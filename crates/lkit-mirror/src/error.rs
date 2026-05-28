@@ -18,9 +18,6 @@ pub enum MirrorError {
     /// Source error (from lkit-core).
     #[error("源错误: {0}")]
     Source(#[from] lkit_core::SourceError),
-    /// Download error (from lkit-core).
-    #[error("下载错误: {0}")]
-    Download(#[from] lkit_core::DownloadError),
     /// JSON serialization error.
     #[error("序列化错误: {0}")]
     Serialization(#[from] serde_json::Error),
