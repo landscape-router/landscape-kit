@@ -53,8 +53,10 @@ impl MirrorTarget for LocalTarget {
         let dir = self.full_path(prefix);
         let mut keys = Vec::new();
 
-        if !dir.exists() {
-            return Ok(keys);
+        match tokio::fs::metadata(&dir).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(keys),
+            Err(e) => return Err(MirrorError::Io(e)),
         }
 
         collect_files_recursive(&dir, &self.root, &mut keys).await?;
@@ -63,8 +65,10 @@ impl MirrorTarget for LocalTarget {
 
     async fn delete(&self, key: &str) -> Result<(), MirrorError> {
         let path = self.full_path(key);
-        if path.exists() {
-            tokio::fs::remove_file(&path).await?;
+        match tokio::fs::metadata(&path).await {
+            Ok(_) => tokio::fs::remove_file(&path).await?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(MirrorError::Io(e)),
         }
         Ok(())
     }
