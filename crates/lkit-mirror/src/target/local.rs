@@ -37,7 +37,11 @@ impl MirrorTarget for LocalTarget {
 
     async fn exists(&self, key: &str) -> Result<bool, MirrorError> {
         let path = self.full_path(key);
-        Ok(path.exists())
+        match tokio::fs::metadata(&path).await {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(MirrorError::Io(e)),
+        }
     }
 
     async fn read(&self, key: &str) -> Result<Vec<u8>, MirrorError> {
