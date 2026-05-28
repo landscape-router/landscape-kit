@@ -1,7 +1,7 @@
 //! `lkit status` command handler.
 
-use lkit_app::status::StatusUseCase;
 use lkit_app::AppState;
+use lkit_app::status::StatusUseCase;
 
 use crate::cli::StatusArgs;
 use crate::messages::msg;
@@ -33,10 +33,7 @@ pub async fn run(args: StatusArgs, state: &AppState) -> anyhow::Result<()> {
         eprintln!(
             "{}: {}",
             msg("status.api.ok"),
-            landscape
-                .landscape_version
-                .as_deref()
-                .unwrap_or("unknown")
+            landscape.landscape_version.as_deref().unwrap_or("unknown")
         );
     } else {
         eprintln!("{}", msg("status.api.unreachable"));

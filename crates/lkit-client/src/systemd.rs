@@ -58,18 +58,13 @@ impl ServiceManager for SystemdManager {
         run_cmd("systemctl", &["start", &self.service_name])
             .await
             .map_err(|e| {
-                if e.to_string().contains("Access denied")
-                    || e.to_string().contains("permission")
-                {
+                if e.to_string().contains("Access denied") || e.to_string().contains("permission") {
                     CoreError::Internal(format!(
                         "permission denied: failed to start {}: {}",
                         self.service_name, e
                     ))
                 } else {
-                    CoreError::Internal(format!(
-                        "failed to start {}: {}",
-                        self.service_name, e
-                    ))
+                    CoreError::Internal(format!("failed to start {}: {}", self.service_name, e))
                 }
             })?;
         Ok(())
@@ -88,18 +83,13 @@ impl ServiceManager for SystemdManager {
         run_cmd("systemctl", &["restart", &self.service_name])
             .await
             .map_err(|e| {
-                if e.to_string().contains("Access denied")
-                    || e.to_string().contains("permission")
-                {
+                if e.to_string().contains("Access denied") || e.to_string().contains("permission") {
                     CoreError::Internal(format!(
                         "permission denied: failed to restart {}: {}",
                         self.service_name, e
                     ))
                 } else {
-                    CoreError::Internal(format!(
-                        "failed to restart {}: {}",
-                        self.service_name, e
-                    ))
+                    CoreError::Internal(format!("failed to restart {}: {}", self.service_name, e))
                 }
             })?;
         Ok(())

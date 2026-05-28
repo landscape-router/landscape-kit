@@ -1,7 +1,7 @@
 //! `lkit service` command handler.
 
-use lkit_app::service::ServiceUseCase;
 use lkit_app::AppState;
+use lkit_app::service::ServiceUseCase;
 
 use crate::cli::{ServiceAction, ServiceArgs};
 use crate::messages::msg;

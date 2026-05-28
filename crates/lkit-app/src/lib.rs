@@ -1,15 +1,15 @@
 //! lkit-app: use case layer — business logic for install, backup, upgrade, status, diagnose, config.
 
-pub mod status;
-pub mod service;
-pub mod logs;
 pub mod diagnose;
+pub mod logs;
+pub mod service;
+pub mod status;
 
 mod error;
 
 use std::sync::Arc;
 
-use lkit_core::{LandscapePaths, LogReader, ManagerPaths, ServiceManager, LkitClient};
+use lkit_core::{LandscapePaths, LkitClient, LogReader, ManagerPaths, ServiceManager};
 
 pub use error::AppError;
 

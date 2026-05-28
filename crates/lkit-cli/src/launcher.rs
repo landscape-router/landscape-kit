@@ -7,7 +7,7 @@ use dialoguer::Select;
 use lkit_app::AppState;
 
 use crate::cli::{Commands, DiagnoseArgs, LogsArgs, ServiceAction, ServiceArgs, StatusArgs};
-use crate::messages::{msg, CliMessages};
+use crate::messages::{CliMessages, msg};
 
 /// A single menu entry: label key and associated action.
 struct MenuItem {

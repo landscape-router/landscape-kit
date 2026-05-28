@@ -64,8 +64,16 @@ mod tests {
     fn diagnostic_result_all_passed_when_all_pass() {
         let result = DiagnosticResult {
             checks: vec![
-                DiagnosticCheck { name: "a".into(), passed: true, message: "ok".into() },
-                DiagnosticCheck { name: "b".into(), passed: true, message: "ok".into() },
+                DiagnosticCheck {
+                    name: "a".into(),
+                    passed: true,
+                    message: "ok".into(),
+                },
+                DiagnosticCheck {
+                    name: "b".into(),
+                    passed: true,
+                    message: "ok".into(),
+                },
             ],
         };
         assert!(result.all_passed());
@@ -75,8 +83,16 @@ mod tests {
     fn diagnostic_result_not_all_passed_when_one_fails() {
         let result = DiagnosticResult {
             checks: vec![
-                DiagnosticCheck { name: "a".into(), passed: true, message: "ok".into() },
-                DiagnosticCheck { name: "b".into(), passed: false, message: "fail".into() },
+                DiagnosticCheck {
+                    name: "a".into(),
+                    passed: true,
+                    message: "ok".into(),
+                },
+                DiagnosticCheck {
+                    name: "b".into(),
+                    passed: false,
+                    message: "fail".into(),
+                },
             ],
         };
         assert!(!result.all_passed());
@@ -84,7 +100,11 @@ mod tests {
 
     #[test]
     fn service_state_serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-        let state = ServiceState { active: true, enabled: false, pid: Some(1234) };
+        let state = ServiceState {
+            active: true,
+            enabled: false,
+            pid: Some(1234),
+        };
         let json = serde_json::to_string(&state)?;
         let decoded: ServiceState = serde_json::from_str(&json)?;
         assert!(decoded.active);

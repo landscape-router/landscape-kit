@@ -32,16 +32,16 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
         Commands::SelfCmd(args) => self_cmd::run(args).await,
     };
 
-    if let Err(ref e) = result {
-        if let Some(app_err) = e.downcast_ref::<lkit_app::AppError>() {
-            let exit_code = match app_err {
-                lkit_app::AppError::PermissionDenied(_) => 2,
-                lkit_app::AppError::NotFound(_) => 3,
-                _ => 1,
-            };
-            eprintln!("Error: {:#}", e);
-            std::process::exit(exit_code);
-        }
+    if let Err(ref e) = result
+        && let Some(app_err) = e.downcast_ref::<lkit_app::AppError>()
+    {
+        let exit_code = match app_err {
+            lkit_app::AppError::PermissionDenied(_) => 2,
+            lkit_app::AppError::NotFound(_) => 3,
+            _ => 1,
+        };
+        eprintln!("Error: {:#}", e);
+        std::process::exit(exit_code);
     }
 
     result

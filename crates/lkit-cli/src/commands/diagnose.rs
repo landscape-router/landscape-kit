@@ -1,7 +1,7 @@
 //! `lkit diagnose` command handler.
 
-use lkit_app::diagnose::DiagnoseUseCase;
 use lkit_app::AppState;
+use lkit_app::diagnose::DiagnoseUseCase;
 use lkit_core::DiagnosticResult;
 
 use crate::cli::DiagnoseArgs;
@@ -43,14 +43,8 @@ fn diagnose_exit_code(result: &DiagnosticResult) -> Option<i32> {
     if result.all_passed() {
         return None;
     }
-    let api_failed = result
-        .checks
-        .iter()
-        .any(|c| c.name == "api" && !c.passed);
-    let other_failed = result
-        .checks
-        .iter()
-        .any(|c| c.name != "api" && !c.passed);
+    let api_failed = result.checks.iter().any(|c| c.name == "api" && !c.passed);
+    let other_failed = result.checks.iter().any(|c| c.name != "api" && !c.passed);
     if api_failed && !other_failed {
         Some(4)
     } else {

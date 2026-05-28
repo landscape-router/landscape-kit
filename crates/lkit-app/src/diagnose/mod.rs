@@ -131,9 +131,15 @@ mod tests {
                 pid: None,
             })
         }
-        async fn start(&self) -> Result<(), CoreError> { Ok(()) }
-        async fn stop(&self) -> Result<(), CoreError> { Ok(()) }
-        async fn restart(&self) -> Result<(), CoreError> { Ok(()) }
+        async fn start(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn restart(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
     }
 
     struct MockLkitClient {
@@ -188,7 +194,7 @@ mod tests {
             .checks
             .iter()
             .find(|c| c.name == "home")
-            .expect("home check should exist");
+            .ok_or("home check should exist")?;
         assert!(!home_check.passed);
         assert!(home_check.message.contains("missing"));
         Ok(())
@@ -213,7 +219,7 @@ mod tests {
             .checks
             .iter()
             .find(|c| c.name == "api")
-            .expect("api check should exist");
+            .ok_or("api check should exist")?;
         assert!(!api_check.passed);
         Ok(())
     }

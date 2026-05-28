@@ -1,7 +1,7 @@
 //! `lkit logs` command handler.
 
-use lkit_app::logs::LogsUseCase;
 use lkit_app::AppState;
+use lkit_app::logs::LogsUseCase;
 
 use crate::cli::LogsArgs;
 

@@ -59,9 +59,15 @@ mod tests {
                 pid: if self.active { Some(42) } else { None },
             })
         }
-        async fn start(&self) -> Result<(), CoreError> { Ok(()) }
-        async fn stop(&self) -> Result<(), CoreError> { Ok(()) }
-        async fn restart(&self) -> Result<(), CoreError> { Ok(()) }
+        async fn start(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn restart(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
     }
 
     struct MockLkitClient {
@@ -95,11 +101,8 @@ mod tests {
         );
         let report = uc.execute().await?;
         assert!(report.service.active);
-        assert!(report.landscape.is_some());
-        assert_eq!(
-            report.landscape.as_ref().unwrap().landscape_version,
-            Some("1.0.0".into())
-        );
+        let landscape = report.landscape.ok_or("landscape should be Some")?;
+        assert_eq!(landscape.landscape_version, Some("1.0.0".into()));
         Ok(())
     }
 

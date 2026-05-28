@@ -36,13 +36,13 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Self version can run without Landscape HOME.
-    if let Some(Commands::SelfCmd(ref args)) = cli.command {
-        if let crate::cli::SelfAction::Version = args.action {
-            return commands::self_cmd::run(crate::cli::SelfArgs {
-                action: crate::cli::SelfAction::Version,
-            })
-            .await;
-        }
+    if let Some(Commands::SelfCmd(ref args)) = cli.command
+        && let crate::cli::SelfAction::Version = args.action
+    {
+        return commands::self_cmd::run(crate::cli::SelfArgs {
+            action: crate::cli::SelfAction::Version,
+        })
+        .await;
     }
 
     // Path discovery
@@ -61,8 +61,8 @@ async fn main() -> anyhow::Result<()> {
     let manager_paths = ManagerPaths::new(manager_home());
 
     // Parse landscape.toml for API base URL
-    let base_url =
-        parse_api_listen(&landscape_paths.landscape_config).unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+    let base_url = parse_api_listen(&landscape_paths.landscape_config)
+        .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
 
     // Build DI
     let client: Arc<dyn lkit_core::LkitClient> = Arc::new(LandscapeClient::new(base_url));
