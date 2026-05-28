@@ -370,7 +370,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
    └──→ lkit-mirror (lib) ─────────────────────────┘
             │
             ├── reqwest
-            └── aws-sdk-s3
+            └── rusty-s3
 ```
 
 `lkit-mirror` 是 lib crate，不依赖 `lkit-app` / `lkit-client`，仅依赖 `lkit-core`。
@@ -379,7 +379,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
 
 只发布一个二进制 `lkit`，镜像管理功能内置：
 
-- S3 SDK（aws-sdk-s3）直接打包进 `lkit`
+- S3 客户端（rusty-s3）直接打包进 `lkit`
 - `lkit mirror sync/serve/verify/list` 作为内置子命令
 - 不需要 feature flag，不需要单独发布 `lkit-mirror` 二进制
 
@@ -542,7 +542,7 @@ pub trait MirrorTarget: Send + Sync {
 | Target | 说明 | 依赖 |
 |--------|------|------|
 | `LocalTarget` | 本地文件系统 | std::fs（tokio 封装） |
-| `S3Target` | S3/R2 兼容存储 | `aws-sdk-s3` |
+| `S3Target` | S3/R2 兼容存储 | `rusty-s3` |
 
 `S3Target` 通过 `--endpoint` 参数支持任意 S3 兼容存储（Cloudflare R2、MinIO、AWS S3 等）。
 

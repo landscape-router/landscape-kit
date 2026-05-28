@@ -44,22 +44,20 @@ pub async fn verify(
 
     // Check latest pointer
     let latest_key = format!("{prefix}/latest");
-    if target.exists(&latest_key).await.unwrap_or(false) {
-        if let Ok(data) = target.read(&latest_key).await {
-            if let Ok(latest_tag) = String::from_utf8(data) {
-                let latest_tag = latest_tag.trim();
-                let latest_manifest =
-                    format!("{prefix}/{latest_tag}/release-manifest.json");
-                if !target.exists(&latest_manifest).await.unwrap_or(false) {
-                    results.push(VersionVerifyResult {
-                        tag: format!("latest -> {latest_tag}"),
-                        passed: false,
-                        errors: vec![format!(
-                            "latest points to {latest_tag} but that version does not exist"
-                        )],
-                    });
-                }
-            }
+    if target.exists(&latest_key).await.unwrap_or(false)
+        && let Ok(data) = target.read(&latest_key).await
+        && let Ok(latest_tag) = String::from_utf8(data)
+    {
+        let latest_tag = latest_tag.trim();
+        let latest_manifest = format!("{prefix}/{latest_tag}/release-manifest.json");
+        if !target.exists(&latest_manifest).await.unwrap_or(false) {
+            results.push(VersionVerifyResult {
+                tag: format!("latest -> {latest_tag}"),
+                passed: false,
+                errors: vec![format!(
+                    "latest points to {latest_tag} but that version does not exist"
+                )],
+            });
         }
     }
 
@@ -67,11 +65,7 @@ pub async fn verify(
 }
 
 /// Verify a single version's integrity.
-async fn verify_version(
-    target: &dyn MirrorTarget,
-    prefix: &str,
-    tag: &str,
-) -> VersionVerifyResult {
+async fn verify_version(target: &dyn MirrorTarget, prefix: &str, tag: &str) -> VersionVerifyResult {
     let mut errors = Vec::new();
     let manifest_key = format!("{prefix}/{tag}/release-manifest.json");
 

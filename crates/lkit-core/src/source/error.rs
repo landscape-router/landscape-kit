@@ -46,9 +46,7 @@ mod tests {
 
     #[test]
     fn source_error_display_version_not_found() -> Result<(), Box<dyn std::error::Error>> {
-        let err = SourceError::VersionNotFound {
-            tag: "v1.0".into(),
-        };
+        let err = SourceError::VersionNotFound { tag: "v1.0".into() };
         assert!(err.to_string().contains("v1.0"));
         Ok(())
     }

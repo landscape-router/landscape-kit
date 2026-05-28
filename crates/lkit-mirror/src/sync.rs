@@ -107,24 +107,15 @@ async fn resolve_tags(
     match scope {
         SyncScope::Tag(tag) => Ok(vec![tag.clone()]),
         SyncScope::Latest => {
-            let tag = source
-                .latest_tag()
-                .await
-                .map_err(MirrorError::Source)?;
+            let tag = source.latest_tag().await.map_err(MirrorError::Source)?;
             Ok(vec![tag])
         }
         SyncScope::LatestN(n) => {
-            let versions = source
-                .list_versions()
-                .await
-                .map_err(MirrorError::Source)?;
+            let versions = source.list_versions().await.map_err(MirrorError::Source)?;
             Ok(versions.into_iter().take(*n as usize).collect())
         }
         SyncScope::Since(since_tag) => {
-            let versions = source
-                .list_versions()
-                .await
-                .map_err(MirrorError::Source)?;
+            let versions = source.list_versions().await.map_err(MirrorError::Source)?;
             let pos = versions.iter().position(|v| v == since_tag);
             match pos {
                 Some(i) => Ok(versions.into_iter().take(i).collect()),
@@ -134,10 +125,7 @@ async fn resolve_tags(
             }
         }
         SyncScope::All => {
-            let versions = source
-                .list_versions()
-                .await
-                .map_err(MirrorError::Source)?;
+            let versions = source.list_versions().await.map_err(MirrorError::Source)?;
             Ok(versions)
         }
     }
@@ -168,7 +156,9 @@ async fn sync_version(
     let manifest_json = serde_json::to_string_pretty(&manifest_for_storage)?;
 
     let manifest_key = format!("{version_prefix}/release-manifest.json");
-    target.upload(&manifest_key, manifest_json.as_bytes()).await?;
+    target
+        .upload(&manifest_key, manifest_json.as_bytes())
+        .await?;
 
     for artifact in &manifest.artifacts {
         let url = source.artifact_url(tag, &artifact.name);
@@ -255,7 +245,16 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let month_days: [u64; 12] = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut m = 1;
     for &days_in_month in &month_days {
@@ -269,7 +268,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 #[cfg(test)]

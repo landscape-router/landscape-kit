@@ -104,9 +104,7 @@ mod tests {
         target
             .upload("landscape/v1.0/release-manifest.json", json.as_bytes())
             .await?;
-        target
-            .upload("landscape/v1.0/file.bin", b"data")
-            .await?;
+        target.upload("landscape/v1.0/file.bin", b"data").await?;
 
         let mut manifest2 = manifest.clone();
         manifest2.tag = "v2.0".into();
@@ -115,9 +113,7 @@ mod tests {
         target
             .upload("landscape/v2.0/release-manifest.json", json2.as_bytes())
             .await?;
-        target
-            .upload("landscape/v2.0/file.bin", b"data")
-            .await?;
+        target.upload("landscape/v2.0/file.bin", b"data").await?;
 
         let versions = list_versions(&target, "landscape").await?;
         assert_eq!(versions.len(), 2);

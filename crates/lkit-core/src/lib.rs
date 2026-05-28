@@ -7,12 +7,13 @@ mod paths;
 pub mod source;
 mod traits;
 
-pub use download::{ArtifactDownloader, DownloadConfig, DownloadError, DownloadProgress, NoopProgress};
+pub use download::{
+    ArtifactDownloader, DownloadConfig, DownloadError, DownloadProgress, NoopProgress,
+};
 pub use error::CoreError;
 pub use models::{DiagnosticCheck, DiagnosticResult, ServiceState, ServiceStatus};
 pub use paths::{LandscapePaths, ManagerPaths};
 pub use source::{
-    default_source, Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError,
-    SourceType,
+    Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError, SourceType, default_source,
 };
 pub use traits::{LkitClient, LogReader, ServiceManager};

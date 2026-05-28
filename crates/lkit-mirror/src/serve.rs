@@ -3,11 +3,11 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use axum::Router;
 use axum::extract::Path as AxumPath;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use tokio::fs;
 
 use crate::error::MirrorError;
@@ -37,10 +37,13 @@ impl Default for ServeConfig {
 pub async fn serve(config: ServeConfig) -> Result<(), MirrorError> {
     let root = config.path.clone();
 
-    let app = Router::new().route("/{*path}", get(move |path: AxumPath<String>| {
-        let root = root.clone();
-        async move { handle_file(root, path.0).await }
-    }));
+    let app = Router::new().route(
+        "/{*path}",
+        get(move |path: AxumPath<String>| {
+            let root = root.clone();
+            async move { handle_file(root, path.0).await }
+        }),
+    );
 
     let addr: SocketAddr = format!("{}:{}", config.bind, config.port)
         .parse()
@@ -122,8 +125,8 @@ mod tests {
         tokio::fs::create_dir_all(landscape.join("v1.0")).await?;
         tokio::fs::write(landscape.join("v1.0/test.json"), r#"{"ok":true}"#).await?;
 
-        let response = handle_file(dir.path().to_path_buf(), "landscape/v1.0/test.json".into())
-            .await;
+        let response =
+            handle_file(dir.path().to_path_buf(), "landscape/v1.0/test.json".into()).await;
         assert_eq!(response.status(), StatusCode::OK);
         Ok(())
     }
@@ -139,8 +142,7 @@ mod tests {
     #[tokio::test]
     async fn serve_file_blocks_traversal() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let response =
-            handle_file(dir.path().to_path_buf(), "../../../etc/passwd".into()).await;
+        let response = handle_file(dir.path().to_path_buf(), "../../../etc/passwd".into()).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         Ok(())
     }

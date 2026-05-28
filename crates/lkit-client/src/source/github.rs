@@ -26,6 +26,7 @@ struct GhRelease {
 
 /// GitHub release asset JSON (subset).
 #[derive(Debug, Deserialize)]
+#[expect(dead_code)]
 struct GhAsset {
     name: String,
     size: u64,
@@ -63,10 +64,10 @@ impl GithubSource {
         if let Ok(val) = "lkit".parse() {
             headers.insert(reqwest::header::USER_AGENT, val);
         }
-        if let Some(ref token) = self.token {
-            if let Ok(val) = format!("Bearer {token}").parse() {
-                headers.insert(reqwest::header::AUTHORIZATION, val);
-            }
+        if let Some(ref token) = self.token
+            && let Ok(val) = format!("Bearer {token}").parse()
+        {
+            headers.insert(reqwest::header::AUTHORIZATION, val);
         }
         headers
     }

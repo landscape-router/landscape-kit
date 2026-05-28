@@ -56,12 +56,10 @@ impl SourceResolver {
             })
             .collect();
 
-        let results = tokio::time::timeout(
-            Duration::from_secs(15),
-            futures::future::join_all(handles),
-        )
-        .await
-        .map_err(|_| SourceError::ProbeTimeout)?;
+        let results =
+            tokio::time::timeout(Duration::from_secs(15), futures::future::join_all(handles))
+                .await
+                .map_err(|_| SourceError::ProbeTimeout)?;
 
         // Step 3: Collect successes, sorted by latency
         let mut successes: Vec<(String, Duration)> = Vec::new();
@@ -98,10 +96,7 @@ impl SourceResolver {
         // Step 4: Fetch manifests from each successful source
         let mut probe_results = Vec::new();
         for (source_name, latency) in successes {
-            let source = self
-                .sources
-                .iter()
-                .find(|s| s.name() == source_name);
+            let source = self.sources.iter().find(|s| s.name() == source_name);
 
             if let Some(source) = source {
                 match source.get_artifacts(&actual_tag).await {
@@ -121,9 +116,7 @@ impl SourceResolver {
         }
 
         if probe_results.is_empty() {
-            return Err(SourceError::Network(
-                "所有源获取 manifest 失败".into(),
-            ));
+            return Err(SourceError::Network("所有源获取 manifest 失败".into()));
         }
 
         Ok(probe_results)

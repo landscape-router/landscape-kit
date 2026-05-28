@@ -33,15 +33,13 @@ impl ReleaseSource for LocalSource {
 
     async fn latest_tag(&self) -> Result<String, SourceError> {
         let latest_path = self.path.join("latest");
-        let content = tokio::fs::read_to_string(&latest_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    SourceError::Network("latest pointer not found".into())
-                } else {
-                    SourceError::Io(e.to_string())
-                }
-            })?;
+        let content = tokio::fs::read_to_string(&latest_path).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                SourceError::Network("latest pointer not found".into())
+            } else {
+                SourceError::Io(e.to_string())
+            }
+        })?;
         Ok(content.trim().to_string())
     }
 

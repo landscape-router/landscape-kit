@@ -7,12 +7,12 @@ use lkit_client::GithubSource;
 use lkit_core::ReleaseSource;
 use lkit_mirror::serve::{self, ServeConfig};
 use lkit_mirror::sync::{self, SyncConfig, SyncScope};
-use lkit_mirror::target::local::LocalTarget;
 use lkit_mirror::target::MirrorTarget;
+use lkit_mirror::target::local::LocalTarget;
 
 use crate::cli::{
-    MirrorAction, MirrorArgs, MirrorListArgs, MirrorServeArgs, MirrorSyncArgs,
-    MirrorTargetType, MirrorVerifyArgs,
+    MirrorAction, MirrorArgs, MirrorListArgs, MirrorServeArgs, MirrorSyncArgs, MirrorTargetType,
+    MirrorVerifyArgs,
 };
 
 /// Dispatch mirror subcommand.
@@ -49,12 +49,9 @@ async fn run_sync(args: MirrorSyncArgs) -> anyhow::Result<()> {
     };
 
     // DI assembly: build concrete source from args
-    let http_client = reqwest::Client::builder()
-        .user_agent("lkit")
-        .build()?;
-    let source: Arc<dyn ReleaseSource> = Arc::new(
-        GithubSource::new("sync-source", &args.repo, http_client)?,
-    );
+    let http_client = reqwest::Client::builder().user_agent("lkit").build()?;
+    let source: Arc<dyn ReleaseSource> =
+        Arc::new(GithubSource::new("sync-source", &args.repo, http_client)?);
     let target = build_target(
         &args.target,
         args.path.as_deref(),
@@ -168,7 +165,8 @@ fn build_target(
 ) -> anyhow::Result<Box<dyn MirrorTarget>> {
     match target_type {
         MirrorTargetType::Local => {
-            let path = path.ok_or_else(|| anyhow::anyhow!("--path is required for local target"))?;
+            let path =
+                path.ok_or_else(|| anyhow::anyhow!("--path is required for local target"))?;
             Ok(Box::new(LocalTarget::new(path)))
         }
         MirrorTargetType::S3 => {
@@ -180,8 +178,13 @@ fn build_target(
                 .map_err(|_| anyhow::anyhow!("AWS_ACCESS_KEY_ID env var required"))?;
             let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
                 .map_err(|_| anyhow::anyhow!("AWS_SECRET_ACCESS_KEY env var required"))?;
-            let target =
-                lkit_mirror::target::s3::S3Target::new(endpoint, bucket, &access_key, &secret_key, "")?;
+            let target = lkit_mirror::target::s3::S3Target::new(
+                endpoint,
+                bucket,
+                &access_key,
+                &secret_key,
+                "",
+            )?;
             Ok(Box::new(target))
         }
     }
