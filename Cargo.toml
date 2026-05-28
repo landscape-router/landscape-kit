@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lkit-core",
+    "crates/lkit-client",
+    "crates/lkit-app",
+    "crates/lkit-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+rust-version = "1.95"
+
+[workspace.dependencies]
+# Error handling
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async
+tokio = "1"
+async-trait = "0.1"
+
+# CLI
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP client
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-native-certs"] }

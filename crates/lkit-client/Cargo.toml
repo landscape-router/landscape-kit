@@ -1,0 +1,11 @@
+[package]
+name = "lkit-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lkit-core = { path = "../lkit-core" }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
