@@ -94,11 +94,22 @@ impl ArtifactDownloader for HttpDownloader {
     }
 }
 
-/// Compute SHA-256 hex digest of a file.
+/// Compute SHA-256 hex digest of a file using streaming reads.
 pub async fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
-    let data = tokio::fs::read(path).await?;
+    use tokio::io::AsyncReadExt;
+
+    let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
-    hasher.update(&data);
+    let mut buf = vec![0u8; 64 * 1024];
+
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+
     Ok(format!("{:x}", hasher.finalize()))
 }
 
