@@ -145,21 +145,9 @@ async fn sync_version(
 
     let version_prefix = format!("{prefix}/{tag}");
 
-    let manifest_for_storage = ReleaseManifest {
-        format_version: 1,
-        tag: tag.to_string(),
-        generated_at: now_iso8601(),
-        generated_by: Some(format!("lkit {}", env!("CARGO_PKG_VERSION"))),
-        artifacts: manifest.artifacts.clone(),
-    };
-
-    let manifest_json = serde_json::to_string_pretty(&manifest_for_storage)?;
-
-    let manifest_key = format!("{version_prefix}/release-manifest.json");
-    target
-        .upload(&manifest_key, manifest_json.as_bytes())
-        .await?;
-
+    // Upload artifacts first, manifest last.
+    // This ensures a partial sync never leaves a manifest in target
+    // (which would cause the version to be skipped on next run).
     for artifact in &manifest.artifacts {
         let url = source.artifact_url(tag, &artifact.name);
         info!("downloading {} from {}", artifact.name, url);
@@ -180,6 +168,20 @@ async fn sync_version(
         target.upload(&key, &data).await?;
         debug!("uploaded {}", artifact.name);
     }
+
+    let manifest_for_storage = ReleaseManifest {
+        format_version: 1,
+        tag: tag.to_string(),
+        generated_at: now_iso8601(),
+        generated_by: Some(format!("lkit {}", env!("CARGO_PKG_VERSION"))),
+        artifacts: manifest.artifacts.clone(),
+    };
+
+    let manifest_json = serde_json::to_string_pretty(&manifest_for_storage)?;
+    let manifest_key = format!("{version_prefix}/release-manifest.json");
+    target
+        .upload(&manifest_key, manifest_json.as_bytes())
+        .await?;
 
     Ok(())
 }
@@ -274,6 +276,79 @@ fn is_leap(year: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::target::local::LocalTarget;
+    use lkit_core::{Artifact, ReleaseManifest, ReleaseSource, SourceError};
+    use std::time::Duration;
+
+    struct MockSource {
+        artifacts: Vec<Artifact>,
+    }
+
+    #[async_trait::async_trait]
+    impl ReleaseSource for MockSource {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn latest_tag(&self) -> Result<String, SourceError> {
+            Ok("v1.0".into())
+        }
+        async fn list_versions(&self) -> Result<Vec<String>, SourceError> {
+            Ok(vec!["v1.0".into()])
+        }
+        async fn get_artifacts(&self, tag: &str) -> Result<ReleaseManifest, SourceError> {
+            Ok(ReleaseManifest {
+                format_version: 1,
+                tag: tag.into(),
+                generated_at: String::new(),
+                generated_by: None,
+                artifacts: self.artifacts.clone(),
+            })
+        }
+        fn artifact_url(&self, _tag: &str, name: &str) -> String {
+            format!("http://mock/{name}")
+        }
+        async fn probe(&self, _tag: &str) -> Result<Duration, SourceError> {
+            Ok(Duration::from_millis(1))
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_version_does_not_leave_manifest_on_failure(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // When artifact download fails, manifest must NOT be uploaded.
+        let dir = tempfile::tempdir()?;
+        let target = LocalTarget::new(dir.path());
+
+        let source = MockSource {
+            artifacts: vec![Artifact {
+                name: "test.bin".into(),
+                sha256: "abc".into(),
+                size: 100,
+                arch: None,
+            }],
+        };
+
+        let config = SyncConfig {
+            prefix: "landscape".into(),
+            scope: SyncScope::Tag("v1.0".into()),
+            force: false,
+        };
+
+        let result = run_sync(&config, &source, &target).await;
+        // sync will fail because download_bytes hits http://mock/test.bin
+        assert!(result.is_err() || !result.unwrap().failed.is_empty());
+
+        // Critical: manifest must NOT be present in target
+        let manifest_exists = target
+            .exists("landscape/v1.0/release-manifest.json")
+            .await?;
+        assert!(
+            !manifest_exists,
+            "manifest should not exist when sync fails"
+        );
+        Ok(())
+    }
 
     #[test]
     fn compute_sha256_known_value() -> Result<(), Box<dyn std::error::Error>> {
