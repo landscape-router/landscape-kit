@@ -317,8 +317,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_version_does_not_leave_manifest_on_failure(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn sync_version_does_not_leave_manifest_on_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
         // When artifact download fails, manifest must NOT be uploaded.
         let dir = tempfile::tempdir()?;
         let target = LocalTarget::new(dir.path());
@@ -340,7 +340,10 @@ mod tests {
 
         let result = run_sync(&config, &source, &target).await;
         // sync will fail because download_bytes hits http://mock/test.bin
-        assert!(result.is_err() || !result.unwrap().failed.is_empty());
+        match result {
+            Err(_) => {}
+            Ok(r) => assert!(!r.failed.is_empty(), "expected sync failure"),
+        }
 
         // Critical: manifest must NOT be present in target
         let manifest_exists = target
