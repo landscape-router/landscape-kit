@@ -52,6 +52,11 @@ pub async fn run_sync(
 ) -> Result<SyncResult, MirrorError> {
     let tags = resolve_tags(source, &config.scope).await?;
 
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
+
     let mut synced = Vec::new();
     let mut skipped = Vec::new();
     let mut failed = Vec::new();
@@ -70,7 +75,7 @@ pub async fn run_sync(
 
         info!("syncing {tag}...");
 
-        match sync_version(source, target, &config.prefix, tag).await {
+        match sync_version(&client, source, target, &config.prefix, tag).await {
             Ok(()) => {
                 info!("synced {tag}");
                 synced.push(tag.clone());
@@ -135,6 +140,7 @@ async fn resolve_tags(
 
 /// Sync a single version from source to target.
 async fn sync_version(
+    client: &reqwest::Client,
     source: &dyn ReleaseSource,
     target: &dyn MirrorTarget,
     prefix: &str,
@@ -154,7 +160,7 @@ async fn sync_version(
         let url = source.artifact_url(tag, &artifact.name);
         info!("downloading {} from {}", artifact.name, url);
 
-        let data = download_bytes(&url).await?;
+        let data = download_bytes(client, &url).await?;
 
         if !artifact.sha256.is_empty() {
             let actual = compute_sha256(&data);
@@ -188,13 +194,8 @@ async fn sync_version(
     Ok(())
 }
 
-/// Download bytes from a URL.
-async fn download_bytes(url: &str) -> Result<Vec<u8>, MirrorError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
-
+/// Download bytes from a URL using a shared client.
+async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, MirrorError> {
     let resp = client
         .get(url)
         .send()
