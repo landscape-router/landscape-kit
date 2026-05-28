@@ -165,6 +165,9 @@ impl ReleaseSource for GithubSource {
             .await
             .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
 
+        // GitHub Releases API does not include checksums.
+        // sha256 is empty here; callers (e.g. lkit-mirror sync) compute it
+        // after downloading each artifact.
         let artifacts = release
             .assets
             .into_iter()
