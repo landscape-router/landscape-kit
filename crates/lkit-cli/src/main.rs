@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
 
     // Build DI
-    let client: Arc<dyn lkit_core::LkitClient> = Arc::new(LandscapeClient::new(base_url));
+    let client: Arc<dyn lkit_core::LkitClient> = Arc::new(LandscapeClient::new(base_url)?);
     let service_manager: Arc<dyn lkit_core::ServiceManager> =
         Arc::new(SystemdManager::new("landscape.service"));
     let log_reader: Arc<dyn lkit_core::LogReader> =

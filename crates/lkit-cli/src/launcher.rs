@@ -121,7 +121,7 @@ pub async fn run(state: &AppState) -> anyhow::Result<()> {
                 eprintln!("{}", CliMessages::format("not_implemented", &params));
             }
             MenuAction::Exit => {
-                std::process::exit(0);
+                break Ok(());
             }
         }
     }
