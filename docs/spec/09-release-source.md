@@ -29,6 +29,9 @@ pub trait ReleaseSource: Send + Sync {
     /// 源的显示名称，用于日志和诊断
     fn name(&self) -> &str;
 
+    /// 解析最新版本标签。GitHub 调用 /releases/latest，HTTP/本地读 latest 文件。
+    async fn latest_tag(&self) -> Result<String, SourceError>;
+
     /// 列出可用版本
     async fn list_versions(&self) -> Result<Vec<String>, SourceError>;
 
@@ -54,6 +57,8 @@ pub enum SourceError {
     Network(String),
     #[error("IO 错误: {0}")]
     Io(String),
+    #[error("配置错误: {0}")]
+    Config(String),
     #[error("版本 {tag} 不存在")]
     VersionNotFound { tag: String },
     #[error("制品 {name} 不存在")]
@@ -155,6 +160,7 @@ pub struct ProbeResult {
     pub source_name: String,
     pub latency: Duration,
     pub manifest: ReleaseManifest,
+    pub resolved_tag: String,
 }
 
 /// 多源解析器
@@ -163,11 +169,11 @@ pub struct SourceResolver {
 }
 
 impl SourceResolver {
-    /// 并发探测所有源，选延迟最低的
-    pub async fn resolve(&self, tag: Option<&str>) -> Result<ProbeResult, SourceError>;
+    /// 并发探测所有源，返回所有成功结果按延迟排序（最快的在前）
+    pub async fn resolve(&self, tag: Option<&str>) -> Result<Vec<ProbeResult>, SourceError>;
 
-    /// 获取选中源的制品下载 URL
-    pub fn artifact_url(&self, result: &ProbeResult, artifact_name: &str) -> String;
+    /// 按名称获取源（用于下载制品）
+    pub fn get_source(&self, name: &str) -> Option<&Arc<dyn ReleaseSource>>;
 }
 ```
 
