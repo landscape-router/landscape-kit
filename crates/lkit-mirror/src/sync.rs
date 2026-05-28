@@ -420,4 +420,22 @@ mod tests {
         assert_eq!(tags, vec!["v3.0", "v2.0"]);
         Ok(())
     }
+
+    #[test]
+    fn days_to_ymd_leap_year() -> Result<(), Box<dyn std::error::Error>> {
+        // 2000-01-01 = day 10957 since epoch
+        // 2000-02-29 = day 10957 + 31 + 28 = day 11016
+        let (y, m, d) = days_to_ymd(11016);
+        assert_eq!((y, m, d), (2000, 2, 29));
+        Ok(())
+    }
+
+    #[test]
+    fn days_to_ymd_end_of_leap_year() -> Result<(), Box<dyn std::error::Error>> {
+        // 2000-12-31 = day 10957 + 365 = 11322 (year 2000 has 366 days, but
+        // 2000-01-01 is day 10957 and 2000-12-31 is the 366th day = 10957+365)
+        let (y, m, d) = days_to_ymd(11322);
+        assert_eq!((y, m, d), (2000, 12, 31));
+        Ok(())
+    }
 }
