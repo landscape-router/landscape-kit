@@ -108,25 +108,38 @@ impl ReleaseSource for GithubSource {
     }
 
     async fn list_versions(&self) -> Result<Vec<String>, SourceError> {
-        let url = format!("{}/releases?per_page=100", self.api_base());
-        let resp = self
-            .client
-            .get(&url)
-            .headers(self.auth_headers())
-            .send()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let mut all_tags = Vec::new();
+        let mut url = format!("{}/releases?per_page=100", self.api_base());
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        loop {
+            let resp = self
+                .client
+                .get(&url)
+                .headers(self.auth_headers())
+                .send()
+                .await
+                .map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let releases: Vec<GhRelease> = resp
-            .json()
-            .await
-            .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+            let next_url = extract_next_link(resp.headers());
+            let resp = resp
+                .error_for_status()
+                .map_err(|e| SourceError::Network(e.to_string()))?;
 
-        Ok(releases.into_iter().map(|r| r.tag_name).collect())
+            let releases: Vec<GhRelease> = resp
+                .json()
+                .await
+                .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+
+            let has_releases = !releases.is_empty();
+            all_tags.extend(releases.into_iter().map(|r| r.tag_name));
+
+            match next_url {
+                Some(next) if has_releases => url = next,
+                _ => break,
+            }
+        }
+
+        Ok(all_tags)
     }
 
     async fn get_artifacts(&self, tag: &str) -> Result<ReleaseManifest, SourceError> {
@@ -201,6 +214,21 @@ impl ReleaseSource for GithubSource {
 
         Ok(start.elapsed())
     }
+}
+
+/// Extract the next page URL from the GitHub `Link` header.
+fn extract_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let link = headers.get("link")?.to_str().ok()?;
+    for part in link.split(',') {
+        let part = part.trim();
+        if let (Some(url_start), Some(url_end)) = (part.find('<'), part.find('>')) {
+            let url = &part[url_start + 1..url_end];
+            if part.contains("rel=\"next\"") {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

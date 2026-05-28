@@ -118,7 +118,7 @@ async fn resolve_tags(
             let versions = source.list_versions().await.map_err(MirrorError::Source)?;
             let pos = versions.iter().position(|v| v == since_tag);
             match pos {
-                Some(i) => Ok(versions.into_iter().take(i).collect()),
+                Some(i) => Ok(versions.into_iter().skip(i + 1).collect()),
                 None => Err(MirrorError::GitHubApi(format!(
                     "tag {since_tag} not found in release history"
                 ))),
