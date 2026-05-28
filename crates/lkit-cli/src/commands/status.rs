@@ -6,7 +6,8 @@ use lkit_app::status::StatusUseCase;
 use crate::cli::StatusArgs;
 use crate::messages::msg;
 
-pub async fn run(args: StatusArgs, state: &AppState) -> anyhow::Result<()> {
+/// Run the status command: query systemd and Landscape API, print report.
+pub(crate) async fn run(args: StatusArgs, state: &AppState) -> anyhow::Result<()> {
     let uc = StatusUseCase::new(state.client.clone(), state.service_manager.clone());
     let report = uc.execute().await?;
 
@@ -33,7 +34,10 @@ pub async fn run(args: StatusArgs, state: &AppState) -> anyhow::Result<()> {
         eprintln!(
             "{}: {}",
             msg("status.api.ok"),
-            landscape.landscape_version.as_deref().unwrap_or("unknown")
+            landscape
+                .landscape_version
+                .as_deref()
+                .unwrap_or(&msg("status.version.unknown"))
         );
     } else {
         eprintln!("{}", msg("status.api.unreachable"));

@@ -6,7 +6,8 @@ use lkit_app::service::ServiceUseCase;
 use crate::cli::{ServiceAction, ServiceArgs};
 use crate::messages::msg;
 
-pub async fn run(args: ServiceArgs, state: &AppState) -> anyhow::Result<()> {
+/// Run the service command: start, stop, or restart the Landscape service.
+pub(crate) async fn run(args: ServiceArgs, state: &AppState) -> anyhow::Result<()> {
     let uc = ServiceUseCase::new(state.service_manager.clone());
 
     match args.action {

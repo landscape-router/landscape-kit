@@ -29,6 +29,7 @@ pub struct ServiceState {
 /// Aggregate result of all diagnostic checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticResult {
+    /// Individual check results.
     pub checks: Vec<DiagnosticCheck>,
 }
 

@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::cli::{SelfAction, SelfArgs};
 use crate::messages::CliMessages;
 
-pub async fn run(args: SelfArgs) -> anyhow::Result<()> {
+/// Run the self command: version display or upgrade check.
+pub(crate) async fn run(args: SelfArgs) -> anyhow::Result<()> {
     match args.action {
         SelfAction::Version => {
             let mut params = HashMap::new();

@@ -7,7 +7,8 @@ use lkit_core::DiagnosticResult;
 use crate::cli::DiagnoseArgs;
 use crate::messages::msg;
 
-pub async fn run(args: DiagnoseArgs, state: &AppState) -> anyhow::Result<()> {
+/// Run the diagnose command: execute health checks and report results.
+pub(crate) async fn run(args: DiagnoseArgs, state: &AppState) -> anyhow::Result<()> {
     let uc = DiagnoseUseCase::new(
         state.client.clone(),
         state.service_manager.clone(),
