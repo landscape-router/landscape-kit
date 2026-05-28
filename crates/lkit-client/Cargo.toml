@@ -9,3 +9,8 @@ lkit-core = { path = "../lkit-core" }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
+tokio = { workspace = true, features = ["process", "fs", "io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile = { workspace = true }

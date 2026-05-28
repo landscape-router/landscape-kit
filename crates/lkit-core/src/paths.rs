@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 /// Discovered paths within the Landscape HOME directory.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LandscapePaths {
     /// Root of the Landscape installation.
     pub home: PathBuf,
@@ -15,6 +15,8 @@ pub struct LandscapePaths {
     pub init_lock: PathBuf,
     /// Frontend static assets directory.
     pub static_dir: PathBuf,
+    /// Landscape logs directory.
+    pub logs_dir: PathBuf,
 }
 
 impl LandscapePaths {
@@ -25,6 +27,7 @@ impl LandscapePaths {
             db_file: home.join("landscape_db.sqlite"),
             init_lock: home.join("landscape_init.lock"),
             static_dir: home.join("static"),
+            logs_dir: home.join("logs"),
             home,
         }
     }
