@@ -7,6 +7,7 @@ use lkit_core::{CoreError, LkitClient, ServiceStatus};
 /// HTTP-based client for the Landscape API.
 #[derive(Debug)]
 pub struct LandscapeClient {
+    #[allow(dead_code)]
     base_url: String,
 }
 
