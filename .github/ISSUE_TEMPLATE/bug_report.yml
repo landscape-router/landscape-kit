@@ -1,0 +1,57 @@
+name: Bug 报告 / Bug report
+description: 报告 bug 或异常行为。Report a bug or unexpected behavior.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: "概要 / Summary"
+      description: "一句话描述出了什么问题。One sentence — what went wrong?"
+      placeholder: "例如 e.g., `lkit backup create` 在 Landscape 运行时静默失败"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "复现步骤 / Steps to reproduce"
+      description: "精确步骤，最好从干净状态开始。Exact steps, starting from a clean state if possible."
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "实际行为 / Actual behavior"
+      description: "实际发生了什么？粘贴终端输出、日志或截图。What actually happened? Paste terminal output, logs, or screenshots."
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "预期行为 / Expected behavior"
+      description: "应该发生什么？What should have happened instead?"
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "环境 / Environment"
+      description: "操作系统、init 系统、版本信息。OS, init system, and version info."
+      value: |
+        - OS:
+        - Shell:
+        - init system (systemd version):
+        - lkit version (`lkit self version`):
+        - Landscape version:
+        - rustc version:
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "补充信息 / Additional context"
+      description: "其他信息——相关问题、对根因的猜测、已尝试的绕过方式。Anything else — related issues, suspicions, workarounds tried."

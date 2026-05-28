@@ -1,0 +1,34 @@
+name: 提问 / Question
+description: 关于使用或开发 landscape-kit 的问题。Ask a question about using or developing landscape-kit.
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: "问题 / Question"
+      description: "你想知道什么？What do you want to know?"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: "分类 / Category"
+      options:
+        - "使用帮助 / Usage help"
+        - "安装 / Installation"
+        - "备份与恢复 / Backup & restore"
+        - "配置 / Configuration"
+        - "开发与贡献 / Development & contributing"
+        - "架构与设计 / Architecture & design"
+        - "其他 / Other"
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: "已尝试 / What I've tried"
+      description: "你读过哪些文档、尝试过什么、已经了解的部分。Docs you've read, experiments you've attempted, what you already understand."
+      placeholder: |
+        - lkit version:
+        - OS:
+        - 已尝试 / What I tried:
