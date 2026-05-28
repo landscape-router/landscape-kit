@@ -146,6 +146,9 @@ pub struct MirrorSyncArgs {
     /// S3 endpoint (target=s3)
     #[arg(long)]
     pub endpoint: Option<String>,
+    /// S3 bucket 内的 key 前缀 (target=s3)
+    #[arg(long, default_value = "")]
+    pub s3_prefix: String,
     /// 同步指定版本
     #[arg(long)]
     pub tag: Option<String>,
@@ -193,6 +196,9 @@ pub struct MirrorVerifyArgs {
     /// S3 endpoint
     #[arg(long)]
     pub endpoint: Option<String>,
+    /// S3 bucket 内的 key 前缀 (target=s3)
+    #[arg(long, default_value = "")]
+    pub s3_prefix: String,
 }
 
 #[derive(Args, Clone)]
@@ -212,6 +218,9 @@ pub struct MirrorListArgs {
     /// S3 endpoint
     #[arg(long)]
     pub endpoint: Option<String>,
+    /// S3 bucket 内的 key 前缀 (target=s3)
+    #[arg(long, default_value = "")]
+    pub s3_prefix: String,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]

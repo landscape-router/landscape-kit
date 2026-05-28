@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde::Deserialize;
 
 use lkit_core::{Artifact, ReleaseManifest, ReleaseSource, SourceError};
@@ -58,16 +59,13 @@ impl GithubSource {
         format!("https://api.github.com/repos/{}/{}", self.owner, self.repo)
     }
 
-    fn auth_headers(&self) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        // USER_AGENT for "lkit" is always valid ASCII
-        if let Ok(val) = "lkit".parse() {
-            headers.insert(reqwest::header::USER_AGENT, val);
-        }
+    fn auth_headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(USER_AGENT, HeaderValue::from_static("lkit"));
         if let Some(ref token) = self.token
-            && let Ok(val) = format!("Bearer {token}").parse()
+            && let Ok(val) = HeaderValue::from_str(&format!("Bearer {token}"))
         {
-            headers.insert(reqwest::header::AUTHORIZATION, val);
+            headers.insert(AUTHORIZATION, val);
         }
         headers
     }

@@ -63,8 +63,10 @@ impl ReleaseSource for HttpMirrorSource {
     }
 
     async fn list_versions(&self) -> Result<Vec<String>, SourceError> {
-        Err(SourceError::Network(
-            "HTTP mirror does not support listing all versions".into(),
+        Err(SourceError::Config(
+            "HTTP mirror does not support listing all versions; \
+             use --tag or --latest 1 instead of --all/--latest N/--since"
+                .into(),
         ))
     }
 

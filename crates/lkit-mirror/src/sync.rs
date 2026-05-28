@@ -195,6 +195,10 @@ async fn sync_version(
 }
 
 /// Download bytes from a URL using a shared client.
+///
+/// NOTE: loads the entire artifact into memory. For large files (~128 MB+),
+/// a streaming `MirrorTarget::upload_stream` API should be introduced to
+/// avoid high peak memory usage.
 async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, MirrorError> {
     let resp = client
         .get(url)
@@ -220,6 +224,8 @@ pub fn compute_sha256(data: &[u8]) -> String {
 }
 
 /// ISO 8601 UTC timestamp for "now".
+///
+/// Hand-rolled to avoid pulling in `chrono` or `jiff` for a single timestamp.
 fn now_iso8601() -> String {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

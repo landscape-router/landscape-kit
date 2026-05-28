@@ -57,6 +57,7 @@ async fn run_sync(args: MirrorSyncArgs) -> anyhow::Result<()> {
         args.path.as_deref(),
         args.bucket.as_deref(),
         args.endpoint.as_deref(),
+        &args.s3_prefix,
     )?;
 
     let result = sync::run_sync(&config, source.as_ref(), target.as_ref()).await?;
@@ -94,6 +95,7 @@ async fn run_verify(args: MirrorVerifyArgs) -> anyhow::Result<()> {
         args.path.as_deref(),
         args.bucket.as_deref(),
         args.endpoint.as_deref(),
+        &args.s3_prefix,
     )?;
 
     let results = lkit_mirror::verify::verify(target.as_ref(), &args.prefix).await?;
@@ -129,6 +131,7 @@ async fn run_list(args: MirrorListArgs) -> anyhow::Result<()> {
         args.path.as_deref(),
         args.bucket.as_deref(),
         args.endpoint.as_deref(),
+        &args.s3_prefix,
     )?;
 
     let versions = lkit_mirror::list::list_versions(target.as_ref(), &args.prefix).await?;
@@ -162,6 +165,7 @@ fn build_target(
     path: Option<&str>,
     bucket: Option<&str>,
     endpoint: Option<&str>,
+    s3_prefix: &str,
 ) -> anyhow::Result<Box<dyn MirrorTarget>> {
     match target_type {
         MirrorTargetType::Local => {
@@ -183,7 +187,7 @@ fn build_target(
                 bucket,
                 &access_key,
                 &secret_key,
-                "",
+                s3_prefix,
             )?;
             Ok(Box::new(target))
         }

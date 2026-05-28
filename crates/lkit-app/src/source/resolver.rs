@@ -93,24 +93,38 @@ impl SourceResolver {
         // Sort by latency (fastest first)
         successes.sort_by_key(|(_, latency)| *latency);
 
-        // Step 4: Fetch manifests from each successful source
-        let mut probe_results = Vec::new();
-        for (source_name, latency) in successes {
-            let source = self.sources.iter().find(|s| s.name() == source_name);
+        // Step 4: Concurrently fetch manifests from all successful sources
+        let manifest_handles: Vec<_> = successes
+            .into_iter()
+            .filter_map(|(source_name, latency)| {
+                let source = self.sources.iter().find(|s| s.name() == source_name)?;
+                let source = Arc::clone(source);
+                let tag = actual_tag.clone();
+                Some(tokio::spawn(async move {
+                    let manifest = source.get_artifacts(&tag).await;
+                    (source.name().to_string(), latency, manifest, tag)
+                }))
+            })
+            .collect();
 
-            if let Some(source) = source {
-                match source.get_artifacts(&actual_tag).await {
-                    Ok(manifest) => {
-                        probe_results.push(ProbeResult {
-                            source_name,
-                            latency,
-                            manifest,
-                            resolved_tag: actual_tag.clone(),
-                        });
-                    }
-                    Err(e) => {
-                        warn!("source '{}' get_artifacts failed: {}", source_name, e);
-                    }
+        let manifest_results = futures::future::join_all(manifest_handles).await;
+
+        let mut probe_results = Vec::new();
+        for result in manifest_results {
+            match result {
+                Ok((source_name, latency, Ok(manifest), resolved_tag)) => {
+                    probe_results.push(ProbeResult {
+                        source_name,
+                        latency,
+                        manifest,
+                        resolved_tag,
+                    });
+                }
+                Ok((source_name, _, Err(e), _)) => {
+                    warn!("source '{}' get_artifacts failed: {}", source_name, e);
+                }
+                Err(e) => {
+                    warn!("manifest fetch task panicked: {}", e);
                 }
             }
         }
@@ -118,6 +132,9 @@ impl SourceResolver {
         if probe_results.is_empty() {
             return Err(SourceError::Network("所有源获取 manifest 失败".into()));
         }
+
+        // Re-sort by latency after concurrent fetch (order preserved but ensure correctness)
+        probe_results.sort_by_key(|r| r.latency);
 
         Ok(probe_results)
     }
@@ -155,8 +172,10 @@ mod tests {
     /// Mock source for testing.
     struct MockSource {
         source_name: String,
-        probe_result: Result<Duration, SourceError>,
-        latest: Result<String, SourceError>,
+        probe_latency: Option<Duration>,
+        probe_error: Option<String>,
+        latest_tag: Option<String>,
+        latest_error: Option<String>,
     }
 
     #[async_trait::async_trait]
@@ -165,7 +184,11 @@ mod tests {
             &self.source_name
         }
         async fn latest_tag(&self) -> Result<String, SourceError> {
-            self.latest.clone()
+            match (&self.latest_tag, &self.latest_error) {
+                (Some(tag), _) => Ok(tag.clone()),
+                (_, Some(msg)) => Err(SourceError::Network(msg.clone())),
+                _ => Err(SourceError::Network("not configured".into())),
+            }
         }
         async fn list_versions(&self) -> Result<Vec<String>, SourceError> {
             Ok(vec![])
@@ -183,19 +206,10 @@ mod tests {
             String::new()
         }
         async fn probe(&self, _tag: &str) -> Result<Duration, SourceError> {
-            self.probe_result.clone()
-        }
-    }
-
-    impl Clone for MockSource {
-        fn clone(&self) -> Self {
-            MockSource {
-                source_name: self.source_name.clone(),
-                probe_result: match &self.probe_result {
-                    Ok(d) => Ok(*d),
-                    Err(e) => Err(SourceError::Network(e.to_string())),
-                },
-                latest: self.latest.clone(),
+            match (self.probe_latency, &self.probe_error) {
+                (Some(d), _) => Ok(d),
+                (_, Some(msg)) => Err(SourceError::Network(msg.clone())),
+                _ => Err(SourceError::Network("not configured".into())),
             }
         }
     }
@@ -205,13 +219,17 @@ mod tests {
         let sources: Vec<Arc<dyn ReleaseSource>> = vec![
             Arc::new(MockSource {
                 source_name: "slow".into(),
-                probe_result: Ok(Duration::from_millis(200)),
-                latest: Ok("v1.0".into()),
+                probe_latency: Some(Duration::from_millis(200)),
+                probe_error: None,
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
             Arc::new(MockSource {
                 source_name: "fast".into(),
-                probe_result: Ok(Duration::from_millis(10)),
-                latest: Ok("v1.0".into()),
+                probe_latency: Some(Duration::from_millis(10)),
+                probe_error: None,
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
         ];
         let resolver = SourceResolver::new(sources);
@@ -226,18 +244,24 @@ mod tests {
         let sources: Vec<Arc<dyn ReleaseSource>> = vec![
             Arc::new(MockSource {
                 source_name: "a".into(),
-                probe_result: Ok(Duration::from_millis(50)),
-                latest: Ok("v1.0".into()),
+                probe_latency: Some(Duration::from_millis(50)),
+                probe_error: None,
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
             Arc::new(MockSource {
                 source_name: "b".into(),
-                probe_result: Err(SourceError::Network("fail".into())),
-                latest: Ok("v1.0".into()),
+                probe_latency: None,
+                probe_error: Some("fail".into()),
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
             Arc::new(MockSource {
                 source_name: "c".into(),
-                probe_result: Ok(Duration::from_millis(10)),
-                latest: Ok("v1.0".into()),
+                probe_latency: Some(Duration::from_millis(10)),
+                probe_error: None,
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
         ];
         let resolver = SourceResolver::new(sources);
@@ -253,13 +277,17 @@ mod tests {
         let sources: Vec<Arc<dyn ReleaseSource>> = vec![
             Arc::new(MockSource {
                 source_name: "bad1".into(),
-                probe_result: Err(SourceError::Network("timeout".into())),
-                latest: Ok("v1.0".into()),
+                probe_latency: None,
+                probe_error: Some("timeout".into()),
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
             Arc::new(MockSource {
                 source_name: "bad2".into(),
-                probe_result: Err(SourceError::Network("refused".into())),
-                latest: Ok("v1.0".into()),
+                probe_latency: None,
+                probe_error: Some("refused".into()),
+                latest_tag: Some("v1.0".into()),
+                latest_error: None,
             }),
         ];
         let resolver = SourceResolver::new(sources);
@@ -272,8 +300,10 @@ mod tests {
     async fn resolve_latest_calls_latest_tag() -> Result<(), Box<dyn std::error::Error>> {
         let sources: Vec<Arc<dyn ReleaseSource>> = vec![Arc::new(MockSource {
             source_name: "src".into(),
-            probe_result: Ok(Duration::from_millis(10)),
-            latest: Ok("v2.0".into()),
+            probe_latency: Some(Duration::from_millis(10)),
+            probe_error: None,
+            latest_tag: Some("v2.0".into()),
+            latest_error: None,
         })];
         let resolver = SourceResolver::new(sources);
         let results = resolver.resolve(None).await?;

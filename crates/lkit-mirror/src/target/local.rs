@@ -20,7 +20,12 @@ impl LocalTarget {
 
     fn full_path(&self, key: &str) -> PathBuf {
         let sanitized = key.trim_start_matches('/');
-        self.root.join(sanitized)
+        let path = self.root.join(sanitized);
+        let normalized = normalize_path(&path);
+        if !normalized.starts_with(&self.root) {
+            return self.root.join("__invalid__");
+        }
+        path
     }
 }
 
@@ -98,6 +103,21 @@ fn collect_files_recursive<'a>(
     })
 }
 
+/// Normalize a path by resolving `.` and `..` without requiring the path to exist.
+fn normalize_path(path: &std::path::Path) -> PathBuf {
+    let mut components = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => components.push(other),
+        }
+    }
+    components.iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +188,19 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let target = LocalTarget::new(dir.path());
         target.delete("missing.txt").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn path_traversal_is_blocked() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let target = LocalTarget::new(dir.path());
+
+        // Attempt to write outside root
+        target.upload("../../etc/malicious.txt", b"pwned").await?;
+
+        // The file should land in the safe __invalid__ path, not outside root
+        assert!(!std::path::Path::new("/etc/malicious.txt").exists());
         Ok(())
     }
 }

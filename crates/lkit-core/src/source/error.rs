@@ -1,7 +1,7 @@
 //! Source-level error types.
 
 /// Errors from release source operations.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum SourceError {
     /// Network request failed.
     #[error("网络请求失败: {0}")]
