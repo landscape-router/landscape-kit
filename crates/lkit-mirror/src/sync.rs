@@ -118,7 +118,9 @@ async fn resolve_tags(
             let versions = source.list_versions().await.map_err(MirrorError::Source)?;
             let pos = versions.iter().position(|v| v == since_tag);
             match pos {
-                Some(i) => Ok(versions.into_iter().skip(i + 1).collect()),
+                // list_versions() returns newest-first (GitHub API order).
+                // "since X" means versions NEWER than X, which are before X in the list.
+                Some(i) => Ok(versions.into_iter().take(i).collect()),
                 None => Err(MirrorError::GitHubApi(format!(
                     "tag {since_tag} not found in release history"
                 ))),
@@ -376,6 +378,45 @@ mod tests {
         assert!(ts.ends_with('Z'));
         assert!(ts.contains('T'));
         assert_eq!(ts.len(), 20);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn since_scope_returns_newer_versions() -> Result<(), Box<dyn std::error::Error>> {
+        // list_versions returns newest-first (GitHub API order)
+        struct MockListSource;
+
+        #[async_trait::async_trait]
+        impl ReleaseSource for MockListSource {
+            fn name(&self) -> &str {
+                "mock"
+            }
+            async fn latest_tag(&self) -> Result<String, SourceError> {
+                Ok("v3.0".into())
+            }
+            async fn list_versions(&self) -> Result<Vec<String>, SourceError> {
+                Ok(vec!["v3.0".into(), "v2.0".into(), "v1.0".into()])
+            }
+            async fn get_artifacts(&self, _tag: &str) -> Result<ReleaseManifest, SourceError> {
+                Ok(ReleaseManifest {
+                    format_version: 1,
+                    tag: "v1.0".into(),
+                    generated_at: String::new(),
+                    generated_by: None,
+                    artifacts: vec![],
+                })
+            }
+            fn artifact_url(&self, _tag: &str, _name: &str) -> String {
+                String::new()
+            }
+            async fn probe(&self, _tag: &str) -> Result<Duration, SourceError> {
+                Ok(Duration::from_millis(1))
+            }
+        }
+
+        let tags = resolve_tags(&MockListSource, &SyncScope::Since("v1.0".into())).await?;
+        // --since v1.0 should return versions NEWER than v1.0
+        assert_eq!(tags, vec!["v3.0", "v2.0"]);
         Ok(())
     }
 }
