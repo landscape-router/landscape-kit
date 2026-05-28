@@ -6,6 +6,6 @@ mod paths;
 mod traits;
 
 pub use error::CoreError;
-pub use models::ServiceStatus;
+pub use models::{DiagnosticCheck, DiagnosticResult, ServiceState, ServiceStatus};
 pub use paths::{LandscapePaths, ManagerPaths};
-pub use traits::LkitClient;
+pub use traits::{LkitClient, LogReader, ServiceManager};
