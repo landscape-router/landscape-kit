@@ -371,7 +371,7 @@ V1 采用 **staging tmp** 模式：
 
 1. 检查目标版本与 release source
 2. 创建自动备份点
-3. 获取 release 产物（默认 GitHub Releases，也可来自配置/显式指定路径）
+3. 获取 release 产物（通过多源并发探测，详见 [09-release-source.md](./09-release-source.md)）
 4. 执行升级（V1 以 systemd 托管的二进制替换/部署为主）
 5. 启动 Landscape
 6. 进行 health check
@@ -383,7 +383,7 @@ V1 中，更新不是单纯的"下载并替换二进制"，而是受控事务：
 
 1. 检查可升级版本
 2. 创建自动备份点
-3. 下载并校验 binary 与 `static.zip`
+3. 通过多源并发探测选择最优源，下载并校验 binary 与 `static.zip`（详见 [09-release-source.md](./09-release-source.md)）
 4. 停止 Landscape 服务
 5. 应用新版本
 6. 启动服务

@@ -16,18 +16,23 @@
 - `indicatif`：进度条与 spinner
 - `comfy-table`：表格输出
 - `tokio`：异步运行时
-- `reqwest`：调用 Landscape API
+- `reqwest`：调用 Landscape API / 下载 release 制品
 - `serde` / `serde_json` / `toml`：序列化与配置解析
 - `tracing` / `tracing-subscriber`：日志
 - `anyhow`：CLI 层最终错误展示
-- `thiserror`：库层错误类型定义（`lkit-core`、`lkit-app`）
+- `thiserror`：库层错误类型定义（`lkit-core`、`lkit-client`、`lkit-app`、`lkit-mirror`）
 
 ### 2.2 辅助栈
 
 - `sha2`：校验
 - `flate2` + `tar`：备份归档
 
-### 2.3 后续可扩展
+### 2.3 镜像工具栈（`lkit-mirror`）
+
+- `aws-sdk-s3`：S3/R2 兼容存储上传
+- `axum`：轻量 HTTP 服务（`lkit mirror serve`），由 `lkit-cli` 传入 tokio runtime handle
+
+### 2.4 后续可扩展
 
 - 若需要 `htop` 式实时交互面板，可引入 `ratatui` + `crossterm`，`lkit-app` 层用例代码无需变更
 - `--watch` 模式的表格刷新（定时清屏重绘）在当前栈内可直接实现
@@ -38,19 +43,29 @@
 
 ```text
 crates/
-  lkit-core     # 公共模型、配置、错误、trait 定义（ServiceManager, LogReader, LkitClient）
-  lkit-client   # 外部 IO 实现层：API 客户端、systemd 管理、日志文件读取
-  lkit-app      # 用例层：backup/restore/upgrade/export/status/service/logs/diagnose
-  lkit-cli      # clap 命令入口 + 引导式交互 + i18n 消息（产出二进制：lkit）
+  lkit-core       # 公共模型、配置、错误、trait 定义（ServiceManager, LogReader, LkitClient, ReleaseSource）
+  lkit-client     # 外部 IO 实现层：API 客户端、systemd 管理、日志文件读取、ReleaseSource 实现
+  lkit-app        # 用例层：backup/restore/upgrade/export/status/service/logs/diagnose + SourceResolver
+  lkit-mirror     # 镜像管理 lib crate（sync/serve/verify/list 逻辑，lkit-cli 依赖）
+  lkit-cli        # clap 命令入口 + 引导式交互 + i18n 消息（产出二进制：lkit）
 ```
 
 ### 3.1 依赖关系
 
 ```
 lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
-   │              │
-   └──────────────┘ (lkit-cli 直接依赖 lkit-core，仅用于类型引用)
+   │              │                              ↑
+   └──────────────┘ (lkit-cli 直接依赖 lkit-core) │
+   │                                               │
+   └──→ lkit-mirror (lib) ─────────────────────────┘
+            │
+            ├── reqwest
+            └── aws-sdk-s3
 ```
+
+- `lkit-mirror` 是 lib crate，不依赖 `lkit-app` / `lkit-client`
+- `lkit-cli` 依赖 `lkit-mirror`，内置 `lkit mirror` 子命令
+- 只发布一个二进制 `lkit`，S3 SDK 直接打包
 
 - tokio runtime 在 `lkit-cli` 的 `main()` 中启动
 - `lkit-client` 实现注入到 `lkit-app` 用例中（trait 抽象，方便测试 mock）
@@ -69,11 +84,14 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
 
 `lkit-core` 定义三个 async trait 用于依赖注入：
 
-| Trait | 用途 | lkit-client 实现 |
-|-------|------|-----------------|
-| `LkitClient` | Landscape API 调用 | `LandscapeClient`（reqwest HTTP） |
-| `ServiceManager` | systemd 服务管理 | `SystemdManager`（shell 调用） |
-| `LogReader` | 日志文件读取 | `FileLogReader`（文件 IO） |
+| Trait | 用途 | 定义位置 | 实现位置 |
+|-------|------|---------|---------|
+| `LkitClient` | Landscape API 调用 | `lkit-core` | `lkit-client`（`LandscapeClient`） |
+| `ServiceManager` | systemd 服务管理 | `lkit-core` | `lkit-client`（`SystemdManager`） |
+| `LogReader` | 日志文件读取 | `lkit-core` | `lkit-client`（`FileLogReader`） |
+| `ReleaseSource` | release 源抽象 | `lkit-core` | `lkit-client`（`GithubSource` / `HttpMirrorSource` / `LocalSource`） |
+| `ArtifactDownloader` | 制品下载 | `lkit-core` | `lkit-client`（`HttpDownloader`） |
+| `MirrorTarget` | 镜像目标存储 | `lkit-mirror` | `lkit-mirror`（`S3Target` / `LocalTarget`） |
 
 trait 定义在 `lkit-core`（消费者），实现在 `lkit-client`（生产者），在 `lkit-cli` 的 `main()` 中组装注入。测试时用 mock 实现替代。
 
@@ -90,6 +108,7 @@ lkit-app/
   diagnose/      # DiagnoseUseCase — 系统健康检查
   config/        # ConfigExportUseCase
   self_upgrade/   # SelfUpgradeUseCase
+  source/        # SourceResolver（多源并发探测与选择）；ArtifactDownloader trait 在 lkit-core，实现在 lkit-client
 ```
 
 每个用例通过 struct 暴露，构造函数接收 `Arc<dyn Trait>` 依赖注入，用例方法返回 `Result<T, AppError>`。
@@ -121,14 +140,27 @@ Suggestion: <建议操作>
 ### 5.2 V1 配置项
 
 ```toml
-[release]
-source = "github"             # github | url | local
-custom_url = ""               # 自定义 HTTP(S) 镜像源
-default_version = "latest"    # latest | 固定版本号
+[[sources]]
+name = "r2-official"
+type = "http"
+base_url = "https://dl.landscape.example.com/landscape"
+priority = 10
+
+[[sources]]
+name = "github"
+type = "github"
+repo = "ThisSeanZhang/landscape"
+priority = 20
+
+[download]
+concurrent_files = 4          # 文件间并行下载数
+chunks_per_file = 1           # 单文件分块数（1 = 不分块）
 
 [backup]
 max_auto_backups = 5          # 自动备份保留数量
 ```
+
+源配置说明：详见 [09-release-source.md](./09-release-source.md)。未配置任何源时使用内置默认（GitHub Releases）。`lkit install --source <url>` 可临时覆盖。
 
 ## 6. 管理器自身日志
 

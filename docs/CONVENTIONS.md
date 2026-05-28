@@ -5,6 +5,7 @@
 ## 1. 分层边界
 
 - `lkit-cli` → `lkit-app` → `lkit-client` → `lkit-core`，MUST NOT 反向依赖
+- `lkit-cli` → `lkit-mirror` → `lkit-core`（侧枝，`lkit-mirror` MUST NOT 依赖 `lkit-app` / `lkit-client`）
 - `lkit-app` MUST NOT 依赖 `clap` / `dialoguer` / `console` / `indicatif`
 - `lkit-cli` MUST NOT 包含业务逻辑
 - 库 crate 之间通过 trait 解耦，consumer 定义 trait，producer 实现
@@ -13,7 +14,7 @@
 
 | 层 | 策略 |
 |---|---|
-| `core` / `client` / `app` | `thiserror` 枚举，MUST NOT 使用 `anyhow` |
+| `core` / `client` / `app` / `mirror` | `thiserror` 枚举，MUST NOT 使用 `anyhow` |
 | `cli` | `anyhow::Result`，MUST 将库错误转为 `Error / Caused by / Suggestion` 格式 |
 
 示例：
@@ -27,7 +28,7 @@ MUST NOT 使用 `unwrap()` / `expect()`（含测试代码）。MUST NOT 使用 `
 
 ## 3. 模块组织
 
-- `lkit-app` 按用例切模块：`install` / `backup` / `upgrade` / `status` / `diagnose` / `config` / `self_upgrade`
+- `lkit-app` 按用例切模块：`install` / `backup` / `upgrade` / `status` / `diagnose` / `config` / `self_upgrade` / `source`
 - 每个用例：struct 暴露，构造注入依赖，方法返回 `Result<T, AppError>`
 - `pub(crate)` 用于 crate 内部共享，`pub` 仅用于 crate 公共 API
 

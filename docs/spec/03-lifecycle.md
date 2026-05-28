@@ -138,31 +138,38 @@ V1 默认行为：检测到已安装实例时拒绝执行，提示用户：
 
 ### 6.4 release source 模型
 
-管理器应统一抽象 release 获取来源，至少支持：
+采用 **多源并发探测** 架构，通过 `ReleaseSource` trait 统一抽象所有源类型。详见 [09-release-source.md](./09-release-source.md)。
 
-- GitHub Releases（默认）
-- 配置中声明的 HTTP(S) 镜像源
+支持的源类型：
+
+- GitHub Releases
+- HTTP(S) 镜像源（含 Cloudflare R2 公开桶）
 - 本地文件路径 / `file://` 路径
 
-优先级建议为：
+优先级（三级）：
 
 1. CLI 显式指定的 source
-2. 管理器配置中的默认 source
+2. `lkit.toml` 中声明的 `[[sources]]` 列表
 3. 内置默认 GitHub Releases
+
+同优先级的源并发 HEAD 探测，选延迟最低的。实际下载失败时自动 fallback 到次优源。
 
 ### 6.5 release artifact 约定
 
 V1 安装/升级流程应将 release 视为完整制品集合，至少包含：
 
-- Landscape 后端二进制
+- Landscape 后端二进制（`landscape-webserver-{arch}`）
+- 辅助二进制（`redirect_pkg_handler-{arch}`）
 - `static.zip`
-- `checksum` 文件（V1 强制要求）
-- `manifest`（release 制品清单，V1 必需；缺失时拒绝操作）
+- `release-manifest.json`（制品清单，推荐；由 `lkit mirror sync` 生成）
+- `SHASUM256sum.txt`（校验和文件，上游提供）
 
 其中：
 
 - `static.zip` 作为 V1 固定静态资源包格式，与 Landscape 官方 release 保持一致
 - 安装与升级流程必须同时处理 binary 与 `static.zip`
+- 优先从 `release-manifest.json` 获取制品列表和校验和，fallback 到 `SHASUM256sum.txt`
+- `release-manifest.json` 不存在时不再拒绝操作，而是降级使用 `SHASUM256sum.txt`
 
 ### 6.6 systemd 安装方式
 

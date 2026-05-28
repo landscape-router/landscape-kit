@@ -38,7 +38,13 @@ lkit diagnose [--json]                  # 系统环境检查 + 诊断导出（V1
 lkit self version                       # lkit 自身版本
 lkit self upgrade check                 # 检查 lkit 新版本
 # lkit self upgrade apply               # 升级 lkit 自身（V2）
+lkit mirror sync [OPTIONS]              # 从上游同步 landscape release 到镜像目标
+lkit mirror serve [OPTIONS]             # 启动镜像 HTTP 服务
+lkit mirror verify [OPTIONS]            # 校验镜像完整性
+lkit mirror list [OPTIONS]              # 列出已同步版本
 ```
+
+> 镜像管理功能（`lkit mirror`）内置在 lkit 中，详见 [09-release-source.md](./09-release-source.md)。
 
 **命令分类**：
 
@@ -65,7 +71,7 @@ lkit self upgrade check                 # 检查 lkit 新版本
 引导式安装作为启动器的一个入口，安装状态机（Precheck → Collect Config → Resolve Release → Fetch Artifacts → Apply Host Changes → First Boot → Finalize）定义见 [03-lifecycle](./03-lifecycle.md)。
 
 1. **主机预检查**：系统依赖、运行环境
-2. **安装源与版本**：release source 选择（GitHub / URL / 本地）、版本选择
+2. **安装源与版本**：多源并发探测（GitHub / HTTP 镜像 / 本地）、版本选择（详见 [09-release-source.md](./09-release-source.md)）
 3. **安装路径与服务**：Landscape HOME、systemd 服务配置
 4. **网络基础配置**：
    - 自动识别本机网卡

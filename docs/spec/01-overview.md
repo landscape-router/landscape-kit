@@ -49,7 +49,7 @@ V1 的核心价值不是单纯的自动化安装器，而是一个在 **无网�
 - 管理器通过 **Landscape 现有 API** 获取状态、导出配置、执行管理动作
 - 管理器通过 **本机系统能力** 完成安装、升级、重启、备份、恢复等主机侧操作
 - 首版不新增外部 API，不设计新的远程控制协议
-- 安装阶段所需 release 产物默认可从 GitHub Releases 获取，也支持从配置或显式指定的路径/源读取
+- 安装阶段所需 release 产物通过多源并发探测获取，支持 GitHub Releases / HTTP 镜像（含 R2）/ 本地路径，自动选最快可用源
 
 ## 4. 已确认设计原则
 
@@ -61,7 +61,7 @@ V1 的核心价值不是单纯的自动化安装器，而是一个在 **无网�
 6. **`landscape_init.toml` 不是常驻运行配置**，仅在首次初始化 / 重初始化时使用，初始化后内容会落到 `landscape.toml` 与 `landscape_db.sqlite`
 7. **首版详细网络初始化参数优先通过引导式 CLI 收集**，不在 V1 CLI 暴露大规模 `--wan-*` / `--lan-*` 细粒度参数，非交互安装优先通过 `landscape_init.toml` 驱动
 8. **`static/` 是前端运行所需的静态发布资源**，默认纳入备份点与实例恢复范围
-9. **Landscape release 获取逻辑默认支持 GitHub Releases**，也支持配置或显式指定路径/镜像源
+9. **Landscape release 通过多源并发探测获取**，支持 GitHub Releases / HTTP 镜像（含 R2）/ 本地路径；`lkit mirror` 子命令负责镜像管理，上游零改动
 10. **V1 服务安装方式仅支持 systemd**
 11. **landscape_api_token 暂不纳入备份/恢复设计**
 12. **降低用户负担**：`lkit` 无参数进入通用启动器，安装/备份/状态等均可从主菜单导航；网络初始化参数通过交互方式收集；自动化场景复用 `landscape_init.toml`
