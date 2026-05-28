@@ -85,6 +85,10 @@ pub enum MirrorError {
     GitHubApi(String),
     #[error("目标存储错误: {0}")]
     TargetError(String),
+    #[error("源错误: {0}")]
+    Source(#[from] lkit_core::SourceError),
+    #[error("序列化错误: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 ```
 
