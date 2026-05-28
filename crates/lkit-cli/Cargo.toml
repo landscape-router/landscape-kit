@@ -1,0 +1,18 @@
+[package]
+name = "lkit-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lkit"
+path = "src/main.rs"
+
+[dependencies]
+lkit-core = { path = "../lkit-core" }
+lkit-app = { path = "../lkit-app" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
