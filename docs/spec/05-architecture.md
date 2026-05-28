@@ -17,7 +17,7 @@
 - `comfy-table`：表格输出
 - `tokio`：异步运行时
 - `reqwest`：调用 Landscape API
-- `serde` / `serde_json` / `toml`：序列化
+- `serde` / `serde_json` / `toml`：序列化与配置解析
 - `tracing` / `tracing-subscriber`：日志
 - `anyhow`：CLI 层最终错误展示
 - `thiserror`：库层错误类型定义（`lkit-core`、`lkit-app`）
@@ -38,10 +38,10 @@
 
 ```text
 crates/
-  lkit-core     # 公共模型、配置、错误、备份元数据定义
-  lkit-client   # Landscape API 客户端
-  lkit-app      # 用例层：backup/restore/upgrade/export/status
-  lkit-cli      # clap 命令入口 + 引导式交互（产出二进制：lkit）
+  lkit-core     # 公共模型、配置、错误、trait 定义（ServiceManager, LogReader, LkitClient）
+  lkit-client   # 外部 IO 实现层：API 客户端、systemd 管理、日志文件读取
+  lkit-app      # 用例层：backup/restore/upgrade/export/status/service/logs/diagnose
+  lkit-cli      # clap 命令入口 + 引导式交互 + i18n 消息（产出二进制：lkit）
 ```
 
 ### 3.1 依赖关系
@@ -53,30 +53,46 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
 ```
 
 - tokio runtime 在 `lkit-cli` 的 `main()` 中启动
-- `lkit-client` 注入到 `lkit-app` 用例中（trait 抽象，方便测试 mock）
+- `lkit-client` 实现注入到 `lkit-app` 用例中（trait 抽象，方便测试 mock）
 - `lkit-app` 不依赖 `clap`、`dialoguer`、`console` — 只依赖数据结构和 async trait
+- `lkit self version` 不需要 Landscape HOME 存在，可在任意环境执行
+- `LANDSCAPE_HOME` 环境变量可覆盖默认 Landscape 安装路径（默认 `~/.landscape-router`）
 
 ### 3.2 分层原则
 
 - 所有核心业务逻辑收敛在 `lkit-app`
-- `lkit-client` 只负责 Landscape API 封装
-- `lkit-core` 定义共享协议、模型、错误类型
+- `lkit-client` 负责所有外部 IO 实现：Landscape API HTTP 调用、systemd shell 管理（`ServiceManager` trait）、日志文件读取（`LogReader` trait）
+- `lkit-core` 定义共享协议（`LkitClient`、`ServiceManager`、`LogReader` trait）、模型、错误类型
 - `lkit-cli` 负责 CLI 参数解析与引导式交互，不实现业务逻辑
 
-### 3.3 lkit-app 模块概览
+### 3.3 核心 Trait 抽象
+
+`lkit-core` 定义三个 async trait 用于依赖注入：
+
+| Trait | 用途 | lkit-client 实现 |
+|-------|------|-----------------|
+| `LkitClient` | Landscape API 调用 | `LandscapeClient`（reqwest HTTP） |
+| `ServiceManager` | systemd 服务管理 | `SystemdManager`（shell 调用） |
+| `LogReader` | 日志文件读取 | `FileLogReader`（文件 IO） |
+
+trait 定义在 `lkit-core`（消费者），实现在 `lkit-client`（生产者），在 `lkit-cli` 的 `main()` 中组装注入。测试时用 mock 实现替代。
+
+### 3.4 lkit-app 模块概览
 
 ```
 lkit-app/
   install/       # InstallUseCase（安装状态机）
   backup/        # BackupUseCase, RestoreUseCase
   upgrade/       # UpgradeUseCase, RollbackUseCase
-  status/        # StatusUseCase
-  diagnose/      # DiagnoseUseCase
+  status/        # StatusUseCase — systemd + API 状态查询
+  service/       # ServiceUseCase — systemd 服务启停控制
+  logs/          # LogsUseCase — 日志文件读取
+  diagnose/      # DiagnoseUseCase — 系统健康检查
   config/        # ConfigExportUseCase
   self_upgrade/   # SelfUpgradeUseCase
 ```
 
-每个用例通过 struct 暴露，构造函数接收依赖（`LkitClient` trait、配置路径等），用例方法返回 `Result<T, AppError>`。
+每个用例通过 struct 暴露，构造函数接收 `Arc<dyn Trait>` 依赖注入，用例方法返回 `Result<T, AppError>`。
 
 ## 4. 错误处理
 
@@ -145,6 +161,8 @@ max_auto_backups = 5          # 自动备份保留数量
 - 本机安装 -> 创建备份点 -> 修改状态 -> 恢复备份点
 - 导出配置 -> 新实例重建
 - 升级失败 -> 自动回滚
+
+> E2E 测试架构详见 [08-testing.md](./08-testing.md)
 
 ## 8. 退出码
 
