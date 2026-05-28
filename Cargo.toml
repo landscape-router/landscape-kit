@@ -4,6 +4,7 @@ members = [
     "crates/lkit-core",
     "crates/lkit-client",
     "crates/lkit-app",
+    "crates/lkit-mirror",
     "crates/lkit-cli",
 ]
 
@@ -32,13 +33,19 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP client
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-native-certs"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-native-certs", "stream"] }
 
 # Interactive UI
 dialoguer = "0.11"
 
 # Config parsing
 toml = "0.8"
+
+# Mirror / S3
+rusty-s3 = "0.9"
+axum = "0.8"
+sha2 = "0.10"
+futures = "0.3"
 
 # Testing
 tempfile = "3"
