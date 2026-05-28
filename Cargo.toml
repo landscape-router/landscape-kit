@@ -34,5 +34,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-native-certs"] }
 
+# Interactive UI
+dialoguer = "0.11"
+
+# Config parsing
+toml = "0.8"
+
 # Testing
 tempfile = "3"
