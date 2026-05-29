@@ -13,8 +13,8 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use lkit_app::AppState;
-use lkit_client::{FileLogReader, LandscapeClient, SystemdManager};
-use lkit_core::{LandscapePaths, ManagerPaths};
+use lkit_client::{FileLogReader, LandscapeClient, SystemInstaller, SystemdManager};
+use lkit_core::{HostInstaller, LandscapePaths, ManagerPaths};
 
 use crate::cli::{Cli, Commands};
 use crate::messages::msg;
@@ -46,14 +46,20 @@ async fn main() -> anyhow::Result<()> {
         .await;
     }
 
-    // Path discovery
+    let host_installer: Arc<dyn HostInstaller> = Arc::new(SystemInstaller::new());
+
+    // Install command runs without requiring existing Landscape HOME.
+    if let Some(Commands::Install(args)) = cli.command {
+        return commands::install::run(args, host_installer).await;
+    }
+
+    // All other commands require an existing Landscape installation.
     let landscape_home = std::env::var("LANDSCAPE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| dirs_or_default());
 
     let landscape_paths = LandscapePaths::new(landscape_home.clone());
 
-    // Check Landscape HOME exists
     if !landscape_paths.home.exists() {
         eprintln!("{}", msg("error.not_installed"));
         std::process::exit(3);
@@ -61,11 +67,9 @@ async fn main() -> anyhow::Result<()> {
 
     let manager_paths = ManagerPaths::new(manager_home());
 
-    // Parse landscape.toml for API base URL
     let base_url = parse_api_listen(&landscape_paths.landscape_config)
         .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
 
-    // Build DI
     let client: Arc<dyn lkit_core::LkitClient> = Arc::new(LandscapeClient::new(base_url)?);
     let service_manager: Arc<dyn lkit_core::ServiceManager> =
         Arc::new(SystemdManager::new("landscape.service"));
@@ -80,9 +84,9 @@ async fn main() -> anyhow::Result<()> {
         manager_paths,
     );
 
-    // Dispatch
+    // Dispatch remaining commands (Install already handled above).
     match cli.command {
-        Some(cmd) => commands::dispatch(cmd, &state).await,
+        Some(cmd) => commands::dispatch(cmd, &state, host_installer).await,
         None => launcher::run(&state).await,
     }
 }

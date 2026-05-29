@@ -80,8 +80,12 @@ pub struct DiagnoseArgs {
     pub json: bool,
 }
 
-#[derive(Args, Clone, Copy)]
-pub struct InstallArgs {}
+#[derive(Args, Clone)]
+pub struct InstallArgs {
+    /// Path to an existing landscape_init.toml (skip wizard, non-interactive mode).
+    #[arg(long)]
+    pub init_file: Option<std::path::PathBuf>,
+}
 
 #[derive(Args, Clone, Copy)]
 pub struct BackupArgs {}

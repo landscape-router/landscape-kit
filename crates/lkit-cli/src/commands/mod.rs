@@ -3,7 +3,7 @@
 mod backup;
 mod config;
 mod diagnose;
-mod install;
+pub(crate) mod install;
 mod logs;
 mod mirror;
 mod rollback;
@@ -12,7 +12,10 @@ mod service;
 mod status;
 mod upgrade;
 
+use std::sync::Arc;
+
 use lkit_app::AppState;
+use lkit_core::HostInstaller;
 
 use crate::cli::Commands;
 use crate::messages::msg;
@@ -20,13 +23,17 @@ use crate::messages::msg;
 /// Dispatch a parsed CLI command to the appropriate handler.
 ///
 /// Maps AppError to exit codes per spec §5.7.
-pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
+pub async fn dispatch(
+    cmd: Commands,
+    state: &AppState,
+    _host_installer: Arc<dyn HostInstaller>,
+) -> anyhow::Result<()> {
     let result = match cmd {
         Commands::Status(args) => status::run(args, state).await,
         Commands::Service(args) => service::run(args, state).await,
         Commands::Logs(args) => logs::run(args, state).await,
         Commands::Diagnose(args) => diagnose::run(args, state).await,
-        Commands::Install(_) => install::run().await,
+        Commands::Install(_) => unreachable!("Install is handled before dispatch"),
         Commands::Backup(_) => backup::run().await,
         Commands::Upgrade(_) => upgrade::run().await,
         Commands::Rollback(_) => rollback::run().await,
