@@ -160,7 +160,7 @@ chunks_per_file = 1           # 单文件分块数（1 = 不分块）
 max_auto_backups = 5          # 自动备份保留数量
 ```
 
-源配置说明：详见 [09-release-source.md](./09-release-source.md)。未配置任何源时使用内置默认（GitHub Releases）。`lkit install --source <url>` 可临时覆盖。
+源配置说明：详见 [09-release-source.md](./09-release-source.md)。未配置任何源时使用内置默认（R2 HTTP 源 + GitHub Releases fallback）。`lkit install --source <url>` 可临时覆盖。
 
 ## 6. 管理器自身日志
 

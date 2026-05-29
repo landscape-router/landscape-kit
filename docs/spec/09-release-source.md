@@ -144,10 +144,16 @@ priority = 25
 
 ### 3.5 内置默认源
 
-未配置任何源时，使用内置默认：
+未配置任何源时，使用内置默认（R2 优先，GitHub 作为 fallback）：
 
 ```toml
 # 内置默认（无需用户配置）
+[[sources]]
+name = "r2-official"
+type = "http"
+base_url = "https://pub-1e112154ee8a4b909c204b5325aba1f3.r2.dev/landscape"
+priority = 10
+
 [[sources]]
 name = "github-default"
 type = "github"
@@ -159,7 +165,7 @@ priority = 100
 
 1. **CLI 显式指定**：`lkit install --source <url>` 或 `lkit install --source local:///path`
 2. **`lkit.toml` 配置**：用户声明的 `[[sources]]` 列表
-3. **内置默认**：硬编码的 GitHub Releases
+3. **内置默认**：硬编码的 R2 HTTP 源 + GitHub Releases fallback
 
 CLI 显式指定的源优先级最高，会插入到探测列表首位，其余源仍作为 fallback。
 
@@ -368,7 +374,7 @@ lkit mirror serve --path /srv/landscape-mirror --port 8080
 
 `lkit mirror` 是内置的镜像管理子命令，职责：
 
-- 从上游 GitHub Releases 拉取 release 制品
+- 从上游源拉取 release 制品（GitHub / HTTP / 本地 / S3，取决于源类型）
 - 生成标准化的 `release-manifest.json`
 - 推送到目标存储（S3/R2/本地目录）
 - 提供轻量 HTTP 服务
@@ -425,7 +431,7 @@ lkit mirror list [OPTIONS]       # 列出已同步版本
 
 #### sync
 
-从 GitHub Releases 拉取制品，生成 manifest，推送到目标。
+从上游源获取 release 制品，生成 manifest，推送到目标存储。
 
 **来源参数**：
 

@@ -144,13 +144,14 @@ V1 默认行为：检测到已安装实例时拒绝执行，提示用户：
 
 - GitHub Releases
 - HTTP(S) 镜像源（含 Cloudflare R2 公开桶）
+- S3 兼容存储（含 R2 私有桶）
 - 本地文件路径 / `file://` 路径
 
 优先级（三级）：
 
 1. CLI 显式指定的 source
 2. `lkit.toml` 中声明的 `[[sources]]` 列表
-3. 内置默认 GitHub Releases
+3. 内置默认 R2 HTTP 源 + GitHub Releases fallback
 
 同优先级的源并发 HEAD 探测，选延迟最低的。实际下载失败时自动 fallback 到次优源。
 
