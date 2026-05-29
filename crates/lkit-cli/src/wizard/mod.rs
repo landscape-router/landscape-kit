@@ -281,6 +281,54 @@ impl Wizard {
             landscape_version,
         })
     }
+
+    /// Run the wizard interactively.
+    ///
+    /// Renders each step in sequence, handling back-navigation and quit.
+    /// Returns `Ok(Some(config))` on completion, `Ok(None)` if the user quit.
+    pub fn run(&mut self, nics: &[nic_scan::NicInfo]) -> anyhow::Result<Option<InstallConfig>> {
+        loop {
+            // Skip LAN steps if single-NIC
+            if self.should_skip_current() {
+                if !self.advance() {
+                    break;
+                }
+                continue;
+            }
+
+            let kind = self.current_step().kind;
+            // Print step header
+            let step_num = self.current_index() + 1;
+            let title = self.current_step().title;
+            let help = self.current_step().help_text;
+            eprintln!();
+            eprintln!("  [{step_num}/7] {title}");
+            eprintln!("  {help}");
+            eprintln!();
+
+            match steps::render_step(kind, &mut self.collected, nics)? {
+                WizardAction::Next => {
+                    if !self.advance() {
+                        break;
+                    }
+                }
+                WizardAction::Back => {
+                    if !self.retreat() {
+                        return Ok(None);
+                    }
+                }
+                WizardAction::Quit => return Ok(None),
+            }
+        }
+
+        // Build config from collected data
+        // landscape_version will be resolved from release manifest later
+        let version = self.collected.version.clone().unwrap_or_default();
+        match self.build_config(version) {
+            Ok(config) => Ok(Some(config)),
+            Err(e) => Err(anyhow::anyhow!("配置不完整: {e}")),
+        }
+    }
 }
 
 #[cfg(test)]
