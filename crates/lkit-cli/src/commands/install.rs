@@ -138,7 +138,6 @@ pub(crate) async fn run(
         .artifacts
         .iter()
         .filter(|a| artifact_matches(a, &system_target))
-        .filter(|a| !a.name.contains("SHASUM"))
         .collect();
 
     if to_download.is_empty() {
@@ -349,6 +348,10 @@ fn build_fallback_chain<'a>(
 }
 
 /// Download artifacts from a source, with SHA-256 verification.
+///
+/// Downloads SHASUM256sum.txt first (if present) and uses it to verify
+/// all subsequent artifacts. Falls back to manifest-provided sha256,
+/// then warns if no checksum source is available.
 async fn download_artifacts(
     artifacts: &[&Artifact],
     source: &Arc<dyn lkit_core::ReleaseSource>,
@@ -357,9 +360,26 @@ async fn download_artifacts(
     dest_dir: &std::path::Path,
     downloader: &HttpDownloader,
 ) -> anyhow::Result<()> {
+    use std::collections::HashMap;
+
     let progress = CliProgress::new();
 
+    // Partition: SHASUM file(s) first, then everything else.
+    let mut shasum_files = Vec::new();
+    let mut other_artifacts = Vec::new();
     for artifact in artifacts {
+        if artifact.name.contains("SHASUM") {
+            shasum_files.push(artifact);
+        } else {
+            other_artifacts.push(artifact);
+        }
+    }
+
+    // Checksums from SHASUM256sum.txt (filename → hex hash).
+    let mut shasum_map: HashMap<String, String> = HashMap::new();
+
+    // Phase 1: Download SHASUM file(s) and parse checksums.
+    for artifact in &shasum_files {
         let url = source.artifact_url(tag, &artifact.name);
         let tmp_path = tmp_dir.join(&artifact.name);
         let final_path = dest_dir.join(&artifact.name);
@@ -368,18 +388,61 @@ async fn download_artifacts(
             .download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress))
             .await?;
 
-        // SHA-256 verification
-        if artifact.sha256.is_empty() {
-            eprintln!("  ⚠ {} 无 checksum，跳过校验", artifact.name);
-        } else {
-            let hash = sha256_file(&tmp_path).await?;
-            if hash != artifact.sha256 {
-                anyhow::bail!(
-                    "checksum 不匹配: {} (expected {}, got {})",
-                    artifact.name,
-                    artifact.sha256,
-                    hash
-                );
+        if let Ok(content) = std::fs::read_to_string(&tmp_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((hash, name)) = line.split_once(char::is_whitespace) {
+                    shasum_map.insert(name.trim().to_string(), hash.trim().to_string());
+                }
+            }
+        }
+
+        tokio::fs::rename(&tmp_path, &final_path).await?;
+    }
+
+    if !shasum_map.is_empty() {
+        eprintln!("  已加载 SHASUM256sum.txt ({} 个 checksum)", shasum_map.len());
+    }
+
+    // Phase 2: Download remaining artifacts with verification.
+    for artifact in &other_artifacts {
+        let url = source.artifact_url(tag, &artifact.name);
+        let tmp_path = tmp_dir.join(&artifact.name);
+        let final_path = dest_dir.join(&artifact.name);
+
+        downloader
+            .download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress))
+            .await?;
+
+        // SHA-256 verification: prefer SHASUM, fall back to manifest, warn if neither.
+        let expected = shasum_map
+            .get(&artifact.name)
+            .map(|s| s.as_str())
+            .or_else(|| {
+                if artifact.sha256.is_empty() {
+                    None
+                } else {
+                    Some(artifact.sha256.as_str())
+                }
+            });
+
+        match expected {
+            Some(expected_hash) => {
+                let hash = sha256_file(&tmp_path).await?;
+                if hash != expected_hash {
+                    anyhow::bail!(
+                        "checksum 不匹配: {} (expected {}, got {})",
+                        artifact.name,
+                        expected_hash,
+                        hash
+                    );
+                }
+            }
+            None => {
+                eprintln!("  ⚠ {} 无 checksum，跳过校验", artifact.name);
             }
         }
 
