@@ -154,12 +154,10 @@ impl InstallExecutor {
             .await
             .map_err(AppError::Core)?;
 
-        // 6. Create lock file (after successful systemd enable+start)
-        let lock_path = home.join("landscape_init.lock");
-        self.host_installer
-            .write_file(&lock_path, b"")
-            .await
-            .map_err(AppError::Core)?;
+        // NOTE: lock file is NOT created here. It must be created AFTER
+        // landscape-webserver has read landscape_init.toml (confirmed by
+        // health check). Creating it too early causes a race condition:
+        // landscape-webserver sees the lock and skips the init config.
 
         Ok(InstallReport {
             home: home.to_path_buf(),
@@ -314,7 +312,6 @@ mod tests {
                 "daemon_reload",
                 "enable_service",
                 "start_service",
-                "write_file", // landscape_init.lock
             ]
         );
         Ok(())

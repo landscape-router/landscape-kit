@@ -53,7 +53,7 @@ pub(crate) async fn run(
 
     let executor = InstallExecutor::new(host_installer);
 
-    // --init-file mode: unchanged behavior
+    // --init-file mode
     if let Some(init_file) = &args.init_file {
         let content = std::fs::read_to_string(init_file)
             .map_err(|e| anyhow::anyhow!("无法读取 {}: {e}", init_file.display()))?;
@@ -61,6 +61,12 @@ pub(crate) async fn run(
         // Validate TOML syntax
         let _: toml::Value =
             toml::from_str(&content).map_err(|e| anyhow::anyhow!("TOML 解析失败: {e}"))?;
+
+        // Delete old lock so landscape-webserver reads the init TOML
+        let lock = landscape_home.join("landscape_init.lock");
+        if lock.exists() {
+            tokio::fs::remove_file(&lock).await?;
+        }
 
         let report = executor
             .execute_with_raw_toml(&content, &landscape_home)
