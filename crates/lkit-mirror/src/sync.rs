@@ -1,7 +1,11 @@
 //! Mirror sync — download releases from a source and push to mirror target.
 
+use std::collections::HashMap;
+use std::path::Path;
+
 use lkit_core::{ReleaseManifest, ReleaseSource};
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 
 use crate::error::MirrorError;
@@ -42,6 +46,30 @@ pub struct SyncResult {
     pub skipped: Vec<String>,
     /// Versions that failed with error messages.
     pub failed: Vec<(String, String)>,
+}
+
+/// Compare two semver-style tags (e.g. "v1.2.3") component by component.
+fn compare_tags(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |s: &str| -> Vec<u64> {
+        s.trim_start_matches('v')
+            .split('.')
+            .filter_map(|c| c.parse::<u64>().ok())
+            .collect()
+    };
+    let va = parse(a);
+    let vb = parse(b);
+    for (ca, cb) in va.iter().zip(vb.iter()) {
+        match ca.cmp(cb) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    va.len().cmp(&vb.len())
+}
+
+/// Return the tag with the highest version number.
+fn max_tag(tags: &[String]) -> Option<&String> {
+    tags.iter().max_by(|a, b| compare_tags(a, b))
 }
 
 /// Run sync from a release source to a mirror target.
@@ -89,7 +117,7 @@ pub async fn run_sync(
     }
 
     // Update latest pointer if we synced anything
-    if let Some(latest) = synced.last() {
+    if let Some(latest) = max_tag(&synced) {
         let latest_key = format!("{}/latest", config.prefix);
         target
             .upload(&latest_key, latest.as_bytes())
@@ -153,36 +181,100 @@ async fn sync_version(
 
     let version_prefix = format!("{prefix}/{tag}");
 
+    // Collect sha256 values from all sources (SHASUM256sum.txt + computed).
+    let mut sha256_map: HashMap<String, String> = HashMap::new();
+
+    // Check if SHASUM256sum.txt is in the artifact list.
+    let has_shasum = manifest
+        .artifacts
+        .iter()
+        .any(|a| a.name == "SHASUM256sum.txt");
+
+    // Download SHASUM256sum.txt first (if present) to get reference hashes.
+    if has_shasum {
+        let shasum_name = "SHASUM256sum.txt";
+        let url = source.artifact_url(tag, shasum_name);
+        info!("downloading SHASUM256sum.txt from {}", url);
+
+        let tmp = tempfile::NamedTempFile::new()?;
+        download_to_file(client, &url, tmp.path()).await?;
+        let data = tokio::fs::read(tmp.path()).await?;
+
+        // Parse: each line is "<hash>  <filename>"
+        if let Ok(text) = std::str::from_utf8(&data) {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((hash, name)) = line.split_once(char::is_whitespace) {
+                    sha256_map.insert(name.trim().to_string(), hash.trim().to_string());
+                }
+            }
+        }
+
+        let key = format!("{version_prefix}/SHASUM256sum.txt");
+        target.upload(&key, &data).await?;
+        debug!("uploaded SHASUM256sum.txt");
+    }
+
     // Upload artifacts first, manifest last.
     // This ensures a partial sync never leaves a manifest in target
     // (which would cause the version to be skipped on next run).
     for artifact in &manifest.artifacts {
+        if artifact.name == "SHASUM256sum.txt" && has_shasum {
+            continue; // already handled above
+        }
+
         let url = source.artifact_url(tag, &artifact.name);
         info!("downloading {} from {}", artifact.name, url);
 
-        let data = download_bytes(client, &url).await?;
+        let tmp = tempfile::NamedTempFile::new()?;
+        let computed_hash = download_to_file(client, &url, tmp.path()).await?;
 
-        if !artifact.sha256.is_empty() {
-            let actual = compute_sha256(&data);
-            if actual != artifact.sha256 {
+        // Verify against SHASUM256sum.txt hash if available.
+        if let Some(expected) = sha256_map.get(&artifact.name) {
+            if computed_hash != *expected {
                 return Err(MirrorError::TargetError(format!(
                     "checksum mismatch for {}: expected {}, got {}",
-                    artifact.name, artifact.sha256, actual
+                    artifact.name, expected, computed_hash
                 )));
             }
+        } else if !artifact.sha256.is_empty() && computed_hash != artifact.sha256 {
+            // Verify against source-provided hash if present.
+            return Err(MirrorError::TargetError(format!(
+                "checksum mismatch for {}: expected {}, got {}",
+                artifact.name, artifact.sha256, computed_hash
+            )));
         }
 
+        // Store hash: prefer SHASUM value, fall back to computed.
+        sha256_map
+            .entry(artifact.name.clone())
+            .or_insert(computed_hash);
+
+        let data = tokio::fs::read(tmp.path()).await?;
         let key = format!("{version_prefix}/{}", artifact.name);
         target.upload(&key, &data).await?;
         debug!("uploaded {}", artifact.name);
     }
+
+    // Build manifest with populated sha256 values.
+    let stored_artifacts: Vec<lkit_core::Artifact> = manifest
+        .artifacts
+        .into_iter()
+        .map(|a| lkit_core::Artifact {
+            sha256: sha256_map.get(&a.name).cloned().unwrap_or(a.sha256),
+            ..a
+        })
+        .collect();
 
     let manifest_for_storage = ReleaseManifest {
         format_version: 1,
         tag: tag.to_string(),
         generated_at: now_iso8601(),
         generated_by: Some(format!("lkit {}", env!("CARGO_PKG_VERSION"))),
-        artifacts: manifest.artifacts.clone(),
+        artifacts: stored_artifacts,
     };
 
     let manifest_json = serde_json::to_string_pretty(&manifest_for_storage)?;
@@ -194,12 +286,16 @@ async fn sync_version(
     Ok(())
 }
 
-/// Download bytes from a URL using a shared client.
+/// Stream-download a URL to a temp file, computing SHA-256 on the fly.
 ///
-/// NOTE: loads the entire artifact into memory. For large files (~128 MB+),
-/// a streaming `MirrorTarget::upload_stream` API should be introduced to
-/// avoid high peak memory usage.
-async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, MirrorError> {
+/// Returns the SHA-256 hex digest of the downloaded content.
+async fn download_to_file(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+) -> Result<String, MirrorError> {
+    use futures::StreamExt;
+
     let resp = client
         .get(url)
         .send()
@@ -210,10 +306,18 @@ async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, 
         .error_for_status()
         .map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
 
-    resp.bytes()
-        .await
-        .map(|b| b.to_vec())
-        .map_err(|e| MirrorError::GitHubApi(e.to_string()))
+    let mut file = tokio::fs::File::create(dest).await?;
+    let mut hasher = Sha256::new();
+    let mut stream = resp.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
+        hasher.update(&chunk);
+        file.write_all(&chunk).await.map_err(MirrorError::Io)?;
+    }
+
+    file.flush().await.map_err(MirrorError::Io)?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Compute SHA-256 hex digest.
@@ -446,5 +550,45 @@ mod tests {
         let (y, m, d) = days_to_ymd(11322);
         assert_eq!((y, m, d), (2000, 12, 31));
         Ok(())
+    }
+
+    #[test]
+    fn compare_tags_major_version() {
+        assert!(compare_tags("v2.0", "v1.0") == std::cmp::Ordering::Greater);
+        assert!(compare_tags("v1.0", "v2.0") == std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn compare_tags_minor_version() {
+        assert!(compare_tags("v0.19.2", "v0.9.0") == std::cmp::Ordering::Greater);
+        assert!(compare_tags("v0.9.0", "v0.19.2") == std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn compare_tags_equal() {
+        assert!(compare_tags("v1.0", "v1.0") == std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_tags_different_lengths() {
+        assert!(compare_tags("v1.0.1", "v1.0") == std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn max_tag_selects_highest() {
+        let tags: Vec<String> = vec!["v0.9.0".into(), "v0.19.2".into(), "v0.18.3".into()];
+        assert_eq!(max_tag(&tags).map(|s| s.as_str()), Some("v0.19.2"));
+    }
+
+    #[test]
+    fn max_tag_empty_list() {
+        let tags: Vec<String> = vec![];
+        assert!(max_tag(&tags).is_none());
+    }
+
+    #[test]
+    fn max_tag_single() {
+        let tags: Vec<String> = vec!["v1.0".into()];
+        assert_eq!(max_tag(&tags).map(|s| s.as_str()), Some("v1.0"));
     }
 }

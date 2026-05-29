@@ -33,7 +33,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP client
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-native-certs", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "stream"] }
 
 # Interactive UI
 dialoguer = "0.11"

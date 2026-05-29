@@ -276,6 +276,8 @@ impl SourceResolver {
 - GitHub 源：通过 GitHub API 获取 latest release
 - 本地源：`<path>/<prefix>/latest` 文件
 
+`lkit mirror sync` 更新 `latest` 指针时，使用 **semver 语义比较**（按 `vMAJOR.MINOR.PATCH` 逐段比较数值大小），而非字符串排序。例如 `v0.19.2` > `v0.9.0`。多次分批 sync 后，`latest` 始终指向版本号最大的 tag。
+
 ## 5. 镜像目录规范
 
 任何第三方均可按此规范搭建兼容镜像。lkit 客户端可从任何符合规范的镜像下载制品。
@@ -467,12 +469,15 @@ sync 流程：
 
 1. 根据范围参数，调用 GitHub API 获取候选 release 列表
 2. 检查目标中已存在的版本，跳过完整的（除非 `--force`）
-3. 下载缺失版本的所有 artifacts 到临时目录
-4. 计算每个文件的 sha256
-5. 生成 `release-manifest.json`
-6. 上传所有文件到目标（保留目录结构）
-7. 更新 `latest` 指针
-8. 清理临时目录
+3. 对每个版本：
+   a. 获取源的制品列表（manifest 或 API）
+   b. 若存在 `SHASUM256sum.txt`，优先下载并解析，获得各制品的参考 sha256
+   c. 流式下载每个制品到临时文件，同时计算 sha256
+   d. 若有 SHASUM 参考值则校验，否则与源 manifest 中的 sha256 校验
+   e. 上传制品到目标（保留目录结构），SHA256 值写入 manifest
+   f. 生成并上传 `release-manifest.json`（含完整 sha256）
+   g. 清理临时文件
+4. 更新 `latest` 指针（指向版本号最大的 tag，按 semver 比较）
 
 #### serve
 

@@ -6,6 +6,7 @@ use async_trait::async_trait;
 
 use super::MirrorTarget;
 use crate::error::MirrorError;
+use crate::util::normalize_path;
 
 /// Mirror target backed by a local directory.
 pub struct LocalTarget {
@@ -101,21 +102,6 @@ fn collect_files_recursive<'a>(
         }
         Ok(())
     })
-}
-
-/// Normalize a path by resolving `.` and `..` without requiring the path to exist.
-fn normalize_path(path: &std::path::Path) -> PathBuf {
-    let mut components = Vec::new();
-    for comp in path.components() {
-        match comp {
-            std::path::Component::ParentDir => {
-                components.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => components.push(other),
-        }
-    }
-    components.iter().collect()
 }
 
 #[cfg(test)]

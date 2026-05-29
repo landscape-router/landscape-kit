@@ -11,6 +11,7 @@ use axum::routing::get;
 use tokio::fs;
 
 use crate::error::MirrorError;
+use crate::util::normalize_path;
 
 /// Serve configuration.
 #[derive(Debug, Clone)]
@@ -89,21 +90,6 @@ async fn handle_file(root: PathBuf, path: String) -> Response {
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "server error").into_response(),
         },
     }
-}
-
-/// Normalize a path by resolving `.` and `..` without requiring the path to exist.
-fn normalize_path(path: &std::path::Path) -> PathBuf {
-    let mut components = Vec::new();
-    for comp in path.components() {
-        match comp {
-            std::path::Component::ParentDir => {
-                components.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => components.push(other),
-        }
-    }
-    components.iter().collect()
 }
 
 #[cfg(test)]

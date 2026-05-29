@@ -93,7 +93,7 @@ impl ReleaseSource for LocalSource {
         let manifest_path = self.path.join(tag).join("release-manifest.json");
         let start = std::time::Instant::now();
 
-        if !manifest_path.exists() {
+        if tokio::fs::metadata(&manifest_path).await.is_err() {
             return Err(SourceError::VersionNotFound { tag: tag.into() });
         }
 
