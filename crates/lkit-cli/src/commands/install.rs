@@ -51,16 +51,7 @@ pub(crate) async fn run(
         );
     }
 
-    // --force: stop running service before reinstalling
-    if args.force && lock_path.exists() {
-        eprintln!("  停止 landscape 服务...");
-        let _ = tokio::process::Command::new("systemctl")
-            .args(["stop", "landscape.service"])
-            .status()
-            .await;
-    }
-
-    let executor = InstallExecutor::new(host_installer);
+    let executor = InstallExecutor::new(host_installer.clone());
 
     // --init-file mode
     if let Some(init_file) = &args.init_file {
@@ -274,21 +265,35 @@ pub(crate) async fn run(
         .map_err(|e| anyhow::anyhow!("解压任务失败: {e}"))??;
     }
 
-    // ── Install (TOML + systemd + lock) ──
+    // ── Install (TOML + systemd) ──
+    // Check if service is already running (force reinstall scenario).
+    let was_active = host_installer
+        .is_service_active("landscape.service")
+        .await
+        .unwrap_or(false);
+
     // Delete old lock so landscape-webserver reads landscape_init.toml on startup.
-    // Without this, --force reinstalls write a new init TOML that is never read
-    // because the old lock tells landscape-webserver to skip it.
     let lock = landscape_home.join("landscape_init.lock");
     if lock.exists() {
         tokio::fs::remove_file(&lock).await?;
     }
+
     let report = executor.execute(&config, &landscape_home).await?;
+
+    // If service was already running, restart to pick up new init config.
+    // executor.execute() calls start_service, but systemd start on a running
+    // service is a no-op — a restart is needed to reload the config.
+    if was_active {
+        eprintln!("  检测到 landscape 服务已在运行，重启以应用新配置...");
+        host_installer.restart_service("landscape.service").await?;
+    }
 
     // ── Health check ──
     let healthy = health_check(config.landscape.https_port, 20).await;
 
     // ── Report ──
-    print_report(&report, &system_target, &to_download, healthy);
+    let action = if was_active { "重新安装" } else { "安装完成" };
+    print_report(&report, &system_target, &to_download, healthy, action);
 
     Ok(())
 }
@@ -551,6 +556,7 @@ fn print_report(
     target: &SystemTarget,
     artifacts: &[&Artifact],
     healthy: bool,
+    action: &str,
 ) {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
@@ -569,7 +575,7 @@ fn print_report(
     table.add_row(vec!["状态", status]);
 
     eprintln!();
-    eprintln!("Landscape 安装完成！");
+    eprintln!("Landscape {action}！");
     for line in table.to_string().lines() {
         eprintln!("  {line}");
     }

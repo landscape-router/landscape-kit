@@ -258,6 +258,26 @@ mod tests {
                 .push("start_service".to_string());
             Ok(())
         }
+
+        async fn stop_service(&self, _unit: &str) -> Result<(), CoreError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("stop_service".to_string());
+            Ok(())
+        }
+
+        async fn restart_service(&self, _unit: &str) -> Result<(), CoreError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("restart_service".to_string());
+            Ok(())
+        }
+
+        async fn is_service_active(&self, _unit: &str) -> Result<bool, CoreError> {
+            Ok(false)
+        }
     }
 
     fn test_config() -> InstallConfig {
@@ -372,6 +392,15 @@ mod tests {
             }
             async fn start_service(&self, _unit: &str) -> Result<(), CoreError> {
                 Ok(())
+            }
+            async fn stop_service(&self, _unit: &str) -> Result<(), CoreError> {
+                Ok(())
+            }
+            async fn restart_service(&self, _unit: &str) -> Result<(), CoreError> {
+                Ok(())
+            }
+            async fn is_service_active(&self, _unit: &str) -> Result<bool, CoreError> {
+                Ok(false)
             }
         }
 

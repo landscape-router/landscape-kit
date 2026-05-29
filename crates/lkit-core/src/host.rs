@@ -32,4 +32,13 @@ pub trait HostInstaller: Send + Sync {
 
     /// Execute `systemctl start <unit>`.
     async fn start_service(&self, unit: &str) -> Result<(), CoreError>;
+
+    /// Execute `systemctl stop <unit>`.
+    async fn stop_service(&self, unit: &str) -> Result<(), CoreError>;
+
+    /// Execute `systemctl restart <unit>`.
+    async fn restart_service(&self, unit: &str) -> Result<(), CoreError>;
+
+    /// Check if a systemd service is currently active.
+    async fn is_service_active(&self, unit: &str) -> Result<bool, CoreError>;
 }

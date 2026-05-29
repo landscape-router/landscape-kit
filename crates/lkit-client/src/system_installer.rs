@@ -81,6 +81,43 @@ impl HostInstaller for SystemInstaller {
         }
         Ok(())
     }
+
+    async fn stop_service(&self, unit: &str) -> Result<(), CoreError> {
+        let status = tokio::process::Command::new("systemctl")
+            .args(["stop", unit])
+            .status()
+            .await
+            .map_err(CoreError::Io)?;
+        if !status.success() {
+            return Err(CoreError::Internal(format!(
+                "systemctl stop {unit} exited with {status}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn restart_service(&self, unit: &str) -> Result<(), CoreError> {
+        let status = tokio::process::Command::new("systemctl")
+            .args(["restart", unit])
+            .status()
+            .await
+            .map_err(CoreError::Io)?;
+        if !status.success() {
+            return Err(CoreError::Internal(format!(
+                "systemctl restart {unit} exited with {status}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn is_service_active(&self, unit: &str) -> Result<bool, CoreError> {
+        let status = tokio::process::Command::new("systemctl")
+            .args(["is-active", unit])
+            .status()
+            .await
+            .map_err(CoreError::Io)?;
+        Ok(status.success())
+    }
 }
 
 #[cfg(test)]
