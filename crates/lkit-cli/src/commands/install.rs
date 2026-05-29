@@ -459,6 +459,7 @@ async fn health_check(port: u16, max_attempts: u32) -> bool {
     let url = format!("http://127.0.0.1:{port}");
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(c) => c,
