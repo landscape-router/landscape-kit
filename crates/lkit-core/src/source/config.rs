@@ -89,7 +89,13 @@ mod tests {
         assert_eq!(sources[0].name, "r2-official");
         assert_eq!(sources[0].source_type, SourceType::Http);
         assert_eq!(sources[0].priority, 10);
-        assert!(sources[0].base_url.as_deref().unwrap().contains("r2.dev"));
+        assert!(
+            sources[0]
+                .base_url
+                .as_deref()
+                .ok_or("r2-official missing base_url")?
+                .contains("r2.dev")
+        );
         // GitHub is fallback
         assert_eq!(sources[1].name, "github-default");
         assert_eq!(sources[1].source_type, SourceType::Github);

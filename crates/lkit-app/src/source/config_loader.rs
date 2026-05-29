@@ -74,13 +74,14 @@ base_url = "https://mirror.example.com/landscape"
     }
 
     #[test]
-    fn invalid_toml_returns_error() {
-        let dir = tempfile::tempdir().expect("tempdir");
+    fn invalid_toml_returns_error() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
         let config_dir = dir.path().join("config");
-        std::fs::create_dir(&config_dir).expect("mkdir");
+        std::fs::create_dir(&config_dir)?;
         let content = "not = valid = toml";
-        std::fs::write(config_dir.join("lkit.toml"), content).expect("write");
+        std::fs::write(config_dir.join("lkit.toml"), content)?;
         let result = load_lkit_toml(dir.path());
         assert!(result.is_err());
+        Ok(())
     }
 }

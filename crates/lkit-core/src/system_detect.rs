@@ -139,10 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn detect_returns_valid_target() {
-        let target = detect().expect("detection should work on supported host");
+    fn detect_returns_valid_target() -> Result<(), Box<dyn std::error::Error>> {
+        let target = detect()?;
         assert!(!target.arch.is_empty());
         assert!(!target.target_str.is_empty());
+        Ok(())
     }
 
     #[test]

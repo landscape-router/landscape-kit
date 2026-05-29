@@ -8,17 +8,25 @@ pub struct CliProgress {
     pb: ProgressBar,
 }
 
+/// Build the download progress bar style.
+///
+/// Template is a compile-time constant string — `with_template` only fails
+/// on malformed templates, which cannot happen here.
+fn build_style() -> ProgressStyle {
+    // SAFETY: template is a valid indicatif format string.
+    match ProgressStyle::with_template(
+        "  {msg:<24} {bytes:>10} / {total_bytes:<10} [{bar:30}] {bytes_per_sec}",
+    ) {
+        Ok(s) => s.progress_chars("=>-"),
+        Err(_) => ProgressStyle::default_bar(),
+    }
+}
+
 impl CliProgress {
     /// Create a new progress bar (hidden until `on_file_start`).
     pub fn new() -> Self {
         let pb = ProgressBar::new(0);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "  {msg:<24} {bytes:>10} / {total_bytes:<10} [{bar:30}] {bytes_per_sec}",
-            )
-            .expect("valid template")
-            .progress_chars("=>-"),
-        );
+        pb.set_style(build_style());
         Self { pb }
     }
 }
