@@ -161,10 +161,13 @@ impl ReleaseSource for S3Source {
             // Extract version directories from object keys.
             // Keys look like: "landscape/v0.19.2/manifest.json"
             for obj in &list_resp.contents {
-                let key = if obj.key.starts_with(&full_prefix) {
-                    &obj.key[full_prefix.len()..]
+                let decoded_key = urlencoding::decode(&obj.key)
+                    .unwrap_or_else(|_| obj.key.clone().into())
+                    .into_owned();
+                let key = if decoded_key.starts_with(&full_prefix) {
+                    &decoded_key[full_prefix.len()..]
                 } else {
-                    &obj.key
+                    &decoded_key
                 };
                 if let Some(slash_pos) = key.find('/') {
                     let dir = &key[..slash_pos];

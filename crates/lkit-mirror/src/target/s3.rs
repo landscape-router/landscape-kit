@@ -167,7 +167,10 @@ impl MirrorTarget for S3Target {
                 })?;
 
             for obj in &list_resp.contents {
-                all_keys.push(obj.key.clone());
+                let decoded = urlencoding::decode(&obj.key)
+                    .unwrap_or_else(|_| obj.key.clone().into())
+                    .into_owned();
+                all_keys.push(decoded);
             }
 
             if list_resp.next_continuation_token.is_none() {
