@@ -257,7 +257,7 @@ pub(crate) async fn run(
     if healthy {
         eprintln!("  状态: 服务已启动");
     } else {
-        eprintln!("  ⚠ 健康检查超时，请手动验证: systemctl status landscape");
+        eprintln!("  ⚠ 健康检查超时，请手动验证: sudo systemctl status landscape");
     }
 
     Ok(())
