@@ -163,13 +163,12 @@ impl ReleaseSource for GithubSource {
             .await
             .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
 
-        // GitHub Releases API does not include checksums.
-        // sha256 is empty here; callers (e.g. lkit-mirror sync) compute it
-        // after downloading each artifact.
+        // GitHub Releases API does not provide per-asset checksums.
+        // sha256 is left empty; install flow uses SHASUM256sum.txt
+        // (included as an asset) for verification when available.
         let artifacts = release
             .assets
             .into_iter()
-            .filter(|a| !a.name.contains("SHASUM"))
             .map(|a| {
                 let arch = lkit_core::parse_arch(&a.name).map(|info| {
                     if info.musl {
