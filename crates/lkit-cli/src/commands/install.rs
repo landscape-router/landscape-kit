@@ -138,6 +138,7 @@ pub(crate) async fn run(
         .artifacts
         .iter()
         .filter(|a| artifact_matches(a, &system_target))
+        .filter(|a| !a.name.contains("SHASUM"))
         .collect();
 
     if to_download.is_empty() {
@@ -226,6 +227,13 @@ pub(crate) async fn run(
         {
             tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).await?;
         }
+    }
+
+    // ── Create symlinks (systemd expects arch-less names) ──
+    let webserver_src = landscape_home.join(format!("landscape-webserver-{}", system_target.target_str));
+    let webserver_dst = landscape_home.join("landscape-webserver");
+    if webserver_src.exists() && !webserver_dst.exists() {
+        std::os::unix::fs::symlink(&webserver_src, &webserver_dst)?;
     }
 
     // ── Extract static.zip ──
