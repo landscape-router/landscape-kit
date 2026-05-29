@@ -17,7 +17,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={home}/landscape-webserver --home {home} --web-root {home}/static
+ExecStart={home}/landscape-webserver --config-dir {home} --web {home}/static
 Restart=on-failure
 RestartSec=5
 
