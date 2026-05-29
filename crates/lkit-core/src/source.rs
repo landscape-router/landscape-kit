@@ -4,8 +4,8 @@ pub mod config;
 mod error;
 mod manifest;
 pub mod name_parser;
-pub mod version;
 mod trait_def;
+pub mod version;
 
 pub use config::{SourceConfig, SourceType, default_sources};
 pub use error::SourceError;

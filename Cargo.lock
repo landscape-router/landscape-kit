@@ -1309,7 +1309,6 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "indicatif",
- "libc",
  "lkit-app",
  "lkit-client",
  "lkit-core",
