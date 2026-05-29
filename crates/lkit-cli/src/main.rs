@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod launcher;
 mod messages;
+mod wizard;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
