@@ -4,9 +4,11 @@ pub mod config;
 mod error;
 mod manifest;
 pub mod name_parser;
+pub mod version;
 mod trait_def;
 
 pub use config::{SourceConfig, SourceType, default_sources};
 pub use error::SourceError;
 pub use manifest::{Artifact, ReleaseManifest};
 pub use trait_def::ReleaseSource;
+pub use version::compare_semver;

@@ -24,7 +24,7 @@ pub use paths::{LandscapePaths, ManagerPaths};
 pub use source::name_parser::{ArchInfo, parse_arch};
 pub use source::{
     Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError, SourceType,
-    default_sources,
+    compare_semver, default_sources,
 };
 pub use system_detect::{LibcType, SystemTarget, detect};
 pub use traits::{LkitClient, LogReader, ServiceManager};

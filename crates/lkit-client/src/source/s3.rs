@@ -185,7 +185,7 @@ impl ReleaseSource for S3Source {
 
         let mut sorted: Vec<String> = versions.into_iter().collect();
         // Sort newest-first to match GitHub API convention.
-        sorted.sort_by(|a, b| compare_semver(b, a));
+        sorted.sort_by(|a, b| lkit_core::compare_semver(b, a));
         Ok(sorted)
     }
 
@@ -247,25 +247,6 @@ impl ReleaseSource for S3Source {
 
         Ok(start.elapsed())
     }
-}
-
-/// Compare two semver-style tags (e.g. "v1.2.3") component by component.
-fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
-    let parse = |s: &str| -> Vec<u64> {
-        s.trim_start_matches('v')
-            .split('.')
-            .filter_map(|c| c.parse::<u64>().ok())
-            .collect()
-    };
-    let va = parse(a);
-    let vb = parse(b);
-    for (ca, cb) in va.iter().zip(vb.iter()) {
-        match ca.cmp(cb) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    va.len().cmp(&vb.len())
 }
 
 #[cfg(test)]
