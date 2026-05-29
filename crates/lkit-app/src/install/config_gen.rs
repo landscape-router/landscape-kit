@@ -375,15 +375,15 @@ mod tests {
         });
 
         let result = generate_init_toml(&cfg);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::ConfigGeneration(msg) => {
+        match result {
+            Err(AppError::ConfigGeneration(msg)) => {
                 assert!(
                     msg.contains("/30"),
                     "message should mention /30, got: {msg}"
                 );
             }
-            other => panic!("expected ConfigGeneration, got: {other}"),
+            Err(other) => panic!("expected ConfigGeneration, got: {other}"),
+            Ok(_) => panic!("expected error for mask=30, got Ok"),
         }
     }
 }

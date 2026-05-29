@@ -192,8 +192,6 @@ impl Wizard {
             return false;
         }
 
-        let current_kind = self.current_step().kind;
-
         // Move back, skipping LAN steps in single-NIC mode
         self.current -= 1;
         while self.current > 0 && self.should_skip_current() {
@@ -202,18 +200,15 @@ impl Wizard {
 
         // Cascading clear rules
         let target_kind = self.current_step().kind;
-        match (current_kind, target_kind) {
-            // Going back from WanConfig to WanSelect: clear wan_mode (NIC changed)
-            (StepKind::WanConfig, StepKind::WanSelect) => {
-                self.collected.wan_mode = None;
-            }
-            // Going back from LanConfig to LanSelect: preserve lan_gateway/lan_mask
-            // (gateway is on br_lan, independent of specific member NICs)
-            (StepKind::LanConfig, StepKind::LanSelect) => {
-                // Intentionally preserved
-            }
-            _ => {}
+
+        // Clear wan_mode when retreating to WanSelect — the WAN NIC may change.
+        // Handles both single-NIC (WanConfig→WanSelect) and multi-NIC
+        // (WanConfig→LanSelect→WanSelect) paths.
+        if target_kind == StepKind::WanSelect {
+            self.collected.wan_mode = None;
         }
+        // lan_gateway / lan_mask are preserved when retreating from LanConfig
+        // to LanSelect — the gateway is on br_lan, independent of member NICs.
 
         true
     }
@@ -371,70 +366,46 @@ mod tests {
     }
 
     /// Retreating from WanConfig to WanSelect clears wan_mode.
+    ///
+    /// In single-NIC mode, WanConfig retreats directly to WanSelect (skipping LanSelect).
+    /// In multi-NIC mode, WanConfig retreats to LanSelect first — wan_mode is NOT cleared
+    /// because LAN changes don't affect WAN. The clear happens only when reaching WanSelect.
     #[test]
     fn test_retreat_clears_wan_mode() {
-        let mut w = Wizard::new(false);
+        // Single-NIC: WanConfig → WanSelect directly, clears wan_mode
+        let mut w = Wizard::new(true);
         w.collected.wan_mode = Some(WanMode::Dhcp);
 
-        // Move to WanConfig (step 2): WanSelect → LanSelect → WanConfig
-        w.advance(); // → LanSelect
-        w.advance(); // → WanConfig
+        assert!(w.advance());
         assert_eq!(w.current_step().kind, StepKind::WanConfig);
 
-        // Retreat to WanSelect (step 0)
-        w.retreat(); // → LanSelect (skip back)
-        // Actually let me trace: retreat from WanConfig (idx 2)
-        // current_kind = WanConfig, current = 2
-        // current -= 1 → current = 1 (LanSelect)
-        // should_skip? No (single_nic=false)
-        // target = LanSelect
-        // match (WanConfig, LanSelect) → no match → no clear
-        // So we need to retreat again to get to WanSelect
+        assert!(w.retreat());
+        assert_eq!(w.current_step().kind, StepKind::WanSelect);
+        assert!(
+            w.collected.wan_mode.is_none(),
+            "wan_mode should be cleared when retreating to WanSelect"
+        );
 
-        // Wait, this doesn't cascade properly. Let me re-check the logic.
-        // Actually the match is (current_kind, target_kind). Going from WanConfig → LanSelect
-        // doesn't match (WanConfig, WanSelect). We need to go WanConfig → WanSelect directly.
-        // But that only happens in single_nic mode.
-        // Let me fix: in multi-NIC mode, going from WanConfig → LanSelect doesn't clear.
-        // But the spec says "修改 WAN NIC → 清除 wan_mode" — this means going back to WanSelect.
-        // With multi-NIC, you'd go WanConfig → LanSelect → WanSelect. The clear should happen
-        // when reaching WanSelect.
-        //
-        // Actually, re-reading the spec: the clear happens when going BACK FROM WanConfig.
-        // Not when arriving at WanSelect. Let me re-think.
-        //
-        // The plan says: "retreat from WanConfig to WanSelect: clear wan_mode"
-        // In multi-NIC: WanConfig(2) → LanSelect(1) → WanSelect(0)
-        // The clear should happen on the first retreat from WanConfig.
-        //
-        // My current code checks (current_kind, target_kind). Going from WanConfig to
-        // LanSelect, the pair is (WanConfig, LanSelect) which doesn't match.
-        // This is a bug — the clear should happen when leaving WanConfig backwards regardless.
-        //
-        // Let me fix the logic: clear wan_mode when retreating FROM WanConfig (any direction).
-
-        // For now, let me test single_nic where it goes directly back to WanSelect.
-        // And fix the multi-NIC case in the implementation.
-
-        // Actually, looking at it again: the plan says "从 Step 3 退到 Step 1，wan_mode 被清除"
-        // Step 3 = WanConfig, Step 1 = WanSelect (0-indexed: step 0=WanSelect, step 2=WanConfig)
-        // In single_nic mode, going from WanConfig(2) → retreat → skip LanSelect → WanSelect(0)
-        // That's where the clear should happen.
-
-        // Let me redo this test with single_nic mode.
-        let mut w2 = Wizard::new(true);
+        // Multi-NIC: WanConfig → LanSelect, wan_mode preserved
+        let mut w2 = Wizard::new(false);
         w2.collected.wan_mode = Some(WanMode::Dhcp);
 
-        // Move to WanConfig in single-NIC mode: WanSelect(0) → WanConfig(2, skipping LanSelect)
-        assert!(w2.advance());
+        w2.advance(); // → LanSelect
+        w2.advance(); // → WanConfig
         assert_eq!(w2.current_step().kind, StepKind::WanConfig);
 
-        // Retreat should skip LanSelect back to WanSelect
-        assert!(w2.retreat());
+        w2.retreat(); // → LanSelect (wan_mode preserved — LAN changes don't affect WAN)
+        assert_eq!(w2.current_step().kind, StepKind::LanSelect);
+        assert!(
+            w2.collected.wan_mode.is_some(),
+            "wan_mode preserved on WanConfig→LanSelect retreat"
+        );
+
+        w2.retreat(); // → WanSelect (now clear)
         assert_eq!(w2.current_step().kind, StepKind::WanSelect);
         assert!(
             w2.collected.wan_mode.is_none(),
-            "wan_mode should be cleared when retreating to WanSelect"
+            "wan_mode cleared when reaching WanSelect"
         );
     }
 

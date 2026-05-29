@@ -45,7 +45,7 @@ impl InstallExecutor {
         Self { host_installer }
     }
 
-    /// Execute the full installation flow.
+    /// Execute the full installation flow from a wizard-collected config.
     ///
     /// 1. Generate `landscape_init.toml` from config
     /// 2. Create Landscape HOME directory
@@ -57,29 +57,44 @@ impl InstallExecutor {
         config: &InstallConfig,
         home: &Path,
     ) -> Result<InstallReport, AppError> {
-        // 1. Generate TOML
         let toml_content = generate_init_toml(config)?;
+        self.apply(home, &toml_content).await
+    }
 
-        // 2. Create HOME
+    /// Execute installation with a pre-existing TOML string (`--init-file` mode).
+    ///
+    /// Writes the raw TOML directly without regenerating — preserves all
+    /// user-configured fields (ifaces, ipconfigs, routes, DHCP, custom config).
+    pub async fn execute_with_raw_toml(
+        &self,
+        toml_content: &str,
+        home: &Path,
+    ) -> Result<InstallReport, AppError> {
+        self.apply(home, toml_content).await
+    }
+
+    /// Shared installation logic: write TOML + systemd + start service.
+    async fn apply(&self, home: &Path, toml_content: &str) -> Result<InstallReport, AppError> {
+        // 1. Create HOME
         self.host_installer
             .create_dir_all(home)
             .await
             .map_err(AppError::Core)?;
 
-        // 3. Write landscape_init.toml
+        // 2. Write landscape_init.toml
         let init_toml_path = home.join("landscape_init.toml");
         self.host_installer
             .write_file(&init_toml_path, toml_content.as_bytes())
             .await
             .map_err(AppError::Core)?;
 
-        // 4. Set permissions 0600
+        // 3. Set permissions 0600 (plaintext password protection)
         self.host_installer
             .set_permissions(&init_toml_path, 0o600)
             .await
             .map_err(AppError::Core)?;
 
-        // 5. Write systemd unit
+        // 4. Write systemd unit
         let systemd_path = PathBuf::from("/etc/systemd/system/landscape.service");
         let unit_content = SYSTEMD_UNIT_TEMPLATE.replace("{home}", &home.to_string_lossy());
         self.host_installer
@@ -87,7 +102,7 @@ impl InstallExecutor {
             .await
             .map_err(AppError::Core)?;
 
-        // 6. Systemd lifecycle
+        // 5. Systemd lifecycle
         self.host_installer
             .daemon_reload()
             .await
@@ -103,17 +118,20 @@ impl InstallExecutor {
             .await
             .map_err(AppError::Core)?;
 
-        let lan_ip = config
-            .network
-            .lan
-            .as_ref()
-            .map(|l| l.gateway.to_string())
-            .unwrap_or_else(|| "127.0.0.1".to_string());
-        let web_url = format!("http://{}:{}", lan_ip, config.landscape.web_port);
+        // 6. Build report — extract web URL from TOML
+        let parsed: toml::Value = toml::from_str(toml_content)
+            .map_err(|e| AppError::ConfigGeneration(format!("TOML validation failed: {e}")))?;
+
+        let web_port = parsed
+            .get("config")
+            .and_then(|c| c.get("web"))
+            .and_then(|w| w.get("port"))
+            .and_then(|v| v.as_integer())
+            .unwrap_or(6300);
 
         Ok(InstallReport {
             home: home.to_path_buf(),
-            web_url,
+            web_url: format!("http://127.0.0.1:{web_port}"),
         })
     }
 }
@@ -283,11 +301,9 @@ mod tests {
         Ok(())
     }
 
-    /// Verify the generated TOML is valid by parsing it.
+    /// Verify the generated TOML contains expected fields.
     #[tokio::test]
     async fn test_execute_generates_valid_toml() -> Result<(), Box<dyn std::error::Error>> {
-        use std::sync::Arc;
-
         struct CapturingInstaller {
             files: Mutex<Vec<(PathBuf, Vec<u8>)>>,
         }
@@ -337,8 +353,24 @@ mod tests {
         // First file should be landscape_init.toml
         assert_eq!(files[0].0, home.join("landscape_init.toml"));
         let toml_str = String::from_utf8(files[0].1.clone())?;
-        // Verify it parses as valid TOML
-        let _parsed: toml::Value = toml::from_str(&toml_str)?;
+
+        // Verify it parses as valid TOML with expected content
+        let parsed: toml::Value = toml::from_str(&toml_str)?;
+        assert_eq!(parsed["version"].as_str(), Some("0.19.2"));
+        assert_eq!(
+            parsed["config"]["auth"]["admin_user"].as_str(),
+            Some("root")
+        );
+        assert_eq!(
+            parsed["config"]["auth"]["admin_pass"].as_str(),
+            Some("secret")
+        );
+        assert_eq!(parsed["config"]["web"]["port"].as_integer(), Some(6300));
+        assert_eq!(parsed["ifaces"][0]["name"].as_str(), Some("eth0"));
+        assert_eq!(
+            parsed["ipconfigs"][0]["ip_model"]["t"].as_str(),
+            Some("dhcpclient")
+        );
 
         Ok(())
     }
