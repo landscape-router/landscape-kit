@@ -75,8 +75,8 @@ pub(crate) async fn run(
         eprintln!();
         eprintln!("Landscape 安装完成！");
         eprintln!("  HOME: {}", report.home.display());
-        eprintln!("  Web UI: {}", report.web_url);
-        eprintln!("  HTTPS UI: {}", report.https_url);
+        eprintln!("  Web HTTP UI: {}", report.web_url);
+        eprintln!("  Web HTTPS UI: {}", report.https_url);
         eprintln!();
         return Ok(());
     }
@@ -279,12 +279,7 @@ pub(crate) async fn run(
     let healthy = health_check(config.landscape.https_port, 20).await;
 
     // ── Report ──
-    print_report(&report, &system_target, &to_download);
-    if healthy {
-        eprintln!("  状态: 服务已启动");
-    } else {
-        eprintln!("  ⚠ 健康检查超时，请手动验证: sudo systemctl status landscape");
-    }
+    print_report(&report, &system_target, &to_download, healthy);
 
     Ok(())
 }
@@ -546,15 +541,23 @@ fn print_report(
     report: &lkit_app::install::InstallReport,
     target: &SystemTarget,
     artifacts: &[&Artifact],
+    healthy: bool,
 ) {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.set_header(vec!["项目", "值"]);
     table.add_row(vec!["HOME", &report.home.display().to_string()]);
-    table.add_row(vec!["Web UI", &report.web_url]);
-    table.add_row(vec!["HTTPS UI", &report.https_url]);
+    table.add_row(vec!["Web HTTP UI", &report.web_url]);
+    table.add_row(vec!["Web HTTPS UI", &report.https_url]);
     table.add_row(vec!["系统", &target.target_str]);
-    table.add_row(vec!["制品数", &artifacts.len().to_string()]);
+    table.add_row(vec!["已安装组件", &artifacts.len().to_string()]);
+
+    let status = if healthy {
+        "服务已启动"
+    } else {
+        "健康检查超时，请手动验证: sudo systemctl status landscape"
+    };
+    table.add_row(vec!["状态", status]);
 
     eprintln!();
     eprintln!("Landscape 安装完成！");
