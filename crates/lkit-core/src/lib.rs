@@ -2,6 +2,8 @@
 
 pub mod download;
 mod error;
+pub mod host;
+pub mod install;
 mod models;
 mod paths;
 pub mod source;
