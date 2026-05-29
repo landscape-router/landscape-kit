@@ -292,7 +292,11 @@ pub(crate) async fn run(
     let healthy = health_check(config.landscape.https_port, 20).await;
 
     // ── Report ──
-    let action = if was_active { "重新安装" } else { "安装完成" };
+    let action = if was_active {
+        "重新安装"
+    } else {
+        "安装完成"
+    };
     print_report(&report, &system_target, &to_download, healthy, action);
 
     Ok(())
