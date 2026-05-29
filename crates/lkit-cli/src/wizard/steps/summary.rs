@@ -75,6 +75,6 @@ pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
         0 => Ok(WizardAction::Next),
         1 => Ok(WizardAction::Back),
         2 => Ok(WizardAction::Quit),
-        _ => unreachable!(),
+        _ => anyhow::bail!("unexpected selection: {selection}"),
     }
 }

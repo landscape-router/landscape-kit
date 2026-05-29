@@ -43,7 +43,7 @@ pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
         2 => {
             collected.wan_mode = Some(WanMode::Nothing);
         }
-        _ => unreachable!(),
+        _ => anyhow::bail!("unexpected selection: {selection}"),
     }
 
     Ok(WizardAction::Next)

@@ -2,12 +2,9 @@
 
 use std::collections::HashMap;
 use std::io::IsTerminal;
-use std::sync::Arc;
 
 use dialoguer::Select;
 use lkit_app::AppState;
-use lkit_client::SystemInstaller;
-use lkit_core::HostInstaller;
 
 use crate::cli::{Commands, DiagnoseArgs, LogsArgs, ServiceAction, ServiceArgs, StatusArgs};
 use crate::messages::{CliMessages, msg};
@@ -120,8 +117,7 @@ pub async fn run(state: &AppState) -> anyhow::Result<()> {
 
         match &items[selection].action {
             MenuAction::Dispatch(cmd) => {
-                let host_installer: Arc<dyn HostInstaller> = Arc::new(SystemInstaller::new());
-                crate::commands::dispatch(cmd.clone(), state, host_installer).await?;
+                crate::commands::dispatch(cmd.clone(), state).await?;
             }
             MenuAction::NotImplemented(milestone) => {
                 let mut params = HashMap::new();

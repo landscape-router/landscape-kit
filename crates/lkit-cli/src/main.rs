@@ -86,7 +86,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Dispatch remaining commands (Install already handled above).
     match cli.command {
-        Some(cmd) => commands::dispatch(cmd, &state, host_installer).await,
+        Some(Commands::Install(args)) => commands::install::run(args, host_installer).await,
+        Some(cmd) => commands::dispatch(cmd, &state).await,
         None => launcher::run(&state).await,
     }
 }

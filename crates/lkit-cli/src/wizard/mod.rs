@@ -319,7 +319,11 @@ impl Wizard {
 
         // Build config from collected data
         // landscape_version will be resolved from release manifest later
-        let version = self.collected.version.clone().unwrap_or_default();
+        let version = self
+            .collected
+            .version
+            .clone()
+            .unwrap_or_else(|| "latest".to_string());
         match self.build_config(version) {
             Ok(config) => Ok(Some(config)),
             Err(e) => Err(anyhow::anyhow!("配置不完整: {e}")),

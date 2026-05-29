@@ -179,7 +179,7 @@ fn derive_dhcp_pool(gateway: Ipv4Addr, mask: u8) -> Result<(Ipv4Addr, Ipv4Addr),
         Ipv4Addr::from(gw + 1)
     } else {
         // Normal subnet: start at .100 within the network
-        let base = network & mask_bits;
+        let base = network;
         let candidate = base + 100;
         if candidate >= broadcast {
             // .100 is beyond broadcast — fallback to gateway + 1

@@ -58,7 +58,8 @@ impl InstallExecutor {
         home: &Path,
     ) -> Result<InstallReport, AppError> {
         let toml_content = generate_init_toml(config)?;
-        self.apply(home, &toml_content).await
+        self.apply(home, &toml_content, config.landscape.web_port)
+            .await
     }
 
     /// Execute installation with a pre-existing TOML string (`--init-file` mode).
@@ -70,11 +71,25 @@ impl InstallExecutor {
         toml_content: &str,
         home: &Path,
     ) -> Result<InstallReport, AppError> {
-        self.apply(home, toml_content).await
+        let parsed: toml::Value = toml::from_str(toml_content)
+            .map_err(|e| AppError::ConfigGeneration(format!("TOML validation failed: {e}")))?;
+        let web_port = parsed
+            .get("config")
+            .and_then(|c| c.get("web"))
+            .and_then(|w| w.get("port"))
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| AppError::ConfigGeneration("TOML missing config.web.port".to_string()))?
+            as u16;
+        self.apply(home, toml_content, web_port).await
     }
 
     /// Shared installation logic: write TOML + systemd + start service.
-    async fn apply(&self, home: &Path, toml_content: &str) -> Result<InstallReport, AppError> {
+    async fn apply(
+        &self,
+        home: &Path,
+        toml_content: &str,
+        web_port: u16,
+    ) -> Result<InstallReport, AppError> {
         // 1. Create HOME
         self.host_installer
             .create_dir_all(home)
@@ -117,17 +132,6 @@ impl InstallExecutor {
             .start_service("landscape.service")
             .await
             .map_err(AppError::Core)?;
-
-        // 6. Build report — extract web URL from TOML
-        let parsed: toml::Value = toml::from_str(toml_content)
-            .map_err(|e| AppError::ConfigGeneration(format!("TOML validation failed: {e}")))?;
-
-        let web_port = parsed
-            .get("config")
-            .and_then(|c| c.get("web"))
-            .and_then(|w| w.get("port"))
-            .and_then(|v| v.as_integer())
-            .unwrap_or(6300);
 
         Ok(InstallReport {
             home: home.to_path_buf(),
