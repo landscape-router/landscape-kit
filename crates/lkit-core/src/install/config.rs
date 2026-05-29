@@ -83,8 +83,8 @@ pub struct LanSetup {
 pub struct LandscapeServiceConfig {
     /// Web UI listen port.
     pub web_port: u16,
-    /// HTTPS listen port. `None` disables HTTPS.
-    pub https_port: Option<u16>,
+    /// HTTPS listen port.
+    pub https_port: u16,
     /// Admin username.
     pub admin_user: String,
     /// Admin password.

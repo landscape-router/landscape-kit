@@ -1,13 +1,13 @@
 //! Step 5: Landscape service configuration (port, HTTPS port, admin user, password).
 
 use anyhow::Result;
-use dialoguer::{Confirm, Input, Password};
+use dialoguer::{Input, Password};
 
 use crate::wizard::{CollectedConfig, WizardAction};
 
 /// Render the Landscape service configuration step.
 ///
-/// Collects web port, optional HTTPS port, admin username, and admin password (with confirmation).
+/// Collects web port, HTTPS port (mandatory), admin username, and admin password (with confirmation).
 pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
     let port: u16 = Input::new()
         .with_prompt("Web 端口")
@@ -21,27 +21,17 @@ pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
         })
         .interact()?;
 
-    let enable_https = Confirm::new()
-        .with_prompt("启用 HTTPS")
-        .default(collected.https_port.is_some())
+    let https_port: u16 = Input::new()
+        .with_prompt("HTTPS 端口")
+        .default(collected.https_port)
+        .validate_with(|input: &u16| -> Result<(), String> {
+            if *input > 0 {
+                Ok(())
+            } else {
+                Err("端口必须 > 0".to_string())
+            }
+        })
         .interact()?;
-
-    let https_port = if enable_https {
-        let p: u16 = Input::new()
-            .with_prompt("HTTPS 端口")
-            .default(collected.https_port.unwrap_or(6443))
-            .validate_with(|input: &u16| -> Result<(), String> {
-                if *input > 0 {
-                    Ok(())
-                } else {
-                    Err("端口必须 > 0".to_string())
-                }
-            })
-            .interact()?;
-        Some(p)
-    } else {
-        None
-    };
 
     let user: String = Input::new()
         .with_prompt("管理员用户名")

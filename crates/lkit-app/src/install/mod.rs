@@ -12,8 +12,7 @@ use crate::install::config_gen::generate_init_toml;
 
 /// Systemd unit file template for Landscape service.
 ///
-/// `{https_arg}` is replaced with ` --https <port>` when HTTPS is enabled,
-/// or an empty string when HTTPS is disabled.
+/// `{https_arg}` is replaced with ` --https <port>`.
 const SYSTEMD_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Landscape Router
 After=network.target
@@ -33,8 +32,10 @@ WantedBy=multi-user.target
 pub struct InstallReport {
     /// Landscape HOME directory path.
     pub home: PathBuf,
-    /// URL to access the web UI.
+    /// HTTP URL to access the web UI.
     pub web_url: String,
+    /// HTTPS URL to access the web UI.
+    pub https_url: String,
 }
 
 /// Executes the installation process: TOML generation, file writing, systemd setup.
@@ -93,7 +94,9 @@ impl InstallExecutor {
             .and_then(|c| c.get("web"))
             .and_then(|w| w.get("https_port"))
             .and_then(|v| v.as_integer())
-            .map(|p| p as u16);
+            .ok_or_else(|| {
+                AppError::ConfigGeneration("TOML missing config.web.https_port".to_string())
+            })? as u16;
         self.apply(home, toml_content, web_port, https_port).await
     }
 
@@ -103,7 +106,7 @@ impl InstallExecutor {
         home: &Path,
         toml_content: &str,
         web_port: u16,
-        https_port: Option<u16>,
+        https_port: u16,
     ) -> Result<InstallReport, AppError> {
         // 1. Create HOME
         self.host_installer
@@ -126,10 +129,7 @@ impl InstallExecutor {
 
         // 4. Write systemd unit
         let systemd_path = PathBuf::from("/etc/systemd/system/landscape.service");
-        let https_arg = match https_port {
-            Some(port) => format!(" --https {port}"),
-            None => String::new(),
-        };
+        let https_arg = format!(" --https {https_port}");
         let unit_content = SYSTEMD_UNIT_TEMPLATE
             .replace("{home}", &home.to_string_lossy())
             .replace("{https_arg}", &https_arg);
@@ -164,6 +164,7 @@ impl InstallExecutor {
         Ok(InstallReport {
             home: home.to_path_buf(),
             web_url: format!("http://127.0.0.1:{web_port}"),
+            https_url: format!("https://127.0.0.1:{https_port}"),
         })
     }
 }
@@ -276,7 +277,7 @@ mod tests {
             },
             landscape: LandscapeServiceConfig {
                 web_port: 6300,
-                https_port: None,
+                https_port: 6443,
                 admin_user: "root".to_string(),
                 admin_pass: "secret".to_string(),
             },

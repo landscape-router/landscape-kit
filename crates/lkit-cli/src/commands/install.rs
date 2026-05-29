@@ -70,6 +70,7 @@ pub(crate) async fn run(
         eprintln!("Landscape 安装完成！");
         eprintln!("  HOME: {}", report.home.display());
         eprintln!("  Web UI: {}", report.web_url);
+        eprintln!("  HTTPS UI: {}", report.https_url);
         eprintln!();
         return Ok(());
     }
@@ -247,16 +248,22 @@ pub(crate) async fn run(
     let static_zip = landscape_home.join("static.zip");
     if static_zip.exists() {
         eprintln!("  解压 static.zip...");
-        let file = std::fs::File::open(&static_zip)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-        archive.extract(&landscape_home)?;
+        let home = landscape_home.clone();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&static_zip)?;
+            let mut archive = zip::ZipArchive::new(file)?;
+            archive.extract(&home)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("解压任务失败: {e}"))??;
     }
 
     // ── Install (TOML + systemd + lock) ──
     let report = executor.execute(&config, &landscape_home).await?;
 
     // ── Health check ──
-    let healthy = health_check(config.landscape.web_port, config.landscape.https_port, 20).await;
+    let healthy = health_check(config.landscape.https_port, 20).await;
 
     // ── Report ──
     print_report(&report, &system_target, &to_download);
@@ -461,13 +468,12 @@ async fn download_artifacts(
     Ok(())
 }
 
-/// Health check — poll the web UI endpoints (HTTP and optionally HTTPS).
+/// Health check — poll the HTTPS endpoint.
 ///
-/// Returns `true` if any endpoint is healthy within `max_attempts` × 3 seconds.
+/// Returns `true` if the HTTPS endpoint is healthy within `max_attempts` × 3 seconds.
 /// Returns `false` (with warning) on timeout — does not error.
-async fn health_check(port: u16, https_port: Option<u16>, max_attempts: u32) -> bool {
-    let http_url = format!("http://127.0.0.1:{port}");
-    let https_url = https_port.map(|p| format!("https://127.0.0.1:{p}"));
+async fn health_check(https_port: u16, max_attempts: u32) -> bool {
+    let https_url = format!("https://127.0.0.1:{https_port}");
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .redirect(reqwest::redirect::Policy::none())
@@ -479,19 +485,10 @@ async fn health_check(port: u16, https_port: Option<u16>, max_attempts: u32) -> 
     };
 
     for attempt in 0..max_attempts {
-        // Check HTTP
-        match client.get(&http_url).send().await {
+        match client.get(&https_url).send().await {
             Ok(resp) if resp.status().is_success() => return true,
             Ok(_) => {}
             Err(_) => {}
-        }
-        // Check HTTPS (if configured)
-        if let Some(ref url) = https_url {
-            match client.get(url.as_str()).send().await {
-                Ok(resp) if resp.status().is_success() => return true,
-                Ok(_) => {}
-                Err(_) => {}
-            }
         }
         if attempt + 1 < max_attempts {
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -504,7 +501,7 @@ async fn health_check(port: u16, https_port: Option<u16>, max_attempts: u32) -> 
 fn generate_minimal_config(
     wan_nic: &str,
     port: u16,
-    https_port: Option<u16>,
+    https_port: u16,
     tag: &str,
     home: &std::path::Path,
 ) -> anyhow::Result<InstallConfig> {
@@ -542,6 +539,7 @@ fn print_report(
     table.set_header(vec!["项目", "值"]);
     table.add_row(vec!["HOME", &report.home.display().to_string()]);
     table.add_row(vec!["Web UI", &report.web_url]);
+    table.add_row(vec!["HTTPS UI", &report.https_url]);
     table.add_row(vec!["系统", &target.target_str]);
     table.add_row(vec!["制品数", &artifacts.len().to_string()]);
 

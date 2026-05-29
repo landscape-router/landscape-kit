@@ -24,9 +24,7 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
 
     // [config.web]
     doc["config"]["web"]["port"] = toml_edit::value(i64::from(config.landscape.web_port));
-    if let Some(https_port) = config.landscape.https_port {
-        doc["config"]["web"]["https_port"] = toml_edit::value(i64::from(https_port));
-    }
+    doc["config"]["web"]["https_port"] = toml_edit::value(i64::from(config.landscape.https_port));
     doc["config"]["web"]["web_root"] =
         toml_edit::value(format!("{}/static", config.home.display()));
 
@@ -217,7 +215,7 @@ mod tests {
             },
             landscape: LandscapeServiceConfig {
                 web_port: 6300,
-                https_port: None,
+                https_port: 6443,
                 admin_user: "root".to_string(),
                 admin_pass: "secret".to_string(),
             },

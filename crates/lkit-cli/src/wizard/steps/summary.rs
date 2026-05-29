@@ -50,9 +50,7 @@ pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
     let port = collected.web_port.unwrap_or(6300);
     let user = collected.admin_user.as_deref().unwrap_or("root");
     table.add_row(vec![format!("  Web 端口: {port}")]);
-    if let Some(https) = collected.https_port {
-        table.add_row(vec![format!("  HTTPS 端口: {https}")]);
-    }
+    table.add_row(vec![format!("  HTTPS 端口: {}", collected.https_port)]);
     table.add_row(vec![format!("  管理员: {user}")]);
 
     // Section: 安装源

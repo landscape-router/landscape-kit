@@ -55,7 +55,7 @@ pub struct StepDef {
 }
 
 /// Intermediate data collected across all wizard steps.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct CollectedConfig {
     /// Step 1: selected WAN NIC name.
     pub wan_nic: Option<String>,
@@ -69,8 +69,8 @@ pub struct CollectedConfig {
     pub lan_mask: Option<u8>,
     /// Step 5: web UI port (default 6300).
     pub web_port: Option<u16>,
-    /// Step 5: HTTPS listen port (None = disabled).
-    pub https_port: Option<u16>,
+    /// Step 5: HTTPS listen port.
+    pub https_port: u16,
     /// Step 5: admin username (default "root").
     pub admin_user: Option<String>,
     /// Step 5: admin password.
@@ -79,6 +79,24 @@ pub struct CollectedConfig {
     pub source_name: Option<String>,
     /// Step 6: version tag (None = latest).
     pub version: Option<String>,
+}
+
+impl Default for CollectedConfig {
+    fn default() -> Self {
+        Self {
+            wan_nic: None,
+            lan_nics: Vec::new(),
+            wan_mode: None,
+            lan_gateway: None,
+            lan_mask: None,
+            web_port: None,
+            https_port: 6443,
+            admin_user: None,
+            admin_pass: None,
+            source_name: None,
+            version: None,
+        }
+    }
 }
 
 /// The wizard state machine.
@@ -397,9 +415,7 @@ pub fn print_status_table(collected: &CollectedConfig) {
         if let Some(port) = collected.web_port {
             table.add_row(vec![format!("Web 端口: {port}")]);
         }
-        if let Some(port) = collected.https_port {
-            table.add_row(vec![format!("HTTPS 端口: {port}")]);
-        }
+        table.add_row(vec![format!("HTTPS 端口: {}", collected.https_port)]);
         if let Some(user) = &collected.admin_user {
             table.add_row(vec![format!("管理员: {user}")]);
         }
