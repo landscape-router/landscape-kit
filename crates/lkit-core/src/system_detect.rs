@@ -119,7 +119,10 @@ mod tests {
 
     #[test]
     fn map_arch_x86_64() {
-        assert_eq!(map_arch("x86_64").unwrap_or_else(|e| panic!("{e}")), "x86_64");
+        assert_eq!(
+            map_arch("x86_64").unwrap_or_else(|e| panic!("{e}")),
+            "x86_64"
+        );
     }
 
     #[test]

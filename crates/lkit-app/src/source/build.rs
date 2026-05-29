@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use lkit_client::{GithubSource, HttpMirrorSource, LocalSource, S3Source};
-use lkit_core::source::config::{SourceConfig, SourceType};
 use lkit_core::ReleaseSource;
+use lkit_core::source::config::{SourceConfig, SourceType};
 
 /// Convert a list of `SourceConfig` into `Arc<dyn ReleaseSource>` instances.
 ///
@@ -31,10 +31,7 @@ fn build_one(
 ) -> Result<Arc<dyn ReleaseSource>, String> {
     match cfg.source_type {
         SourceType::Github => {
-            let repo = cfg
-                .repo
-                .as_deref()
-                .ok_or("github 类型缺少 repo 字段")?;
+            let repo = cfg.repo.as_deref().ok_or("github 类型缺少 repo 字段")?;
             let src = GithubSource::new(&cfg.name, repo, client.clone())
                 .map_err(|e| format!("创建 GithubSource 失败: {e}"))?;
             Ok(Arc::new(src))
@@ -51,21 +48,12 @@ fn build_one(
             )))
         }
         SourceType::Local => {
-            let path = cfg
-                .path
-                .as_deref()
-                .ok_or("local 类型缺少 path 字段")?;
+            let path = cfg.path.as_deref().ok_or("local 类型缺少 path 字段")?;
             Ok(Arc::new(LocalSource::new(&cfg.name, path)))
         }
         SourceType::S3 => {
-            let endpoint = cfg
-                .endpoint
-                .as_deref()
-                .ok_or("s3 类型缺少 endpoint 字段")?;
-            let bucket = cfg
-                .bucket
-                .as_deref()
-                .ok_or("s3 类型缺少 bucket 字段")?;
+            let endpoint = cfg.endpoint.as_deref().ok_or("s3 类型缺少 endpoint 字段")?;
+            let bucket = cfg.bucket.as_deref().ok_or("s3 类型缺少 bucket 字段")?;
             let access_key = std::env::var("AWS_ACCESS_KEY_ID")
                 .map_err(|_| "S3 源需要 AWS_ACCESS_KEY_ID 环境变量")?;
             let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")

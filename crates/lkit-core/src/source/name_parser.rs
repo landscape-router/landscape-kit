@@ -43,53 +43,47 @@ mod tests {
 
     #[test]
     fn parse_landscape_webserver_x86_64() {
-        let info = parse_arch("landscape-webserver-x86_64").unwrap_or_else(|| {
-            panic!("expected Some for landscape-webserver-x86_64")
-        });
+        let info = parse_arch("landscape-webserver-x86_64")
+            .unwrap_or_else(|| panic!("expected Some for landscape-webserver-x86_64"));
         assert_eq!(info.arch, "x86_64");
         assert!(!info.musl);
     }
 
     #[test]
     fn parse_landscape_webserver_x86_64_musl() {
-        let info = parse_arch("landscape-webserver-x86_64-musl").unwrap_or_else(|| {
-            panic!("expected Some for landscape-webserver-x86_64-musl")
-        });
+        let info = parse_arch("landscape-webserver-x86_64-musl")
+            .unwrap_or_else(|| panic!("expected Some for landscape-webserver-x86_64-musl"));
         assert_eq!(info.arch, "x86_64");
         assert!(info.musl);
     }
 
     #[test]
     fn parse_landscape_webserver_aarch64() {
-        let info = parse_arch("landscape-webserver-aarch64").unwrap_or_else(|| {
-            panic!("expected Some for landscape-webserver-aarch64")
-        });
+        let info = parse_arch("landscape-webserver-aarch64")
+            .unwrap_or_else(|| panic!("expected Some for landscape-webserver-aarch64"));
         assert_eq!(info.arch, "aarch64");
         assert!(!info.musl);
     }
 
     #[test]
     fn parse_landscape_webserver_riscv64() {
-        let info = parse_arch("landscape-webserver-riscv64").unwrap_or_else(|| {
-            panic!("expected Some for landscape-webserver-riscv64")
-        });
+        let info = parse_arch("landscape-webserver-riscv64")
+            .unwrap_or_else(|| panic!("expected Some for landscape-webserver-riscv64"));
         assert_eq!(info.arch, "riscv64");
         assert!(!info.musl);
     }
 
     #[test]
     fn parse_redirect_pkg_x86_64() {
-        let info = parse_arch("redirect_pkg_handler-x86_64").unwrap_or_else(|| {
-            panic!("expected Some for redirect_pkg_handler-x86_64")
-        });
+        let info = parse_arch("redirect_pkg_handler-x86_64")
+            .unwrap_or_else(|| panic!("expected Some for redirect_pkg_handler-x86_64"));
         assert_eq!(info.arch, "x86_64");
     }
 
     #[test]
     fn parse_redirect_pkg_x86_64_musl() {
-        let info = parse_arch("redirect_pkg_handler-x86_64-musl").unwrap_or_else(|| {
-            panic!("expected Some for redirect_pkg_handler-x86_64-musl")
-        });
+        let info = parse_arch("redirect_pkg_handler-x86_64-musl")
+            .unwrap_or_else(|| panic!("expected Some for redirect_pkg_handler-x86_64-musl"));
         assert_eq!(info.arch, "x86_64");
         assert!(info.musl);
     }
@@ -121,18 +115,16 @@ mod tests {
 
     #[test]
     fn parse_loongarch64() {
-        let info = parse_arch("landscape-webserver-loongarch64").unwrap_or_else(|| {
-            panic!("expected Some for landscape-webserver-loongarch64")
-        });
+        let info = parse_arch("landscape-webserver-loongarch64")
+            .unwrap_or_else(|| panic!("expected Some for landscape-webserver-loongarch64"));
         assert_eq!(info.arch, "loongarch64");
         assert!(!info.musl);
     }
 
     #[test]
     fn parse_s390x() {
-        let info = parse_arch("landscape-webserver-s390x").unwrap_or_else(|| {
-            panic!("expected Some for landscape-webserver-s390x")
-        });
+        let info = parse_arch("landscape-webserver-s390x")
+            .unwrap_or_else(|| panic!("expected Some for landscape-webserver-s390x"));
         assert_eq!(info.arch, "s390x");
         assert!(!info.musl);
     }

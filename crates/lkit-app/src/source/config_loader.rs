@@ -23,8 +23,8 @@ pub fn load_lkit_toml(manager_home: &Path) -> Result<Vec<SourceConfig>, AppError
         sources: Option<Vec<SourceConfig>>,
     }
 
-    let parsed: LkitToml =
-        toml::from_str(&content).map_err(|e| AppError::ConfigGeneration(format!("lkit.toml 语法错误: {e}")))?;
+    let parsed: LkitToml = toml::from_str(&content)
+        .map_err(|e| AppError::ConfigGeneration(format!("lkit.toml 语法错误: {e}")))?;
 
     Ok(parsed.sources.unwrap_or_default())
 }

@@ -84,8 +84,8 @@ impl ReleaseSource for LocalSource {
                 }
             })?;
 
-        let mut manifest: ReleaseManifest =
-            serde_json::from_str(&content).map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+        let mut manifest: ReleaseManifest = serde_json::from_str(&content)
+            .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
 
         // Fill arch from filename when manifest doesn't include it
         for artifact in &mut manifest.artifacts {

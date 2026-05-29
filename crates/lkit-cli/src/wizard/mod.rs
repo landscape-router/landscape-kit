@@ -289,7 +289,11 @@ impl Wizard {
     ///
     /// Renders each step in sequence, handling back-navigation and quit.
     /// Returns `Ok(Some(config))` on completion, `Ok(None)` if the user quit.
-    pub fn run(&mut self, nics: &[nic_scan::NicInfo], home: PathBuf) -> anyhow::Result<Option<InstallConfig>> {
+    pub fn run(
+        &mut self,
+        nics: &[nic_scan::NicInfo],
+        home: PathBuf,
+    ) -> anyhow::Result<Option<InstallConfig>> {
         let mut last_error: Option<String> = None;
 
         loop {
@@ -357,8 +361,8 @@ impl Wizard {
 ///
 /// Called after each wizard step to give the user a running summary.
 pub fn print_status_table(collected: &CollectedConfig) {
-    use comfy_table::presets::UTF8_FULL;
     use comfy_table::Table;
+    use comfy_table::presets::UTF8_FULL;
 
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);

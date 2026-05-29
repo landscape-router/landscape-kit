@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use comfy_table::presets::UTF8_FULL;
 use comfy_table::Table;
+use comfy_table::presets::UTF8_FULL;
 
 use lkit_app::install::InstallExecutor;
 use lkit_app::source::{SourceResolver, build_release_sources, load_lkit_toml};
@@ -140,10 +140,7 @@ pub(crate) async fn run(
         .collect();
 
     if to_download.is_empty() {
-        anyhow::bail!(
-            "当前系统 ({}) 没有可用的制品",
-            system_target.target_str
-        );
+        anyhow::bail!("当前系统 ({}) 没有可用的制品", system_target.target_str);
     }
 
     // ── Wizard (TTY) or generate minimal config (non-TTY) ──
@@ -184,11 +181,8 @@ pub(crate) async fn run(
 
         // Try download with fallback (max 2 sources)
         let mut download_success = false;
-        let sources_to_try = build_fallback_chain(
-            &selected_source_name,
-            probe_results.as_deref(),
-            &resolver,
-        );
+        let sources_to_try =
+            build_fallback_chain(&selected_source_name, probe_results.as_deref(), &resolver);
 
         for source in &sources_to_try {
             eprintln!("  下载中 (源: {})...", source.name());
@@ -258,9 +252,11 @@ pub(crate) async fn run(
 }
 
 /// Load all available sources: CLI single-source > lkit.toml > built-in defaults.
-fn load_all_sources(manager_home: &PathBuf) -> anyhow::Result<Vec<lkit_core::SourceConfig>> {
-    let user_sources = load_lkit_toml(manager_home)
-        .map_err(|e| anyhow::anyhow!("加载 lkit.toml 失败: {e}"))?;
+fn load_all_sources(
+    manager_home: &std::path::Path,
+) -> anyhow::Result<Vec<lkit_core::SourceConfig>> {
+    let user_sources =
+        load_lkit_toml(manager_home).map_err(|e| anyhow::anyhow!("加载 lkit.toml 失败: {e}"))?;
 
     if user_sources.is_empty() {
         Ok(default_sources())
@@ -356,12 +352,7 @@ async fn download_artifacts(
         let final_path = dest_dir.join(&artifact.name);
 
         downloader
-            .download(
-                &url,
-                &tmp_path,
-                &DownloadConfig::default(),
-                Some(&progress),
-            )
+            .download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress))
             .await?;
 
         // SHA-256 verification
