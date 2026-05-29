@@ -165,6 +165,7 @@ pub(crate) async fn run(
             .find(|n| n.name != "lo")
             .map(|n| n.name.clone())
             .ok_or_else(|| anyhow::anyhow!("未找到可用网卡"))?;
+        eprintln!("  ⚠ 非交互模式：admin 密码为空，请在安装后通过 Web UI 设置。");
         generate_minimal_config(&wan_nic, args.web_port, &resolved_tag, &landscape_home)?
     } else {
         anyhow::bail!("非交互模式需要 --init-file 或 --source + --version");

@@ -13,7 +13,7 @@ pub struct CliProgress {
 /// Template is a compile-time constant string — `with_template` only fails
 /// on malformed templates, which cannot happen here.
 fn build_style() -> ProgressStyle {
-    // SAFETY: template is a valid indicatif format string.
+    // Template is a compile-time constant; cannot be malformed.
     match ProgressStyle::with_template(
         "  {msg:<24} {bytes:>10} / {total_bytes:<10} [{bar:30}] {bytes_per_sec}",
     ) {

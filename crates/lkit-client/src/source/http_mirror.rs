@@ -165,6 +165,10 @@ fn parse_shasum_file(content: &str, tag: &str) -> Result<ReleaseManifest, Source
             }
             let (hash, name) = line.split_once(char::is_whitespace)?;
             let name = name.trim();
+            // Skip SHASUM files (they reference themselves)
+            if name.contains("SHASUM") {
+                return None;
+            }
             let arch = lkit_core::parse_arch(name).map(|info| {
                 if info.musl {
                     format!("{}-musl", info.arch)

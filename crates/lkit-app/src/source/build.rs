@@ -58,6 +58,7 @@ fn build_one(
                 .map_err(|_| "S3 源需要 AWS_ACCESS_KEY_ID 环境变量")?;
             let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
                 .map_err(|_| "S3 源需要 AWS_SECRET_ACCESS_KEY 环境变量")?;
+            // Reuse `region` field as S3 key prefix (S3Source hardcodes region to "auto")
             let prefix = cfg.region.as_deref().unwrap_or("");
             let src = S3Source::new(
                 &cfg.name,
