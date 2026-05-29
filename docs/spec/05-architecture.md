@@ -29,7 +29,7 @@
 
 ### 2.3 镜像工具栈（`lkit-mirror`）
 
-- `aws-sdk-s3`：S3/R2 兼容存储上传
+- `rusty-s3`：S3/R2 兼容存储上传/读取
 - `axum`：轻量 HTTP 服务（`lkit mirror serve`），由 `lkit-cli` 传入 tokio runtime handle
 
 ### 2.4 后续可扩展
@@ -60,7 +60,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
    └──→ lkit-mirror (lib) ─────────────────────────┘
             │
             ├── reqwest
-            └── aws-sdk-s3
+            └── rusty-s3
 ```
 
 - `lkit-mirror` 是 lib crate，不依赖 `lkit-app` / `lkit-client`
@@ -82,7 +82,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
 
 ### 3.3 核心 Trait 抽象
 
-`lkit-core` 定义三个 async trait 用于依赖注入：
+`lkit-core` 定义五个 async trait 用于依赖注入（`MirrorTarget` 定义在 `lkit-mirror`）：
 
 | Trait | 用途 | 定义位置 | 实现位置 |
 |-------|------|---------|---------|

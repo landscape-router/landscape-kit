@@ -99,6 +99,7 @@ pub enum MirrorError {
 | `GithubSource` | GitHub Releases API | `lkit-client` |
 | `HttpMirrorSource` | 任意 HTTP(S) 镜像，含 R2 公开桶 | `lkit-client` |
 | `LocalSource` | 本地目录 / `file://` 路径 | `lkit-client` |
+| `S3Source` | S3 兼容存储（含 R2 私有桶） | `lkit-client` |
 
 ### 3.4 源配置模型
 
@@ -122,6 +123,14 @@ name = "local"
 type = "local"
 path = "/srv/landscape-mirror/landscape"
 priority = 30
+
+[[sources]]
+name = "r2-private"
+type = "s3"
+endpoint = "https://<account>.r2.cloudflarestorage.com"
+bucket = "releases"
+region = "auto"
+priority = 25
 ```
 
 `base_url` / `path` 指向产品目录（含产品名前缀），而非镜像根目录。`type = "github"` 自动处理路径。
@@ -386,7 +395,13 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
    └──→ lkit-mirror (lib) ─────────────────────────┘
             │
             ├── reqwest
-            └── rusty-s3
+            ├── rusty-s3
+            ├── axum
+            ├── sha2
+            ├── tokio
+            ├── tracing
+            ├── serde / serde_json
+            └── tempfile
 ```
 
 `lkit-mirror` 是 lib crate，不依赖 `lkit-app` / `lkit-client`，仅依赖 `lkit-core`。
@@ -416,10 +431,13 @@ lkit mirror list [OPTIONS]       # 列出已同步版本
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--source` | `github` | 同步源类型：`github` / `http` / `local` |
+| `--source` | `github` | 同步源类型：`github` / `http` / `local` / `s3` |
 | `--repo` | `ThisSeanZhang/landscape` | GitHub 仓库（`owner/repo`），`source=github` 时使用 |
 | `--source-url` | — | HTTP 镜像源地址，`source=http` 时必需 |
 | `--source-path` | — | 本地源路径，`source=local` 时必需 |
+| `--source-bucket` | — | S3 bucket 名，`source=s3` 时必需 |
+| `--source-endpoint` | — | S3 endpoint URL，`source=s3` 时必需 |
+| `--source-region` | `auto` | S3 region，`source=s3` 时可选 |
 | `--prefix` | repo 名（如 `landscape`） | 目标产品目录，自动从 repo 名推导，MUST NOT 包含尾斜杠 |
 
 三种源类型支持不同场景：
@@ -435,6 +453,12 @@ lkit mirror sync --source http --source-url https://mirror.internal/landscape \
 # 从本地镜像（mirror-to-mirror，无需重新下载）
 lkit mirror sync --source local --source-path /srv/mirror/landscape \
   --target s3 --bucket my-mirror --endpoint https://...
+
+# 从 S3/R2 私有桶（mirror-to-mirror via S3）
+AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=yyy \
+lkit mirror sync --source s3 --source-bucket src-mirror \
+  --source-endpoint https://<account>.r2.cloudflarestorage.com \
+  --target local --path /srv/mirror --tag v0.19.2
 ```
 
 通过 `--repo` 可以同步任意产品的 release。例如同步 lkit 自身的 release：
@@ -465,6 +489,8 @@ lkit mirror sync --repo landscape-router/landscape-kit --prefix lkit \
 
 **增量同步**：默认跳过目标中已存在的版本（以 `<tag>/release-manifest.json` 存在且所有制品文件完整为准）。`--force` 强制重新同步覆盖已有版本。
 
+**S3 共享参数**：`--s3-prefix`（默认 `""`）控制 S3 bucket 内的 key 前缀，适用于 sync/verify/list 三个子命令。例如 `--s3-prefix "mirrors/prod"` 会将所有 key 放在 `mirrors/prod/` 下。
+
 ```bash
 # 同步最新 release 到本地目录（默认行为）
 lkit mirror sync --target local --path /srv/mirror
@@ -489,7 +515,7 @@ lkit mirror sync --target local --path /srv/mirror --tag v0.19.2 --force
 
 sync 流程：
 
-1. 根据范围参数，调用 GitHub API 获取候选 release 列表
+1. 根据范围参数，通过 `ReleaseSource` trait 获取候选 release 列表（GitHub API / HTTP 请求 / 本地目录读取 / S3 list，取决于源类型）
 2. 检查目标中已存在的版本，跳过完整的（除非 `--force`）
 3. 对每个版本：
    a. 获取源的制品列表（manifest 或 API）
@@ -513,13 +539,13 @@ lkit mirror serve --path /srv/mirror
 lkit mirror serve --path /srv/mirror --port 9090 --bind 127.0.0.1
 ```
 
-服务端点：
+serve 是通用静态文件服务器，镜像目录中所有文件均可通过 HTTP 访问。常见 URL 模式：
 
-| 路径 | 说明 |
+| URL 模式 | 说明 |
 |------|------|
-| `GET /<prefix>/latest` | 返回指定产品的最新 tag |
-| `GET /<prefix>/<tag>/release-manifest.json` | 返回指定制品版本 manifest |
-| `GET /<prefix>/<tag>/<artifact>` | 下载指定制品 |
+| `/<prefix>/latest` | 纯文本文件，内容为最新 tag |
+| `/<prefix>/<tag>/release-manifest.json` | 指定版本的制品 manifest |
+| `/<prefix>/<tag>/<artifact>` | 单个制品文件 |
 
 其中 `<prefix>` 为产品目录名（如 `landscape`、`landscape-kit`）。
 
