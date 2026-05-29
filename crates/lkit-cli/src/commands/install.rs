@@ -260,6 +260,13 @@ pub(crate) async fn run(
     }
 
     // ── Install (TOML + systemd + lock) ──
+    // Delete old lock so landscape-webserver reads landscape_init.toml on startup.
+    // Without this, --force reinstalls write a new init TOML that is never read
+    // because the old lock tells landscape-webserver to skip it.
+    let lock = landscape_home.join("landscape_init.lock");
+    if lock.exists() {
+        tokio::fs::remove_file(&lock).await?;
+    }
     let report = executor.execute(&config, &landscape_home).await?;
 
     // ── Health check ──
