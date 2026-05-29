@@ -68,9 +68,9 @@ pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
 
     // Indent the whole table by 2 spaces.
     for line in table.to_string().lines() {
-        println!("  {line}");
+        eprintln!("  {line}");
     }
-    println!();
+    eprintln!();
 
     let options = &["确认安装", "返回修改", "退出"];
     let selection = Select::new()
