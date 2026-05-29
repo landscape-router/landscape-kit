@@ -35,16 +35,29 @@ pub enum SourceType {
     Local,
 }
 
-/// Built-in default source (GitHub, lowest priority).
-pub fn default_source() -> SourceConfig {
-    SourceConfig {
-        name: "github-default".into(),
-        source_type: SourceType::Github,
-        priority: 100,
-        base_url: None,
-        repo: Some("ThisSeanZhang/landscape".into()),
-        path: None,
-    }
+/// Built-in default sources.
+///
+/// Returns R2 (priority 10) and GitHub (priority 100) as fallback.
+/// User-configured sources in `lkit.toml` take precedence.
+pub fn default_sources() -> Vec<SourceConfig> {
+    vec![
+        SourceConfig {
+            name: "r2-official".into(),
+            source_type: SourceType::Http,
+            priority: 10,
+            base_url: Some("https://pub-1e112154ee8a4b909c204b5325aba1f3.r2.dev/landscape".into()),
+            repo: None,
+            path: None,
+        },
+        SourceConfig {
+            name: "github-default".into(),
+            source_type: SourceType::Github,
+            priority: 100,
+            base_url: None,
+            repo: Some("ThisSeanZhang/landscape".into()),
+            path: None,
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -52,11 +65,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_source_is_github_with_lowest_priority() -> Result<(), Box<dyn std::error::Error>> {
-        let src = default_source();
-        assert_eq!(src.source_type, SourceType::Github);
-        assert_eq!(src.priority, 100);
-        assert_eq!(src.repo.as_deref(), Some("ThisSeanZhang/landscape"));
+    fn default_sources_includes_r2_and_github() -> Result<(), Box<dyn std::error::Error>> {
+        let sources = default_sources();
+        assert_eq!(sources.len(), 2);
+        // R2 is first (higher priority)
+        assert_eq!(sources[0].name, "r2-official");
+        assert_eq!(sources[0].source_type, SourceType::Http);
+        assert_eq!(sources[0].priority, 10);
+        assert!(sources[0].base_url.as_deref().unwrap().contains("r2.dev"));
+        // GitHub is fallback
+        assert_eq!(sources[1].name, "github-default");
+        assert_eq!(sources[1].source_type, SourceType::Github);
+        assert_eq!(sources[1].priority, 100);
         Ok(())
     }
 

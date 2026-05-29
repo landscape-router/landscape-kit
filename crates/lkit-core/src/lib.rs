@@ -14,6 +14,7 @@ pub use error::CoreError;
 pub use models::{DiagnosticCheck, DiagnosticResult, ServiceState, ServiceStatus};
 pub use paths::{LandscapePaths, ManagerPaths};
 pub use source::{
-    Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError, SourceType, default_source,
+    Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError, SourceType,
+    default_sources,
 };
 pub use traits::{LkitClient, LogReader, ServiceManager};
