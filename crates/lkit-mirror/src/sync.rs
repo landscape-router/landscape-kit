@@ -5,7 +5,7 @@ use std::path::Path;
 
 use lkit_core::{ReleaseManifest, ReleaseSource};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 
 use crate::error::MirrorError;
@@ -101,6 +101,22 @@ pub async fn run_sync(
             }
         }
 
+        // Check if the release has any artifacts before syncing.
+        match source.get_artifacts(tag).await {
+            Ok(manifest) if manifest.artifacts.is_empty() => {
+                tracing::warn!("skipping {tag} — no downloadable artifacts");
+                skipped.push(tag.clone());
+                continue;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                tracing::warn!("failed to sync {tag}: {msg}");
+                failed.push((tag.clone(), msg));
+                continue;
+            }
+            _ => {}
+        }
+
         info!("syncing {tag}...");
 
         match sync_version(&client, source, target, &config.prefix, tag).await {
@@ -116,20 +132,68 @@ pub async fn run_sync(
         }
     }
 
-    // Update latest pointer if we synced anything
-    if let Some(latest) = max_tag(&synced) {
-        let latest_key = format!("{}/latest", config.prefix);
-        target
-            .upload(&latest_key, latest.as_bytes())
-            .await
-            .map_err(|e| MirrorError::UploadFailed(format!("failed to update latest: {e}")))?;
-    }
+    // Update latest pointer: follow upstream's notion of "latest".
+    // Only write the pointer if the upstream latest actually exists on target
+    // (either just synced or was already there).
+    update_latest_pointer(source, target, &config.prefix, &synced, &skipped).await?;
 
     Ok(SyncResult {
         synced,
         skipped,
         failed,
     })
+}
+
+/// Update the latest pointer on target, following upstream's notion of "latest".
+///
+/// Queries `source.latest_tag()`. If that tag exists on target (either just synced
+/// or already present), writes it as the latest pointer. Falls back to semver-max
+/// of synced tags if the source does not support `latest_tag()`.
+async fn update_latest_pointer(
+    source: &dyn ReleaseSource,
+    target: &dyn MirrorTarget,
+    prefix: &str,
+    synced: &[String],
+    skipped: &[String],
+) -> Result<(), MirrorError> {
+    if synced.is_empty() && skipped.is_empty() {
+        return Ok(());
+    }
+
+    let latest_key = format!("{prefix}/latest");
+
+    // Try upstream first.
+    if let Ok(upstream_latest) = source.latest_tag().await {
+        let on_target = synced.contains(&upstream_latest) || skipped.contains(&upstream_latest);
+        if on_target {
+            target
+                .upload(&latest_key, upstream_latest.as_bytes())
+                .await
+                .map_err(|e| MirrorError::UploadFailed(format!("failed to update latest: {e}")))?;
+            return Ok(());
+        }
+        // Upstream latest not on target — don't touch the pointer.
+        return Ok(());
+    }
+
+    // Fallback: semver max of newly synced tags.
+    if let Some(new_max) = max_tag(synced) {
+        let should_update = match target.read(&latest_key).await {
+            Ok(data) => {
+                let existing = String::from_utf8_lossy(&data).trim().to_string();
+                compare_tags(new_max, &existing) == std::cmp::Ordering::Greater
+            }
+            Err(_) => true,
+        };
+        if should_update {
+            target
+                .upload(&latest_key, new_max.as_bytes())
+                .await
+                .map_err(|e| MirrorError::UploadFailed(format!("failed to update latest: {e}")))?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Resolve tags based on sync scope.
@@ -289,7 +353,20 @@ async fn sync_version(
 /// Stream-download a URL to a temp file, computing SHA-256 on the fly.
 ///
 /// Returns the SHA-256 hex digest of the downloaded content.
+/// Supports `http(s)://` (via reqwest) and `file://` (local copy).
 async fn download_to_file(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+) -> Result<String, MirrorError> {
+    if url.starts_with("file://") {
+        return download_file_url(url, dest).await;
+    }
+    download_http(client, url, dest).await
+}
+
+/// Download via HTTP(S) with streaming SHA-256.
+async fn download_http(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
@@ -317,6 +394,39 @@ async fn download_to_file(
     }
 
     file.flush().await.map_err(MirrorError::Io)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Copy a local file (file:// URL) to dest, computing SHA-256 on the fly.
+async fn download_file_url(url: &str, dest: &Path) -> Result<String, MirrorError> {
+    let path_str = url.strip_prefix("file://").unwrap_or(url);
+    let src_path = Path::new(path_str);
+
+    let mut src = tokio::fs::File::open(src_path).await.map_err(|e| {
+        MirrorError::Io(std::io::Error::new(
+            e.kind(),
+            format!("failed to open {path_str}: {e}"),
+        ))
+    })?;
+    let mut dst = tokio::fs::File::create(dest).await?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 8192];
+
+    loop {
+        let n = src.read(&mut buf).await.map_err(|e| {
+            MirrorError::Io(std::io::Error::new(
+                e.kind(),
+                format!("failed to read {path_str}: {e}"),
+            ))
+        })?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        dst.write_all(&buf[..n]).await.map_err(MirrorError::Io)?;
+    }
+
+    dst.flush().await.map_err(MirrorError::Io)?;
     Ok(format!("{:x}", hasher.finalize()))
 }
 

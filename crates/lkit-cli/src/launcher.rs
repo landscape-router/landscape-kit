@@ -16,6 +16,7 @@ struct MenuItem {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum MenuAction {
     Dispatch(Commands),
     NotImplemented(&'static str),

@@ -16,6 +16,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// 查看服务状态
     Status(StatusArgs),
@@ -128,6 +129,15 @@ pub enum MirrorAction {
 
 #[derive(Args, Clone)]
 pub struct MirrorSyncArgs {
+    /// 同步源类型
+    #[arg(long, value_enum, default_value_t = SyncSourceType::Github)]
+    pub source: SyncSourceType,
+    /// HTTP 镜像源地址 (source=http)
+    #[arg(long)]
+    pub source_url: Option<String>,
+    /// 本地源路径 (source=local)
+    #[arg(long)]
+    pub source_path: Option<String>,
     /// GitHub 仓库 (owner/repo)
     #[arg(long, default_value = "ThisSeanZhang/landscape")]
     pub repo: String,
@@ -227,6 +237,17 @@ pub struct MirrorListArgs {
 pub enum MirrorTargetType {
     Local,
     S3,
+}
+
+/// 同步源类型。
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum SyncSourceType {
+    /// 从 GitHub Releases 同步
+    Github,
+    /// 从 HTTP(S) 镜像同步
+    Http,
+    /// 从本地目录同步
+    Local,
 }
 
 #[cfg(test)]

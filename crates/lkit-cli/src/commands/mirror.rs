@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lkit_client::GithubSource;
+use lkit_client::{GithubSource, HttpMirrorSource, LocalSource};
 use lkit_core::ReleaseSource;
 use lkit_mirror::serve::{self, ServeConfig};
 use lkit_mirror::sync::{self, SyncConfig, SyncScope};
@@ -12,7 +12,7 @@ use lkit_mirror::target::local::LocalTarget;
 
 use crate::cli::{
     MirrorAction, MirrorArgs, MirrorListArgs, MirrorServeArgs, MirrorSyncArgs, MirrorTargetType,
-    MirrorVerifyArgs,
+    MirrorVerifyArgs, SyncSourceType,
 };
 
 /// Dispatch mirror subcommand.
@@ -50,8 +50,13 @@ async fn run_sync(args: MirrorSyncArgs) -> anyhow::Result<()> {
 
     // DI assembly: build concrete source from args
     let http_client = reqwest::Client::builder().user_agent("lkit").build()?;
-    let source: Arc<dyn ReleaseSource> =
-        Arc::new(GithubSource::new("sync-source", &args.repo, http_client)?);
+    let source = build_source(
+        &args.source,
+        &args.repo,
+        args.source_url.as_deref(),
+        args.source_path.as_deref(),
+        http_client,
+    )?;
     let target = build_target(
         &args.target,
         args.path.as_deref(),
@@ -196,4 +201,35 @@ fn build_target(
 
 fn extract_repo_name(repo: &str) -> &str {
     repo.split('/').next_back().unwrap_or(repo)
+}
+
+/// Build a release source from CLI arguments.
+fn build_source(
+    source_type: &SyncSourceType,
+    repo: &str,
+    source_url: Option<&str>,
+    source_path: Option<&str>,
+    http_client: reqwest::Client,
+) -> anyhow::Result<Arc<dyn ReleaseSource>> {
+    match source_type {
+        SyncSourceType::Github => Ok(Arc::new(GithubSource::new(
+            "sync-source",
+            repo,
+            http_client,
+        )?)),
+        SyncSourceType::Http => {
+            let url = source_url
+                .ok_or_else(|| anyhow::anyhow!("--source-url is required for http source"))?;
+            Ok(Arc::new(HttpMirrorSource::new(
+                "http-mirror",
+                url,
+                http_client,
+            )))
+        }
+        SyncSourceType::Local => {
+            let path = source_path
+                .ok_or_else(|| anyhow::anyhow!("--source-path is required for local source"))?;
+            Ok(Arc::new(LocalSource::new("local-source", path)))
+        }
+    }
 }
