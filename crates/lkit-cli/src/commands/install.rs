@@ -151,6 +151,7 @@ pub(crate) async fn run(
         let mut wizard = Wizard::new(single_nic);
         wizard.collected.source_name = Some(selected_source_name.clone());
         wizard.collected.version = Some(resolved_tag.clone());
+        wizard.collected.https_port = args.https_port;
         match wizard.run(&nics, landscape_home.clone())? {
             Some(c) => c,
             None => {
@@ -167,7 +168,13 @@ pub(crate) async fn run(
             .map(|n| n.name.clone())
             .ok_or_else(|| anyhow::anyhow!("未找到可用网卡"))?;
         eprintln!("  ⚠ 非交互模式：admin 密码为空，请在安装后通过 Web UI 设置。");
-        generate_minimal_config(&wan_nic, args.web_port, &resolved_tag, &landscape_home)?
+        generate_minimal_config(
+            &wan_nic,
+            args.web_port,
+            args.https_port,
+            &resolved_tag,
+            &landscape_home,
+        )?
     } else {
         anyhow::bail!("非交互模式需要 --init-file 或 --source + --version");
     };
@@ -229,7 +236,8 @@ pub(crate) async fn run(
     }
 
     // ── Create symlinks (systemd expects arch-less names) ──
-    let webserver_src = landscape_home.join(format!("landscape-webserver-{}", system_target.target_str));
+    let webserver_src =
+        landscape_home.join(format!("landscape-webserver-{}", system_target.target_str));
     let webserver_dst = landscape_home.join("landscape-webserver");
     if webserver_src.exists() && !webserver_dst.exists() {
         std::os::unix::fs::symlink(&webserver_src, &webserver_dst)?;
@@ -248,7 +256,7 @@ pub(crate) async fn run(
     let report = executor.execute(&config, &landscape_home).await?;
 
     // ── Health check ──
-    let healthy = health_check(config.landscape.web_port, 20).await;
+    let healthy = health_check(config.landscape.web_port, config.landscape.https_port, 20).await;
 
     // ── Report ──
     print_report(&report, &system_target, &to_download);
@@ -402,7 +410,10 @@ async fn download_artifacts(
     }
 
     if !shasum_map.is_empty() {
-        eprintln!("  已加载 SHASUM256sum.txt ({} 个 checksum)", shasum_map.len());
+        eprintln!(
+            "  已加载 SHASUM256sum.txt ({} 个 checksum)",
+            shasum_map.len()
+        );
     }
 
     // Phase 2: Download remaining artifacts with verification.
@@ -416,16 +427,15 @@ async fn download_artifacts(
             .await?;
 
         // SHA-256 verification: prefer SHASUM, fall back to manifest, warn if neither.
-        let expected = shasum_map
-            .get(&artifact.name)
-            .map(|s| s.as_str())
-            .or_else(|| {
-                if artifact.sha256.is_empty() {
+        let expected =
+            shasum_map
+                .get(&artifact.name)
+                .map(|s| s.as_str())
+                .or(if artifact.sha256.is_empty() {
                     None
                 } else {
                     Some(artifact.sha256.as_str())
-                }
-            });
+                });
 
         match expected {
             Some(expected_hash) => {
@@ -451,12 +461,13 @@ async fn download_artifacts(
     Ok(())
 }
 
-/// Health check — poll the web UI endpoint.
+/// Health check — poll the web UI endpoints (HTTP and optionally HTTPS).
 ///
-/// Returns `true` if healthy within `max_attempts` × 3 seconds.
+/// Returns `true` if any endpoint is healthy within `max_attempts` × 3 seconds.
 /// Returns `false` (with warning) on timeout — does not error.
-async fn health_check(port: u16, max_attempts: u32) -> bool {
-    let url = format!("http://127.0.0.1:{port}");
+async fn health_check(port: u16, https_port: Option<u16>, max_attempts: u32) -> bool {
+    let http_url = format!("http://127.0.0.1:{port}");
+    let https_url = https_port.map(|p| format!("https://127.0.0.1:{p}"));
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .redirect(reqwest::redirect::Policy::none())
@@ -468,10 +479,19 @@ async fn health_check(port: u16, max_attempts: u32) -> bool {
     };
 
     for attempt in 0..max_attempts {
-        match client.get(&url).send().await {
+        // Check HTTP
+        match client.get(&http_url).send().await {
             Ok(resp) if resp.status().is_success() => return true,
             Ok(_) => {}
             Err(_) => {}
+        }
+        // Check HTTPS (if configured)
+        if let Some(ref url) = https_url {
+            match client.get(url.as_str()).send().await {
+                Ok(resp) if resp.status().is_success() => return true,
+                Ok(_) => {}
+                Err(_) => {}
+            }
         }
         if attempt + 1 < max_attempts {
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -484,6 +504,7 @@ async fn health_check(port: u16, max_attempts: u32) -> bool {
 fn generate_minimal_config(
     wan_nic: &str,
     port: u16,
+    https_port: Option<u16>,
     tag: &str,
     home: &std::path::Path,
 ) -> anyhow::Result<InstallConfig> {
@@ -497,6 +518,7 @@ fn generate_minimal_config(
         },
         landscape: LandscapeServiceConfig {
             web_port: port,
+            https_port,
             admin_user: "root".to_string(),
             admin_pass: String::new(),
         },

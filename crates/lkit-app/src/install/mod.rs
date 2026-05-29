@@ -11,13 +11,16 @@ use crate::error::AppError;
 use crate::install::config_gen::generate_init_toml;
 
 /// Systemd unit file template for Landscape service.
+///
+/// `{https_arg}` is replaced with ` --https <port>` when HTTPS is enabled,
+/// or an empty string when HTTPS is disabled.
 const SYSTEMD_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Landscape Router
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={home}/landscape-webserver --config-dir {home} --web {home}/static
+ExecStart={home}/landscape-webserver --config-dir {home} --web {home}/static{https_arg}
 Restart=on-failure
 RestartSec=5
 
@@ -58,8 +61,13 @@ impl InstallExecutor {
         home: &Path,
     ) -> Result<InstallReport, AppError> {
         let toml_content = generate_init_toml(config)?;
-        self.apply(home, &toml_content, config.landscape.web_port)
-            .await
+        self.apply(
+            home,
+            &toml_content,
+            config.landscape.web_port,
+            config.landscape.https_port,
+        )
+        .await
     }
 
     /// Execute installation with a pre-existing TOML string (`--init-file` mode).
@@ -80,7 +88,13 @@ impl InstallExecutor {
             .and_then(|v| v.as_integer())
             .ok_or_else(|| AppError::ConfigGeneration("TOML missing config.web.port".to_string()))?
             as u16;
-        self.apply(home, toml_content, web_port).await
+        let https_port = parsed
+            .get("config")
+            .and_then(|c| c.get("web"))
+            .and_then(|w| w.get("https_port"))
+            .and_then(|v| v.as_integer())
+            .map(|p| p as u16);
+        self.apply(home, toml_content, web_port, https_port).await
     }
 
     /// Shared installation logic: write TOML + systemd + start service.
@@ -89,6 +103,7 @@ impl InstallExecutor {
         home: &Path,
         toml_content: &str,
         web_port: u16,
+        https_port: Option<u16>,
     ) -> Result<InstallReport, AppError> {
         // 1. Create HOME
         self.host_installer
@@ -111,7 +126,13 @@ impl InstallExecutor {
 
         // 4. Write systemd unit
         let systemd_path = PathBuf::from("/etc/systemd/system/landscape.service");
-        let unit_content = SYSTEMD_UNIT_TEMPLATE.replace("{home}", &home.to_string_lossy());
+        let https_arg = match https_port {
+            Some(port) => format!(" --https {port}"),
+            None => String::new(),
+        };
+        let unit_content = SYSTEMD_UNIT_TEMPLATE
+            .replace("{home}", &home.to_string_lossy())
+            .replace("{https_arg}", &https_arg);
         self.host_installer
             .write_file(&systemd_path, unit_content.as_bytes())
             .await
@@ -255,6 +276,7 @@ mod tests {
             },
             landscape: LandscapeServiceConfig {
                 web_port: 6300,
+                https_port: None,
                 admin_user: "root".to_string(),
                 admin_pass: "secret".to_string(),
             },

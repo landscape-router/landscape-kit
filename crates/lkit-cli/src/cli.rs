@@ -98,6 +98,10 @@ pub struct InstallArgs {
     #[arg(long, default_value_t = 6300)]
     pub web_port: u16,
 
+    /// HTTPS listen port (optional, default 6443 if landscape-webserver supports it).
+    #[arg(long)]
+    pub https_port: Option<u16>,
+
     /// Force reinstall even if already installed.
     #[arg(long)]
     pub force: bool,

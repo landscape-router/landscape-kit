@@ -69,6 +69,8 @@ pub struct CollectedConfig {
     pub lan_mask: Option<u8>,
     /// Step 5: web UI port (default 6300).
     pub web_port: Option<u16>,
+    /// Step 5: HTTPS listen port (None = disabled).
+    pub https_port: Option<u16>,
     /// Step 5: admin username (default "root").
     pub admin_user: Option<String>,
     /// Step 5: admin password.
@@ -273,6 +275,7 @@ impl Wizard {
             },
             landscape: LandscapeServiceConfig {
                 web_port,
+                https_port: self.collected.https_port,
                 admin_user,
                 admin_pass,
             },
@@ -393,6 +396,9 @@ pub fn print_status_table(collected: &CollectedConfig) {
         table.add_row(vec!["服务"]);
         if let Some(port) = collected.web_port {
             table.add_row(vec![format!("Web 端口: {port}")]);
+        }
+        if let Some(port) = collected.https_port {
+            table.add_row(vec![format!("HTTPS 端口: {port}")]);
         }
         if let Some(user) = &collected.admin_user {
             table.add_row(vec![format!("管理员: {user}")]);
