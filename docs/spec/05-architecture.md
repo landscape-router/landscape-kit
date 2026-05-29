@@ -89,7 +89,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
 | `LkitClient` | Landscape API 调用 | `lkit-core` | `lkit-client`（`LandscapeClient`） |
 | `ServiceManager` | systemd 服务管理 | `lkit-core` | `lkit-client`（`SystemdManager`） |
 | `LogReader` | 日志文件读取 | `lkit-core` | `lkit-client`（`FileLogReader`） |
-| `ReleaseSource` | release 源抽象 | `lkit-core` | `lkit-client`（`GithubSource` / `HttpMirrorSource` / `LocalSource`） |
+| `ReleaseSource` | release 源抽象 | `lkit-core` | `lkit-client`（`GithubSource` / `HttpMirrorSource` / `LocalSource` / `S3Source`） |
 | `ArtifactDownloader` | 制品下载 | `lkit-core` | `lkit-client`（`HttpDownloader`） |
 | `MirrorTarget` | 镜像目标存储 | `lkit-mirror` | `lkit-mirror`（`S3Target` / `LocalTarget`） |
 

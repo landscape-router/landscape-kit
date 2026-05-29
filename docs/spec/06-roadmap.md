@@ -11,7 +11,9 @@ M1-M3 按实现顺序推进，每个里程碑产出可运行的功能增量。M4
 
 ## 3. 首版里程碑
 
-### M1：CLI 骨架与通用启动器
+状态：[done] 已完成 | [wip] 进行中 | [ ] 未开始
+
+### M1：CLI 骨架与通用启动器 [done]
 
 - `clap` 命令骨架，所有子命令可注册
 - `lkit`（无参数）通用启动器主菜单
@@ -19,29 +21,32 @@ M1-M3 按实现顺序推进，每个里程碑产出可运行的功能增量。M4
 - `lkit diagnose` 基础能力（含 doctor 原检查项）
 - 本机入口可在无网络场景下使用
 
-### M2：安装与初始化
+### M2：安装与初始化 [wip]
 
-- `lkit install` 命令（无参数进入通用启动器，`--init-file` 非交互安装）
-- release source 解析（单源：GitHub Releases）
-- binary + `static.zip` 获取与校验（`SHASUM256sum.txt`）
-- systemd 安装流程
-- 自动初始化与首次启动检查
-- 引导式网络配置
+- `lkit install` 命令（无参数进入通用启动器，`--init-file` 非交互安装）[wip] CLI 骨架已就绪，业务逻辑待实现
+- release source 解析 [done] 已由 M2.5 的多源架构覆盖（GitHub / HTTP / local / S3）
+- binary + `static.zip` 获取与校验 [done] 已在 `lkit mirror sync` + `verify` 中实现
+- systemd 安装流程 [wip]
+- 自动初始化与首次启动检查 [wip]
+- 引导式网络配置 [wip]
 
-### M2.5：多源下载与镜像工具
+### M2.5：多源下载与镜像工具 [done]
 
 - `ReleaseSource` trait 与 `SourceResolver`（多源并发探测）
 - `ArtifactDownloader` trait（文件级并行 + 可选单文件分块）
 - `release-manifest.json` schema 实现
 - `lkit-mirror` lib crate + `lkit mirror` 内置子命令
 - Target 抽象：`LocalTarget` + `S3Target`（R2/MinIO/S3）
-- `lkit mirror sync`：范围控制（`--tag` / `--latest N` / `--since` / `--all`）+ 增量同步 + `--repo` 多产品支持
+- Source 抽象：`GithubSource` + `HttpMirrorSource` + `LocalSource` + `S3Source`
+- `lkit mirror sync`：范围控制（`--tag` / `--latest N` / `--since` / `--all`）+ 增量同步
 - `lkit mirror serve` / `verify` / `list`
+- `--source` 参数（github/http/local/s3）支持 mirror-to-mirror
+- 内置默认源：R2 HTTP 优先 + GitHub fallback
 - 镜像目录规范文档
-- `lkit install` 切换到多源并发探测下载
+- `lkit install` 切换到多源并发探测下载 [wip] SourceResolver 已实现，install 用例待接入
 - 详细设计见 [09-release-source.md](./09-release-source.md)
 
-### M3：备份、恢复与更新回滚
+### M3：备份、恢复与更新回滚 [ ]
 
 - `config export`
 - `backup create/list/restore/delete`
@@ -56,15 +61,15 @@ M1-M3 按实现顺序推进，每个里程碑产出可运行的功能增量。M4
 
 - [ ] `lkit install --init-file` 非交互安装完整可用
 - [ ] `lkit install --source` / `--version` 参数化安装完整可用
-- [ ] `lkit status` 输出格式稳定（表格/JSON）
+- [x] `lkit status` 输出格式稳定（表格/JSON）
 - [ ] `lkit backup create/list/restore/delete` 完整可用
 - [ ] `lkit upgrade check/apply` + `lkit rollback list/apply` 完整可用
-- [ ] `lkit diagnose` 检查项完整、输出格式稳定
-- [ ] `lkit mirror sync --target local` 完整可用
-- [ ] `lkit mirror sync --target s3` 完整可用（R2/MinIO）
-- [ ] `lkit mirror verify` 校验准确性确认
-- [ ] `lkit mirror list` 输出格式稳定
-- [ ] `lkit mirror serve` HTTP 服务可正常提供制品下载
+- [x] `lkit diagnose` 检查项完整、输出格式稳定
+- [x] `lkit mirror sync --target local` 完整可用
+- [x] `lkit mirror sync --target s3` 完整可用（R2/MinIO）
+- [x] `lkit mirror verify` 校验准确性确认
+- [x] `lkit mirror list` 输出格式稳定
+- [x] `lkit mirror serve` HTTP 服务可正常提供制品下载
 - [ ] 所有命令返回一致的退出码
 - [ ] 非 TTY 下所有命令可无交互执行
 
