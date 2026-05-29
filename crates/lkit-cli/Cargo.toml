@@ -24,6 +24,7 @@ toml = { workspace = true }
 reqwest = { workspace = true }
 ctrlc = { workspace = true }
 libc = { workspace = true }
+nix = { workspace = true }
 comfy-table = { workspace = true }
 indicatif = { workspace = true }
 zip = { workspace = true }

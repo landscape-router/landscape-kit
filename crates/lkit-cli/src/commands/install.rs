@@ -1,5 +1,6 @@
 //! `lkit install` — guided installation of Landscape.
 
+use std::io::IsTerminal;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ pub(crate) async fn run(
     let manager_home = manager_home();
 
     // Pre-flight: require root (effective UID 0).
-    if unsafe { libc::geteuid() } != 0 {
+    if nix::unistd::geteuid().as_raw() != 0 {
         anyhow::bail!("需要 root 权限，请使用 sudo 运行。");
     }
 
@@ -75,7 +76,7 @@ pub(crate) async fn run(
 
     // ── System detection ──
     let system_target = lkit_core::detect()?;
-    let is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) != 0 };
+    let is_tty = std::io::stdin().is_terminal();
 
     eprintln!("  系统: {}", system_target.target_str);
 
@@ -172,13 +173,16 @@ pub(crate) async fn run(
     };
 
     // ── Download ──
-    let target_binary = format!("landscape-webserver-{}", system_target.arch);
-    let need_download = !landscape_home.join(&target_binary).exists() || args.force;
+    let webserver_filename = format!("landscape-webserver-{}", system_target.target_str);
+    let need_download = !landscape_home.join(&webserver_filename).exists() || args.force;
+
+    tokio::fs::create_dir_all(&landscape_home).await?;
 
     if need_download {
         let downloader = HttpDownloader::with_defaults()?;
         let tmp_dir = ManagerPaths::new(manager_home).tmp_dir;
         tokio::fs::create_dir_all(&tmp_dir).await?;
+        eprintln!("  下载临时目录: {}", tmp_dir.display());
 
         // Try download with fallback (max 2 sources)
         let mut download_success = false;
@@ -279,7 +283,7 @@ fn select_source_interactive(
             (i + 1).to_string(),
             r.source_name.clone(),
             r.resolved_tag.clone(),
-            format!("{:?}", r.latency),
+            format!("{}ms", r.latency.as_millis()),
         ]);
     }
 
@@ -357,7 +361,9 @@ async fn download_artifacts(
             .await?;
 
         // SHA-256 verification
-        if !artifact.sha256.is_empty() {
+        if artifact.sha256.is_empty() {
+            eprintln!("  ⚠ {} 无 checksum，跳过校验", artifact.name);
+        } else {
             let hash = sha256_file(&tmp_path).await?;
             if hash != artifact.sha256 {
                 anyhow::bail!(
