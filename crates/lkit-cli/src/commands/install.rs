@@ -51,6 +51,15 @@ pub(crate) async fn run(
         );
     }
 
+    // --force: stop running service before reinstalling
+    if args.force && lock_path.exists() {
+        eprintln!("  停止 landscape 服务...");
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["stop", "landscape.service"])
+            .status()
+            .await;
+    }
+
     let executor = InstallExecutor::new(host_installer);
 
     // --init-file mode
