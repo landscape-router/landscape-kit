@@ -133,6 +133,13 @@ impl InstallExecutor {
             .await
             .map_err(AppError::Core)?;
 
+        // 6. Create lock file (after successful systemd enable+start)
+        let lock_path = home.join("landscape_init.lock");
+        self.host_installer
+            .write_file(&lock_path, b"")
+            .await
+            .map_err(AppError::Core)?;
+
         Ok(InstallReport {
             home: home.to_path_buf(),
             web_url: format!("http://127.0.0.1:{web_port}"),
@@ -284,6 +291,7 @@ mod tests {
                 "daemon_reload",
                 "enable_service",
                 "start_service",
+                "write_file", // landscape_init.lock
             ]
         );
         Ok(())
