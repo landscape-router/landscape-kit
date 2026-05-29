@@ -54,7 +54,7 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
             member["name"] = toml_edit::value(nic);
             member["create_dev_type"] = toml_edit::value("no_need_to_create");
             member["controller_name"] = toml_edit::value("br_lan");
-            member["zone_type"] = toml_edit::value("lan");
+            member["zone_type"] = toml_edit::value("undefined");
             member["enable_in_boot"] = toml_edit::value(true);
             member["wifi_mode"] = toml_edit::value("undefined");
             ifaces.push(member);
@@ -263,7 +263,7 @@ mod tests {
         let br_member = &parsed["ifaces"][1];
         assert_eq!(br_member["name"].as_str(), Some("eth1"));
         assert_eq!(br_member["controller_name"].as_str(), Some("br_lan"));
-        assert_eq!(br_member["zone_type"].as_str(), Some("lan"));
+        assert_eq!(br_member["zone_type"].as_str(), Some("undefined"));
 
         // bridge iface
         let br = &parsed["ifaces"][3];
