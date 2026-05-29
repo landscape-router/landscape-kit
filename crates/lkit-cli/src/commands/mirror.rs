@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lkit_client::{GithubSource, HttpMirrorSource, LocalSource};
+use lkit_client::{GithubSource, HttpMirrorSource, LocalSource, S3Source};
 use lkit_core::ReleaseSource;
 use lkit_mirror::serve::{self, ServeConfig};
 use lkit_mirror::sync::{self, SyncConfig, SyncScope};
@@ -55,6 +55,9 @@ async fn run_sync(args: MirrorSyncArgs) -> anyhow::Result<()> {
         &args.repo,
         args.source_url.as_deref(),
         args.source_path.as_deref(),
+        args.source_bucket.as_deref(),
+        args.source_endpoint.as_deref(),
+        &config.prefix,
         http_client,
     )?;
     let target = build_target(
@@ -204,11 +207,15 @@ fn extract_repo_name(repo: &str) -> &str {
 }
 
 /// Build a release source from CLI arguments.
+#[allow(clippy::too_many_arguments)]
 fn build_source(
     source_type: &SyncSourceType,
     repo: &str,
     source_url: Option<&str>,
     source_path: Option<&str>,
+    source_bucket: Option<&str>,
+    source_endpoint: Option<&str>,
+    prefix: &str,
     http_client: reqwest::Client,
 ) -> anyhow::Result<Arc<dyn ReleaseSource>> {
     match source_type {
@@ -230,6 +237,25 @@ fn build_source(
             let path = source_path
                 .ok_or_else(|| anyhow::anyhow!("--source-path is required for local source"))?;
             Ok(Arc::new(LocalSource::new("local-source", path)))
+        }
+        SyncSourceType::S3 => {
+            let bucket = source_bucket
+                .ok_or_else(|| anyhow::anyhow!("--source-bucket is required for s3 source"))?;
+            let endpoint = source_endpoint
+                .ok_or_else(|| anyhow::anyhow!("--source-endpoint is required for s3 source"))?;
+            let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+                .map_err(|_| anyhow::anyhow!("AWS_ACCESS_KEY_ID env var required for s3 source"))?;
+            let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY").map_err(|_| {
+                anyhow::anyhow!("AWS_SECRET_ACCESS_KEY env var required for s3 source")
+            })?;
+            Ok(Arc::new(S3Source::new(
+                "s3-source",
+                endpoint,
+                bucket,
+                &access_key,
+                &secret_key,
+                prefix,
+            )?))
         }
     }
 }

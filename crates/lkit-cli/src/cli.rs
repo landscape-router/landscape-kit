@@ -138,6 +138,12 @@ pub struct MirrorSyncArgs {
     /// 本地源路径 (source=local)
     #[arg(long)]
     pub source_path: Option<String>,
+    /// S3 bucket (source=s3)
+    #[arg(long)]
+    pub source_bucket: Option<String>,
+    /// S3 endpoint (source=s3)
+    #[arg(long)]
+    pub source_endpoint: Option<String>,
     /// GitHub 仓库 (owner/repo)
     #[arg(long, default_value = "ThisSeanZhang/landscape")]
     pub repo: String,
@@ -248,6 +254,8 @@ pub enum SyncSourceType {
     Http,
     /// 从本地目录同步
     Local,
+    /// 从 S3 兼容存储同步
+    S3,
 }
 
 #[cfg(test)]
