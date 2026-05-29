@@ -84,7 +84,23 @@ impl ReleaseSource for LocalSource {
                 }
             })?;
 
-        serde_json::from_str(&content).map_err(|e| SourceError::InvalidManifest(e.to_string()))
+        let mut manifest: ReleaseManifest =
+            serde_json::from_str(&content).map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+
+        // Fill arch from filename when manifest doesn't include it
+        for artifact in &mut manifest.artifacts {
+            if artifact.arch.is_none() {
+                artifact.arch = lkit_core::parse_arch(&artifact.name).map(|info| {
+                    if info.musl {
+                        format!("{}-musl", info.arch)
+                    } else {
+                        info.arch
+                    }
+                });
+            }
+        }
+
+        Ok(manifest)
     }
 
     fn artifact_url(&self, tag: &str, name: &str) -> String {

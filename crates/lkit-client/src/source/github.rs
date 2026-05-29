@@ -169,11 +169,21 @@ impl ReleaseSource for GithubSource {
         let artifacts = release
             .assets
             .into_iter()
-            .map(|a| Artifact {
-                name: a.name,
-                sha256: String::new(),
-                size: a.size,
-                arch: None,
+            .filter(|a| !a.name.contains("SHASUM"))
+            .map(|a| {
+                let arch = lkit_core::parse_arch(&a.name).map(|info| {
+                    if info.musl {
+                        format!("{}-musl", info.arch)
+                    } else {
+                        info.arch
+                    }
+                });
+                Artifact {
+                    name: a.name,
+                    sha256: String::new(),
+                    size: a.size,
+                    arch,
+                }
             })
             .collect();
 
