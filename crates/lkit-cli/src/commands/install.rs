@@ -239,18 +239,16 @@ pub(crate) async fn run(
     let static_zip = landscape_home.join("static.zip");
     if static_zip.exists() {
         eprintln!("  解压 static.zip...");
-        let static_dir = landscape_home.join("static");
-        tokio::fs::create_dir_all(&static_dir).await?;
         let file = std::fs::File::open(&static_zip)?;
         let mut archive = zip::ZipArchive::new(file)?;
-        archive.extract(&static_dir)?;
+        archive.extract(&landscape_home)?;
     }
 
     // ── Install (TOML + systemd + lock) ──
     let report = executor.execute(&config, &landscape_home).await?;
 
     // ── Health check ──
-    let healthy = health_check(config.landscape.web_port, 10).await;
+    let healthy = health_check(config.landscape.web_port, 20).await;
 
     // ── Report ──
     print_report(&report, &system_target, &to_download);
