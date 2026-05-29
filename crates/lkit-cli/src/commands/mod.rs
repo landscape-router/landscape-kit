@@ -5,6 +5,7 @@ mod config;
 mod diagnose;
 mod install;
 mod logs;
+mod mirror;
 mod rollback;
 pub(crate) mod self_cmd;
 mod service;
@@ -31,6 +32,7 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
         Commands::Rollback(_) => rollback::run().await,
         Commands::Config(_) => config::run().await,
         Commands::SelfCmd(args) => self_cmd::run(args).await,
+        Commands::Mirror(args) => mirror::run(args).await,
     };
 
     if let Err(ref e) = result

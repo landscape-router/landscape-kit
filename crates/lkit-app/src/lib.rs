@@ -3,6 +3,7 @@
 pub mod diagnose;
 pub mod logs;
 pub mod service;
+pub mod source;
 pub mod status;
 
 mod error;

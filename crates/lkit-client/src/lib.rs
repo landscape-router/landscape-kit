@@ -1,9 +1,13 @@
-//! lkit-client: external I/O implementations — API client, systemd, log reader.
+//! lkit-client: external I/O implementations — API client, systemd, log reader, downloader.
 
 mod client;
+pub mod download;
 mod log_reader;
+pub mod source;
 mod systemd;
 
 pub use client::LandscapeClient;
+pub use download::HttpDownloader;
 pub use log_reader::FileLogReader;
+pub use source::{GithubSource, HttpMirrorSource, LocalSource};
 pub use systemd::SystemdManager;

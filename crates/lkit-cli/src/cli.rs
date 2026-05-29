@@ -15,7 +15,8 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
-#[derive(Subcommand, Clone, Copy)]
+#[derive(Subcommand, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// 查看服务状态
     Status(StatusArgs),
@@ -38,6 +39,8 @@ pub enum Commands {
     /// 自身管理
     #[command(name = "self")]
     SelfCmd(SelfArgs),
+    /// 镜像管理
+    Mirror(MirrorArgs),
 }
 
 #[derive(Args, Clone, Copy)]
@@ -106,6 +109,147 @@ pub enum SelfAction {
     UpgradeCheck,
 }
 
+#[derive(Args, Clone)]
+pub struct MirrorArgs {
+    #[command(subcommand)]
+    pub action: MirrorAction,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum MirrorAction {
+    /// 从上游同步 release 制品
+    Sync(MirrorSyncArgs),
+    /// 启动 HTTP 文件服务
+    Serve(MirrorServeArgs),
+    /// 校验镜像完整性
+    Verify(MirrorVerifyArgs),
+    /// 列出已同步版本
+    List(MirrorListArgs),
+}
+
+#[derive(Args, Clone)]
+pub struct MirrorSyncArgs {
+    /// 同步源类型
+    #[arg(long, value_enum, default_value_t = SyncSourceType::Github)]
+    pub source: SyncSourceType,
+    /// HTTP 镜像源地址 (source=http)
+    #[arg(long)]
+    pub source_url: Option<String>,
+    /// 本地源路径 (source=local)
+    #[arg(long)]
+    pub source_path: Option<String>,
+    /// GitHub 仓库 (owner/repo)
+    #[arg(long, default_value = "ThisSeanZhang/landscape")]
+    pub repo: String,
+    /// 目标产品目录
+    #[arg(long)]
+    pub prefix: Option<String>,
+    /// 目标类型
+    #[arg(long, value_enum)]
+    pub target: MirrorTargetType,
+    /// 本地路径 (target=local)
+    #[arg(long)]
+    pub path: Option<String>,
+    /// S3 bucket (target=s3)
+    #[arg(long)]
+    pub bucket: Option<String>,
+    /// S3 endpoint (target=s3)
+    #[arg(long)]
+    pub endpoint: Option<String>,
+    /// S3 bucket 内的 key 前缀 (target=s3)
+    #[arg(long, default_value = "")]
+    pub s3_prefix: String,
+    /// 同步指定版本
+    #[arg(long)]
+    pub tag: Option<String>,
+    /// 同步最近 N 个版本
+    #[arg(long)]
+    pub latest: Option<u32>,
+    /// 同步某版本之后的所有版本
+    #[arg(long)]
+    pub since: Option<String>,
+    /// 同步全部历史版本
+    #[arg(long)]
+    pub all: bool,
+    /// 强制重新同步
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Args, Clone)]
+pub struct MirrorServeArgs {
+    /// 本地镜像路径
+    #[arg(long)]
+    pub path: String,
+    /// 监听端口
+    #[arg(long, default_value_t = 8080)]
+    pub port: u16,
+    /// 绑定地址
+    #[arg(long, default_value = "0.0.0.0")]
+    pub bind: String,
+}
+
+#[derive(Args, Clone)]
+pub struct MirrorVerifyArgs {
+    /// 目标类型
+    #[arg(long, value_enum)]
+    pub target: MirrorTargetType,
+    /// 产品目录前缀
+    #[arg(long, default_value = "landscape")]
+    pub prefix: String,
+    /// 本地路径
+    #[arg(long)]
+    pub path: Option<String>,
+    /// S3 bucket
+    #[arg(long)]
+    pub bucket: Option<String>,
+    /// S3 endpoint
+    #[arg(long)]
+    pub endpoint: Option<String>,
+    /// S3 bucket 内的 key 前缀 (target=s3)
+    #[arg(long, default_value = "")]
+    pub s3_prefix: String,
+}
+
+#[derive(Args, Clone)]
+pub struct MirrorListArgs {
+    /// 目标类型
+    #[arg(long, value_enum)]
+    pub target: MirrorTargetType,
+    /// 产品目录前缀
+    #[arg(long, default_value = "landscape")]
+    pub prefix: String,
+    /// 本地路径
+    #[arg(long)]
+    pub path: Option<String>,
+    /// S3 bucket
+    #[arg(long)]
+    pub bucket: Option<String>,
+    /// S3 endpoint
+    #[arg(long)]
+    pub endpoint: Option<String>,
+    /// S3 bucket 内的 key 前缀 (target=s3)
+    #[arg(long, default_value = "")]
+    pub s3_prefix: String,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum MirrorTargetType {
+    Local,
+    S3,
+}
+
+/// 同步源类型。
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum SyncSourceType {
+    /// 从 GitHub Releases 同步
+    Github,
+    /// 从 HTTP(S) 镜像同步
+    Http,
+    /// 从本地目录同步
+    Local,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +309,17 @@ mod tests {
             assert!(matches!(args.action, SelfAction::Version));
         } else {
             return Err("expected SelfCmd".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_mirror_sync() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["lkit", "mirror", "sync", "--target", "local"])?;
+        if let Some(Commands::Mirror(args)) = cli.command {
+            assert!(matches!(args.action, MirrorAction::Sync(_)));
+        } else {
+            return Err("expected Mirror".into());
         }
         Ok(())
     }

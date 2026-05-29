@@ -29,6 +29,9 @@ pub trait ReleaseSource: Send + Sync {
     /// 源的显示名称，用于日志和诊断
     fn name(&self) -> &str;
 
+    /// 解析最新版本标签。GitHub 调用 /releases/latest，HTTP/本地读 latest 文件。
+    async fn latest_tag(&self) -> Result<String, SourceError>;
+
     /// 列出可用版本
     async fn list_versions(&self) -> Result<Vec<String>, SourceError>;
 
@@ -54,6 +57,8 @@ pub enum SourceError {
     Network(String),
     #[error("IO 错误: {0}")]
     Io(String),
+    #[error("配置错误: {0}")]
+    Config(String),
     #[error("版本 {tag} 不存在")]
     VersionNotFound { tag: String },
     #[error("制品 {name} 不存在")]
@@ -80,6 +85,10 @@ pub enum MirrorError {
     GitHubApi(String),
     #[error("目标存储错误: {0}")]
     TargetError(String),
+    #[error("源错误: {0}")]
+    Source(#[from] lkit_core::SourceError),
+    #[error("序列化错误: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 ```
 
@@ -155,6 +164,7 @@ pub struct ProbeResult {
     pub source_name: String,
     pub latency: Duration,
     pub manifest: ReleaseManifest,
+    pub resolved_tag: String,
 }
 
 /// 多源解析器
@@ -163,11 +173,11 @@ pub struct SourceResolver {
 }
 
 impl SourceResolver {
-    /// 并发探测所有源，选延迟最低的
-    pub async fn resolve(&self, tag: Option<&str>) -> Result<ProbeResult, SourceError>;
+    /// 并发探测所有源，返回所有成功结果按延迟排序（最快的在前）
+    pub async fn resolve(&self, tag: Option<&str>) -> Result<Vec<ProbeResult>, SourceError>;
 
-    /// 获取选中源的制品下载 URL
-    pub fn artifact_url(&self, result: &ProbeResult, artifact_name: &str) -> String;
+    /// 按名称获取源（用于下载制品）
+    pub fn get_source(&self, name: &str) -> Option<&Arc<dyn ReleaseSource>>;
 }
 ```
 
@@ -265,6 +275,12 @@ impl SourceResolver {
 - HTTP 源：`<base_url>/<prefix>/latest` 文件，内容为纯文本 tag（如 `v0.19.2`）
 - GitHub 源：通过 GitHub API 获取 latest release
 - 本地源：`<path>/<prefix>/latest` 文件
+
+`lkit mirror sync` 更新 `latest` 指针时，优先跟随 **上游源的 `latest_tag()`**（对于 GitHub 源即 `/releases/latest`，对于 HTTP/本地源即 `latest` 文件）。只有当上游 latest 版本实际存在于目标存储中时（刚刚同步成功或此前已存在），才写入指针。这确保：
+
+- 同步旧版本不会将 `latest` 降级
+- mirror 的 `latest` 与上游保持一致
+- 当上游源不支持 `latest_tag()` 时，fallback 到 semver 语义比较（按 `vMAJOR.MINOR.PATCH` 逐段比较数值大小）
 
 ## 5. 镜像目录规范
 
@@ -370,7 +386,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
    └──→ lkit-mirror (lib) ─────────────────────────┘
             │
             ├── reqwest
-            └── aws-sdk-s3
+            └── rusty-s3
 ```
 
 `lkit-mirror` 是 lib crate，不依赖 `lkit-app` / `lkit-client`，仅依赖 `lkit-core`。
@@ -379,7 +395,7 @@ lkit-cli ──→ lkit-app ──→ lkit-client ──→ lkit-core
 
 只发布一个二进制 `lkit`，镜像管理功能内置：
 
-- S3 SDK（aws-sdk-s3）直接打包进 `lkit`
+- S3 客户端（rusty-s3）直接打包进 `lkit`
 - `lkit mirror sync/serve/verify/list` 作为内置子命令
 - 不需要 feature flag，不需要单独发布 `lkit-mirror` 二进制
 
@@ -400,8 +416,26 @@ lkit mirror list [OPTIONS]       # 列出已同步版本
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--repo` | `ThisSeanZhang/landscape` | GitHub 仓库（`owner/repo`） |
+| `--source` | `github` | 同步源类型：`github` / `http` / `local` |
+| `--repo` | `ThisSeanZhang/landscape` | GitHub 仓库（`owner/repo`），`source=github` 时使用 |
+| `--source-url` | — | HTTP 镜像源地址，`source=http` 时必需 |
+| `--source-path` | — | 本地源路径，`source=local` 时必需 |
 | `--prefix` | repo 名（如 `landscape`） | 目标产品目录，自动从 repo 名推导，MUST NOT 包含尾斜杠 |
+
+三种源类型支持不同场景：
+
+```bash
+# 从 GitHub（默认）
+lkit mirror sync --target s3 --bucket my-mirror --endpoint https://...
+
+# 从 HTTP 镜像
+lkit mirror sync --source http --source-url https://mirror.internal/landscape \
+  --target local --path /srv/mirror --tag v0.19.2
+
+# 从本地镜像（mirror-to-mirror，无需重新下载）
+lkit mirror sync --source local --source-path /srv/mirror/landscape \
+  --target s3 --bucket my-mirror --endpoint https://...
+```
 
 通过 `--repo` 可以同步任意产品的 release。例如同步 lkit 自身的 release：
 
@@ -457,12 +491,15 @@ sync 流程：
 
 1. 根据范围参数，调用 GitHub API 获取候选 release 列表
 2. 检查目标中已存在的版本，跳过完整的（除非 `--force`）
-3. 下载缺失版本的所有 artifacts 到临时目录
-4. 计算每个文件的 sha256
-5. 生成 `release-manifest.json`
-6. 上传所有文件到目标（保留目录结构）
-7. 更新 `latest` 指针
-8. 清理临时目录
+3. 对每个版本：
+   a. 获取源的制品列表（manifest 或 API）
+   b. 若存在 `SHASUM256sum.txt`，优先下载并解析，获得各制品的参考 sha256
+   c. 流式下载每个制品到临时文件，同时计算 sha256
+   d. 若有 SHASUM 参考值则校验，否则与源 manifest 中的 sha256 校验
+   e. 上传制品到目标（保留目录结构），SHA256 值写入 manifest
+   f. 生成并上传 `release-manifest.json`（含完整 sha256）
+   g. 清理临时文件
+4. 更新 `latest` 指针：查询源的 `latest_tag()`，若该版本存在于目标中则写入；否则不更改（防止旧版本覆盖最新指针）。源不支持 `latest_tag()` 时 fallback 到 semver 比较。
 
 #### serve
 
@@ -542,7 +579,7 @@ pub trait MirrorTarget: Send + Sync {
 | Target | 说明 | 依赖 |
 |--------|------|------|
 | `LocalTarget` | 本地文件系统 | std::fs（tokio 封装） |
-| `S3Target` | S3/R2 兼容存储 | `aws-sdk-s3` |
+| `S3Target` | S3/R2 兼容存储 | `rusty-s3` |
 
 `S3Target` 通过 `--endpoint` 参数支持任意 S3 兼容存储（Cloudflare R2、MinIO、AWS S3 等）。
 

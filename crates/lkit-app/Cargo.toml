@@ -8,6 +8,9 @@ license.workspace = true
 lkit-core = { path = "../lkit-core" }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }
+futures = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
