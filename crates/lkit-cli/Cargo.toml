@@ -26,6 +26,7 @@ ctrlc = { workspace = true }
 libc = { workspace = true }
 comfy-table = { workspace = true }
 indicatif = { workspace = true }
+zip = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -60,6 +60,9 @@ axum = "0.8"
 sha2 = "0.10"
 futures = "0.3"
 
+# Zip
+zip = "2"
+
 # Testing
 tempfile = "3"
 
