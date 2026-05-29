@@ -7,6 +7,7 @@ pub mod install;
 mod models;
 mod paths;
 pub mod source;
+pub mod system_detect;
 mod traits;
 
 pub use download::{
@@ -25,4 +26,5 @@ pub use source::{
     default_sources,
 };
 pub use source::name_parser::{ArchInfo, parse_arch};
+pub use system_detect::{LibcType, SystemTarget, detect};
 pub use traits::{LkitClient, LogReader, ServiceManager};
