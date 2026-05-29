@@ -18,15 +18,21 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
     // version
     doc["version"] = toml_edit::value(&config.landscape_version);
 
-    // [config.auth]
-    doc["config"]["auth"]["admin_user"] = toml_edit::value(&config.landscape.admin_user);
-    doc["config"]["auth"]["admin_pass"] = toml_edit::value(&config.landscape.admin_pass);
+    // [config.auth] — use explicit Table to avoid inline format
+    let mut auth = toml_edit::Table::new();
+    auth["admin_user"] = toml_edit::value(&config.landscape.admin_user);
+    auth["admin_pass"] = toml_edit::value(&config.landscape.admin_pass);
 
-    // [config.web]
-    doc["config"]["web"]["port"] = toml_edit::value(i64::from(config.landscape.web_port));
-    doc["config"]["web"]["https_port"] = toml_edit::value(i64::from(config.landscape.https_port));
-    doc["config"]["web"]["web_root"] =
-        toml_edit::value(format!("{}/static", config.home.display()));
+    // [config.web] — use explicit Table to avoid inline format
+    let mut web = toml_edit::Table::new();
+    web["port"] = toml_edit::value(i64::from(config.landscape.web_port));
+    web["https_port"] = toml_edit::value(i64::from(config.landscape.https_port));
+    web["web_root"] = toml_edit::value(format!("{}/static", config.home.display()));
+
+    let mut cfg = toml_edit::Table::new();
+    cfg["auth"] = toml_edit::Item::Table(auth);
+    cfg["web"] = toml_edit::Item::Table(web);
+    doc["config"] = toml_edit::Item::Table(cfg);
 
     // ── ifaces ──────────────────────────────────────────────────
 
