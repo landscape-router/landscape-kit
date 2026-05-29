@@ -460,6 +460,7 @@ async fn health_check(port: u16, max_attempts: u32) -> bool {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(true)
         .build()
     {
         Ok(c) => c,
