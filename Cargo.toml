@@ -40,6 +40,7 @@ dialoguer = "0.11"
 
 # Config parsing
 toml = "0.8"
+toml_edit = "0.22"
 
 # Mirror / S3
 rusty-s3 = "0.9"
