@@ -24,4 +24,5 @@ pub use source::{
     Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError, SourceType,
     default_sources,
 };
+pub use source::name_parser::{ArchInfo, parse_arch};
 pub use traits::{LkitClient, LogReader, ServiceManager};

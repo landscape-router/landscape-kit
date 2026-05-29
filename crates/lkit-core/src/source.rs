@@ -3,6 +3,7 @@
 pub mod config;
 mod error;
 mod manifest;
+pub mod name_parser;
 mod trait_def;
 
 pub use config::{SourceConfig, SourceType, default_sources};
