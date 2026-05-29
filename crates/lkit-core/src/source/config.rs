@@ -21,6 +21,15 @@ pub struct SourceConfig {
     /// Local filesystem path for local type.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// S3 endpoint URL for s3 type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// S3 bucket name for s3 type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
+    /// S3 region for s3 type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
 }
 
 /// Source type discriminator.
@@ -33,6 +42,8 @@ pub enum SourceType {
     Http,
     /// Local filesystem directory.
     Local,
+    /// S3-compatible object storage.
+    S3,
 }
 
 /// Built-in default sources.
@@ -48,6 +59,9 @@ pub fn default_sources() -> Vec<SourceConfig> {
             base_url: Some("https://pub-1e112154ee8a4b909c204b5325aba1f3.r2.dev/landscape".into()),
             repo: None,
             path: None,
+            endpoint: None,
+            bucket: None,
+            region: None,
         },
         SourceConfig {
             name: "github-default".into(),
@@ -56,6 +70,9 @@ pub fn default_sources() -> Vec<SourceConfig> {
             base_url: None,
             repo: Some("ThisSeanZhang/landscape".into()),
             path: None,
+            endpoint: None,
+            bucket: None,
+            region: None,
         },
     ]
 }
@@ -89,6 +106,28 @@ mod tests {
             base_url: None,
             repo: None,
             path: Some("/srv/mirror".into()),
+            endpoint: None,
+            bucket: None,
+            region: None,
+        };
+        let json = serde_json::to_string(&config)?;
+        let decoded: SourceConfig = serde_json::from_str(&json)?;
+        assert_eq!(config, decoded);
+        Ok(())
+    }
+
+    #[test]
+    fn s3_config_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let config = SourceConfig {
+            name: "s3-test".into(),
+            source_type: SourceType::S3,
+            priority: 5,
+            base_url: None,
+            repo: None,
+            path: None,
+            endpoint: Some("https://xxx.r2.cloudflarestorage.com".into()),
+            bucket: Some("releases".into()),
+            region: Some("auto".into()),
         };
         let json = serde_json::to_string(&config)?;
         let decoded: SourceConfig = serde_json::from_str(&json)?;
