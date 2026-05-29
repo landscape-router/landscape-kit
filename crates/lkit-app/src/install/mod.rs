@@ -256,6 +256,7 @@ mod tests {
                 version: None,
             },
             landscape_version: "0.19.2".to_string(),
+            home: std::path::PathBuf::from("/tmp/test-landscape"),
         }
     }
 

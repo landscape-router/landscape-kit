@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod launcher;
 mod messages;
+mod progress;
 mod wizard;
 
 use std::path::{Path, PathBuf};
@@ -21,6 +22,14 @@ use crate::messages::msg;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Restore terminal cursor on Ctrl+C (dialoguer hides it during prompts).
+    ctrlc::set_handler(|| {
+        use std::io::Write;
+        let _ = std::io::stderr().write_all(b"\x1b[?25h");
+        std::process::exit(130);
+    })
+    .ok();
+
     let cli = Cli::parse();
 
     // Initialize tracing: stderr, default WARN, -v for INFO, -vv for DEBUG.

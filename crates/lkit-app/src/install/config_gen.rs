@@ -24,6 +24,9 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
 
     // [config.web]
     doc["config"]["web"]["port"] = toml_edit::value(i64::from(config.landscape.web_port));
+    doc["config"]["web"]["web_root"] = toml_edit::value(
+        format!("{}/static", config.home.display()),
+    );
 
     // ── ifaces ──────────────────────────────────────────────────
 
@@ -220,6 +223,7 @@ mod tests {
                 version: None,
             },
             landscape_version: "0.19.2".to_string(),
+            home: std::path::PathBuf::from("/tmp/test-landscape"),
         }
     }
 

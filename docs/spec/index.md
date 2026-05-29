@@ -17,6 +17,7 @@
 7. [i18n 设计考量](./07-i18n.md)
 8. [测试策略](./08-testing.md)
 9. [Release Source 与镜像管理](./09-release-source.md)
+10. [安装流程实现规格](./10-install-flow.md)
 
 ## 核心结论
 

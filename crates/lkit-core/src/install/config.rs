@@ -3,6 +3,7 @@
 //! These are pure data types collected by the wizard — no system side effects.
 
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 
 /// Complete installation configuration collected by the wizard.
 ///
@@ -17,7 +18,10 @@ pub struct InstallConfig {
     /// Installation source and version selection.
     pub source: SourceSelection,
     /// Landscape binary version string (from ReleaseManifest.tag, v prefix stripped).
+    /// Written to TOML `version` field. Landscape validates this matches its VERSION constant.
     pub landscape_version: String,
+    /// Landscape HOME directory path (e.g., /root/.landscape-router).
+    pub home: PathBuf,
 }
 
 /// Network setup with WAN and optional LAN configuration.

@@ -4,6 +4,7 @@ pub mod nic_scan;
 pub mod steps;
 
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 
 use lkit_core::{
     InstallConfig, LanSetup, LandscapeServiceConfig, NetworkSetup, SourceSelection, WanMode,
@@ -30,12 +31,14 @@ pub enum StepKind {
 }
 
 /// Navigation action returned by each step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WizardAction {
     /// Proceed to the next step.
     Next,
     /// Go back to the previous step.
     Back,
+    /// Retry the current step with an error message shown under the step header.
+    Retry(String),
     /// Abort the wizard.
     Quit,
 }
@@ -215,8 +218,11 @@ impl Wizard {
 
     /// Build an [`InstallConfig`] from the collected data.
     ///
+    /// `version` is the raw tag from the source (e.g., "v0.19.2").
+    /// `home` is the Landscape HOME directory path.
+    ///
     /// Returns `Err` if required fields are missing.
-    pub fn build_config(&self, landscape_version: String) -> Result<InstallConfig, String> {
+    pub fn build_config(&self, version: String, home: PathBuf) -> Result<InstallConfig, String> {
         let wan_nic = self
             .collected
             .wan_nic
@@ -271,10 +277,11 @@ impl Wizard {
                 admin_pass,
             },
             source: SourceSelection {
-                source_name: self.collected.source_name.clone(),
-                version: self.collected.version.clone(),
+                source_name: None,
+                version: Some(version.clone()),
             },
-            landscape_version,
+            landscape_version: version.strip_prefix('v').unwrap_or(&version).to_string(),
+            home,
         })
     }
 
@@ -282,10 +289,13 @@ impl Wizard {
     ///
     /// Renders each step in sequence, handling back-navigation and quit.
     /// Returns `Ok(Some(config))` on completion, `Ok(None)` if the user quit.
-    pub fn run(&mut self, nics: &[nic_scan::NicInfo]) -> anyhow::Result<Option<InstallConfig>> {
+    pub fn run(&mut self, nics: &[nic_scan::NicInfo], home: PathBuf) -> anyhow::Result<Option<InstallConfig>> {
+        let mut last_error: Option<String> = None;
+
         loop {
             // Skip LAN steps if single-NIC
             if self.should_skip_current() {
+                last_error = None;
                 if !self.advance() {
                     break;
                 }
@@ -293,13 +303,21 @@ impl Wizard {
             }
 
             let kind = self.current_step().kind;
-            // Print step header
             let step_num = self.current_index() + 1;
             let title = self.current_step().title;
             let help = self.current_step().help_text;
+
+            // Unified step header
             eprintln!();
+            eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             eprintln!("  [{step_num}/7] {title}");
             eprintln!("  {help}");
+
+            // Show validation error from previous attempt, if any
+            if let Some(err) = last_error.take() {
+                eprintln!();
+                eprintln!("  ! {err}");
+            }
             eprintln!();
 
             match steps::render_step(kind, &mut self.collected, nics)? {
@@ -313,18 +331,22 @@ impl Wizard {
                         return Ok(None);
                     }
                 }
+                WizardAction::Retry(err_msg) => {
+                    last_error = Some(err_msg);
+                    continue;
+                }
                 WizardAction::Quit => return Ok(None),
             }
         }
 
-        // Build config from collected data
-        // landscape_version will be resolved from release manifest later
+        // Build config from collected data.
+        // Version was pre-resolved by the install command via SourceResolver.
         let version = self
             .collected
             .version
             .clone()
-            .unwrap_or_else(|| "latest".to_string());
-        match self.build_config(version) {
+            .ok_or_else(|| anyhow::anyhow!("未确定版本"))?;
+        match self.build_config(version, home) {
             Ok(config) => Ok(Some(config)),
             Err(e) => Err(anyhow::anyhow!("配置不完整: {e}")),
         }
@@ -463,7 +485,7 @@ mod tests {
     fn test_quit_returns_none() {
         let w = Wizard::new(false);
         // At step 0, if user quits, no config is built.
-        let result = w.build_config("0.19.2".to_string());
+        let result = w.build_config("v0.19.2".to_string(), PathBuf::from("/tmp/test-landscape"));
         assert!(result.is_err(), "should fail with missing fields");
     }
 
@@ -480,7 +502,7 @@ mod tests {
         w.collected.admin_user = Some("root".to_string());
         w.collected.admin_pass = Some("secret".to_string());
 
-        let config = w.build_config("0.19.2".to_string())?;
+        let config = w.build_config("v0.19.2".to_string(), PathBuf::from("/tmp/test-landscape"))?;
         assert_eq!(config.network.wan.iface_name, "eth0");
         assert!(config.network.lan.is_some());
         assert_eq!(config.landscape_version, "0.19.2");

@@ -1,37 +1,18 @@
-//! Step 6: Install source and version selection.
+//! Step 6: Version confirmation (auto-resolved from source).
 
 use anyhow::Result;
-use dialoguer::Input;
 
 use crate::wizard::{CollectedConfig, WizardAction};
 
-/// Render the source and version selection step.
+/// Render the version confirmation step.
 ///
-/// V1: simplified — accepts source name and version tag as text input.
-/// Full source resolution (SourceResolver, latency probing) is deferred to later milestones.
-pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
-    let source: String = Input::new()
-        .with_prompt("安装源名称（留空自动探测）")
-        .allow_empty(true)
-        .default(collected.source_name.clone().unwrap_or_default())
-        .interact()?;
-
-    let version: String = Input::new()
-        .with_prompt("版本号（留空使用最新版）")
-        .allow_empty(true)
-        .default(collected.version.clone().unwrap_or_default())
-        .interact()?;
-
-    collected.source_name = if source.is_empty() {
-        None
-    } else {
-        Some(source)
-    };
-    collected.version = if version.is_empty() {
-        None
-    } else {
-        Some(version)
-    };
-
+/// Version is pre-resolved by the install command via SourceResolver.
+/// This step just displays it and lets the user proceed.
+pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
+    let ver = collected
+        .version
+        .as_deref()
+        .unwrap_or("未确定");
+    println!("  已确定版本: {ver}");
     Ok(WizardAction::Next)
 }

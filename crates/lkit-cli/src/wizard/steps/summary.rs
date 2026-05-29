@@ -1,6 +1,8 @@
 //! Step 7: Summary confirmation.
 
 use anyhow::Result;
+use comfy_table::presets::UTF8_FULL;
+use comfy_table::{ContentArrangement, Table};
 use dialoguer::Select;
 
 use crate::wizard::{CollectedConfig, WizardAction};
@@ -9,11 +11,18 @@ use crate::wizard::{CollectedConfig, WizardAction};
 pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
     let has_lan = !collected.lan_nics.is_empty();
 
-    println!();
-    println!("  ┌─ 安装摘要 ─────────────────────────────────┐");
-    println!("  │ 网络                                       │");
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Disabled)
+        .set_width(46);
 
-    // WAN info
+    // Title row (header gets a heavy ═══ separator below automatically).
+    table.set_header(vec!["安装摘要"]);
+
+    // Section: 网络
+    table.add_row(vec!["网络"]);
+
     let wan_desc = match &collected.wan_mode {
         Some(lkit_core::WanMode::Dhcp) => "DHCP".to_string(),
         Some(lkit_core::WanMode::Static { ipv4, mask, .. }) => {
@@ -23,45 +32,44 @@ pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
         None => "未选择".to_string(),
     };
     let wan_nic = collected.wan_nic.as_deref().unwrap_or("?");
-    println!("  │   WAN: {wan_nic} · {wan_desc:<33}│");
+    table.add_row(vec![format!("  WAN: {wan_nic} · {wan_desc}")]);
 
     if has_lan {
         let lan_nics = collected.lan_nics.join(" + ");
-        println!(
-            "  │   LAN: {lan_nics} → br_lan{:width$}│",
-            "",
-            width = 27_usize.saturating_sub(lan_nics.len())
-        );
+        table.add_row(vec![format!("  LAN: {lan_nics} → br_lan")]);
         if let (Some(gw), Some(mask)) = (collected.lan_gateway, collected.lan_mask) {
-            let gw_str = format!("{gw}/{mask}");
-            println!("  │   网关: {gw_str:<33}│");
+            table.add_row(vec![format!("  网关: {gw}/{mask}")]);
         }
-        println!("  │   DHCP: 自动生成{:width$}│", "", width = 26);
+        table.add_row(vec!["  DHCP: 自动生成"]);
     } else {
-        println!("  │   LAN: 无（单网卡模式）{:width$}│", "", width = 18);
+        table.add_row(vec!["  LAN: 无（单网卡模式）"]);
     }
 
-    println!("  │                                            │");
-    println!("  │ 服务                                       │");
+    // Section: 服务
+    table.add_row(vec!["服务"]);
     let port = collected.web_port.unwrap_or(6300);
     let user = collected.admin_user.as_deref().unwrap_or("root");
-    println!("  │   Web 端口: {port:<29}│");
-    println!("  │   管理员: {user:<31}│");
-    println!("  │                                            │");
-    println!("  │ 安装源                                     │");
+    table.add_row(vec![format!("  Web 端口: {port}")]);
+    table.add_row(vec![format!("  管理员: {user}")]);
+
+    // Section: 安装源
+    table.add_row(vec!["安装源"]);
     let source_display = collected.source_name.as_deref().unwrap_or("自动探测");
     let version_display = collected.version.as_deref().unwrap_or("最新版");
-    println!("  │   来源: {source_display:<33}│");
-    println!("  │   版本: {version_display:<33}│");
-    println!("  │                                            │");
+    table.add_row(vec![format!("  来源: {source_display}")]);
+    table.add_row(vec![format!("  版本: {version_display}")]);
 
+    // Footer note
     if has_lan {
-        println!("  │ NAT、防火墙等高级服务请安装后在 Web UI 配置 │");
+        table.add_row(vec!["NAT、防火墙等高级服务请安装后在 Web UI 配置"]);
     } else {
-        println!("  │ LAN 和高级服务请安装后在 Web UI 配置        │");
+        table.add_row(vec!["LAN 和高级服务请安装后在 Web UI 配置"]);
     }
 
-    println!("  └────────────────────────────────────────────┘");
+    // Indent the whole table by 2 spaces.
+    for line in table.to_string().lines() {
+        println!("  {line}");
+    }
     println!();
 
     let options = &["确认安装", "返回修改", "退出"];

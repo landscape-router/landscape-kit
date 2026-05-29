@@ -42,8 +42,7 @@ pub fn render(collected: &mut CollectedConfig, nics: &[NicInfo]) -> Result<Wizar
         .interact()?;
 
     if selections.is_empty() {
-        eprintln!("  至少选择一个 LAN 网卡");
-        return Ok(WizardAction::Back);
+        return Ok(WizardAction::Retry("至少选择一个 LAN 网卡".into()));
     }
 
     collected.lan_nics = selections
