@@ -13,7 +13,11 @@ pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
         .with_prompt("Web 端口")
         .default(collected.web_port.unwrap_or(6300))
         .validate_with(|input: &u16| -> Result<(), String> {
-            if *input > 0 { Ok(()) } else { Err("端口必须 > 0".to_string()) }
+            if *input > 0 {
+                Ok(())
+            } else {
+                Err("端口必须 > 0".to_string())
+            }
         })
         .interact()?;
 

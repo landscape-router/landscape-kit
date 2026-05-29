@@ -3,6 +3,6 @@
 pub mod config;
 
 pub use config::{
-    InstallConfig, LandscapeServiceConfig, LanSetup, NetworkSetup, SourceSelection, WanMode,
+    InstallConfig, LanSetup, LandscapeServiceConfig, NetworkSetup, SourceSelection, WanMode,
     WanSetup,
 };

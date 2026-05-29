@@ -28,7 +28,9 @@ impl HostInstaller for SystemInstaller {
     }
 
     async fn write_file(&self, path: &Path, contents: &[u8]) -> Result<(), CoreError> {
-        tokio::fs::write(path, contents).await.map_err(CoreError::Io)
+        tokio::fs::write(path, contents)
+            .await
+            .map_err(CoreError::Io)
     }
 
     async fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), CoreError> {
@@ -94,9 +96,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
 
         let installer = SystemInstaller::new();
-        installer
-            .write_file(&file_path, b"hello world")
-            .await?;
+        installer.write_file(&file_path, b"hello world").await?;
 
         let content = tokio::fs::read_to_string(&file_path).await?;
         assert_eq!(content, "hello world");

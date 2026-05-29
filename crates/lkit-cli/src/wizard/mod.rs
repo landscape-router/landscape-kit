@@ -6,7 +6,7 @@ pub mod steps;
 use std::net::Ipv4Addr;
 
 use lkit_core::{
-    InstallConfig, LandscapeServiceConfig, LanSetup, NetworkSetup, SourceSelection, WanMode,
+    InstallConfig, LanSetup, LandscapeServiceConfig, NetworkSetup, SourceSelection, WanMode,
     WanSetup,
 };
 
@@ -151,6 +151,7 @@ impl Wizard {
     }
 
     /// Total number of registered steps (including skipped ones).
+    #[allow(dead_code)]
     pub fn total_steps(&self) -> usize {
         self.steps.len()
     }
@@ -493,7 +494,7 @@ mod tests {
 
     /// build_config succeeds with complete data.
     #[test]
-    fn test_build_config_success() {
+    fn test_build_config_success() -> Result<(), Box<dyn std::error::Error>> {
         let mut w = Wizard::new(false);
         w.collected.wan_nic = Some("eth0".to_string());
         w.collected.lan_nics = vec!["eth1".to_string()];
@@ -504,11 +505,10 @@ mod tests {
         w.collected.admin_user = Some("root".to_string());
         w.collected.admin_pass = Some("secret".to_string());
 
-        let config = w.build_config("0.19.2".to_string());
-        assert!(config.is_ok());
-        let config = config.unwrap();
+        let config = w.build_config("0.19.2".to_string())?;
         assert_eq!(config.network.wan.iface_name, "eth0");
         assert!(config.network.lan.is_some());
         assert_eq!(config.landscape_version, "0.19.2");
+        Ok(())
     }
 }

@@ -149,7 +149,10 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
         dhcp.insert("config", toml_edit::Item::Table(cfg));
 
         dhcp_services.push(dhcp);
-        doc.insert("dhcpv4_services", toml_edit::Item::ArrayOfTables(dhcp_services));
+        doc.insert(
+            "dhcpv4_services",
+            toml_edit::Item::ArrayOfTables(dhcp_services),
+        );
     }
 
     Ok(doc.to_string())
@@ -195,7 +198,7 @@ fn derive_dhcp_pool(gateway: Ipv4Addr, mask: u8) -> Result<(Ipv4Addr, Ipv4Addr),
 mod tests {
     use super::*;
     use lkit_core::{
-        InstallConfig, LandscapeServiceConfig, LanSetup, NetworkSetup, SourceSelection, WanSetup,
+        InstallConfig, LanSetup, LandscapeServiceConfig, NetworkSetup, SourceSelection, WanSetup,
     };
 
     fn base_config() -> InstallConfig {
@@ -267,7 +270,10 @@ mod tests {
         );
 
         // route_lans exists
-        assert_eq!(parsed["route_lans"][0]["iface_name"].as_str(), Some("br_lan"));
+        assert_eq!(
+            parsed["route_lans"][0]["iface_name"].as_str(),
+            Some("br_lan")
+        );
 
         Ok(())
     }
@@ -372,7 +378,10 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::ConfigGeneration(msg) => {
-                assert!(msg.contains("/30"), "message should mention /30, got: {msg}");
+                assert!(
+                    msg.contains("/30"),
+                    "message should mention /30, got: {msg}"
+                );
             }
             other => panic!("expected ConfigGeneration, got: {other}"),
         }

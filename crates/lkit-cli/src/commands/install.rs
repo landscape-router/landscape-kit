@@ -7,8 +7,8 @@ use lkit_app::install::InstallExecutor;
 use lkit_core::HostInstaller;
 
 use crate::cli::InstallArgs;
-use crate::wizard::nic_scan;
 use crate::wizard::Wizard;
+use crate::wizard::nic_scan;
 
 /// Run the install command.
 ///
@@ -82,8 +82,8 @@ fn read_init_file(path: &Path) -> anyhow::Result<lkit_core::InstallConfig> {
         .map_err(|e| anyhow::anyhow!("无法读取 {}: {e}", path.display()))?;
 
     // Validate TOML syntax
-    let _parsed: toml::Value = toml::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("TOML 解析失败: {e}"))?;
+    let _parsed: toml::Value =
+        toml::from_str(&content).map_err(|e| anyhow::anyhow!("TOML 解析失败: {e}"))?;
 
     // Extract version for InstallConfig (the executor will generate its own TOML)
     let version = _parsed

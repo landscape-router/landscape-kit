@@ -27,7 +27,11 @@ pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
 
     if has_lan {
         let lan_nics = collected.lan_nics.join(" + ");
-        println!("  │   LAN: {lan_nics} → br_lan{:width$}│", "", width = 27_usize.saturating_sub(lan_nics.len()));
+        println!(
+            "  │   LAN: {lan_nics} → br_lan{:width$}│",
+            "",
+            width = 27_usize.saturating_sub(lan_nics.len())
+        );
         if let (Some(gw), Some(mask)) = (collected.lan_gateway, collected.lan_mask) {
             let gw_str = format!("{gw}/{mask}");
             println!("  │   网关: {gw_str:<33}│");

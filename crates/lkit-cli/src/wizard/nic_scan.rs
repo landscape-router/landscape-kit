@@ -12,13 +12,12 @@ pub struct NicInfo {
     /// Current IP address if available.
     pub current_ip: Option<String>,
     /// Whether the interface is operationally up.
+    #[allow(dead_code)]
     pub is_up: bool,
 }
 
 /// Prefixes of virtual/excluded interfaces.
-const EXCLUDED_PREFIXES: &[&str] = &[
-    "lo", "docker", "veth", "br-", "virbr", "tun", "tap", "wg",
-];
+const EXCLUDED_PREFIXES: &[&str] = &["lo", "docker", "veth", "br-", "virbr", "tun", "tap", "wg"];
 
 /// Scan `/sys/class/net/` for physical network interfaces.
 pub fn scan_nics() -> Vec<NicInfo> {
@@ -104,10 +103,7 @@ mod tests {
     #[test]
     fn test_scan_reads_mac() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        setup_sysfs(
-            dir.path(),
-            &[("enp0s3", "08:00:27:c9:38:ab", "up")],
-        );
+        setup_sysfs(dir.path(), &[("enp0s3", "08:00:27:c9:38:ab", "up")]);
 
         let nics = scan_nics_at(dir.path());
         assert_eq!(nics.len(), 1);

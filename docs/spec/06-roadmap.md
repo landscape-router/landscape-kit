@@ -21,14 +21,14 @@ M1-M3 按实现顺序推进，每个里程碑产出可运行的功能增量。M4
 - `lkit diagnose` 基础能力（含 doctor 原检查项）
 - 本机入口可在无网络场景下使用
 
-### M2：安装与初始化 [wip]
+### M2：安装与初始化 [done]
 
-- `lkit install` 命令（无参数进入通用启动器，`--init-file` 非交互安装）[wip] CLI 骨架已就绪，业务逻辑待实现
+- `lkit install` 命令（无参数进入引导式 Wizard，`--init-file` 非交互安装）[done]
 - release source 解析 [done] 已由 M2.5 的多源架构覆盖（GitHub / HTTP / local / S3）
 - binary + `static.zip` 获取与校验 [done] 已在 `lkit mirror sync` + `verify` 中实现
-- systemd 安装流程 [wip]
-- 自动初始化与首次启动检查 [wip]
-- 引导式网络配置 [wip]
+- systemd 安装流程 [done] InstallExecutor + systemd unit 模板
+- 自动初始化与首次启动检查 [done] landscape_init.toml 生成 + 权限保护
+- 引导式网络配置 [done] 7 步可回退 Wizard（WAN/LAN 选择、IP 模式、网关、服务、源、确认）
 
 ### M2.5：多源下载与镜像工具 [done]
 
@@ -59,7 +59,7 @@ M1-M3 按实现顺序推进，每个里程碑产出可运行的功能增量。M4
 
 ### M4：验收检查清单
 
-- [ ] `lkit install --init-file` 非交互安装完整可用
+- [x] `lkit install --init-file` 非交互安装完整可用
 - [ ] `lkit install --source` / `--version` 参数化安装完整可用
 - [x] `lkit status` 输出格式稳定（表格/JSON）
 - [ ] `lkit backup create/list/restore/delete` 完整可用

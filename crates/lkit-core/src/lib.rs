@@ -14,14 +14,14 @@ pub use download::{
 };
 pub use error::CoreError;
 pub use host::HostInstaller;
+pub use install::{
+    InstallConfig, LanSetup, LandscapeServiceConfig, NetworkSetup, SourceSelection, WanMode,
+    WanSetup,
+};
 pub use models::{DiagnosticCheck, DiagnosticResult, ServiceState, ServiceStatus};
 pub use paths::{LandscapePaths, ManagerPaths};
 pub use source::{
     Artifact, ReleaseManifest, ReleaseSource, SourceConfig, SourceError, SourceType,
     default_sources,
-};
-pub use install::{
-    InstallConfig, LandscapeServiceConfig, LanSetup, NetworkSetup, SourceSelection, WanMode,
-    WanSetup,
 };
 pub use traits::{LkitClient, LogReader, ServiceManager};

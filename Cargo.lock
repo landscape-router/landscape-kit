@@ -1064,6 +1064,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml",
+ "toml_edit",
  "tracing",
 ]
 
@@ -1080,6 +1082,7 @@ dependencies = [
  "lkit-mirror",
  "reqwest",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",

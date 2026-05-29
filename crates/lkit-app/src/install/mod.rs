@@ -64,20 +64,20 @@ impl InstallExecutor {
         self.host_installer
             .create_dir_all(home)
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         // 3. Write landscape_init.toml
         let init_toml_path = home.join("landscape_init.toml");
         self.host_installer
             .write_file(&init_toml_path, toml_content.as_bytes())
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         // 4. Set permissions 0600
         self.host_installer
             .set_permissions(&init_toml_path, 0o600)
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         // 5. Write systemd unit
         let systemd_path = PathBuf::from("/etc/systemd/system/landscape.service");
@@ -85,23 +85,23 @@ impl InstallExecutor {
         self.host_installer
             .write_file(&systemd_path, unit_content.as_bytes())
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         // 6. Systemd lifecycle
         self.host_installer
             .daemon_reload()
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         self.host_installer
             .enable_service("landscape.service")
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         self.host_installer
             .start_service("landscape.service")
             .await
-            .map_err(|e| AppError::Core(e))?;
+            .map_err(AppError::Core)?;
 
         let lan_ip = config
             .network
@@ -124,7 +124,10 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use lkit_core::{CoreError, LandscapeServiceConfig, LanSetup, NetworkSetup, SourceSelection, WanMode, WanSetup};
+    use lkit_core::{
+        CoreError, LanSetup, LandscapeServiceConfig, NetworkSetup, SourceSelection, WanMode,
+        WanSetup,
+    };
 
     /// Records calls in order for verification.
     struct MockHostInstaller {
@@ -155,7 +158,10 @@ mod tests {
     #[async_trait]
     impl HostInstaller for MockHostInstaller {
         async fn create_dir_all(&self, _path: &Path) -> Result<(), CoreError> {
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("create_dir_all".to_string());
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("create_dir_all".to_string());
             Ok(())
         }
 
@@ -165,27 +171,42 @@ mod tests {
             if self.fail_on_write_n == Some(*count) {
                 return Err(CoreError::Internal("mock write failure".to_string()));
             }
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("write_file".to_string());
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("write_file".to_string());
             Ok(())
         }
 
         async fn set_permissions(&self, _path: &Path, _mode: u32) -> Result<(), CoreError> {
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("set_permissions".to_string());
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("set_permissions".to_string());
             Ok(())
         }
 
         async fn daemon_reload(&self) -> Result<(), CoreError> {
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("daemon_reload".to_string());
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("daemon_reload".to_string());
             Ok(())
         }
 
         async fn enable_service(&self, _unit: &str) -> Result<(), CoreError> {
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("enable_service".to_string());
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("enable_service".to_string());
             Ok(())
         }
 
         async fn start_service(&self, _unit: &str) -> Result<(), CoreError> {
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("start_service".to_string());
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("start_service".to_string());
             Ok(())
         }
     }
@@ -234,9 +255,9 @@ mod tests {
             calls.as_slice(),
             &[
                 "create_dir_all",
-                "write_file",     // landscape_init.toml
+                "write_file", // landscape_init.toml
                 "set_permissions",
-                "write_file",     // systemd unit
+                "write_file", // systemd unit
                 "daemon_reload",
                 "enable_service",
                 "start_service",
@@ -281,15 +302,28 @@ mod tests {
 
         #[async_trait]
         impl HostInstaller for CapturingInstaller {
-            async fn create_dir_all(&self, _path: &Path) -> Result<(), CoreError> { Ok(()) }
-            async fn write_file(&self, path: &Path, contents: &[u8]) -> Result<(), CoreError> {
-                self.files.lock().unwrap_or_else(|e| e.into_inner()).push((path.to_path_buf(), contents.to_vec()));
+            async fn create_dir_all(&self, _path: &Path) -> Result<(), CoreError> {
                 Ok(())
             }
-            async fn set_permissions(&self, _path: &Path, _mode: u32) -> Result<(), CoreError> { Ok(()) }
-            async fn daemon_reload(&self) -> Result<(), CoreError> { Ok(()) }
-            async fn enable_service(&self, _unit: &str) -> Result<(), CoreError> { Ok(()) }
-            async fn start_service(&self, _unit: &str) -> Result<(), CoreError> { Ok(()) }
+            async fn write_file(&self, path: &Path, contents: &[u8]) -> Result<(), CoreError> {
+                self.files
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push((path.to_path_buf(), contents.to_vec()));
+                Ok(())
+            }
+            async fn set_permissions(&self, _path: &Path, _mode: u32) -> Result<(), CoreError> {
+                Ok(())
+            }
+            async fn daemon_reload(&self) -> Result<(), CoreError> {
+                Ok(())
+            }
+            async fn enable_service(&self, _unit: &str) -> Result<(), CoreError> {
+                Ok(())
+            }
+            async fn start_service(&self, _unit: &str) -> Result<(), CoreError> {
+                Ok(())
+            }
         }
 
         let mock = Arc::new(CapturingInstaller::new());

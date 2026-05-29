@@ -46,6 +46,9 @@ pub fn render(collected: &mut CollectedConfig, nics: &[NicInfo]) -> Result<Wizar
         return Ok(WizardAction::Back);
     }
 
-    collected.lan_nics = selections.iter().map(|&i| candidates[i].name.clone()).collect();
+    collected.lan_nics = selections
+        .iter()
+        .map(|&i| candidates[i].name.clone())
+        .collect();
     Ok(WizardAction::Next)
 }

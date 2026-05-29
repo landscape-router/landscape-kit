@@ -114,7 +114,12 @@ mod tests {
             mask: 24,
             gateway: Ipv4Addr::new(10, 0, 0, 254),
         };
-        if let WanMode::Static { ipv4, mask, gateway } = s {
+        if let WanMode::Static {
+            ipv4,
+            mask,
+            gateway,
+        } = s
+        {
             assert_eq!(ipv4, Ipv4Addr::new(10, 0, 0, 1));
             assert_eq!(mask, 24);
             assert_eq!(gateway, Ipv4Addr::new(10, 0, 0, 254));
@@ -138,7 +143,9 @@ mod tests {
             }),
         };
         assert!(setup.lan.is_some());
-        assert_eq!(setup.lan.as_ref().unwrap().member_nics.len(), 1);
+        let lan = setup.lan.as_ref();
+        assert!(lan.is_some());
+        assert_eq!(lan.map(|l| l.member_nics.len()), Some(1));
     }
 
     /// Single-NIC mode: `lan` is None.
