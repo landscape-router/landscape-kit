@@ -277,7 +277,7 @@ impl Wizard {
                 admin_pass,
             },
             source: SourceSelection {
-                source_name: None,
+                source_name: self.collected.source_name.clone(),
                 version: Some(version.clone()),
             },
             landscape_version: version.strip_prefix('v').unwrap_or(&version).to_string(),
@@ -351,6 +351,55 @@ impl Wizard {
             Err(e) => Err(anyhow::anyhow!("配置不完整: {e}")),
         }
     }
+}
+
+/// Print a compact status table showing collected network and service config.
+///
+/// Called after each wizard step to give the user a running summary.
+pub fn print_status_table(collected: &CollectedConfig) {
+    use comfy_table::presets::UTF8_FULL;
+    use comfy_table::Table;
+
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.set_header(vec!["网络"]);
+
+    if let Some(wan) = &collected.wan_nic {
+        let wan_desc = match &collected.wan_mode {
+            Some(WanMode::Dhcp) => "DHCP".to_string(),
+            Some(WanMode::Static { ipv4, mask, .. }) => format!("静态 IP {ipv4}/{mask}"),
+            Some(WanMode::Nothing) => "不配置".to_string(),
+            None => "待配置".to_string(),
+        };
+        table.add_row(vec![format!("WAN: {wan} → {wan_desc}")]);
+    }
+
+    if !collected.lan_nics.is_empty() {
+        let nics = collected.lan_nics.join(" + ");
+        table.add_row(vec![format!("LAN: {nics} → br_lan")]);
+        if let (Some(gw), Some(mask)) = (collected.lan_gateway, collected.lan_mask) {
+            table.add_row(vec![format!("网关: {gw}/{mask}")]);
+        }
+    } else if collected.wan_nic.is_some() {
+        table.add_row(vec!["LAN: 无（单网卡模式）"]);
+    }
+
+    if collected.web_port.is_some() || collected.admin_user.is_some() {
+        table.add_row(vec![""]);
+        table.add_row(vec!["服务"]);
+        if let Some(port) = collected.web_port {
+            table.add_row(vec![format!("Web 端口: {port}")]);
+        }
+        if let Some(user) = &collected.admin_user {
+            table.add_row(vec![format!("管理员: {user}")]);
+        }
+    }
+
+    eprintln!();
+    for line in table.to_string().lines() {
+        eprintln!("  {line}");
+    }
+    eprintln!();
 }
 
 #[cfg(test)]

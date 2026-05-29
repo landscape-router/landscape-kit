@@ -14,12 +14,15 @@ use crate::wizard::nic_scan::NicInfo;
 use crate::wizard::{CollectedConfig, StepKind, WizardAction};
 
 /// Dispatch rendering to the appropriate step handler.
+///
+/// After each step renders, prints a compact status table showing
+/// the current state of collected configuration.
 pub fn render_step(
     kind: StepKind,
     collected: &mut CollectedConfig,
     nics: &[NicInfo],
 ) -> Result<WizardAction> {
-    match kind {
+    let action = match kind {
         StepKind::WanSelect => wan_select::render(collected, nics),
         StepKind::LanSelect => lan_select::render(collected, nics),
         StepKind::WanConfig => wan_config::render(collected),
@@ -27,5 +30,12 @@ pub fn render_step(
         StepKind::LandscapeService => landscape_svc::render(collected),
         StepKind::Source => source::render(collected),
         StepKind::Summary => summary::render(collected),
+    }?;
+
+    // Show running summary after non-summary steps
+    if kind != StepKind::Summary {
+        super::print_status_table(collected);
     }
+
+    Ok(action)
 }
