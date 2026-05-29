@@ -276,7 +276,11 @@ impl SourceResolver {
 - GitHub 源：通过 GitHub API 获取 latest release
 - 本地源：`<path>/<prefix>/latest` 文件
 
-`lkit mirror sync` 更新 `latest` 指针时，使用 **semver 语义比较**（按 `vMAJOR.MINOR.PATCH` 逐段比较数值大小），而非字符串排序。例如 `v0.19.2` > `v0.9.0`。多次分批 sync 后，`latest` 始终指向版本号最大的 tag。
+`lkit mirror sync` 更新 `latest` 指针时，优先跟随 **上游源的 `latest_tag()`**（对于 GitHub 源即 `/releases/latest`，对于 HTTP/本地源即 `latest` 文件）。只有当上游 latest 版本实际存在于目标存储中时（刚刚同步成功或此前已存在），才写入指针。这确保：
+
+- 同步旧版本不会将 `latest` 降级
+- mirror 的 `latest` 与上游保持一致
+- 当上游源不支持 `latest_tag()` 时，fallback 到 semver 语义比较（按 `vMAJOR.MINOR.PATCH` 逐段比较数值大小）
 
 ## 5. 镜像目录规范
 
@@ -412,8 +416,26 @@ lkit mirror list [OPTIONS]       # 列出已同步版本
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--repo` | `ThisSeanZhang/landscape` | GitHub 仓库（`owner/repo`） |
+| `--source` | `github` | 同步源类型：`github` / `http` / `local` |
+| `--repo` | `ThisSeanZhang/landscape` | GitHub 仓库（`owner/repo`），`source=github` 时使用 |
+| `--source-url` | — | HTTP 镜像源地址，`source=http` 时必需 |
+| `--source-path` | — | 本地源路径，`source=local` 时必需 |
 | `--prefix` | repo 名（如 `landscape`） | 目标产品目录，自动从 repo 名推导，MUST NOT 包含尾斜杠 |
+
+三种源类型支持不同场景：
+
+```bash
+# 从 GitHub（默认）
+lkit mirror sync --target s3 --bucket my-mirror --endpoint https://...
+
+# 从 HTTP 镜像
+lkit mirror sync --source http --source-url https://mirror.internal/landscape \
+  --target local --path /srv/mirror --tag v0.19.2
+
+# 从本地镜像（mirror-to-mirror，无需重新下载）
+lkit mirror sync --source local --source-path /srv/mirror/landscape \
+  --target s3 --bucket my-mirror --endpoint https://...
+```
 
 通过 `--repo` 可以同步任意产品的 release。例如同步 lkit 自身的 release：
 
@@ -477,7 +499,7 @@ sync 流程：
    e. 上传制品到目标（保留目录结构），SHA256 值写入 manifest
    f. 生成并上传 `release-manifest.json`（含完整 sha256）
    g. 清理临时文件
-4. 更新 `latest` 指针（指向版本号最大的 tag，按 semver 比较）
+4. 更新 `latest` 指针：查询源的 `latest_tag()`，若该版本存在于目标中则写入；否则不更改（防止旧版本覆盖最新指针）。源不支持 `latest_tag()` 时 fallback 到 semver 比较。
 
 #### serve
 
