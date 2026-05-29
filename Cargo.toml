@@ -49,3 +49,9 @@ futures = "0.3"
 
 # Testing
 tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 4
+panic = "abort"
