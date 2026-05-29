@@ -84,8 +84,10 @@ impl ReleaseSource for HttpMirrorSource {
                 .text()
                 .await
                 .map_err(|e| SourceError::Network(e.to_string()))?;
-            return serde_json::from_str(&text)
-                .map_err(|e| SourceError::InvalidManifest(e.to_string()));
+            let mut manifest: ReleaseManifest = serde_json::from_str(&text)
+                .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+            fill_missing_arch(&mut manifest);
+            return Ok(manifest);
         }
 
         // Fallback: try SHASUM256sum.txt
@@ -165,11 +167,22 @@ fn parse_shasum_file(content: &str, tag: &str) -> Result<ReleaseManifest, Source
             }
             let (hash, name) = line.split_once(char::is_whitespace)?;
             let name = name.trim();
+            // Skip SHASUM files (they reference themselves)
+            if name.contains("SHASUM") {
+                return None;
+            }
+            let arch = lkit_core::parse_arch(name).map(|info| {
+                if info.musl {
+                    format!("{}-musl", info.arch)
+                } else {
+                    info.arch
+                }
+            });
             Some(Artifact {
                 name: name.to_string(),
                 sha256: hash.to_string(),
                 size: 0,
-                arch: None,
+                arch,
             })
         })
         .collect();
@@ -187,6 +200,21 @@ fn parse_shasum_file(content: &str, tag: &str) -> Result<ReleaseManifest, Source
         generated_by: None,
         artifacts,
     })
+}
+
+/// Fill missing `arch` fields by parsing architecture from artifact filenames.
+fn fill_missing_arch(manifest: &mut ReleaseManifest) {
+    for artifact in &mut manifest.artifacts {
+        if artifact.arch.is_none() {
+            artifact.arch = lkit_core::parse_arch(&artifact.name).map(|info| {
+                if info.musl {
+                    format!("{}-musl", info.arch)
+                } else {
+                    info.arch
+                }
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -239,5 +267,61 @@ mod tests {
         let manifest = parse_shasum_file(content, "v1.0")?;
         assert_eq!(manifest.artifacts.len(), 1);
         Ok(())
+    }
+
+    #[test]
+    fn fill_missing_arch_populates_from_filename() {
+        let mut manifest = ReleaseManifest {
+            format_version: 1,
+            tag: "v1.0".into(),
+            generated_at: String::new(),
+            generated_by: None,
+            artifacts: vec![
+                Artifact {
+                    name: "landscape-webserver-aarch64".into(),
+                    sha256: "abc".into(),
+                    size: 100,
+                    arch: None,
+                },
+                Artifact {
+                    name: "landscape-webserver-x86_64-musl".into(),
+                    sha256: "def".into(),
+                    size: 100,
+                    arch: None,
+                },
+                Artifact {
+                    name: "static.zip".into(),
+                    sha256: "ghi".into(),
+                    size: 100,
+                    arch: None,
+                },
+                Artifact {
+                    name: "landscape-webserver-riscv64".into(),
+                    sha256: "jkl".into(),
+                    size: 100,
+                    arch: Some("riscv64".into()), // already set — must be preserved
+                },
+            ],
+        };
+
+        fill_missing_arch(&mut manifest);
+
+        assert_eq!(manifest.artifacts[0].arch.as_deref(), Some("aarch64"));
+        assert_eq!(manifest.artifacts[1].arch.as_deref(), Some("x86_64-musl"));
+        assert!(manifest.artifacts[2].arch.is_none()); // static.zip has no parseable arch
+        assert_eq!(manifest.artifacts[3].arch.as_deref(), Some("riscv64")); // preserved
+    }
+
+    #[test]
+    fn fill_missing_arch_empty_manifest() {
+        let mut manifest = ReleaseManifest {
+            format_version: 1,
+            tag: "v1.0".into(),
+            generated_at: String::new(),
+            generated_by: None,
+            artifacts: vec![],
+        };
+        fill_missing_arch(&mut manifest);
+        assert!(manifest.artifacts.is_empty());
     }
 }

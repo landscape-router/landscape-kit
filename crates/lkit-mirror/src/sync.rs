@@ -48,28 +48,9 @@ pub struct SyncResult {
     pub failed: Vec<(String, String)>,
 }
 
-/// Compare two semver-style tags (e.g. "v1.2.3") component by component.
-fn compare_tags(a: &str, b: &str) -> std::cmp::Ordering {
-    let parse = |s: &str| -> Vec<u64> {
-        s.trim_start_matches('v')
-            .split('.')
-            .filter_map(|c| c.parse::<u64>().ok())
-            .collect()
-    };
-    let va = parse(a);
-    let vb = parse(b);
-    for (ca, cb) in va.iter().zip(vb.iter()) {
-        match ca.cmp(cb) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    va.len().cmp(&vb.len())
-}
-
 /// Return the tag with the highest version number.
 fn max_tag(tags: &[String]) -> Option<&String> {
-    tags.iter().max_by(|a, b| compare_tags(a, b))
+    tags.iter().max_by(|a, b| lkit_core::compare_semver(a, b))
 }
 
 /// Run sync from a release source to a mirror target.
@@ -181,7 +162,7 @@ async fn update_latest_pointer(
         let should_update = match target.read(&latest_key).await {
             Ok(data) => {
                 let existing = String::from_utf8_lossy(&data).trim().to_string();
-                compare_tags(new_max, &existing) == std::cmp::Ordering::Greater
+                lkit_core::compare_semver(new_max, &existing) == std::cmp::Ordering::Greater
             }
             Err(_) => true,
         };
@@ -660,28 +641,6 @@ mod tests {
         let (y, m, d) = days_to_ymd(11322);
         assert_eq!((y, m, d), (2000, 12, 31));
         Ok(())
-    }
-
-    #[test]
-    fn compare_tags_major_version() {
-        assert!(compare_tags("v2.0", "v1.0") == std::cmp::Ordering::Greater);
-        assert!(compare_tags("v1.0", "v2.0") == std::cmp::Ordering::Less);
-    }
-
-    #[test]
-    fn compare_tags_minor_version() {
-        assert!(compare_tags("v0.19.2", "v0.9.0") == std::cmp::Ordering::Greater);
-        assert!(compare_tags("v0.9.0", "v0.19.2") == std::cmp::Ordering::Less);
-    }
-
-    #[test]
-    fn compare_tags_equal() {
-        assert!(compare_tags("v1.0", "v1.0") == std::cmp::Ordering::Equal);
-    }
-
-    #[test]
-    fn compare_tags_different_lengths() {
-        assert!(compare_tags("v1.0.1", "v1.0") == std::cmp::Ordering::Greater);
     }
 
     #[test]

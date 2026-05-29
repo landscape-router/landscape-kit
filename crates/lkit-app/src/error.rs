@@ -20,4 +20,8 @@ pub enum AppError {
     /// Insufficient permissions for the operation.
     #[error("permission denied: {0}")]
     PermissionDenied(String),
+
+    /// Configuration generation failure.
+    #[error("configuration generation failed: {0}")]
+    ConfigGeneration(String),
 }

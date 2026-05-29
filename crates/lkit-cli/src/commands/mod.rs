@@ -3,7 +3,7 @@
 mod backup;
 mod config;
 mod diagnose;
-mod install;
+pub(crate) mod install;
 mod logs;
 mod mirror;
 mod rollback;
@@ -26,7 +26,12 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
         Commands::Service(args) => service::run(args, state).await,
         Commands::Logs(args) => logs::run(args, state).await,
         Commands::Diagnose(args) => diagnose::run(args, state).await,
-        Commands::Install(_) => install::run().await,
+        Commands::Install(args) => {
+            anyhow::bail!(
+                "Install({init_file:?}) reached dispatch — should be handled in main",
+                init_file = args.init_file
+            )
+        }
         Commands::Backup(_) => backup::run().await,
         Commands::Upgrade(_) => upgrade::run().await,
         Commands::Rollback(_) => rollback::run().await,

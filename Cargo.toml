@@ -38,14 +38,31 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 # Interactive UI
 dialoguer = "0.11"
 
+# Tables
+comfy-table = "7"
+
+# Progress bars
+indicatif = "0.17"
+
+# Signal handling
+ctrlc = "3"
+
+# System
+libc = "0.2"
+nix = { version = "0.29", features = ["user"] }
+
 # Config parsing
 toml = "0.8"
+toml_edit = "0.22"
 
 # Mirror / S3
 rusty-s3 = "0.9"
 axum = "0.8"
 sha2 = "0.10"
 futures = "0.3"
+
+# Zip
+zip = "2"
 
 # Testing
 tempfile = "3"

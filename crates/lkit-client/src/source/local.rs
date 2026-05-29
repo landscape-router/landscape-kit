@@ -68,7 +68,7 @@ impl ReleaseSource for LocalSource {
         }
 
         // Sort newest-first to match GitHub API convention (required by --since).
-        versions.sort_by(|a, b| compare_semver(b, a));
+        versions.sort_by(|a, b| lkit_core::compare_semver(b, a));
         Ok(versions)
     }
 
@@ -84,7 +84,23 @@ impl ReleaseSource for LocalSource {
                 }
             })?;
 
-        serde_json::from_str(&content).map_err(|e| SourceError::InvalidManifest(e.to_string()))
+        let mut manifest: ReleaseManifest = serde_json::from_str(&content)
+            .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+
+        // Fill arch from filename when manifest doesn't include it
+        for artifact in &mut manifest.artifacts {
+            if artifact.arch.is_none() {
+                artifact.arch = lkit_core::parse_arch(&artifact.name).map(|info| {
+                    if info.musl {
+                        format!("{}-musl", info.arch)
+                    } else {
+                        info.arch
+                    }
+                });
+            }
+        }
+
+        Ok(manifest)
     }
 
     fn artifact_url(&self, tag: &str, name: &str) -> String {
@@ -101,25 +117,6 @@ impl ReleaseSource for LocalSource {
 
         Ok(start.elapsed())
     }
-}
-
-/// Compare two semver-style tags (e.g. "v1.2.3") component by component.
-fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
-    let parse = |s: &str| -> Vec<u64> {
-        s.trim_start_matches('v')
-            .split('.')
-            .filter_map(|c| c.parse::<u64>().ok())
-            .collect()
-    };
-    let va = parse(a);
-    let vb = parse(b);
-    for (ca, cb) in va.iter().zip(vb.iter()) {
-        match ca.cmp(cb) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    va.len().cmp(&vb.len())
 }
 
 #[cfg(test)]
@@ -240,24 +237,6 @@ mod tests {
         let result = src.probe("v999").await;
         assert!(matches!(result, Err(SourceError::VersionNotFound { .. })));
         Ok(())
-    }
-
-    #[test]
-    fn compare_semver_major() {
-        assert_eq!(compare_semver("v2.0", "v1.0"), std::cmp::Ordering::Greater);
-    }
-
-    #[test]
-    fn compare_semver_minor() {
-        assert_eq!(
-            compare_semver("v0.19.2", "v0.9.0"),
-            std::cmp::Ordering::Greater
-        );
-    }
-
-    #[test]
-    fn compare_semver_equal() {
-        assert_eq!(compare_semver("v1.0", "v1.0"), std::cmp::Ordering::Equal);
     }
 
     #[tokio::test]

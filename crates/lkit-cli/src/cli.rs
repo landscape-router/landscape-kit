@@ -80,8 +80,32 @@ pub struct DiagnoseArgs {
     pub json: bool,
 }
 
-#[derive(Args, Clone, Copy)]
-pub struct InstallArgs {}
+#[derive(Args, Clone)]
+pub struct InstallArgs {
+    /// Path to an existing landscape_init.toml (skip wizard, non-interactive mode).
+    #[arg(long)]
+    pub init_file: Option<std::path::PathBuf>,
+
+    /// Source name to use (skip interactive source selection).
+    #[arg(long)]
+    pub source: Option<String>,
+
+    /// Version tag to install (e.g. v0.19.2).
+    #[arg(long)]
+    pub version: Option<String>,
+
+    /// Web UI port (used in non-interactive mode).
+    #[arg(long, default_value_t = 6300)]
+    pub web_port: u16,
+
+    /// HTTPS listen port.
+    #[arg(long, default_value_t = 6443)]
+    pub https_port: u16,
+
+    /// Force reinstall even if already installed.
+    #[arg(long)]
+    pub force: bool,
+}
 
 #[derive(Args, Clone, Copy)]
 pub struct BackupArgs {}

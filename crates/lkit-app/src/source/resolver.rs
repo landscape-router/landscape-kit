@@ -107,7 +107,12 @@ impl SourceResolver {
             })
             .collect();
 
-        let manifest_results = futures::future::join_all(manifest_handles).await;
+        let manifest_results = tokio::time::timeout(
+            Duration::from_secs(30),
+            futures::future::join_all(manifest_handles),
+        )
+        .await
+        .map_err(|_| SourceError::Network("获取 manifest 超时 (30s)".into()))?;
 
         let mut probe_results = Vec::new();
         for result in manifest_results {

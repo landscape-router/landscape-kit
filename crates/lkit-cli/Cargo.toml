@@ -22,3 +22,11 @@ tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 reqwest = { workspace = true }
+ctrlc = { workspace = true }
+nix = { workspace = true }
+comfy-table = { workspace = true }
+indicatif = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
