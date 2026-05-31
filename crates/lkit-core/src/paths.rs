@@ -37,7 +37,7 @@ impl LandscapePaths {
 }
 
 /// Paths within the manager's own working directory (`~/.landscape-kit/`).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ManagerPaths {
     /// Root of the manager working directory.
     pub home: PathBuf,
