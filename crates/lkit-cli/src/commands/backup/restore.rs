@@ -1,4 +1,4 @@
-//! `lkit backup restore` and hidden `lkit backup _do_restore`.
+//! `lkit backup restore` and hidden `lkit backup do-restore`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -53,7 +53,7 @@ pub(crate) async fn run(id_or_path: &str, state: &AppState) -> anyhow::Result<()
             "--",
             &self_path.to_string_lossy(),
             "backup",
-            "_do_restore",
+            "do-restore",
             &entry.id,
             "--recovery-dir",
             &recovery_dir.to_string_lossy(),
@@ -72,7 +72,7 @@ pub(crate) async fn run(id_or_path: &str, state: &AppState) -> anyhow::Result<()
     Ok(())
 }
 
-/// Run `lkit backup _do_restore <id> --recovery-dir <path>`.
+/// Run `lkit backup do-restore <id> --recovery-dir <path>`.
 ///
 /// This is the hidden subcommand that performs the actual restore under
 /// systemd-run protection. It is NOT meant to be called directly by users.

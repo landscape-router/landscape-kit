@@ -46,8 +46,8 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
         let (exit_code, suggestion) = match app_err {
             lkit_app::AppError::PermissionDenied(_) => (2, msg("error.suggestion.permission")),
             lkit_app::AppError::NotFound(_) => (3, msg("error.suggestion.not_installed")),
-            lkit_app::AppError::BackupNotFound(_) => (3, msg("error.suggestion.not_installed")),
-            lkit_app::AppError::Backup(_) => (1, msg("error.suggestion.generic")),
+            lkit_app::AppError::BackupNotFound(_) => (5, msg("error.suggestion.backup")),
+            lkit_app::AppError::Backup(_) => (5, msg("error.suggestion.backup")),
             lkit_app::AppError::SpaceInsufficient { .. } => (1, "请清理磁盘空间后重试".to_string()),
             lkit_app::AppError::HealthCheckFailed(_) => {
                 (1, "恢复已自动回滚，请检查日志".to_string())

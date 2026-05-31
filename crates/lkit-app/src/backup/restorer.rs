@@ -104,30 +104,36 @@ pub fn health_check(landscape_paths: &LandscapePaths) -> Result<(), AppError> {
     Err(AppError::HealthCheckFailed("health check reached unreachable code".into()))
 }
 
-/// Parse listen address from landscape.toml, falling back to `127.0.0.1:443`.
+/// Parse listen address from landscape.toml, falling back to `127.0.0.1:6443`.
+///
+/// Supports two config formats:
+/// - Runtime format: `[web].https_port`
+/// - Backup/export format: `[config.web].https_port`
 fn parse_listen_addr(paths: &LandscapePaths) -> std::net::SocketAddr {
-    let default = "127.0.0.1:443".to_string();
+    let default: std::net::SocketAddr = ([127, 0, 0, 1], 6443).into();
     let content = match std::fs::read_to_string(&paths.landscape_config) {
         Ok(c) => c,
-        Err(_) => return default.parse().unwrap_or_else(|_| ([127, 0, 0, 1], 443).into()),
+        Err(_) => return default,
     };
     let value: toml::Value = match content.parse() {
         Ok(v) => v,
-        Err(_) => return default.parse().unwrap_or_else(|_| ([127, 0, 0, 1], 443).into()),
+        Err(_) => return default,
     };
-    let web = match value.get("web") {
+    // Try `[web]` (runtime format) then `[config.web]` (backup/export format).
+    let web = value.get("web").or_else(|| value.get("config").and_then(|c| c.get("web")));
+    let web = match web {
         Some(w) => w,
-        None => return default.parse().unwrap_or_else(|_| ([127, 0, 0, 1], 443).into()),
+        None => return default,
     };
     let ip = web.get("address").and_then(|v| v.as_str()).unwrap_or("127.0.0.1");
     let port: u16 =
-        web.get("https_port").and_then(|v| v.as_integer()).map(|p| p as u16).unwrap_or(443);
+        web.get("https_port").and_then(|v| v.as_integer()).map(|p| p as u16).unwrap_or(6443);
 
     format!("{ip}:{port}")
         .to_socket_addrs()
         .ok()
         .and_then(|mut addrs| addrs.next())
-        .unwrap_or_else(|| ([127, 0, 0, 1], 443).into())
+        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -188,7 +194,7 @@ https_port = 1
         let paths = LandscapePaths::new(dir.path().to_path_buf());
         // No landscape.toml exists; should use default.
         let addr = parse_listen_addr(&paths);
-        assert_eq!(addr.port(), 443);
+        assert_eq!(addr.port(), 6443);
     }
 
     #[test]

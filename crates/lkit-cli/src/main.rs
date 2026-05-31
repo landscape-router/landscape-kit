@@ -62,18 +62,34 @@ async fn main() -> anyhow::Result<()> {
         return commands::install::run(args, host_installer).await;
     }
 
-    // All other commands require an existing Landscape installation.
+    let manager_paths = ManagerPaths::new(manager_home());
+
+    // Determine whether the command requires an existing Landscape HOME directory.
+    //
+    // Most backup subcommands, status, service, diagnose, and mirror can operate
+    // without ~/.landscape-router/ — they either read the backup repository
+    // (manager_paths), control systemd directly, or have no dependency on
+    // Landscape at all.
+    let needs_landscape_home = match &cli.command {
+        Some(Commands::Backup(bk)) => {
+            matches!(bk.action, crate::cli::BackupCommands::Create { .. })
+        }
+        Some(Commands::Status(_))
+        | Some(Commands::Service(_))
+        | Some(Commands::Diagnose(_))
+        | Some(Commands::Mirror(_)) => false,
+        None => true, // interactive launcher needs full state
+        _ => true,
+    };
+
     let landscape_home =
         std::env::var("LANDSCAPE_HOME").map(PathBuf::from).unwrap_or_else(|_| dirs_or_default());
-
     let landscape_paths = LandscapePaths::new(landscape_home.clone());
 
-    if !landscape_paths.home.exists() {
+    if needs_landscape_home && !landscape_paths.home.exists() {
         eprintln!("{}", msg("error.not_installed"));
         std::process::exit(3);
     }
-
-    let manager_paths = ManagerPaths::new(manager_home());
 
     let base_url = parse_api_listen(&landscape_paths.landscape_config)
         .unwrap_or_else(|| "https://127.0.0.1:6443".to_string());

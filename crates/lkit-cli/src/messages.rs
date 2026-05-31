@@ -42,6 +42,7 @@ impl CliMessages {
             "error.suggestion.not_installed" => "请先安装 Landscape",
             "error.suggestion.permission" => "请使用 sudo 或以 root 身份运行",
             "error.suggestion.generic" => "请检查日志或使用 -v 获取详细信息",
+            "error.suggestion.backup" => "请检查备份 ID 或路径是否正确",
             "backup.created" => "备份创建成功: {id}",
             "backup.restored" => "恢复成功",
             "backup.restore_started" => "恢复已启动，查看进度: journalctl -u lkit-restore -f",

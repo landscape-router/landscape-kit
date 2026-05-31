@@ -330,10 +330,11 @@ mount -t bpf bpf /sys/fs/bpf/
 |------|------------|--------|------|--------|------|
 | `install` | — | Hard（拒绝重复） | Hard（root） | Hard | `--force` 可覆盖已安装 |
 | `status` | Soft（降级为本机 systemd 状态） | Soft | — | — | 无 HOME 时仅展示本机 systemd 状态 |
+| `service` | — | — | Hard（root） | — | 仅依赖 systemd，与 Landscape 安装无关 |
 | `backup create` | Hard | Hard | Soft（HOME 可读） | Hard | — |
-| `backup list` | Hard | Hard | Soft（HOME 可读） | — | — |
-| `backup restore` | Hard | Hard | Hard（root） | Hard | — |
-| `backup delete` | Hard | Hard | Soft（HOME 可读） | Hard | — |
+| `backup list` | — | — | Soft（HOME 可读） | — | 仅依赖备份目录（manager_paths） |
+| `backup restore` | — | — | Hard（root） | Hard | 备份包自包含全部文件，不依赖已安装的 landscape |
+| `backup delete` | — | — | Soft（HOME 可读） | — | 仅依赖备份目录（manager_paths） |
 | `upgrade check` | Hard | Hard | Soft（HOME 可读） | — | — |
 | `upgrade apply` | Hard | Hard | Hard（root） | Hard | — |
 | `rollback list` | Hard | Hard | Soft（HOME 可读） | — | — |

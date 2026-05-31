@@ -118,36 +118,37 @@ impl BackupUseCase {
             .map_err(|e| AppError::Backup(format!("metadata serialization failed: {e}")))?;
         std::fs::write(staging.join("metadata.json"), &meta_json)?;
 
-        // 7. Build package to temp file.
+        // 7. Build package to temp file with pending ID, then compute file hash.
         let tmp_output = self.manager_paths.tmp_dir.join(format!("lkit-backup-{ts}.tar.gz.tmp"));
         builder::build_package(&staging, &tmp_output)?;
-
-        // 8. Compute file hash and finalize name.
         let file_hash = builder::sha256_file(&tmp_output)?;
         let short_hash = &file_hash[..8];
+
+        // 8. Repack with the final backup ID baked into metadata.json.
+        let final_id = format!("{ts}-{short_hash}");
+        let final_metadata = BackupMetadata { backup_id: final_id.clone(), ..metadata };
+        let final_meta_json = serde_json::to_string_pretty(&final_metadata)
+            .map_err(|e| AppError::Backup(format!("metadata serialization failed: {e}")))?;
+        std::fs::write(staging.join("metadata.json"), &final_meta_json)?;
+        builder::build_package(&staging, &tmp_output)?;
+
+        // 9. Atomic rename: fsync + rename.
         let final_name = format!("lkit-backup-{ts}-{short_hash}.tar.gz");
         let backup_dir = &self.manager_paths.backup_dir;
         std::fs::create_dir_all(backup_dir)?;
         let final_path = backup_dir.join(&final_name);
-
-        // 9. Atomic rename: write-tmp + fsync + rename.
         let parent = final_path.parent().unwrap_or(Path::new("."));
         let tmp_file = std::fs::File::open(&tmp_output)?;
         tmp_file.sync_all()?;
         std::fs::rename(&tmp_output, &final_path)?;
         let final_file = std::fs::File::open(&final_path)?;
         final_file.sync_all()?;
-        // Also fsync the directory to ensure the rename is committed.
         if let Ok(dir) = std::fs::File::open(parent) {
             dir.sync_all()?;
         }
 
         // 10. Cleanup staging.
         let _ = std::fs::remove_dir_all(&staging);
-
-        // 11. Update metadata with final ID.
-        let final_id = format!("{ts}-{short_hash}");
-        let final_metadata = BackupMetadata { backup_id: final_id.clone(), ..metadata };
 
         Ok(BackupEntry {
             id: final_id,
@@ -202,6 +203,12 @@ impl BackupUseCase {
             let backup_dir = &self.manager_paths.backup_dir;
             let filename = format!("lkit-backup-{}.tar.gz", id_or_path);
             backup_dir.join(filename)
+        } else if !id_or_path.contains('/') && !id_or_path.contains('\\') {
+            // Fallback: scan backup dir for a filename containing the given ID.
+            // Handles legacy archives whose metadata still carries a "-pending" suffix.
+            scan_backup_dir(&self.manager_paths.backup_dir, id_or_path).ok_or_else(|| {
+                AppError::BackupNotFound(format!("backup file not found: {id_or_path}"))
+            })?
         } else {
             PathBuf::from(id_or_path)
         };
@@ -297,6 +304,14 @@ impl BackupUseCase {
 
     /// Replace landscape files with extracted backup contents.
     async fn do_replace(&self, extracted: &HashMap<String, PathBuf>) -> Result<(), AppError> {
+        // Ensure the destination directory exists (first-time restore from scratch).
+        std::fs::create_dir_all(&self.landscape_paths.home)?;
+
+        // Delete the init lock so Landscape re-initializes from landscape_init.toml
+        // on next start. Without this, the old database persists and the restored
+        // config is silently ignored.
+        let _ = std::fs::remove_file(&self.landscape_paths.init_lock);
+
         // Replace binary.
         if let Some(src) = extracted.get("landscape-webserver") {
             let dst = self.landscape_paths.home.join("landscape-webserver");
@@ -384,6 +399,26 @@ fn hostname() -> String {
         .ok()
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".into())
+}
+
+/// Scan the backup directory for an archive whose filename contains the given
+/// ID (or its timestamp prefix) as a substring.
+///
+/// Handles legacy IDs like `20260531-182107-pending` where the hash suffix
+/// differs from the actual filename (`20260531-182107-5cf7b362`).
+fn scan_backup_dir(backup_dir: &Path, id: &str) -> Option<PathBuf> {
+    // Use the timestamp prefix for matching (everything before the last dash segment).
+    let match_key = id.rsplit_once('-').map_or(id, |(prefix, _)| prefix);
+    let dir = std::fs::read_dir(backup_dir).ok()?;
+    for entry in dir.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = path.file_name()?.to_string_lossy();
+        if name.starts_with("lkit-backup-") && name.ends_with(".tar.gz") && name.contains(match_key)
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Check if a string matches the backup ID format `{YYYYMMDD-HHMMSS}-{sha256[:8]}`.
