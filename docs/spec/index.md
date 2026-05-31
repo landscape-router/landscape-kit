@@ -29,7 +29,6 @@
 - `lkit-mirror` lib crate 负责镜像管理逻辑，`lkit mirror` 内置子命令（sync/serve/verify/list），上游零改动
 - V1 仅支持 systemd
 - `landscape_init.toml` 只用于初始化/重建，不做常驻配置
-- 默认实例恢复面：[04-backup-restore](./04-backup-restore.md) 为权威定义：`landscape.toml` + `landscape_db.sqlite` + `landscape_init.lock` + `static/`
-- `landscape_backup_index.json`（Landscape 维护的权威备份范围）与管理器本地 `backup.json`（展示索引）是两种文件，前者是真相源
+- 默认实例恢复面：[04-backup-restore](./04-backup-restore.md) 为权威定义：`landscape-webserver` + `static/` + `landscape_init.toml`（API 导出）
 - 升级采用事务式流程：自动备份 → 获取制品 → 应用更新 → health check → 失败回滚
 - `upgrade` 指版本升级操作，`self upgrade` 指管理器自身升级

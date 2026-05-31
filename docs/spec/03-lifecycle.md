@@ -63,16 +63,11 @@ Landscape HOME 的发现顺序定义如下：
 
 ## 4. 目录模型
 
-### 4.1 backup 索引
+### 4.1 backup 展示
 
-管理器本地维护 `backup.json` 作为 CLI 展示索引（非持久化缓存，重建不影响数据完整性）：
+`lkit backup list` 通过直接扫描 `{manager_home}/backup/*.tar.gz` 并提取内嵌的 `metadata.json` 获取元信息（无需完全解压），按创建时间降序排序展示。
 
-- **仅为展示索引**，用于 `lkit backup list` 加速展示
-- **不是备份真相来源**
-- 真实备份信息以备份包中的 backup manifest 与 frozen backup index 为准
-- 可从备份目录重新扫描重建
-
-Landscape 维护的 `landscape_backup_index.json` 是备份范围的权威声明，管理器只负责读取与执行。两者是不同文件，不同职责。
+不存在独立的展示索引文件；备份包自身即为展示信息的真相源。
 
 ## 5. Landscape 初始化机制
 

@@ -22,7 +22,7 @@
   - 创建流程：先写临时文件 → 计算完整文件 sha256 → 取前 8 位 → 重命名
   - 避免 chicken-and-egg：文件名中的 hash 是对完整 tar.gz 文件的 hash
 - `lkit backup list` 扫描默认备份目录
-- `lkit backup restore <id>` 从默认备份目录查找，也支持传入外部文件路径
+- `lkit backup restore <id|path>` 自动识别：匹配 `{YYYYMMDD-HHMMSS}-{sha256[:8]}` 格式的视为 ID 在备份目录查找，否则视为直接文件路径
 
 ### 3.2 备份 ID 格式
 
@@ -150,11 +150,12 @@ lkit-backup-{YYYYMMDD-HHMMSS}-{sha256[:8]}.tar.gz
 
 `lkit backup restore <id|path>`：
 
-1. 校验备份包完整性（checksum、格式）
-2. 确认后提示用户"将通过 systemd 在后台执行恢复"
-3. **创建当前状态快照**：复制当前 `landscape-webserver` + `static/` + `landscape_init.toml`（如存在）到 `{manager_home}/runtime/recovery-{timestamp}/`
-4. 通过 `systemd-run --unit=lkit-restore --same-dir --collect` 启动后台 service 执行 `_do_restore`
-5. 提示用户：恢复已启动，查看进度：`journalctl -u lkit-restore -f`
+1. **参数识别**：参数匹配 `{YYYYMMDD-HHMMSS}-{sha256[:8]}` 格式时，从 `{manager_home}/backup/` 拼接文件名查找；否则视为直接文件路径
+2. 校验备份包完整性（checksum、格式）
+3. 确认后提示用户"将通过 systemd 在后台执行恢复"
+4. **创建当前状态快照**：复制当前 `landscape-webserver` + `static/` + `landscape_init.toml`（如存在）到 `{manager_home}/runtime/recovery-{timestamp}/`
+5. 通过 `systemd-run --unit=lkit-restore --same-dir --collect` 启动后台 service 执行 `_do_restore`
+6. 提示用户：恢复已启动，查看进度：`journalctl -u lkit-restore -f`
 
 #### 4.8.4 _do_restore 隐藏子命令（后台 service 执行）
 

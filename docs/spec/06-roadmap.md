@@ -99,6 +99,5 @@ M1-M3 按实现顺序推进，每个里程碑产出可运行的功能增量。M4
 - `landscape_init.toml` 仅用于 **初始化 / 重建**，不是默认实例恢复面的核心依赖
 - 默认实例恢复面见 [04-backup-restore](./04-backup-restore.md) 权威定义
 - `metric/` 可作为高级可选项；`logs/`、`geo_tmp/`、`landscape_api_token` 不纳入 V1 默认恢复面
-- 建议由 Landscape 提供 `landscape_backup_index.json`，作为备份/恢复范围与语义的权威声明
 - 升级采用 **事务式流程**：自动备份 -> 获取制品 -> 应用更新 -> health check -> 失败回滚
 - CLI 首版必须把 **安装、手动备份、恢复、升级、回滚、运行管理、救援入口** 作为一等能力

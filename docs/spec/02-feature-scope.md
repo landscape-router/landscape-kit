@@ -26,8 +26,7 @@ lkit service {start|stop|restart}       # systemd 服务控制
 lkit logs                               # Landscape 日志
 lkit backup create                      # 创建备份点
 lkit backup list [--json]               # 列出备份点
-lkit backup restore <id>                # 按 ID 恢复备份点
-lkit backup restore --file <path>       # 从外部备份文件恢复
+lkit backup restore <id|path>           # 按 ID 或外部文件路径恢复备份点
 lkit backup delete <id>                 # 删除备份点
 lkit config export                      # 导出 landscape_init.toml
 lkit upgrade check [--json]             # 检查 Landscape 可升级版本
