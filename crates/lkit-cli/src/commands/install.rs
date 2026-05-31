@@ -72,6 +72,19 @@ pub(crate) async fn run(
         eprintln!("  HOME: {}", report.home.display());
         eprintln!("  Web HTTP UI: {}", report.web_url);
         eprintln!("  Web HTTPS UI: {}", report.https_url);
+
+        if !report.warnings.is_empty() {
+            eprintln!();
+            eprintln!("  警告:");
+            for w in &report.warnings {
+                eprintln!("    - {w}");
+            }
+            eprintln!();
+            eprintln!("  所有文件已就位。以下为完整恢复流程，实际仅需执行失败的部分:");
+            eprintln!("    sudo systemctl daemon-reload");
+            eprintln!("    sudo systemctl enable landscape.service");
+            eprintln!("    sudo systemctl start landscape.service");
+        }
         eprintln!();
         return Ok(());
     }
@@ -253,6 +266,8 @@ pub(crate) async fn run(
 
     // ── Install (TOML + systemd) ──
     // Check if service is already running (force reinstall scenario).
+    // unwrap_or(false): if systemd is unreachable (e.g. D-Bus down), treat as
+    // inactive — no restart needed since the service can't be running.
     let was_active = host_installer.is_service_active("landscape.service").await.unwrap_or(false);
 
     // Delete old lock so landscape-webserver reads landscape_init.toml on startup.
@@ -261,14 +276,16 @@ pub(crate) async fn run(
         tokio::fs::remove_file(&lock).await?;
     }
 
-    let report = executor.execute(&config, &landscape_home).await?;
+    let mut report = executor.execute(&config, &landscape_home).await?;
 
     // If service was already running, restart to pick up new init config.
     // executor.execute() calls start_service, but systemd start on a running
     // service is a no-op — a restart is needed to reload the config.
     if was_active {
         eprintln!("  检测到 landscape 服务已在运行，重启以应用新配置...");
-        host_installer.restart_service("landscape.service").await?;
+        if let Err(e) = host_installer.restart_service("landscape.service").await {
+            report.warnings.push(format!("restart failed: {e}"));
+        }
     }
 
     // ── Health check ──
@@ -528,7 +545,11 @@ fn print_report(
     table.add_row(vec!["系统", &target.target_str]);
     table.add_row(vec!["已安装组件", &artifacts.len().to_string()]);
 
-    let status = if healthy {
+    let status_owned;
+    let status = if !report.warnings.is_empty() {
+        status_owned = format!("systemd 操作部分失败 ({} 项警告)", report.warnings.len());
+        status_owned.as_str()
+    } else if healthy {
         "服务已启动"
     } else {
         "健康检查超时，请手动验证: sudo systemctl status landscape"
@@ -539,6 +560,19 @@ fn print_report(
     eprintln!("Landscape {action}！");
     for line in table.to_string().lines() {
         eprintln!("  {line}");
+    }
+
+    if !report.warnings.is_empty() {
+        eprintln!();
+        eprintln!("  警告:");
+        for w in &report.warnings {
+            eprintln!("    - {w}");
+        }
+        eprintln!();
+        eprintln!("  所有文件已就位。以下为完整恢复流程，实际仅需执行失败的部分:");
+        eprintln!("    sudo systemctl daemon-reload");
+        eprintln!("    sudo systemctl enable landscape.service");
+        eprintln!("    sudo systemctl start landscape.service");
     }
     eprintln!();
 }

@@ -36,6 +36,8 @@ pub struct InstallReport {
     pub web_url: String,
     /// HTTPS URL to access the web UI.
     pub https_url: String,
+    /// Non-fatal warnings collected during installation (e.g. systemd failures).
+    pub warnings: Vec<String>,
 }
 
 /// Executes the installation process: TOML generation, file writing, systemd setup.
@@ -130,12 +132,20 @@ impl InstallExecutor {
             .await
             .map_err(AppError::Core)?;
 
-        // 5. Systemd lifecycle
-        self.host_installer.daemon_reload().await.map_err(AppError::Core)?;
+        // 5. Systemd lifecycle (best-effort: files are already on disk)
+        let mut warnings = Vec::new();
 
-        self.host_installer.enable_service("landscape.service").await.map_err(AppError::Core)?;
+        if let Err(e) = self.host_installer.daemon_reload().await {
+            warnings.push(format!("daemon-reload failed: {e}"));
+        }
 
-        self.host_installer.start_service("landscape.service").await.map_err(AppError::Core)?;
+        if let Err(e) = self.host_installer.enable_service("landscape.service").await {
+            warnings.push(format!("enable failed: {e}"));
+        }
+
+        if let Err(e) = self.host_installer.start_service("landscape.service").await {
+            warnings.push(format!("start failed: {e}"));
+        }
 
         // NOTE: lock file is NOT created here. It must be created AFTER
         // landscape-webserver has read landscape_init.toml (confirmed by
@@ -146,6 +156,7 @@ impl InstallExecutor {
             home: home.to_path_buf(),
             web_url: format!("http://127.0.0.1:{web_port}"),
             https_url: format!("https://127.0.0.1:{https_port}"),
+            warnings,
         })
     }
 }
@@ -167,6 +178,8 @@ mod tests {
         /// If set, fail on the nth write_file call.
         fail_on_write_n: Option<usize>,
         write_count: Mutex<usize>,
+        /// If true, all systemd operations return errors.
+        fail_systemd: bool,
     }
 
     impl MockHostInstaller {
@@ -175,6 +188,7 @@ mod tests {
                 calls: Mutex::new(vec![]),
                 fail_on_write_n: None,
                 write_count: Mutex::new(0),
+                fail_systemd: false,
             }
         }
 
@@ -183,6 +197,16 @@ mod tests {
                 calls: Mutex::new(vec![]),
                 fail_on_write_n: Some(n),
                 write_count: Mutex::new(0),
+                fail_systemd: false,
+            }
+        }
+
+        fn with_failing_systemd() -> Self {
+            Self {
+                calls: Mutex::new(vec![]),
+                fail_on_write_n: None,
+                write_count: Mutex::new(0),
+                fail_systemd: true,
             }
         }
     }
@@ -214,16 +238,25 @@ mod tests {
 
         async fn daemon_reload(&self) -> Result<(), CoreError> {
             self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("daemon_reload".to_string());
+            if self.fail_systemd {
+                return Err(CoreError::Internal("Transport endpoint is not connected".to_string()));
+            }
             Ok(())
         }
 
         async fn enable_service(&self, _unit: &str) -> Result<(), CoreError> {
             self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("enable_service".to_string());
+            if self.fail_systemd {
+                return Err(CoreError::Internal("Transport endpoint is not connected".to_string()));
+            }
             Ok(())
         }
 
         async fn start_service(&self, _unit: &str) -> Result<(), CoreError> {
             self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("start_service".to_string());
+            if self.fail_systemd {
+                return Err(CoreError::Internal("Transport endpoint is not connected".to_string()));
+            }
             Ok(())
         }
 
@@ -282,6 +315,7 @@ mod tests {
 
         assert_eq!(report.home, home);
         assert!(report.web_url.contains("6300"));
+        assert!(report.warnings.is_empty());
 
         let calls = mock.calls.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(
@@ -385,6 +419,39 @@ mod tests {
         assert_eq!(parsed["ifaces"][0]["name"].as_str(), Some("eth0"));
         assert_eq!(parsed["ipconfigs"][0]["ip_model"]["t"].as_str(), Some("dhcpclient"));
 
+        Ok(())
+    }
+
+    /// Systemd failures are non-fatal — install still succeeds with warnings.
+    #[tokio::test]
+    async fn test_execute_systemd_failure_is_non_fatal() -> Result<(), Box<dyn std::error::Error>> {
+        let mock = Arc::new(MockHostInstaller::with_failing_systemd());
+        let executor = InstallExecutor::new(mock.clone());
+        let home = PathBuf::from("/tmp/test-landscape");
+
+        let config = test_config();
+        let report = executor.execute(&config, &home).await?;
+
+        assert_eq!(report.home, home);
+        assert_eq!(report.warnings.len(), 3);
+        assert!(report.warnings[0].contains("daemon-reload"));
+        assert!(report.warnings[1].contains("enable"));
+        assert!(report.warnings[2].contains("start"));
+
+        // All steps were attempted (including systemd ones).
+        let calls = mock.calls.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            calls.as_slice(),
+            &[
+                "create_dir_all",
+                "write_file",
+                "set_permissions",
+                "write_file",
+                "daemon_reload",
+                "enable_service",
+                "start_service",
+            ]
+        );
         Ok(())
     }
 }
