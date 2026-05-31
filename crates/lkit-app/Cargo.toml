@@ -8,6 +8,7 @@ license.workspace = true
 lkit-core = { path = "../lkit-core" }
 lkit-client = { path = "../lkit-client" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time"] }
@@ -16,6 +17,9 @@ toml = { workspace = true }
 toml_edit = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
