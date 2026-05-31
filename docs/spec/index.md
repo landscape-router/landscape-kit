@@ -18,6 +18,7 @@
 8. [测试策略](./08-testing.md)
 9. [Release Source 与镜像管理](./09-release-source.md)
 10. [安装流程实现规格](./10-install-flow.md)
+11. [环境检查规格](./11-environment-checks.md)
 
 ## 核心结论
 

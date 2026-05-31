@@ -206,7 +206,14 @@ max_auto_backups = 5          # 自动备份保留数量
 | 3 | Landscape 未安装或 HOME 不可访问 |
 | 4 | 网络/API 不可达 |
 | 5 | 备份/恢复/升级操作失败 |
-| 6 | 系统依赖不满足（systemd 不可用等） |
+| 6 | 系统依赖不满足 |
+| 6.1 | Kernel 版本不足（< 6.9） |
+| 6.2 | Kernel BTF / BPF 内核特性缺失 |
+| 6.3 | systemd 不可用 |
+| 6.4 | `ip`（iproute2）不可用 |
+| 6.5 | 端口 6300 或 6443 冲突 |
+| 6.6 | NetworkManager 冲突 |
+| 6.7 | RLIMIT_MEMLOCK 不足 |
 
 ## 9. Landscape API 依赖清单
 
