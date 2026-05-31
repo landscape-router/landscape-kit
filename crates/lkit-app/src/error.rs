@@ -24,4 +24,24 @@ pub enum AppError {
     /// Configuration generation failure.
     #[error("configuration generation failed: {0}")]
     ConfigGeneration(String),
+
+    /// Backup operation error.
+    #[error("backup error: {0}")]
+    Backup(String),
+
+    /// Requested backup not found.
+    #[error("backup not found: {0}")]
+    BackupNotFound(String),
+
+    /// Insufficient disk space for backup.
+    #[error("space insufficient: need {need} bytes, have {available} bytes")]
+    SpaceInsufficient { need: u64, available: u64 },
+
+    /// Health check failed after restore.
+    #[error("health check failed after restore: {0}")]
+    HealthCheckFailed(String),
+
+    /// I/O error.
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 }
