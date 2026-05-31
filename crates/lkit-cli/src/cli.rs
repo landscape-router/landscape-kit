@@ -1,5 +1,7 @@
 //! CLI argument definitions using clap derive.
 
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand};
 
 /// Landscape local CLI management and rescue tool.
@@ -107,8 +109,43 @@ pub struct InstallArgs {
     pub force: bool,
 }
 
-#[derive(Args, Clone, Copy)]
-pub struct BackupArgs {}
+#[derive(Args, Clone)]
+pub struct BackupArgs {
+    #[command(subcommand)]
+    pub action: BackupCommands,
+}
+
+#[derive(Subcommand, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum BackupCommands {
+    /// 创建备份
+    Create {
+        #[arg(long)]
+        remark: Option<String>,
+    },
+    /// 列出备份
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// 从备份恢复
+    Restore { id_or_path: String },
+    /// 解压备份到指定路径
+    Rebuild {
+        id: String,
+        #[arg(long)]
+        target: PathBuf,
+    },
+    /// 删除备份
+    Delete { id: String },
+    /// (hidden) 实际恢复逻辑，由 systemd-run 内部调用
+    #[command(hide = true)]
+    DoRestore {
+        id: String,
+        #[arg(long)]
+        recovery_dir: PathBuf,
+    },
+}
 
 #[derive(Args, Clone, Copy)]
 pub struct UpgradeArgs {}

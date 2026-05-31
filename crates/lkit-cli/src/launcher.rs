@@ -6,7 +6,10 @@ use std::io::IsTerminal;
 use dialoguer::Select;
 use lkit_app::AppState;
 
-use crate::cli::{Commands, DiagnoseArgs, LogsArgs, ServiceAction, ServiceArgs, StatusArgs};
+use crate::cli::{
+    BackupArgs, BackupCommands, Commands, DiagnoseArgs, LogsArgs, ServiceAction, ServiceArgs,
+    StatusArgs,
+};
 use crate::messages::{CliMessages, msg};
 
 /// A single menu entry: label key and associated action.
@@ -62,11 +65,15 @@ fn menu_items() -> Vec<MenuItem> {
         },
         MenuItem {
             label_key: "menu.backup",
-            action: MenuAction::NotImplemented("M3"),
+            action: MenuAction::Dispatch(Commands::Backup(BackupArgs {
+                action: BackupCommands::Create { remark: None },
+            })),
         },
         MenuItem {
             label_key: "menu.restore",
-            action: MenuAction::NotImplemented("M3"),
+            action: MenuAction::Dispatch(Commands::Backup(BackupArgs {
+                action: BackupCommands::List { json: false },
+            })),
         },
         MenuItem {
             label_key: "menu.upgrade",
