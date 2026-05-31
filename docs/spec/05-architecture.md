@@ -216,7 +216,7 @@ max_auto_backups = 5          # 自动备份保留数量
 |---|---|---|
 | `/api/v1/status` | 获取运行状态、版本信息 | GET |
 | `/api/v1/health` | 健康检查（启动后校验） | GET |
-| `/api/v1/config/export` | 导出当前配置为 init 格式 | GET |
+| `/api/v1/system/config/export` | 导出当前配置为 init 格式 | GET |
 | `/api/v1/system/info` | 获取系统信息（网卡列表等） | GET |
 
 - 所有 API 调用通过 `lkit-client` 封装
