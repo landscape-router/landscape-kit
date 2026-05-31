@@ -529,8 +529,9 @@ fn is_tty() -> bool {
 | 后台下载 | 网络错误 / checksum 不匹配 | 报错，清理 tmp 文件。不修改 HOME |
 | 解压 | zip 损坏 | 报错，清理 tmp + 已下载文件 |
 | TOML 写入 | IO 错误 | 报错，尝试删除已写入文件 |
-| systemd | 写入 / daemon-reload / enable 失败 | 报错，不删除已写入文件（管理员手动处理） |
-| 启动 | start 失败 | 报错，不撤回 |
+| systemd | 写入失败 | 报错，不删除已写入文件（管理员手动处理） |
+| systemd | daemon-reload / enable / start 失败 | 警告（best-effort），安装继续。列出失败项，提示手动恢复命令 |
+| 重启 | restart 失败 | 警告，安装继续 |
 | 健康检查 | 超时 | 警告，不报错。提示用户手动验证 |
 | 锁检查 | 已安装 | 拒绝，提示 `--force` |
 
