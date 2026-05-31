@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 
 use crate::error::CoreError;
-use crate::models::{ServiceState, ServiceStatus};
+use crate::models::ServiceState;
 
 /// Abstraction over Landscape API and local system queries.
 ///
@@ -11,11 +11,14 @@ use crate::models::{ServiceState, ServiceStatus};
 /// Enables test mocking without depending on a concrete client.
 #[async_trait]
 pub trait LkitClient: Send + Sync {
-    /// Retrieve current Landscape service status.
-    async fn get_status(&self) -> Result<ServiceStatus, CoreError>;
+    /// Retrieve the currently installed Landscape version via API.
+    async fn get_version(&self) -> Result<String, CoreError>;
 
     /// Check if the Landscape API is healthy.
     async fn health_check(&self) -> Result<bool, CoreError>;
+
+    /// Export the running configuration as landscape_init.toml content.
+    async fn export_config(&self) -> Result<String, CoreError>;
 }
 
 /// Abstraction over systemd service management.

@@ -71,10 +71,7 @@ mod tests {
     fn format_substitutes_params() {
         let mut params = HashMap::new();
         params.insert("milestone", "M2");
-        assert_eq!(
-            CliMessages::format("not_implemented", &params),
-            "该功能将在 M2 版本推出"
-        );
+        assert_eq!(CliMessages::format("not_implemented", &params), "该功能将在 M2 版本推出");
     }
 
     #[test]

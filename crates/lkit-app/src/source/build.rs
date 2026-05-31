@@ -37,15 +37,8 @@ fn build_one(
             Ok(Arc::new(src))
         }
         SourceType::Http => {
-            let url = cfg
-                .base_url
-                .as_deref()
-                .ok_or("http 类型缺少 base_url 字段")?;
-            Ok(Arc::new(HttpMirrorSource::new(
-                &cfg.name,
-                url,
-                client.clone(),
-            )))
+            let url = cfg.base_url.as_deref().ok_or("http 类型缺少 base_url 字段")?;
+            Ok(Arc::new(HttpMirrorSource::new(&cfg.name, url, client.clone())))
         }
         SourceType::Local => {
             let path = cfg.path.as_deref().ok_or("local 类型缺少 path 字段")?;
@@ -60,15 +53,8 @@ fn build_one(
                 .map_err(|_| "S3 源需要 AWS_SECRET_ACCESS_KEY 环境变量")?;
             // Reuse `region` field as S3 key prefix (S3Source hardcodes region to "auto")
             let prefix = cfg.region.as_deref().unwrap_or("");
-            let src = S3Source::new(
-                &cfg.name,
-                endpoint,
-                bucket,
-                &access_key,
-                &secret_key,
-                prefix,
-            )
-            .map_err(|e| format!("创建 S3Source 失败: {e}"))?;
+            let src = S3Source::new(&cfg.name, endpoint, bucket, &access_key, &secret_key, prefix)
+                .map_err(|e| format!("创建 S3Source 失败: {e}"))?;
             Ok(Arc::new(src))
         }
     }

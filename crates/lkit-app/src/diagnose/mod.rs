@@ -20,11 +20,7 @@ impl DiagnoseUseCase {
         service_manager: Arc<dyn ServiceManager>,
         landscape_paths: LandscapePaths,
     ) -> Self {
-        Self {
-            client,
-            service_manager,
-            landscape_paths,
-        }
+        Self { client, service_manager, landscape_paths }
     }
 
     /// Execute all diagnostic checks. Each check is independent — a failure
@@ -116,7 +112,7 @@ mod tests {
     use super::*;
 
     use async_trait::async_trait;
-    use lkit_core::{CoreError, ServiceState, ServiceStatus};
+    use lkit_core::{CoreError, ServiceState};
 
     struct MockServiceManager {
         active: bool,
@@ -125,11 +121,7 @@ mod tests {
     #[async_trait]
     impl ServiceManager for MockServiceManager {
         async fn status(&self) -> Result<ServiceState, CoreError> {
-            Ok(ServiceState {
-                active: self.active,
-                enabled: true,
-                pid: None,
-            })
+            Ok(ServiceState { active: self.active, enabled: true, pid: None })
         }
         async fn start(&self) -> Result<(), CoreError> {
             Ok(())
@@ -148,16 +140,18 @@ mod tests {
 
     #[async_trait]
     impl LkitClient for MockLkitClient {
-        async fn get_status(&self) -> Result<ServiceStatus, CoreError> {
-            Ok(ServiceStatus {
-                landscape_version: None,
-                systemd_active: false,
-                systemd_enabled: false,
-                api_reachable: self.healthy,
-            })
+        async fn get_version(&self) -> Result<String, CoreError> {
+            if self.healthy {
+                Ok("1.0.0".into())
+            } else {
+                Err(CoreError::Internal("connection refused".into()))
+            }
         }
         async fn health_check(&self) -> Result<bool, CoreError> {
             Ok(self.healthy)
+        }
+        async fn export_config(&self) -> Result<String, CoreError> {
+            Ok("[config]\nversion = \"1.0.0\"".into())
         }
     }
 
@@ -190,11 +184,8 @@ mod tests {
             paths,
         );
         let result = uc.execute().await?;
-        let home_check = result
-            .checks
-            .iter()
-            .find(|c| c.name == "home")
-            .ok_or("home check should exist")?;
+        let home_check =
+            result.checks.iter().find(|c| c.name == "home").ok_or("home check should exist")?;
         assert!(!home_check.passed);
         assert!(home_check.message.contains("missing"));
         Ok(())
@@ -215,11 +206,8 @@ mod tests {
         );
         let result = uc.execute().await?;
         assert!(!result.all_passed());
-        let api_check = result
-            .checks
-            .iter()
-            .find(|c| c.name == "api")
-            .ok_or("api check should exist")?;
+        let api_check =
+            result.checks.iter().find(|c| c.name == "api").ok_or("api check should exist")?;
         assert!(!api_check.passed);
         Ok(())
     }

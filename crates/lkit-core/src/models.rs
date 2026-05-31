@@ -2,17 +2,28 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Current status of the Landscape service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceStatus {
-    /// Landscape version, if detected.
-    pub landscape_version: Option<String>,
-    /// Whether the systemd unit is active (running).
-    pub systemd_active: bool,
-    /// Whether the systemd unit is enabled (auto-start).
-    pub systemd_enabled: bool,
-    /// Whether the Landscape API is reachable.
-    pub api_reachable: bool,
+/// Landscape API v1 通用响应包装。
+/// 所有 API 端点返回此结构，业务数据在 `data` 中。
+#[derive(Debug, Deserialize)]
+pub struct ApiResponse<T> {
+    pub data: Option<T>,
+    pub error_id: Option<String>,
+    pub message: Option<String>,
+    pub args: Option<serde_json::Value>,
+}
+
+/// `GET /api/v1/system/info` 返回的系统信息。
+#[derive(Debug, Deserialize)]
+pub struct SystemInfoResponse {
+    pub landscape_version: String,
+}
+
+/// `GET /api/v1/system/config/export` 返回的导出配置。
+#[derive(Debug, Deserialize)]
+pub struct ExportInitConfigResponse {
+    pub filename: String,
+    pub version: String,
+    pub content: String,
 }
 
 /// Local systemd service state.
@@ -101,11 +112,7 @@ mod tests {
 
     #[test]
     fn service_state_serde_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-        let state = ServiceState {
-            active: true,
-            enabled: false,
-            pid: Some(1234),
-        };
+        let state = ServiceState { active: true, enabled: false, pid: Some(1234) };
         let json = serde_json::to_string(&state)?;
         let decoded: ServiceState = serde_json::from_str(&json)?;
         assert!(decoded.active);

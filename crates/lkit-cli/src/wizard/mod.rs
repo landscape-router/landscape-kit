@@ -182,10 +182,7 @@ impl Wizard {
     /// Whether the current step should be skipped.
     pub fn should_skip_current(&self) -> bool {
         if self.single_nic {
-            matches!(
-                self.current_step().kind,
-                StepKind::LanSelect | StepKind::LanConfig
-            )
+            matches!(self.current_step().kind, StepKind::LanSelect | StepKind::LanConfig)
         } else {
             false
         }
@@ -243,25 +240,14 @@ impl Wizard {
     ///
     /// Returns `Err` if required fields are missing.
     pub fn build_config(&self, version: String, home: PathBuf) -> Result<InstallConfig, String> {
-        let wan_nic = self
-            .collected
-            .wan_nic
-            .as_ref()
-            .ok_or("WAN NIC not selected")?;
+        let wan_nic = self.collected.wan_nic.as_ref().ok_or("WAN NIC not selected")?;
 
-        let wan_mode = self
-            .collected
-            .wan_mode
-            .clone()
-            .ok_or("WAN mode not selected")?;
+        let wan_mode = self.collected.wan_mode.clone().ok_or("WAN mode not selected")?;
 
         let lan = if self.collected.lan_nics.is_empty() {
             None
         } else {
-            let gateway = self
-                .collected
-                .lan_gateway
-                .ok_or("LAN gateway not configured")?;
+            let gateway = self.collected.lan_gateway.ok_or("LAN gateway not configured")?;
             let mask = self.collected.lan_mask.ok_or("LAN mask not configured")?;
             Some(LanSetup {
                 member_nics: self.collected.lan_nics.clone(),
@@ -271,24 +257,13 @@ impl Wizard {
         };
 
         let web_port = self.collected.web_port.unwrap_or(6300);
-        let admin_user = self
-            .collected
-            .admin_user
-            .clone()
-            .unwrap_or_else(|| "root".to_string());
-        let admin_pass = self
-            .collected
-            .admin_pass
-            .as_ref()
-            .ok_or("admin password not set")?
-            .clone();
+        let admin_user = self.collected.admin_user.clone().unwrap_or_else(|| "root".to_string());
+        let admin_pass =
+            self.collected.admin_pass.as_ref().ok_or("admin password not set")?.clone();
 
         Ok(InstallConfig {
             network: NetworkSetup {
-                wan: WanSetup {
-                    iface_name: wan_nic.clone(),
-                    mode: wan_mode,
-                },
+                wan: WanSetup { iface_name: wan_nic.clone(), mode: wan_mode },
                 lan,
             },
             landscape: LandscapeServiceConfig {
@@ -366,11 +341,8 @@ impl Wizard {
 
         // Build config from collected data.
         // Version was pre-resolved by the install command via SourceResolver.
-        let version = self
-            .collected
-            .version
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("未确定版本"))?;
+        let version =
+            self.collected.version.clone().ok_or_else(|| anyhow::anyhow!("未确定版本"))?;
         match self.build_config(version, home) {
             Ok(config) => Ok(Some(config)),
             Err(e) => Err(anyhow::anyhow!("配置不完整: {e}")),
@@ -392,7 +364,9 @@ pub fn print_status_table(collected: &CollectedConfig) {
     if let Some(wan) = &collected.wan_nic {
         let wan_desc = match &collected.wan_mode {
             Some(WanMode::Dhcp) => "DHCP".to_string(),
-            Some(WanMode::Static { ipv4, mask, .. }) => format!("静态 IP {ipv4}/{mask}"),
+            Some(WanMode::Static { ipv4, mask, .. }) => {
+                format!("静态 IP {ipv4}/{mask}")
+            }
             Some(WanMode::Nothing) => "不配置".to_string(),
             None => "待配置".to_string(),
         };
@@ -504,10 +478,7 @@ mod tests {
 
         w2.retreat(); // → WanSelect (now clear)
         assert_eq!(w2.current_step().kind, StepKind::WanSelect);
-        assert!(
-            w2.collected.wan_mode.is_none(),
-            "wan_mode cleared when reaching WanSelect"
-        );
+        assert!(w2.collected.wan_mode.is_none(), "wan_mode cleared when reaching WanSelect");
     }
 
     /// Retreating from LanConfig to LanSelect preserves lan_gateway.

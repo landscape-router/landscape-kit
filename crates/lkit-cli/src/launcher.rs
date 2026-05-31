@@ -80,10 +80,7 @@ fn menu_items() -> Vec<MenuItem> {
             label_key: "menu.config_export",
             action: MenuAction::NotImplemented("M3"),
         },
-        MenuItem {
-            label_key: "menu.exit",
-            action: MenuAction::Exit,
-        },
+        MenuItem { label_key: "menu.exit", action: MenuAction::Exit },
     ]
 }
 
@@ -109,11 +106,8 @@ pub async fn run(state: &AppState) -> anyhow::Result<()> {
         .collect();
 
     loop {
-        let selection = Select::new()
-            .with_prompt(msg("menu.title"))
-            .items(&labels)
-            .default(0)
-            .interact()?;
+        let selection =
+            Select::new().with_prompt(msg("menu.title")).items(&labels).default(0).interact()?;
 
         match &items[selection].action {
             MenuAction::Dispatch(cmd) => {

@@ -7,10 +7,7 @@ use std::cmp::Ordering;
 /// Returns `Greater` if `a` is a newer version than `b`.
 pub fn compare_semver(a: &str, b: &str) -> Ordering {
     let parse = |s: &str| -> Vec<u64> {
-        s.trim_start_matches('v')
-            .split('.')
-            .filter_map(|c| c.parse::<u64>().ok())
-            .collect()
+        s.trim_start_matches('v').split('.').filter_map(|c| c.parse::<u64>().ok()).collect()
     };
     let va = parse(a);
     let vb = parse(b);

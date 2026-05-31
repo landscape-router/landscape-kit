@@ -63,9 +63,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // All other commands require an existing Landscape installation.
-    let landscape_home = std::env::var("LANDSCAPE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs_or_default());
+    let landscape_home =
+        std::env::var("LANDSCAPE_HOME").map(PathBuf::from).unwrap_or_else(|_| dirs_or_default());
 
     let landscape_paths = LandscapePaths::new(landscape_home.clone());
 
@@ -77,21 +76,16 @@ async fn main() -> anyhow::Result<()> {
     let manager_paths = ManagerPaths::new(manager_home());
 
     let base_url = parse_api_listen(&landscape_paths.landscape_config)
-        .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+        .unwrap_or_else(|| "https://127.0.0.1:6443".to_string());
 
-    let client: Arc<dyn lkit_core::LkitClient> = Arc::new(LandscapeClient::new(base_url)?);
+    let client: Arc<dyn lkit_core::LkitClient> =
+        Arc::new(LandscapeClient::new(base_url, Some(landscape_paths.api_token.clone()))?);
     let service_manager: Arc<dyn lkit_core::ServiceManager> =
         Arc::new(SystemdManager::new("landscape.service"));
     let log_reader: Arc<dyn lkit_core::LogReader> =
         Arc::new(FileLogReader::new(landscape_paths.logs_dir.clone()));
 
-    let state = AppState::new(
-        client,
-        service_manager,
-        log_reader,
-        landscape_paths,
-        manager_paths,
-    );
+    let state = AppState::new(client, service_manager, log_reader, landscape_paths, manager_paths);
 
     // Dispatch remaining commands (Install already handled above).
     match cli.command {
@@ -113,10 +107,15 @@ fn manager_home() -> PathBuf {
     PathBuf::from(home).join(".landscape-kit")
 }
 
-/// Parse api.listen from landscape.toml. Returns None if file missing or unparseable.
+/// Parse Landscape API base URL from landscape.toml.
+///
+/// Reads `web.https_port` and `web.address`. Falls back to `https://127.0.0.1:6443`
+/// when the config file is missing or unparseable (default state).
 fn parse_api_listen(config_path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(config_path).ok()?;
     let value: toml::Value = content.parse().ok()?;
-    let listen = value.get("api")?.get("listen")?.as_str()?;
-    Some(format!("http://{listen}"))
+    let web = value.get("web")?;
+    let https_port_u64 = web.get("https_port")?.as_integer()?;
+    let ip = web.get("address").and_then(|v| v.as_str()).unwrap_or("127.0.0.1");
+    Some(format!("https://{ip}:{https_port_u64}"))
 }

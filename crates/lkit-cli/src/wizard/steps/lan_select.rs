@@ -20,20 +20,14 @@ pub fn render(collected: &mut CollectedConfig, nics: &[NicInfo]) -> Result<Wizar
     let items: Vec<String> = candidates
         .iter()
         .map(|n| {
-            let ip_info = n
-                .current_ip
-                .as_deref()
-                .map(|ip| format!(" {ip}"))
-                .unwrap_or_default();
+            let ip_info = n.current_ip.as_deref().map(|ip| format!(" {ip}")).unwrap_or_default();
             format!("{} ({}){}", n.name, n.mac, ip_info)
         })
         .collect();
 
     // Pre-select previously selected LAN NICs
-    let defaults: Vec<bool> = candidates
-        .iter()
-        .map(|n| collected.lan_nics.contains(&n.name))
-        .collect();
+    let defaults: Vec<bool> =
+        candidates.iter().map(|n| collected.lan_nics.contains(&n.name)).collect();
 
     let selections = MultiSelect::new()
         .with_prompt("选择 LAN 网卡（空格选择，Enter 确认）")
@@ -45,9 +39,6 @@ pub fn render(collected: &mut CollectedConfig, nics: &[NicInfo]) -> Result<Wizar
         return Ok(WizardAction::Retry("至少选择一个 LAN 网卡".into()));
     }
 
-    collected.lan_nics = selections
-        .iter()
-        .map(|&i| candidates[i].name.clone())
-        .collect();
+    collected.lan_nics = selections.iter().map(|&i| candidates[i].name.clone()).collect();
     Ok(WizardAction::Next)
 }

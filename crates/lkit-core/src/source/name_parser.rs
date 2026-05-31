@@ -19,19 +19,13 @@ pub fn parse_arch(filename: &str) -> Option<ArchInfo> {
     let stem = filename.rsplitn(2, '.').last().unwrap_or(filename);
 
     // Check musl suffix
-    let (stem, musl) = if let Some(s) = stem.strip_suffix("-musl") {
-        (s, true)
-    } else {
-        (stem, false)
-    };
+    let (stem, musl) =
+        if let Some(s) = stem.strip_suffix("-musl") { (s, true) } else { (stem, false) };
 
     // Match known arch at the end of the stem
     for arch in KNOWN_ARCHES {
         if let Some(_remaining) = stem.strip_suffix(&format!("-{arch}")) {
-            return Some(ArchInfo {
-                arch: arch.to_string(),
-                musl,
-            });
+            return Some(ArchInfo { arch: arch.to_string(), musl });
         }
     }
     None

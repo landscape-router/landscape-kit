@@ -13,9 +13,7 @@ pub struct SystemdManager {
 impl SystemdManager {
     /// Create a manager for the given systemd unit (e.g. "landscape.service").
     pub fn new(service_name: impl Into<String>) -> Self {
-        Self {
-            service_name: service_name.into(),
-        }
+        Self { service_name: service_name.into() }
     }
 }
 
@@ -34,50 +32,37 @@ impl ServiceManager for SystemdManager {
             .map(|out| out.trim() == "enabled")
             .unwrap_or(false);
 
-        let pid = run_cmd(
-            "systemctl",
-            &["show", &self.service_name, "--property=MainPID"],
-        )
-        .await
-        .ok()
-        .and_then(|out| {
-            let line = out.trim();
-            line.strip_prefix("MainPID=")
-                .and_then(|v| v.parse::<u32>().ok())
-                .filter(|&p| p != 0)
-        });
+        let pid = run_cmd("systemctl", &["show", &self.service_name, "--property=MainPID"])
+            .await
+            .ok()
+            .and_then(|out| {
+                let line = out.trim();
+                line.strip_prefix("MainPID=")
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .filter(|&p| p != 0)
+            });
 
-        Ok(ServiceState {
-            active,
-            enabled,
-            pid,
-        })
+        Ok(ServiceState { active, enabled, pid })
     }
 
     async fn start(&self) -> Result<(), CoreError> {
-        run_cmd("systemctl", &["start", &self.service_name])
-            .await
-            .map_err(|e| {
-                CoreError::Internal(format!("failed to start {}: {}", self.service_name, e))
-            })?;
+        run_cmd("systemctl", &["start", &self.service_name]).await.map_err(|e| {
+            CoreError::Internal(format!("failed to start {}: {}", self.service_name, e))
+        })?;
         Ok(())
     }
 
     async fn stop(&self) -> Result<(), CoreError> {
-        run_cmd("systemctl", &["stop", &self.service_name])
-            .await
-            .map_err(|e| {
-                CoreError::Internal(format!("failed to stop {}: {}", self.service_name, e))
-            })?;
+        run_cmd("systemctl", &["stop", &self.service_name]).await.map_err(|e| {
+            CoreError::Internal(format!("failed to stop {}: {}", self.service_name, e))
+        })?;
         Ok(())
     }
 
     async fn restart(&self) -> Result<(), CoreError> {
-        run_cmd("systemctl", &["restart", &self.service_name])
-            .await
-            .map_err(|e| {
-                CoreError::Internal(format!("failed to restart {}: {}", self.service_name, e))
-            })?;
+        run_cmd("systemctl", &["restart", &self.service_name]).await.map_err(|e| {
+            CoreError::Internal(format!("failed to restart {}: {}", self.service_name, e))
+        })?;
         Ok(())
     }
 }

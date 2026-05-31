@@ -118,11 +118,7 @@ pub async fn run_sync(
     // (either just synced or was already there).
     update_latest_pointer(source, target, &config.prefix, &synced, &skipped).await?;
 
-    Ok(SyncResult {
-        synced,
-        skipped,
-        failed,
-    })
+    Ok(SyncResult { synced, skipped, failed })
 }
 
 /// Update the latest pointer on target, following upstream's notion of "latest".
@@ -230,10 +226,7 @@ async fn sync_version(
     let mut sha256_map: HashMap<String, String> = HashMap::new();
 
     // Check if SHASUM256sum.txt is in the artifact list.
-    let has_shasum = manifest
-        .artifacts
-        .iter()
-        .any(|a| a.name == "SHASUM256sum.txt");
+    let has_shasum = manifest.artifacts.iter().any(|a| a.name == "SHASUM256sum.txt");
 
     // Download SHASUM256sum.txt first (if present) to get reference hashes.
     if has_shasum {
@@ -294,9 +287,7 @@ async fn sync_version(
         }
 
         // Store hash: prefer SHASUM value, fall back to computed.
-        sha256_map
-            .entry(artifact.name.clone())
-            .or_insert(computed_hash);
+        sha256_map.entry(artifact.name.clone()).or_insert(computed_hash);
 
         let data = tokio::fs::read(tmp.path()).await?;
         let key = format!("{version_prefix}/{}", artifact.name);
@@ -324,9 +315,7 @@ async fn sync_version(
 
     let manifest_json = serde_json::to_string_pretty(&manifest_for_storage)?;
     let manifest_key = format!("{version_prefix}/release-manifest.json");
-    target
-        .upload(&manifest_key, manifest_json.as_bytes())
-        .await?;
+    target.upload(&manifest_key, manifest_json.as_bytes()).await?;
 
     Ok(())
 }
@@ -354,15 +343,9 @@ async fn download_http(
 ) -> Result<String, MirrorError> {
     use futures::StreamExt;
 
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
+    let resp = client.get(url).send().await.map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
 
-    let resp = resp
-        .error_for_status()
-        .map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
+    let resp = resp.error_for_status().map_err(|e| MirrorError::GitHubApi(e.to_string()))?;
 
     let mut file = tokio::fs::File::create(dest).await?;
     let mut hasher = Sha256::new();
@@ -384,10 +367,7 @@ async fn download_file_url(url: &str, dest: &Path) -> Result<String, MirrorError
     let src_path = Path::new(path_str);
 
     let mut src = tokio::fs::File::open(src_path).await.map_err(|e| {
-        MirrorError::Io(std::io::Error::new(
-            e.kind(),
-            format!("failed to open {path_str}: {e}"),
-        ))
+        MirrorError::Io(std::io::Error::new(e.kind(), format!("failed to open {path_str}: {e}")))
     })?;
     let mut dst = tokio::fs::File::create(dest).await?;
     let mut hasher = Sha256::new();
@@ -422,9 +402,8 @@ pub fn compute_sha256(data: &[u8]) -> String {
 ///
 /// Hand-rolled to avoid pulling in `chrono` or `jiff` for a single timestamp.
 fn now_iso8601() -> String {
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
+    let duration =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs();
     let days = secs / 86400;
     let remaining = secs % 86400;
@@ -448,20 +427,8 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
         y += 1;
     }
     let leap = is_leap(y);
-    let month_days: [u64; 12] = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
+    let month_days: [u64; 12] =
+        [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut m = 1;
     for &days_in_month in &month_days {
         if remaining < days_in_month {
@@ -547,23 +514,15 @@ mod tests {
         }
 
         // Critical: manifest must NOT be present in target
-        let manifest_exists = target
-            .exists("landscape/v1.0/release-manifest.json")
-            .await?;
-        assert!(
-            !manifest_exists,
-            "manifest should not exist when sync fails"
-        );
+        let manifest_exists = target.exists("landscape/v1.0/release-manifest.json").await?;
+        assert!(!manifest_exists, "manifest should not exist when sync fails");
         Ok(())
     }
 
     #[test]
     fn compute_sha256_known_value() -> Result<(), Box<dyn std::error::Error>> {
         let hash = compute_sha256(b"hello world");
-        assert_eq!(
-            hash,
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-        );
+        assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
         Ok(())
     }
 

@@ -17,10 +17,7 @@ pub struct DownloadConfig {
 
 impl Default for DownloadConfig {
     fn default() -> Self {
-        Self {
-            concurrent_files: 4,
-            chunks_per_file: 1,
-        }
+        Self { concurrent_files: 4, chunks_per_file: 1 }
     }
 }
 

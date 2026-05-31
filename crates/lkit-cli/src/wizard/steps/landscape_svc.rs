@@ -13,11 +13,7 @@ pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
         .with_prompt("Web 端口")
         .default(collected.web_port.unwrap_or(6300))
         .validate_with(|input: &u16| -> Result<(), String> {
-            if *input > 0 {
-                Ok(())
-            } else {
-                Err("端口必须 > 0".to_string())
-            }
+            if *input > 0 { Ok(()) } else { Err("端口必须 > 0".to_string()) }
         })
         .interact()?;
 
@@ -25,22 +21,13 @@ pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
         .with_prompt("HTTPS 端口")
         .default(collected.https_port)
         .validate_with(|input: &u16| -> Result<(), String> {
-            if *input > 0 {
-                Ok(())
-            } else {
-                Err("端口必须 > 0".to_string())
-            }
+            if *input > 0 { Ok(()) } else { Err("端口必须 > 0".to_string()) }
         })
         .interact()?;
 
     let user: String = Input::new()
         .with_prompt("管理员用户名")
-        .default(
-            collected
-                .admin_user
-                .clone()
-                .unwrap_or_else(|| "root".to_string()),
-        )
+        .default(collected.admin_user.clone().unwrap_or_else(|| "root".to_string()))
         .interact()?;
 
     let pass = Password::new()

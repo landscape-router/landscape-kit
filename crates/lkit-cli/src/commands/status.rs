@@ -14,10 +14,10 @@ pub(crate) async fn run(args: StatusArgs, state: &AppState) -> anyhow::Result<()
     if args.json {
         let output = serde_json::json!({
             "service": report.service,
-            "landscape": report.landscape,
+            "landscape_version": report.landscape_version,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
-        if report.landscape.is_none() {
+        if report.landscape_version.is_none() {
             std::process::exit(4);
         }
         return Ok(());
@@ -30,15 +30,8 @@ pub(crate) async fn run(args: StatusArgs, state: &AppState) -> anyhow::Result<()
     };
     eprintln!("{}", systemd_msg);
 
-    if let Some(ref landscape) = report.landscape {
-        eprintln!(
-            "{}: {}",
-            msg("status.api.ok"),
-            landscape
-                .landscape_version
-                .as_deref()
-                .unwrap_or(&msg("status.version.unknown"))
-        );
+    if let Some(ref version) = report.landscape_version {
+        eprintln!("{}: {}", msg("status.api.ok"), version);
     } else {
         eprintln!("{}", msg("status.api.unreachable"));
         std::process::exit(4);

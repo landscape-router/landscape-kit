@@ -39,25 +39,16 @@ impl ReleaseSource for HttpMirrorSource {
 
     async fn latest_tag(&self) -> Result<String, SourceError> {
         let url = format!("{}/latest", self.base_url);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp =
+            self.client.get(&url).send().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SourceError::Network("latest pointer not found".into()));
         }
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let text = resp.text().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         Ok(text.trim().to_string())
     }
@@ -80,10 +71,7 @@ impl ReleaseSource for HttpMirrorSource {
             .map_err(|e| SourceError::Network(e.to_string()))?;
 
         if resp.status().is_success() {
-            let text = resp
-                .text()
-                .await
-                .map_err(|e| SourceError::Network(e.to_string()))?;
+            let text = resp.text().await.map_err(|e| SourceError::Network(e.to_string()))?;
             let mut manifest: ReleaseManifest = serde_json::from_str(&text)
                 .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
             fill_missing_arch(&mut manifest);
@@ -103,14 +91,9 @@ impl ReleaseSource for HttpMirrorSource {
             return Err(SourceError::VersionNotFound { tag: tag.into() });
         }
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let text = resp.text().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         parse_shasum_file(&text, tag)
     }
@@ -144,13 +127,11 @@ impl ReleaseSource for HttpMirrorSource {
             if resp.status() == reqwest::StatusCode::NOT_FOUND {
                 return Err(SourceError::VersionNotFound { tag: tag.into() });
             }
-            resp.error_for_status()
-                .map_err(|e| SourceError::Network(e.to_string()))?;
+            resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
             return Ok(start.elapsed());
         }
 
-        resp.error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
         Ok(start.elapsed())
     }
@@ -171,13 +152,8 @@ fn parse_shasum_file(content: &str, tag: &str) -> Result<ReleaseManifest, Source
             if name.contains("SHASUM") {
                 return None;
             }
-            let arch = lkit_core::parse_arch(name).map(|info| {
-                if info.musl {
-                    format!("{}-musl", info.arch)
-                } else {
-                    info.arch
-                }
-            });
+            let arch = lkit_core::parse_arch(name)
+                .map(|info| if info.musl { format!("{}-musl", info.arch) } else { info.arch });
             Some(Artifact {
                 name: name.to_string(),
                 sha256: hash.to_string(),
@@ -206,13 +182,8 @@ fn parse_shasum_file(content: &str, tag: &str) -> Result<ReleaseManifest, Source
 fn fill_missing_arch(manifest: &mut ReleaseManifest) {
     for artifact in &mut manifest.artifacts {
         if artifact.arch.is_none() {
-            artifact.arch = lkit_core::parse_arch(&artifact.name).map(|info| {
-                if info.musl {
-                    format!("{}-musl", info.arch)
-                } else {
-                    info.arch
-                }
-            });
+            artifact.arch = lkit_core::parse_arch(&artifact.name)
+                .map(|info| if info.musl { format!("{}-musl", info.arch) } else { info.arch });
         }
     }
 }

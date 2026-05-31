@@ -34,11 +34,7 @@ pub fn render(collected: &mut CollectedConfig) -> Result<WizardAction> {
         }
         1 => {
             let (ipv4, mask, gateway) = collect_static_ip()?;
-            collected.wan_mode = Some(WanMode::Static {
-                ipv4,
-                mask,
-                gateway,
-            });
+            collected.wan_mode = Some(WanMode::Static { ipv4, mask, gateway });
         }
         2 => {
             collected.wan_mode = Some(WanMode::Nothing);
@@ -54,10 +50,7 @@ fn collect_static_ip() -> Result<(Ipv4Addr, u8, Ipv4Addr)> {
     let ipv4_str: String = Input::new()
         .with_prompt("IP 地址")
         .validate_with(|input: &String| -> Result<(), String> {
-            input
-                .parse::<Ipv4Addr>()
-                .map(|_| ())
-                .map_err(|_| "无效的 IPv4 地址".to_string())
+            input.parse::<Ipv4Addr>().map(|_| ()).map_err(|_| "无效的 IPv4 地址".to_string())
         })
         .interact()?;
 
@@ -65,21 +58,14 @@ fn collect_static_ip() -> Result<(Ipv4Addr, u8, Ipv4Addr)> {
         .with_prompt("子网掩码位数（如 24）")
         .default(24u8)
         .validate_with(|input: &u8| -> Result<(), String> {
-            if *input >= 8 && *input <= 30 {
-                Ok(())
-            } else {
-                Err("掩码范围 8~30".to_string())
-            }
+            if *input >= 8 && *input <= 30 { Ok(()) } else { Err("掩码范围 8~30".to_string()) }
         })
         .interact()?;
 
     let gw_str: String = Input::new()
         .with_prompt("网关地址")
         .validate_with(|input: &String| -> Result<(), String> {
-            input
-                .parse::<Ipv4Addr>()
-                .map(|_| ())
-                .map_err(|_| "无效的 IPv4 地址".to_string())
+            input.parse::<Ipv4Addr>().map(|_| ()).map_err(|_| "无效的 IPv4 地址".to_string())
         })
         .interact()?;
 

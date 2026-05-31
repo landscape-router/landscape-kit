@@ -23,10 +23,8 @@ pub async fn list_versions(
 
     let mut versions: Vec<VersionInfo> = Vec::new();
 
-    let manifest_keys: Vec<&String> = all_keys
-        .iter()
-        .filter(|k| k.ends_with("release-manifest.json"))
-        .collect();
+    let manifest_keys: Vec<&String> =
+        all_keys.iter().filter(|k| k.ends_with("release-manifest.json")).collect();
 
     for manifest_key in &manifest_keys {
         let tag = manifest_key
@@ -42,11 +40,7 @@ pub async fn list_versions(
             .filter(|k| k.starts_with(&version_prefix) && !k.ends_with("release-manifest.json"))
             .count();
 
-        versions.push(VersionInfo {
-            tag,
-            artifact_count,
-            has_manifest: true,
-        });
+        versions.push(VersionInfo { tag, artifact_count, has_manifest: true });
     }
 
     versions.sort_by(|a, b| b.tag.cmp(&a.tag));
@@ -101,18 +95,14 @@ mod tests {
         };
         let json = serde_json::to_string(&manifest)?;
 
-        target
-            .upload("landscape/v1.0/release-manifest.json", json.as_bytes())
-            .await?;
+        target.upload("landscape/v1.0/release-manifest.json", json.as_bytes()).await?;
         target.upload("landscape/v1.0/file.bin", b"data").await?;
 
         let mut manifest2 = manifest.clone();
         manifest2.tag = "v2.0".into();
         let json2 = serde_json::to_string(&manifest2)?;
 
-        target
-            .upload("landscape/v2.0/release-manifest.json", json2.as_bytes())
-            .await?;
+        target.upload("landscape/v2.0/release-manifest.json", json2.as_bytes()).await?;
         target.upload("landscape/v2.0/file.bin", b"data").await?;
 
         let versions = list_versions(&target, "landscape").await?;

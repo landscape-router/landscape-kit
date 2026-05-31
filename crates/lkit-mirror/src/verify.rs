@@ -25,10 +25,8 @@ pub async fn verify(
     let mut results = Vec::new();
 
     let all_keys = target.list(prefix).await?;
-    let manifest_keys: Vec<String> = all_keys
-        .into_iter()
-        .filter(|k| k.ends_with("release-manifest.json"))
-        .collect();
+    let manifest_keys: Vec<String> =
+        all_keys.into_iter().filter(|k| k.ends_with("release-manifest.json")).collect();
 
     for manifest_key in &manifest_keys {
         let tag = manifest_key

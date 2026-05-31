@@ -74,11 +74,7 @@ pub fn render(collected: &CollectedConfig) -> Result<WizardAction> {
     eprintln!();
 
     let options = &["确认安装", "返回修改", "退出"];
-    let selection = Select::new()
-        .with_prompt("操作")
-        .items(options)
-        .default(0)
-        .interact()?;
+    let selection = Select::new().with_prompt("操作").items(options).default(0).interact()?;
 
     match selection {
         0 => Ok(WizardAction::Next),

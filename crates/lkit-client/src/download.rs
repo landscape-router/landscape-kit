@@ -22,9 +22,7 @@ impl HttpDownloader {
 
     /// Create a downloader with default client settings.
     pub fn with_defaults() -> Result<Self, reqwest::Error> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .build()?;
+        let client = Client::builder().timeout(std::time::Duration::from_secs(300)).build()?;
         Ok(Self::new(client))
     }
 }
@@ -38,30 +36,21 @@ impl ArtifactDownloader for HttpDownloader {
         _config: &DownloadConfig,
         progress: Option<&dyn DownloadProgress>,
     ) -> Result<(), DownloadError> {
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| DownloadError::Network(e.to_string()))?;
+        let resp =
+            self.client.get(url).send().await.map_err(|e| DownloadError::Network(e.to_string()))?;
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| DownloadError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| DownloadError::Network(e.to_string()))?;
 
         let total = resp.content_length().unwrap_or(0);
-        let file_name = dest
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let file_name =
+            dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
 
         if let Some(p) = progress {
             p.on_file_start(&file_name, total);
         }
 
-        let mut file = tokio::fs::File::create(dest)
-            .await
-            .map_err(|e| DownloadError::Io(e.to_string()))?;
+        let mut file =
+            tokio::fs::File::create(dest).await.map_err(|e| DownloadError::Io(e.to_string()))?;
 
         let mut downloaded: u64 = 0;
         let mut stream = resp.bytes_stream();
@@ -69,18 +58,14 @@ impl ArtifactDownloader for HttpDownloader {
         use futures::StreamExt;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| DownloadError::Network(e.to_string()))?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| DownloadError::Io(e.to_string()))?;
+            file.write_all(&chunk).await.map_err(|e| DownloadError::Io(e.to_string()))?;
             downloaded += chunk.len() as u64;
             if let Some(p) = progress {
                 p.on_file_progress(&file_name, downloaded);
             }
         }
 
-        file.flush()
-            .await
-            .map_err(|e| DownloadError::Io(e.to_string()))?;
+        file.flush().await.map_err(|e| DownloadError::Io(e.to_string()))?;
 
         if total > 0 && downloaded < total {
             return Err(DownloadError::Incomplete { downloaded, total });
@@ -130,10 +115,7 @@ mod tests {
         tokio::fs::write(&file_path, b"hello world").await?;
 
         let hash = sha256_file(&file_path).await?;
-        assert_eq!(
-            hash,
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-        );
+        assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
         Ok(())
     }
 }

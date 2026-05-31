@@ -47,18 +47,13 @@ mod tests {
     #[async_trait]
     impl LogReader for FailingLogReader {
         async fn recent_lines(&self, _lines: usize) -> Result<Vec<String>, CoreError> {
-            Err(CoreError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no log dir",
-            )))
+            Err(CoreError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "no log dir")))
         }
     }
 
     #[tokio::test]
     async fn recent_returns_lines() -> Result<(), Box<dyn std::error::Error>> {
-        let reader = Arc::new(MockLogReader {
-            lines: vec!["line1".into(), "line2".into()],
-        });
+        let reader = Arc::new(MockLogReader { lines: vec!["line1".into(), "line2".into()] });
         let uc = LogsUseCase::new(reader);
         let result = uc.recent(50).await?;
         assert_eq!(result, vec!["line1", "line2"]);

@@ -26,10 +26,7 @@ impl ReleaseManifest {
 
     /// Filter artifacts by architecture. Returns arch-independent + matching arch artifacts.
     pub fn artifacts_for_arch(&self, arch: &str) -> Vec<&Artifact> {
-        self.artifacts
-            .iter()
-            .filter(|a| a.arch.as_deref().is_none_or(|a| a == arch))
-            .collect()
+        self.artifacts.iter().filter(|a| a.arch.as_deref().is_none_or(|a| a == arch)).collect()
     }
 }
 

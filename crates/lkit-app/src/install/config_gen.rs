@@ -86,11 +86,7 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
                 ip_model.insert("t", "dhcpclient".into());
                 ip_model.insert("default_router", true.into());
             }
-            WanMode::Static {
-                ipv4,
-                mask,
-                gateway,
-            } => {
+            WanMode::Static { ipv4, mask, gateway } => {
                 ip_model.insert("t", "static".into());
                 ip_model.insert("default_router", true.into());
                 ip_model.insert("default_router_ip", gateway.to_string().into());
@@ -158,10 +154,7 @@ pub fn generate_init_toml(config: &InstallConfig) -> Result<String, AppError> {
         dhcp.insert("config", toml_edit::Item::Table(cfg));
 
         dhcp_services.push(dhcp);
-        doc.insert(
-            "dhcpv4_services",
-            toml_edit::Item::ArrayOfTables(dhcp_services),
-        );
+        doc.insert("dhcpv4_services", toml_edit::Item::ArrayOfTables(dhcp_services));
     }
 
     Ok(doc.to_string())
@@ -225,10 +218,7 @@ mod tests {
                 admin_user: "root".to_string(),
                 admin_pass: "secret".to_string(),
             },
-            source: SourceSelection {
-                source_name: None,
-                version: None,
-            },
+            source: SourceSelection { source_name: None, version: None },
             landscape_version: "0.19.2".to_string(),
             home: std::path::PathBuf::from("/tmp/test-landscape"),
         }
@@ -271,20 +261,14 @@ mod tests {
         assert_eq!(br["create_dev_type"].as_str(), Some("bridge"));
 
         // DHCP service exists
-        assert_eq!(
-            parsed["dhcpv4_services"][0]["iface_name"].as_str(),
-            Some("br_lan")
-        );
+        assert_eq!(parsed["dhcpv4_services"][0]["iface_name"].as_str(), Some("br_lan"));
         assert_eq!(
             parsed["dhcpv4_services"][0]["config"]["ip_range_start"].as_str(),
             Some("192.168.5.100")
         );
 
         // route_lans exists
-        assert_eq!(
-            parsed["route_lans"][0]["iface_name"].as_str(),
-            Some("br_lan")
-        );
+        assert_eq!(parsed["route_lans"][0]["iface_name"].as_str(), Some("br_lan"));
 
         Ok(())
     }
@@ -307,10 +291,7 @@ mod tests {
         assert_eq!(wan_ip["ip_model"]["t"].as_str(), Some("static"));
         assert_eq!(wan_ip["ip_model"]["ipv4"].as_str(), Some("10.0.0.100"));
         assert_eq!(wan_ip["ip_model"]["ipv4_mask"].as_integer(), Some(24));
-        assert_eq!(
-            wan_ip["ip_model"]["default_router_ip"].as_str(),
-            Some("10.0.0.1")
-        );
+        assert_eq!(wan_ip["ip_model"]["default_router_ip"].as_str(), Some("10.0.0.1"));
 
         Ok(())
     }
@@ -388,10 +369,7 @@ mod tests {
         let result = generate_init_toml(&cfg);
         match result {
             Err(AppError::ConfigGeneration(msg)) => {
-                assert!(
-                    msg.contains("/30"),
-                    "message should mention /30, got: {msg}"
-                );
+                assert!(msg.contains("/30"), "message should mention /30, got: {msg}");
             }
             Err(other) => panic!("expected ConfigGeneration, got: {other}"),
             Ok(_) => panic!("expected error for mask=30, got Ok"),

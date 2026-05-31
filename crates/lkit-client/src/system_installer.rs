@@ -28,9 +28,7 @@ impl HostInstaller for SystemInstaller {
     }
 
     async fn write_file(&self, path: &Path, contents: &[u8]) -> Result<(), CoreError> {
-        tokio::fs::write(path, contents)
-            .await
-            .map_err(CoreError::Io)
+        tokio::fs::write(path, contents).await.map_err(CoreError::Io)
     }
 
     async fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), CoreError> {
@@ -89,9 +87,7 @@ impl HostInstaller for SystemInstaller {
             .await
             .map_err(CoreError::Io)?;
         if !status.success() {
-            return Err(CoreError::Internal(format!(
-                "systemctl stop {unit} exited with {status}"
-            )));
+            return Err(CoreError::Internal(format!("systemctl stop {unit} exited with {status}")));
         }
         Ok(())
     }

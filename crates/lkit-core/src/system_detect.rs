@@ -31,16 +31,8 @@ pub enum LibcType {
 pub fn detect() -> Result<SystemTarget, CoreError> {
     let arch = map_arch(std::env::consts::ARCH)?;
     let libc = detect_libc(&arch)?;
-    let target_str = if libc == LibcType::Musl {
-        format!("{arch}-musl")
-    } else {
-        arch.clone()
-    };
-    Ok(SystemTarget {
-        arch,
-        libc,
-        target_str,
-    })
+    let target_str = if libc == LibcType::Musl { format!("{arch}-musl") } else { arch.clone() };
+    Ok(SystemTarget { arch, libc, target_str })
 }
 
 fn map_arch(rust_arch: &str) -> Result<String, CoreError> {
@@ -50,9 +42,7 @@ fn map_arch(rust_arch: &str) -> Result<String, CoreError> {
         "riscv64" | "riscv64gc" => Ok("riscv64".into()),
         "s390x" => Ok("s390x".into()),
         "loongarch64" => Ok("loongarch64".into()),
-        other => Err(CoreError::Internal(format!(
-            "unsupported architecture: {other}"
-        ))),
+        other => Err(CoreError::Internal(format!("unsupported architecture: {other}"))),
     }
 }
 
@@ -69,10 +59,7 @@ fn detect_libc(arch: &str) -> Result<LibcType, CoreError> {
             "/lib/ld-linux-riscv64-lp64d.so.1",
             "/usr/lib/riscv64-linux-gnu/ld-linux-riscv64-lp64d.so.1",
         ],
-        "s390x" => &[
-            "/lib/ld-linux-s390x.so.1",
-            "/usr/lib/s390x-linux-gnu/ld-linux-s390x.so.1",
-        ],
+        "s390x" => &["/lib/ld-linux-s390x.so.1", "/usr/lib/s390x-linux-gnu/ld-linux-s390x.so.1"],
         "loongarch64" => &[
             "/lib/ld-linux-loongarch64-lp64d.so.1",
             "/usr/lib/loongarch64-linux-gnu/ld-linux-loongarch64-lp64d.so.1",
@@ -91,10 +78,8 @@ fn detect_libc(arch: &str) -> Result<LibcType, CoreError> {
 
     // Try musl (only x86_64 has musl variant in practice)
     if arch == "x86_64" {
-        let output = Command::new("/lib/ld-musl-x86_64.so.1")
-            .arg("--version")
-            .output()
-            .map_err(|_| {
+        let output =
+            Command::new("/lib/ld-musl-x86_64.so.1").arg("--version").output().map_err(|_| {
                 CoreError::Internal("unable to detect libc (tried glibc and musl)".into())
             })?;
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -108,9 +93,7 @@ fn detect_libc(arch: &str) -> Result<LibcType, CoreError> {
         return Ok(LibcType::Glibc);
     }
 
-    Err(CoreError::Internal(
-        "unable to detect libc on x86_64".into(),
-    ))
+    Err(CoreError::Internal("unable to detect libc on x86_64".into()))
 }
 
 #[cfg(test)]
@@ -119,18 +102,12 @@ mod tests {
 
     #[test]
     fn map_arch_x86_64() {
-        assert_eq!(
-            map_arch("x86_64").unwrap_or_else(|e| panic!("{e}")),
-            "x86_64"
-        );
+        assert_eq!(map_arch("x86_64").unwrap_or_else(|e| panic!("{e}")), "x86_64");
     }
 
     #[test]
     fn map_arch_riscv64gc() {
-        assert_eq!(
-            map_arch("riscv64gc").unwrap_or_else(|e| panic!("{e}")),
-            "riscv64"
-        );
+        assert_eq!(map_arch("riscv64gc").unwrap_or_else(|e| panic!("{e}")), "riscv64");
     }
 
     #[test]

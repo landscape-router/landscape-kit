@@ -88,19 +88,13 @@ impl ReleaseSource for GithubSource {
             .map_err(|e| SourceError::Network(e.to_string()))?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(SourceError::VersionNotFound {
-                tag: "latest".into(),
-            });
+            return Err(SourceError::VersionNotFound { tag: "latest".into() });
         }
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let release: GhRelease = resp
-            .json()
-            .await
-            .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+        let release: GhRelease =
+            resp.json().await.map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
 
         Ok(release.tag_name)
     }
@@ -119,14 +113,10 @@ impl ReleaseSource for GithubSource {
                 .map_err(|e| SourceError::Network(e.to_string()))?;
 
             let next_url = extract_next_link(resp.headers());
-            let resp = resp
-                .error_for_status()
-                .map_err(|e| SourceError::Network(e.to_string()))?;
+            let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-            let releases: Vec<GhRelease> = resp
-                .json()
-                .await
-                .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+            let releases: Vec<GhRelease> =
+                resp.json().await.map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
 
             let has_releases = !releases.is_empty();
             all_tags.extend(releases.into_iter().map(|r| r.tag_name));
@@ -154,14 +144,10 @@ impl ReleaseSource for GithubSource {
             return Err(SourceError::VersionNotFound { tag: tag.into() });
         }
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let release: GhRelease = resp
-            .json()
-            .await
-            .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
+        let release: GhRelease =
+            resp.json().await.map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
 
         // GitHub Releases API does not provide per-asset checksums.
         // sha256 is left empty; install flow uses SHASUM256sum.txt
@@ -170,13 +156,8 @@ impl ReleaseSource for GithubSource {
             .assets
             .into_iter()
             .map(|a| {
-                let arch = lkit_core::parse_arch(&a.name).map(|info| {
-                    if info.musl {
-                        format!("{}-musl", info.arch)
-                    } else {
-                        info.arch
-                    }
-                });
+                let arch = lkit_core::parse_arch(&a.name)
+                    .map(|info| if info.musl { format!("{}-musl", info.arch) } else { info.arch });
                 Artifact {
                     name: a.name,
                     sha256: String::new(),
@@ -196,10 +177,7 @@ impl ReleaseSource for GithubSource {
     }
 
     fn artifact_url(&self, tag: &str, name: &str) -> String {
-        format!(
-            "https://github.com/{}/{}/releases/download/{tag}/{name}",
-            self.owner, self.repo,
-        )
+        format!("https://github.com/{}/{}/releases/download/{tag}/{name}", self.owner, self.repo,)
     }
 
     async fn probe(&self, tag: &str) -> Result<Duration, SourceError> {
@@ -219,8 +197,7 @@ impl ReleaseSource for GithubSource {
             return Err(SourceError::VersionNotFound { tag: tag.into() });
         }
 
-        resp.error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
         Ok(start.elapsed())
     }

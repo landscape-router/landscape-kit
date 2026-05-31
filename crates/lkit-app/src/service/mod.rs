@@ -59,98 +59,52 @@ mod tests {
     #[async_trait]
     impl ServiceManager for MockServiceManager {
         async fn status(&self) -> Result<ServiceState, CoreError> {
-            Ok(ServiceState {
-                active: false,
-                enabled: true,
-                pid: None,
-            })
+            Ok(ServiceState { active: false, enabled: true, pid: None })
         }
         async fn start(&self) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(Action::Start);
-            if self.should_fail {
-                Err(CoreError::Internal("denied".into()))
-            } else {
-                Ok(())
-            }
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push(Action::Start);
+            if self.should_fail { Err(CoreError::Internal("denied".into())) } else { Ok(()) }
         }
         async fn stop(&self) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(Action::Stop);
-            if self.should_fail {
-                Err(CoreError::Internal("denied".into()))
-            } else {
-                Ok(())
-            }
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push(Action::Stop);
+            if self.should_fail { Err(CoreError::Internal("denied".into())) } else { Ok(()) }
         }
         async fn restart(&self) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(Action::Restart);
-            if self.should_fail {
-                Err(CoreError::Internal("denied".into()))
-            } else {
-                Ok(())
-            }
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push(Action::Restart);
+            if self.should_fail { Err(CoreError::Internal("denied".into())) } else { Ok(()) }
         }
     }
 
     #[tokio::test]
     async fn start_delegates_to_manager() -> Result<(), Box<dyn std::error::Error>> {
-        let mgr = Arc::new(MockServiceManager {
-            calls: Mutex::new(vec![]),
-            should_fail: false,
-        });
+        let mgr = Arc::new(MockServiceManager { calls: Mutex::new(vec![]), should_fail: false });
         let uc = ServiceUseCase::new(mgr.clone());
         uc.start().await?;
-        assert_eq!(
-            *mgr.calls.lock().unwrap_or_else(|e| e.into_inner()),
-            vec![Action::Start]
-        );
+        assert_eq!(*mgr.calls.lock().unwrap_or_else(|e| e.into_inner()), vec![Action::Start]);
         Ok(())
     }
 
     #[tokio::test]
     async fn stop_delegates_to_manager() -> Result<(), Box<dyn std::error::Error>> {
-        let mgr = Arc::new(MockServiceManager {
-            calls: Mutex::new(vec![]),
-            should_fail: false,
-        });
+        let mgr = Arc::new(MockServiceManager { calls: Mutex::new(vec![]), should_fail: false });
         let uc = ServiceUseCase::new(mgr.clone());
         uc.stop().await?;
-        assert_eq!(
-            *mgr.calls.lock().unwrap_or_else(|e| e.into_inner()),
-            vec![Action::Stop]
-        );
+        assert_eq!(*mgr.calls.lock().unwrap_or_else(|e| e.into_inner()), vec![Action::Stop]);
         Ok(())
     }
 
     #[tokio::test]
     async fn restart_delegates_to_manager() -> Result<(), Box<dyn std::error::Error>> {
-        let mgr = Arc::new(MockServiceManager {
-            calls: Mutex::new(vec![]),
-            should_fail: false,
-        });
+        let mgr = Arc::new(MockServiceManager { calls: Mutex::new(vec![]), should_fail: false });
         let uc = ServiceUseCase::new(mgr.clone());
         uc.restart().await?;
-        assert_eq!(
-            *mgr.calls.lock().unwrap_or_else(|e| e.into_inner()),
-            vec![Action::Restart]
-        );
+        assert_eq!(*mgr.calls.lock().unwrap_or_else(|e| e.into_inner()), vec![Action::Restart]);
         Ok(())
     }
 
     #[tokio::test]
     async fn start_propagates_error() {
-        let mgr = Arc::new(MockServiceManager {
-            calls: Mutex::new(vec![]),
-            should_fail: true,
-        });
+        let mgr = Arc::new(MockServiceManager { calls: Mutex::new(vec![]), should_fail: true });
         let uc = ServiceUseCase::new(mgr.clone());
         let result = uc.start().await;
         assert!(result.is_err());

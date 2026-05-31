@@ -62,13 +62,8 @@ impl InstallExecutor {
         home: &Path,
     ) -> Result<InstallReport, AppError> {
         let toml_content = generate_init_toml(config)?;
-        self.apply(
-            home,
-            &toml_content,
-            config.landscape.web_port,
-            config.landscape.https_port,
-        )
-        .await
+        self.apply(home, &toml_content, config.landscape.web_port, config.landscape.https_port)
+            .await
     }
 
     /// Execute installation with a pre-existing TOML string (`--init-file` mode).
@@ -109,10 +104,7 @@ impl InstallExecutor {
         https_port: u16,
     ) -> Result<InstallReport, AppError> {
         // 1. Create HOME
-        self.host_installer
-            .create_dir_all(home)
-            .await
-            .map_err(AppError::Core)?;
+        self.host_installer.create_dir_all(home).await.map_err(AppError::Core)?;
 
         // 2. Write landscape_init.toml
         let init_toml_path = home.join("landscape_init.toml");
@@ -139,20 +131,11 @@ impl InstallExecutor {
             .map_err(AppError::Core)?;
 
         // 5. Systemd lifecycle
-        self.host_installer
-            .daemon_reload()
-            .await
-            .map_err(AppError::Core)?;
+        self.host_installer.daemon_reload().await.map_err(AppError::Core)?;
 
-        self.host_installer
-            .enable_service("landscape.service")
-            .await
-            .map_err(AppError::Core)?;
+        self.host_installer.enable_service("landscape.service").await.map_err(AppError::Core)?;
 
-        self.host_installer
-            .start_service("landscape.service")
-            .await
-            .map_err(AppError::Core)?;
+        self.host_installer.start_service("landscape.service").await.map_err(AppError::Core)?;
 
         // NOTE: lock file is NOT created here. It must be created AFTER
         // landscape-webserver has read landscape_init.toml (confirmed by
@@ -207,10 +190,7 @@ mod tests {
     #[async_trait]
     impl HostInstaller for MockHostInstaller {
         async fn create_dir_all(&self, _path: &Path) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push("create_dir_all".to_string());
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("create_dir_all".to_string());
             Ok(())
         }
 
@@ -220,10 +200,7 @@ mod tests {
             if self.fail_on_write_n == Some(*count) {
                 return Err(CoreError::Internal("mock write failure".to_string()));
             }
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push("write_file".to_string());
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("write_file".to_string());
             Ok(())
         }
 
@@ -236,34 +213,22 @@ mod tests {
         }
 
         async fn daemon_reload(&self) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push("daemon_reload".to_string());
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("daemon_reload".to_string());
             Ok(())
         }
 
         async fn enable_service(&self, _unit: &str) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push("enable_service".to_string());
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("enable_service".to_string());
             Ok(())
         }
 
         async fn start_service(&self, _unit: &str) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push("start_service".to_string());
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("start_service".to_string());
             Ok(())
         }
 
         async fn stop_service(&self, _unit: &str) -> Result<(), CoreError> {
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push("stop_service".to_string());
+            self.calls.lock().unwrap_or_else(|e| e.into_inner()).push("stop_service".to_string());
             Ok(())
         }
 
@@ -299,10 +264,7 @@ mod tests {
                 admin_user: "root".to_string(),
                 admin_pass: "secret".to_string(),
             },
-            source: SourceSelection {
-                source_name: None,
-                version: None,
-            },
+            source: SourceSelection { source_name: None, version: None },
             landscape_version: "0.19.2".to_string(),
             home: std::path::PathBuf::from("/tmp/test-landscape"),
         }
@@ -363,9 +325,7 @@ mod tests {
 
         impl CapturingInstaller {
             fn new() -> Self {
-                Self {
-                    files: Mutex::new(vec![]),
-                }
+                Self { files: Mutex::new(vec![]) }
             }
         }
 
@@ -419,20 +379,11 @@ mod tests {
         // Verify it parses as valid TOML with expected content
         let parsed: toml::Value = toml::from_str(&toml_str)?;
         assert_eq!(parsed["version"].as_str(), Some("0.19.2"));
-        assert_eq!(
-            parsed["config"]["auth"]["admin_user"].as_str(),
-            Some("root")
-        );
-        assert_eq!(
-            parsed["config"]["auth"]["admin_pass"].as_str(),
-            Some("secret")
-        );
+        assert_eq!(parsed["config"]["auth"]["admin_user"].as_str(), Some("root"));
+        assert_eq!(parsed["config"]["auth"]["admin_pass"].as_str(), Some("secret"));
         assert_eq!(parsed["config"]["web"]["port"].as_integer(), Some(6300));
         assert_eq!(parsed["ifaces"][0]["name"].as_str(), Some("eth0"));
-        assert_eq!(
-            parsed["ipconfigs"][0]["ip_model"]["t"].as_str(),
-            Some("dhcpclient")
-        );
+        assert_eq!(parsed["ipconfigs"][0]["ip_model"]["t"].as_str(), Some("dhcpclient"));
 
         Ok(())
     }

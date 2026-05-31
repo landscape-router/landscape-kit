@@ -73,11 +73,7 @@ mod tests {
     #[tokio::test]
     async fn recent_lines_reads_latest_file() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        tokio::fs::write(
-            dir.path().join("app.log.20260101"),
-            "old line 1\nold line 2\n",
-        )
-        .await?;
+        tokio::fs::write(dir.path().join("app.log.20260101"), "old line 1\nold line 2\n").await?;
         tokio::fs::write(
             dir.path().join("app.log.20260102"),
             "new line 1\nnew line 2\nnew line 3\n",
@@ -93,11 +89,7 @@ mod tests {
     #[tokio::test]
     async fn recent_lines_limits_to_n() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        tokio::fs::write(
-            dir.path().join("app.log"),
-            "line1\nline2\nline3\nline4\nline5\n",
-        )
-        .await?;
+        tokio::fs::write(dir.path().join("app.log"), "line1\nline2\nline3\nline4\nline5\n").await?;
 
         let reader = FileLogReader::new(dir.path().to_path_buf());
         let result = reader.recent_lines(3).await?;

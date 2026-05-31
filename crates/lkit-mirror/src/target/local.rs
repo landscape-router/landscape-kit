@@ -61,7 +61,9 @@ impl MirrorTarget for LocalTarget {
 
         match tokio::fs::metadata(&dir).await {
             Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(keys),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(keys);
+            }
             Err(e) => return Err(MirrorError::Io(e)),
         }
 

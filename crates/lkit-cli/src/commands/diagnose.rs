@@ -20,11 +20,7 @@ pub(crate) async fn run(args: DiagnoseArgs, state: &AppState) -> anyhow::Result<
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
         for check in &result.checks {
-            let status = if check.passed {
-                msg("diagnose.pass")
-            } else {
-                msg("diagnose.fail")
-            };
+            let status = if check.passed { msg("diagnose.pass") } else { msg("diagnose.fail") };
             eprintln!("{} {} — {}", status, check.name, check.message);
         }
     }
@@ -46,9 +42,5 @@ fn diagnose_exit_code(result: &DiagnosticResult) -> Option<i32> {
     }
     let api_failed = result.checks.iter().any(|c| c.name == "api" && !c.passed);
     let other_failed = result.checks.iter().any(|c| c.name != "api" && !c.passed);
-    if api_failed && !other_failed {
-        Some(4)
-    } else {
-        Some(1)
-    }
+    if api_failed && !other_failed { Some(4) } else { Some(1) }
 }

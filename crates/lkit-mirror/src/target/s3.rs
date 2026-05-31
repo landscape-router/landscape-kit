@@ -77,10 +77,7 @@ impl MirrorTarget for S3Target {
             .map_err(|e| MirrorError::UploadFailed(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(MirrorError::UploadFailed(format!(
-                "S3 PUT returned {}",
-                resp.status()
-            )));
+            return Err(MirrorError::UploadFailed(format!("S3 PUT returned {}", resp.status())));
         }
 
         Ok(())
@@ -114,16 +111,10 @@ impl MirrorTarget for S3Target {
             .map_err(|e| MirrorError::TargetError(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(MirrorError::TargetError(format!(
-                "S3 GET returned {}",
-                resp.status()
-            )));
+            return Err(MirrorError::TargetError(format!("S3 GET returned {}", resp.status())));
         }
 
-        resp.bytes()
-            .await
-            .map(|b| b.to_vec())
-            .map_err(|e| MirrorError::TargetError(e.to_string()))
+        resp.bytes().await.map(|b| b.to_vec()).map_err(|e| MirrorError::TargetError(e.to_string()))
     }
 
     async fn list(&self, prefix: &str) -> Result<Vec<String>, MirrorError> {
@@ -156,10 +147,7 @@ impl MirrorTarget for S3Target {
                 )));
             }
 
-            let body = resp
-                .bytes()
-                .await
-                .map_err(|e| MirrorError::TargetError(e.to_string()))?;
+            let body = resp.bytes().await.map_err(|e| MirrorError::TargetError(e.to_string()))?;
 
             let list_resp =
                 rusty_s3::actions::ListObjectsV2::parse_response(&body).map_err(|e| {
@@ -184,9 +172,7 @@ impl MirrorTarget for S3Target {
 
     async fn delete(&self, key: &str) -> Result<(), MirrorError> {
         let full_key = self.full_key(key);
-        let action = self
-            .bucket
-            .delete_object(Some(&self.credentials), &full_key);
+        let action = self.bucket.delete_object(Some(&self.credentials), &full_key);
         let url = action.sign(Duration::from_secs(3600));
 
         let resp = self
@@ -197,10 +183,7 @@ impl MirrorTarget for S3Target {
             .map_err(|e| MirrorError::TargetError(e.to_string()))?;
 
         if !resp.status().is_success() && resp.status().as_u16() != 404 {
-            return Err(MirrorError::TargetError(format!(
-                "S3 DELETE returned {}",
-                resp.status()
-            )));
+            return Err(MirrorError::TargetError(format!("S3 DELETE returned {}", resp.status())));
         }
 
         Ok(())
@@ -233,22 +216,14 @@ mod tests {
             "sk",
             "landscape",
         )?;
-        assert_eq!(
-            target.full_key("v1.0/manifest.json"),
-            "landscape/v1.0/manifest.json"
-        );
+        assert_eq!(target.full_key("v1.0/manifest.json"), "landscape/v1.0/manifest.json");
         Ok(())
     }
 
     #[test]
     fn full_key_without_prefix() -> Result<(), Box<dyn std::error::Error>> {
-        let target = S3Target::new(
-            "https://test.r2.cloudflarestorage.com",
-            "bucket",
-            "ak",
-            "sk",
-            "",
-        )?;
+        let target =
+            S3Target::new("https://test.r2.cloudflarestorage.com", "bucket", "ak", "sk", "")?;
         assert_eq!(target.full_key("v1.0/manifest.json"), "v1.0/manifest.json");
         Ok(())
     }

@@ -48,12 +48,7 @@ pub fn scan_nics_at(base: &Path) -> Vec<NicInfo> {
             let operstate = read_trimmed(iface_dir.join("operstate")).unwrap_or_default();
             let is_up = operstate == "up";
 
-            Some(NicInfo {
-                name,
-                mac,
-                current_ip: None,
-                is_up,
-            })
+            Some(NicInfo { name, mac, current_ip: None, is_up })
         })
         .collect();
 

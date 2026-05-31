@@ -18,10 +18,7 @@ pub struct LocalSource {
 impl LocalSource {
     /// Create a new local source.
     pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
-        Self {
-            name: name.into(),
-            path: path.into(),
-        }
+        Self { name: name.into(), path: path.into() }
     }
 }
 
@@ -45,21 +42,13 @@ impl ReleaseSource for LocalSource {
 
     async fn list_versions(&self) -> Result<Vec<String>, SourceError> {
         let mut versions = Vec::new();
-        let mut entries = tokio::fs::read_dir(&self.path)
-            .await
-            .map_err(|e| SourceError::Io(e.to_string()))?;
+        let mut entries =
+            tokio::fs::read_dir(&self.path).await.map_err(|e| SourceError::Io(e.to_string()))?;
 
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| SourceError::Io(e.to_string()))?
+        while let Some(entry) =
+            entries.next_entry().await.map_err(|e| SourceError::Io(e.to_string()))?
         {
-            if entry
-                .file_type()
-                .await
-                .map_err(|e| SourceError::Io(e.to_string()))?
-                .is_dir()
-            {
+            if entry.file_type().await.map_err(|e| SourceError::Io(e.to_string()))?.is_dir() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if name.starts_with('v') {
                     versions.push(name);
@@ -74,15 +63,13 @@ impl ReleaseSource for LocalSource {
 
     async fn get_artifacts(&self, tag: &str) -> Result<ReleaseManifest, SourceError> {
         let manifest_path = self.path.join(tag).join("release-manifest.json");
-        let content = tokio::fs::read_to_string(&manifest_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    SourceError::VersionNotFound { tag: tag.into() }
-                } else {
-                    SourceError::Io(e.to_string())
-                }
-            })?;
+        let content = tokio::fs::read_to_string(&manifest_path).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                SourceError::VersionNotFound { tag: tag.into() }
+            } else {
+                SourceError::Io(e.to_string())
+            }
+        })?;
 
         let mut manifest: ReleaseManifest = serde_json::from_str(&content)
             .map_err(|e| SourceError::InvalidManifest(e.to_string()))?;
@@ -90,13 +77,8 @@ impl ReleaseSource for LocalSource {
         // Fill arch from filename when manifest doesn't include it
         for artifact in &mut manifest.artifacts {
             if artifact.arch.is_none() {
-                artifact.arch = lkit_core::parse_arch(&artifact.name).map(|info| {
-                    if info.musl {
-                        format!("{}-musl", info.arch)
-                    } else {
-                        info.arch
-                    }
-                });
+                artifact.arch = lkit_core::parse_arch(&artifact.name)
+                    .map(|info| if info.musl { format!("{}-musl", info.arch) } else { info.arch });
             }
         }
 

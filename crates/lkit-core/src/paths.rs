@@ -17,6 +17,8 @@ pub struct LandscapePaths {
     pub static_dir: PathBuf,
     /// Landscape logs directory.
     pub logs_dir: PathBuf,
+    /// Landscape API JWT token file.
+    pub api_token: PathBuf,
 }
 
 impl LandscapePaths {
@@ -28,6 +30,7 @@ impl LandscapePaths {
             init_lock: home.join("landscape_init.lock"),
             static_dir: home.join("static"),
             logs_dir: home.join("logs"),
+            api_token: home.join("landscape_api_token"),
             home,
         }
     }

@@ -26,9 +26,7 @@ pub(crate) async fn run(args: MirrorArgs) -> anyhow::Result<()> {
 }
 
 async fn run_sync(args: MirrorSyncArgs) -> anyhow::Result<()> {
-    let prefix = args
-        .prefix
-        .unwrap_or_else(|| extract_repo_name(&args.repo).to_string());
+    let prefix = args.prefix.unwrap_or_else(|| extract_repo_name(&args.repo).to_string());
 
     let scope = if args.all {
         SyncScope::All
@@ -42,11 +40,7 @@ async fn run_sync(args: MirrorSyncArgs) -> anyhow::Result<()> {
         SyncScope::Latest
     };
 
-    let config = SyncConfig {
-        prefix,
-        scope,
-        force: args.force,
-    };
+    let config = SyncConfig { prefix, scope, force: args.force };
 
     // DI assembly: build concrete source from args
     let http_client = reqwest::Client::builder().user_agent("lkit").build()?;
@@ -157,11 +151,7 @@ async fn run_list(args: MirrorListArgs) -> anyhow::Result<()> {
     println!();
 
     for v in &versions {
-        let marker = if latest.as_deref() == Some(&v.tag) {
-            " (latest)"
-        } else {
-            ""
-        };
+        let marker = if latest.as_deref() == Some(&v.tag) { " (latest)" } else { "" };
         println!("  {} — {} artifacts{}", v.tag, v.artifact_count, marker);
     }
 
@@ -219,19 +209,13 @@ fn build_source(
     http_client: reqwest::Client,
 ) -> anyhow::Result<Arc<dyn ReleaseSource>> {
     match source_type {
-        SyncSourceType::Github => Ok(Arc::new(GithubSource::new(
-            "sync-source",
-            repo,
-            http_client,
-        )?)),
+        SyncSourceType::Github => {
+            Ok(Arc::new(GithubSource::new("sync-source", repo, http_client)?))
+        }
         SyncSourceType::Http => {
             let url = source_url
                 .ok_or_else(|| anyhow::anyhow!("--source-url is required for http source"))?;
-            Ok(Arc::new(HttpMirrorSource::new(
-                "http-mirror",
-                url,
-                http_client,
-            )))
+            Ok(Arc::new(HttpMirrorSource::new("http-mirror", url, http_client)))
         }
         SyncSourceType::Local => {
             let path = source_path

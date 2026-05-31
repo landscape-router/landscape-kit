@@ -85,25 +85,16 @@ impl ReleaseSource for S3Source {
 
     async fn latest_tag(&self) -> Result<String, SourceError> {
         let url = self.sign_get("latest");
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp =
+            self.client.get(url).send().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SourceError::Network("latest pointer not found".into()));
         }
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let text = resp.text().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         Ok(text.trim().to_string())
     }
@@ -112,11 +103,8 @@ impl ReleaseSource for S3Source {
         use std::collections::BTreeSet;
 
         let mut versions = BTreeSet::new();
-        let full_prefix = if self.prefix.is_empty() {
-            String::new()
-        } else {
-            format!("{}/", self.prefix)
-        };
+        let full_prefix =
+            if self.prefix.is_empty() { String::new() } else { format!("{}/", self.prefix) };
 
         let mut continuation_token: Option<String> = None;
 
@@ -141,16 +129,10 @@ impl ReleaseSource for S3Source {
                 .map_err(|e| SourceError::Network(e.to_string()))?;
 
             if !resp.status().is_success() {
-                return Err(SourceError::Network(format!(
-                    "S3 LIST returned {}",
-                    resp.status()
-                )));
+                return Err(SourceError::Network(format!("S3 LIST returned {}", resp.status())));
             }
 
-            let body = resp
-                .bytes()
-                .await
-                .map_err(|e| SourceError::Network(e.to_string()))?;
+            let body = resp.bytes().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
             let body_str = std::str::from_utf8(&body)
                 .map_err(|e| SourceError::Network(format!("invalid UTF-8 in S3 response: {e}")))?;
@@ -193,27 +175,16 @@ impl ReleaseSource for S3Source {
         let manifest_key = format!("{}/release-manifest.json", tag);
         let url = self.sign_get(&manifest_key);
 
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp =
+            self.client.get(url).send().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(SourceError::VersionNotFound {
-                tag: tag.to_string(),
-            });
+            return Err(SourceError::VersionNotFound { tag: tag.to_string() });
         }
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let resp = resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        let text = resp.text().await.map_err(|e| SourceError::Network(e.to_string()))?;
 
         serde_json::from_str(&text).map_err(|e| SourceError::InvalidManifest(e.to_string()))
     }
@@ -237,13 +208,10 @@ impl ReleaseSource for S3Source {
             .map_err(|e| SourceError::Network(e.to_string()))?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(SourceError::VersionNotFound {
-                tag: tag.to_string(),
-            });
+            return Err(SourceError::VersionNotFound { tag: tag.to_string() });
         }
 
-        resp.error_for_status()
-            .map_err(|e| SourceError::Network(e.to_string()))?;
+        resp.error_for_status().map_err(|e| SourceError::Network(e.to_string()))?;
 
         Ok(start.elapsed())
     }
@@ -263,10 +231,7 @@ mod tests {
             "sk",
             "landscape",
         )?;
-        assert_eq!(
-            src.full_key("v1.0/manifest.json"),
-            "landscape/v1.0/manifest.json"
-        );
+        assert_eq!(src.full_key("v1.0/manifest.json"), "landscape/v1.0/manifest.json");
         Ok(())
     }
 

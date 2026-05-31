@@ -23,10 +23,7 @@ mod tests {
 
     #[test]
     fn download_error_display_checksum_mismatch() -> Result<(), Box<dyn std::error::Error>> {
-        let err = DownloadError::ChecksumMismatch {
-            expected: "aaa".into(),
-            actual: "bbb".into(),
-        };
+        let err = DownloadError::ChecksumMismatch { expected: "aaa".into(), actual: "bbb".into() };
         assert!(err.to_string().contains("aaa"));
         assert!(err.to_string().contains("bbb"));
         Ok(())
@@ -34,10 +31,7 @@ mod tests {
 
     #[test]
     fn download_error_display_incomplete() -> Result<(), Box<dyn std::error::Error>> {
-        let err = DownloadError::Incomplete {
-            downloaded: 50,
-            total: 100,
-        };
+        let err = DownloadError::Incomplete { downloaded: 50, total: 100 };
         assert!(err.to_string().contains("50/100"));
         Ok(())
     }

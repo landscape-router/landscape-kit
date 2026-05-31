@@ -2,16 +2,16 @@
 
 use std::sync::Arc;
 
-use lkit_core::{LkitClient, ServiceManager, ServiceState, ServiceStatus};
+use lkit_core::{LkitClient, ServiceManager, ServiceState};
 
 use crate::AppError;
 
-/// Status report combining local systemd state and API state.
+/// Status report combining local systemd state and API version.
 pub struct StatusReport {
     /// Local systemd service state.
     pub service: ServiceState,
-    /// Landscape API status, or None if API is unreachable.
-    pub landscape: Option<ServiceStatus>,
+    /// Landscape version string, or None if API is unreachable.
+    pub landscape_version: Option<String>,
 }
 
 /// Queries systemd and the Landscape API to produce a combined status report.
@@ -23,19 +23,16 @@ pub struct StatusUseCase {
 impl StatusUseCase {
     /// Create a new status use case.
     pub fn new(client: Arc<dyn LkitClient>, service_manager: Arc<dyn ServiceManager>) -> Self {
-        Self {
-            client,
-            service_manager,
-        }
+        Self { client, service_manager }
     }
 
     /// Execute the status query.
     ///
-    /// API failure is not fatal — `landscape` will be None in that case.
+    /// API failure is not fatal — `landscape_version` will be None in that case.
     pub async fn execute(&self) -> Result<StatusReport, AppError> {
         let service = self.service_manager.status().await?;
-        let landscape = self.client.get_status().await.ok();
-        Ok(StatusReport { service, landscape })
+        let landscape_version = self.client.get_version().await.ok();
+        Ok(StatusReport { service, landscape_version })
     }
 }
 
@@ -76,20 +73,22 @@ mod tests {
 
     #[async_trait]
     impl LkitClient for MockLkitClient {
-        async fn get_status(&self) -> Result<ServiceStatus, CoreError> {
+        async fn get_version(&self) -> Result<String, CoreError> {
             if self.api_ok {
-                Ok(ServiceStatus {
-                    landscape_version: Some("1.0.0".into()),
-                    systemd_active: true,
-                    systemd_enabled: true,
-                    api_reachable: true,
-                })
+                Ok("1.0.0".into())
             } else {
                 Err(CoreError::Internal("connection refused".into()))
             }
         }
         async fn health_check(&self) -> Result<bool, CoreError> {
             Ok(self.api_ok)
+        }
+        async fn export_config(&self) -> Result<String, CoreError> {
+            if self.api_ok {
+                Ok("[config]\nversion = \"1.0.0\"".into())
+            } else {
+                Err(CoreError::Internal("connection refused".into()))
+            }
         }
     }
 
@@ -101,8 +100,8 @@ mod tests {
         );
         let report = uc.execute().await?;
         assert!(report.service.active);
-        let landscape = report.landscape.ok_or("landscape should be Some")?;
-        assert_eq!(landscape.landscape_version, Some("1.0.0".into()));
+        let ver = report.landscape_version.ok_or("version should be Some")?;
+        assert_eq!(ver, "1.0.0");
         Ok(())
     }
 
@@ -114,7 +113,7 @@ mod tests {
         );
         let report = uc.execute().await?;
         assert!(report.service.active);
-        assert!(report.landscape.is_none());
+        assert!(report.landscape_version.is_none());
         Ok(())
     }
 
@@ -126,7 +125,7 @@ mod tests {
         );
         let report = uc.execute().await?;
         assert!(!report.service.active);
-        assert!(report.landscape.is_some());
+        assert_eq!(report.landscape_version.as_deref(), Some("1.0.0"));
         Ok(())
     }
 }

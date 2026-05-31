@@ -45,10 +45,7 @@ pub(crate) async fn run(
     // Lock check (skip with --force)
     let lock_path = landscape_home.join("landscape_init.lock");
     if lock_path.exists() && !args.force {
-        anyhow::bail!(
-            "Landscape 已安装（{} 存在）。使用 --force 覆盖安装。",
-            lock_path.display()
-        );
+        anyhow::bail!("Landscape 已安装（{} 存在）。使用 --force 覆盖安装。", lock_path.display());
     }
 
     let executor = InstallExecutor::new(host_installer.clone());
@@ -68,9 +65,7 @@ pub(crate) async fn run(
             tokio::fs::remove_file(&lock).await?;
         }
 
-        let report = executor
-            .execute_with_raw_toml(&content, &landscape_home)
-            .await?;
+        let report = executor.execute_with_raw_toml(&content, &landscape_home).await?;
 
         eprintln!();
         eprintln!("Landscape 安装完成！");
@@ -102,9 +97,7 @@ pub(crate) async fn run(
 
     // ── Resolve source ──
     eprintln!("正在探测可用源...");
-    let http_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    let http_client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
     let release_sources = build_release_sources(&sources, http_client.clone());
     let resolver = SourceResolver::new(release_sources);
 
@@ -123,11 +116,7 @@ pub(crate) async fn run(
             .await
             .map_err(|e| anyhow::anyhow!("无法连接源: {e}\n请检查网络或使用 --init-file"))?;
         let best = &results[0];
-        (
-            best.source_name.clone(),
-            best.resolved_tag.clone(),
-            Some(results),
-        )
+        (best.source_name.clone(), best.resolved_tag.clone(), Some(results))
     };
 
     eprintln!("  版本: {resolved_tag}  源: {selected_source_name}");
@@ -141,11 +130,8 @@ pub(crate) async fn run(
         .await
         .map_err(|e| anyhow::anyhow!("获取 manifest 失败: {e}"))?;
 
-    let to_download: Vec<_> = manifest
-        .artifacts
-        .iter()
-        .filter(|a| artifact_matches(a, &system_target))
-        .collect();
+    let to_download: Vec<_> =
+        manifest.artifacts.iter().filter(|a| artifact_matches(a, &system_target)).collect();
 
     if to_download.is_empty() {
         anyhow::bail!("当前系统 ({}) 没有可用的制品", system_target.target_str);
@@ -267,10 +253,7 @@ pub(crate) async fn run(
 
     // ── Install (TOML + systemd) ──
     // Check if service is already running (force reinstall scenario).
-    let was_active = host_installer
-        .is_service_active("landscape.service")
-        .await
-        .unwrap_or(false);
+    let was_active = host_installer.is_service_active("landscape.service").await.unwrap_or(false);
 
     // Delete old lock so landscape-webserver reads landscape_init.toml on startup.
     let lock = landscape_home.join("landscape_init.lock");
@@ -292,11 +275,7 @@ pub(crate) async fn run(
     let healthy = health_check(config.landscape.https_port, 20).await;
 
     // ── Report ──
-    let action = if was_active {
-        "重新安装"
-    } else {
-        "安装完成"
-    };
+    let action = if was_active { "重新安装" } else { "安装完成" };
     print_report(&report, &system_target, &to_download, healthy, action);
 
     Ok(())
@@ -309,11 +288,7 @@ fn load_all_sources(
     let user_sources =
         load_lkit_toml(manager_home).map_err(|e| anyhow::anyhow!("加载 lkit.toml 失败: {e}"))?;
 
-    if user_sources.is_empty() {
-        Ok(default_sources())
-    } else {
-        Ok(user_sources)
-    }
+    if user_sources.is_empty() { Ok(default_sources()) } else { Ok(user_sources) }
 }
 
 /// Show an interactive source selection table and let the user pick.
@@ -380,10 +355,7 @@ fn build_fallback_chain<'a>(
         }
     }
     names.truncate(2); // max 2 sources
-    names
-        .iter()
-        .filter_map(|n| resolver.get_source(n))
-        .collect()
+    names.iter().filter_map(|n| resolver.get_source(n)).collect()
 }
 
 /// Download artifacts from a source, with SHA-256 verification.
@@ -423,9 +395,7 @@ async fn download_artifacts(
         let tmp_path = tmp_dir.join(&artifact.name);
         let final_path = dest_dir.join(&artifact.name);
 
-        downloader
-            .download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress))
-            .await?;
+        downloader.download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress)).await?;
 
         if let Ok(content) = std::fs::read_to_string(&tmp_path) {
             for line in content.lines() {
@@ -443,10 +413,7 @@ async fn download_artifacts(
     }
 
     if !shasum_map.is_empty() {
-        eprintln!(
-            "  已加载 SHASUM256sum.txt ({} 个 checksum)",
-            shasum_map.len()
-        );
+        eprintln!("  已加载 SHASUM256sum.txt ({} 个 checksum)", shasum_map.len());
     }
 
     // Phase 2: Download remaining artifacts with verification.
@@ -455,20 +422,13 @@ async fn download_artifacts(
         let tmp_path = tmp_dir.join(&artifact.name);
         let final_path = dest_dir.join(&artifact.name);
 
-        downloader
-            .download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress))
-            .await?;
+        downloader.download(&url, &tmp_path, &DownloadConfig::default(), Some(&progress)).await?;
 
         // SHA-256 verification: prefer SHASUM, fall back to manifest, warn if neither.
-        let expected =
-            shasum_map
-                .get(&artifact.name)
-                .map(|s| s.as_str())
-                .or(if artifact.sha256.is_empty() {
-                    None
-                } else {
-                    Some(artifact.sha256.as_str())
-                });
+        let expected = shasum_map
+            .get(&artifact.name)
+            .map(|s| s.as_str())
+            .or(if artifact.sha256.is_empty() { None } else { Some(artifact.sha256.as_str()) });
 
         match expected {
             Some(expected_hash) => {
@@ -545,10 +505,7 @@ fn generate_minimal_config(
             admin_user: "root".to_string(),
             admin_pass: String::new(),
         },
-        source: SourceSelection {
-            source_name: None,
-            version: Some(tag.to_string()),
-        },
+        source: SourceSelection { source_name: None, version: Some(tag.to_string()) },
         landscape_version: tag.strip_prefix('v').unwrap_or(tag).to_string(),
         home: home.to_path_buf(),
     })
@@ -588,12 +545,10 @@ fn print_report(
 
 /// Determine Landscape HOME path.
 fn landscape_home() -> PathBuf {
-    std::env::var("LANDSCAPE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            PathBuf::from(home).join(".landscape-router")
-        })
+    std::env::var("LANDSCAPE_HOME").map(PathBuf::from).unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        PathBuf::from(home).join(".landscape-router")
+    })
 }
 
 /// Determine manager HOME path.

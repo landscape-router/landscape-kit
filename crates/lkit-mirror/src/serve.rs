@@ -53,9 +53,7 @@ pub async fn serve(config: ServeConfig) -> Result<(), MirrorError> {
     tracing::info!("serving {} on {}", config.path.display(), addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| MirrorError::TargetError(e.to_string()))
+    axum::serve(listener, app).await.map_err(|e| MirrorError::TargetError(e.to_string()))
 }
 
 /// Serve a single file from the mirror root.
@@ -78,11 +76,7 @@ async fn handle_file(root: PathBuf, path: String) -> Response {
             } else {
                 "application/octet-stream"
             };
-            (
-                StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, content_type)],
-                data,
-            )
+            (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, content_type)], data)
                 .into_response()
         }
         Err(e) => match e.kind() {
