@@ -89,9 +89,13 @@ impl BackupUseCase {
                 + dir_size(&self.landscape_paths.static_dir).unwrap_or(0)
                 + init_content.len() as u64
         } + META_REGION_SIZE;
+
+        fs::create_dir_all(&self.manager_paths.backup_dir)
+            .map_err(|e| AppError::Backup(format!("mkdir backup_dir: {e}")))?;
+
         check_space(estimated_need, &self.manager_paths.backup_dir)?;
 
-        // 5. Build staging
+        // 5. Build staging + execute core logic with cleanup guard
         let ts = Utc::now().format("%Y%m%d-%H%M%S").to_string();
         let rand_suffix: u32 = rand::rng().random();
         let staging_dir =
@@ -99,20 +103,35 @@ impl BackupUseCase {
         fs::create_dir_all(&staging_dir)
             .map_err(|e| AppError::Backup(format!("mkdir staging: {e}")))?;
 
-        fs::create_dir_all(&self.manager_paths.backup_dir)
-            .map_err(|e| AppError::Backup(format!("mkdir backup_dir: {e}")))?;
+        let result = self.do_create(&staging_dir, &binary_path, &init_content, remark, auto, all, &ts, rand_suffix).await;
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging_dir);
+        }
+        result
+    }
 
+    async fn do_create(
+        &self,
+        staging_dir: &Path,
+        binary_path: &Path,
+        init_content: &str,
+        remark: Option<String>,
+        auto: bool,
+        all: bool,
+        ts: &str,
+        rand_suffix: u32,
+    ) -> Result<BackupEntry, AppError> {
         clean_orphan_tmps(&self.manager_paths.backup_dir);
 
         let scope = if all { BackupScope::Full } else { BackupScope::Minimal };
 
         if all {
-            copy_dir_all(&self.landscape_paths.home, &staging_dir)?;
+            copy_dir_all(&self.landscape_paths.home, staging_dir)?;
         } else {
-            fs::copy(&binary_path, staging_dir.join("landscape-webserver"))
+            fs::copy(binary_path, staging_dir.join("landscape-webserver"))
                 .map_err(|e| AppError::Backup(format!("copy binary: {e}")))?;
             copy_dir_all(&self.landscape_paths.static_dir, &staging_dir.join("static"))?;
-            fs::write(staging_dir.join("landscape_init.toml"), &init_content)
+            fs::write(staging_dir.join("landscape_init.toml"), init_content)
                 .map_err(|e| AppError::Backup(format!("write init: {e}")))?;
         }
 
@@ -127,7 +146,7 @@ impl BackupUseCase {
                 .open(&tmp_file)
                 .map_err(|e| AppError::Backup(format!("create .tmp: {e}")))?;
 
-            let checksum = build_archive_to(&staging_dir, &mut file, META_REGION_SIZE)?;
+            let checksum = build_archive_to(staging_dir, &mut file, META_REGION_SIZE)?;
 
             let hostname = nix::unistd::gethostname()
                 .ok()
@@ -167,7 +186,7 @@ impl BackupUseCase {
         fs::rename(&tmp_file, &final_path).map_err(|e| AppError::Backup(format!("rename: {e}")))?;
 
         // 8. Cleanup staging
-        let _ = fs::remove_dir_all(&staging_dir); // best-effort: clean staging after success
+        let _ = fs::remove_dir_all(staging_dir); // best-effort: clean staging after success
 
         // 9. Trim auto backups if this is an auto backup
         if auto && let Err(e) = self.trim_auto_backups() {
@@ -463,7 +482,9 @@ pub(crate) fn check_space(need_bytes: u64, check_path: &Path) -> Result<(), AppE
         .map_err(|e| AppError::Backup(format!("statvfs: {e}")))?;
 
     let available = stat.blocks_available() as u64 * stat.fragment_size() as u64;
-    let safety_margin = 20 * 1024 * 1024;
+    let twenty_mb = 20u64 * 1024 * 1024;
+    let twenty_percent = need_bytes / 5;
+    let safety_margin = twenty_mb.max(twenty_percent);
     let required = need_bytes + safety_margin;
 
     if required > available {

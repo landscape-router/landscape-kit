@@ -122,13 +122,14 @@ lkit-backup-{YYYYMMDD-HHMMSS}-{sha256[:8]}.tar.gz
 由于备份期间 binary 和 static 在运行时只读（仅安装/升级时变更），
 备份全程无需停止 Landscape 服务：
 
-1. 调用 API `export_config()` 获取 `landscape_init.toml` 内容
-2. 通过 `/proc/*/exe` 发现运行中的 binary 路径，复制到 staging
-3. 从 `LANDSCAPE_HOME` 复制 `static/` 到 staging
-4. 写入 `metadata.json`
-5. 打包为 `tar.gz`（staging 目录 → 归档，设 0600 权限）
-6. 校验归档可读后，计算 sha256，使用 `write-tmp + fsync + rename` 模式原子写入 backup 目录
-7. 清理 staging 目录
+1. 创建备份目录（`create_dir_all`），然后执行空间检查（§4.9 备份策略）
+2. 调用 API `export_config()` 获取 `landscape_init.toml` 内容
+3. 通过 `/proc/*/exe` 发现运行中的 binary 路径，复制到 staging
+4. 从 `LANDSCAPE_HOME` 复制 `static/` 到 staging
+5. 写入 `metadata.json`
+6. 打包为 `tar.gz`（staging 目录 → 归档，设 0600 权限）
+7. 校验归档可读后，计算 sha256，使用 `write-tmp + fsync + rename` 模式原子写入 backup 目录
+8. 清理 staging 目录
 
 ### 4.8 恢复流程
 
@@ -175,8 +176,14 @@ lkit-backup-{YYYYMMDD-HHMMSS}-{sha256[:8]}.tar.gz
 
 ### 4.9 空间检查
 
-- 至少覆盖：staging 数据量（binary + static + text） + 压缩产物 + 20% 安全余量
-- 空间不足则拒绝执行备份
+备份和恢复采用不同的空间检查策略：
+
+| 操作 | 计算公式 | 说明 |
+|---|---|---|
+| 备份 | `max(20 MiB, need_bytes × 20%)` | `need_bytes` 为 staging 数据量（binary + static + text）的估算值；最低保障 20 MiB，防止小备份时余量过低 |
+| 恢复 | `(file_size - 1 MiB_header) × 5` | `file_size` 为备份包总大小；减去约 1 MiB 的 metadata/header 后乘以 5，作为解压与替换所需空间的上界 |
+
+- 空间不足则拒绝执行对应操作
 
 ### 4.10 保留策略
 
