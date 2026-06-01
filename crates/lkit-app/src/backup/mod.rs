@@ -22,6 +22,15 @@ use crate::error::AppError;
 use self::packer::{build_archive_to, extract_verified, read_metadata, write_meta_region};
 use self::scanner::discover_binary;
 
+/// Input parameters for backup creation (private helper to reduce arg count).
+struct BackupPayload<'a> {
+    binary_path: &'a Path,
+    init_content: &'a str,
+    remark: Option<String>,
+    auto: bool,
+    all: bool,
+}
+
 /// Backup use case — all backup lifecycle operations.
 pub struct BackupUseCase {
     client: Arc<dyn LkitClient>,
@@ -95,59 +104,55 @@ impl BackupUseCase {
 
         check_space(estimated_need, &self.manager_paths.backup_dir)?;
 
-        // 5. Build staging + execute core logic with cleanup guard
+        // 5. Execute core logic with staging cleanup guard
+        self.do_create(&binary_path, &init_content, remark, auto, all).await
+    }
+
+    async fn do_create(
+        &self,
+        binary_path: &Path,
+        init_content: &str,
+        remark: Option<String>,
+        auto: bool,
+        all: bool,
+    ) -> Result<BackupEntry, AppError> {
         let ts = Utc::now().format("%Y%m%d-%H%M%S").to_string();
         let rand_suffix: u32 = rand::rng().random();
-        let staging_dir =
-            self.manager_paths.tmp_dir.join(format!("staging-{ts}-{rand_suffix:08x}"));
+        let tag = format!("{ts}-{rand_suffix:08x}");
+        let staging_dir = self.manager_paths.tmp_dir.join(format!("staging-{tag}"));
         fs::create_dir_all(&staging_dir)
             .map_err(|e| AppError::Backup(format!("mkdir staging: {e}")))?;
 
-        let result = self
-            .do_create(
-                &staging_dir,
-                &binary_path,
-                &init_content,
-                remark,
-                auto,
-                all,
-                &ts,
-                rand_suffix,
-            )
-            .await;
+        let payload = BackupPayload { binary_path, init_content, remark, auto, all };
+        let result = self.build_backup(&staging_dir, payload, &tag).await;
         if result.is_err() {
             let _ = fs::remove_dir_all(&staging_dir);
         }
         result
     }
 
-    async fn do_create(
+    async fn build_backup(
         &self,
         staging_dir: &Path,
-        binary_path: &Path,
-        init_content: &str,
-        remark: Option<String>,
-        auto: bool,
-        all: bool,
-        ts: &str,
-        rand_suffix: u32,
+        payload: BackupPayload<'_>,
+        tag: &str,
     ) -> Result<BackupEntry, AppError> {
         clean_orphan_tmps(&self.manager_paths.backup_dir);
 
-        let scope = if all { BackupScope::Full } else { BackupScope::Minimal };
+        let scope = if payload.all { BackupScope::Full } else { BackupScope::Minimal };
 
-        if all {
+        if payload.all {
             copy_dir_all(&self.landscape_paths.home, staging_dir)?;
         } else {
-            fs::copy(binary_path, staging_dir.join("landscape-webserver"))
+            fs::copy(payload.binary_path, staging_dir.join("landscape-webserver"))
                 .map_err(|e| AppError::Backup(format!("copy binary: {e}")))?;
             copy_dir_all(&self.landscape_paths.static_dir, &staging_dir.join("static"))?;
-            fs::write(staging_dir.join("landscape_init.toml"), init_content)
+            fs::write(staging_dir.join("landscape_init.toml"), payload.init_content)
                 .map_err(|e| AppError::Backup(format!("write init: {e}")))?;
         }
 
         // 6. Build .lkb
-        let tmp_file = self.manager_paths.backup_dir.join(format!(".tmp-{ts}-{rand_suffix:08x}"));
+        let tmp_file = self.manager_paths.backup_dir.join(format!(".tmp-{tag}"));
 
         let filename = {
             let mut file = fs::OpenOptions::new()
@@ -169,6 +174,7 @@ impl BackupUseCase {
                 .and_then(|h| h.get(..8))
                 .unwrap_or(&checksum[..8.min(checksum.len())]);
 
+            let ts = tag.rsplit_once('-').map_or(tag, |(l, _)| l);
             let backup_id = format!("{ts}-{short_hash}");
             let filename = format!("lkit-backup-{backup_id}.lkb");
 
@@ -182,8 +188,8 @@ impl BackupUseCase {
                     .unwrap_or_else(|_| "unknown".into()),
                 lkit_version: LKIT_VERSION.to_owned(),
                 hostname,
-                remark,
-                auto,
+                remark: payload.remark,
+                auto: payload.auto,
                 scope,
                 checksum,
             };
@@ -203,7 +209,9 @@ impl BackupUseCase {
         let _ = fs::remove_dir_all(staging_dir); // best-effort: clean staging after success
 
         // 9. Trim auto backups if this is an auto backup
-        if auto && let Err(e) = self.trim_auto_backups() {
+        if payload.auto
+            && let Err(e) = self.trim_auto_backups()
+        {
             tracing::warn!("trim auto backups failed: {e}");
         }
 
