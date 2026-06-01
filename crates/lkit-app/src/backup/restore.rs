@@ -64,17 +64,30 @@ impl BackupUseCase {
     pub async fn restore_foreground(&self, entry: &BackupEntry) -> Result<PathBuf, AppError> {
         let staging_dir = self.build_staging_dir()?;
 
+        // Guard: clean up staging dir on any error path
+        let result = self.do_restore_foreground(entry, &staging_dir).await;
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging_dir);
+        }
+        result
+    }
+
+    async fn do_restore_foreground(
+        &self,
+        entry: &BackupEntry,
+        staging_dir: &Path,
+    ) -> Result<PathBuf, AppError> {
         // 1. Space precheck for extraction
         let file_size =
             fs::metadata(&entry.path).map_err(|e| AppError::Backup(format!("stat: {e}")))?.len();
         let extract_need = file_size.saturating_mul(2);
-        super::check_space(extract_need, &staging_dir)?;
+        super::check_space(extract_need, staging_dir)?;
 
         // 2. Verify + extract to staging (streaming)
         {
             let mut file =
                 fs::File::open(&entry.path).map_err(|e| AppError::Backup(format!("open: {e}")))?;
-            extract_verified(&mut file, &entry.checksum, &staging_dir)?;
+            extract_verified(&mut file, &entry.checksum, staging_dir)?;
         }
 
         // 3. Stop Landscape with retries
@@ -100,10 +113,10 @@ impl BackupUseCase {
             .map_err(|e| AppError::Backup(format!("mkdir HOME: {e}")))?;
 
         // 6. cp staging files -> HOME
-        self.copy_staging_to_home(&staging_dir, &entry.scope)?;
+        self.copy_staging_to_home(staging_dir, &entry.scope)?;
 
-        // 7. Cleanup staging
-        let _ = fs::remove_dir_all(&staging_dir);
+        // 7. Cleanup staging (success path)
+        let _ = fs::remove_dir_all(staging_dir);
 
         // 8. Prepare status file path for caller
         let status_file =
