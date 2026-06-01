@@ -81,7 +81,8 @@ impl BackupUseCase {
         // 1. Space precheck for extraction
         let file_size =
             fs::metadata(&entry.path).map_err(|e| AppError::Backup(format!("stat: {e}")))?.len();
-        let extract_need = file_size.saturating_mul(2);
+        let payload_size = file_size.saturating_sub(lkit_core::META_REGION_SIZE);
+        let extract_need = payload_size.saturating_mul(5);
         super::check_space(extract_need, staging_dir)?;
 
         // 2. Verify + extract to staging (streaming)
