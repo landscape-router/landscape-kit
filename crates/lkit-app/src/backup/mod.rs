@@ -436,3 +436,115 @@ pub(crate) fn check_space(need_bytes: u64, check_path: &Path) -> Result<(), AppE
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use lkit_core::CoreError;
+    use tempfile::TempDir;
+
+    struct MockClient {
+        healthy: bool,
+        version: String,
+        config_content: String,
+    }
+
+    #[async_trait]
+    impl LkitClient for MockClient {
+        async fn get_version(&self) -> Result<String, CoreError> {
+            Ok(self.version.clone())
+        }
+
+        async fn health_check(&self) -> Result<bool, CoreError> {
+            if self.healthy { Ok(true) } else { Err(CoreError::Internal("unreachable".into())) }
+        }
+
+        async fn export_config(&self) -> Result<String, CoreError> {
+            Ok(self.config_content.clone())
+        }
+    }
+
+    struct MockServiceManager;
+
+    #[async_trait]
+    impl ServiceManager for MockServiceManager {
+        async fn status(&self) -> Result<lkit_core::ServiceState, CoreError> {
+            Ok(lkit_core::ServiceState { active: true, enabled: true, pid: Some(1) })
+        }
+        async fn start(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn restart(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+    }
+
+    fn setup() -> Result<(TempDir, BackupUseCase), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
+        let landscape_home = tmp.path().join("landscape");
+        let manager_home = tmp.path().join("manager");
+
+        std::fs::create_dir_all(&landscape_home)?;
+        std::fs::create_dir_all(landscape_home.join("static"))?;
+        std::fs::write(landscape_home.join("landscape-webserver"), b"fake binary")?;
+        std::fs::write(landscape_home.join("landscape.toml"), b"[web]\nport = 6443\n")?;
+
+        std::fs::create_dir_all(manager_home.join("backup"))?;
+        std::fs::create_dir_all(manager_home.join("tmp"))?;
+
+        let landscape_paths = LandscapePaths::new(landscape_home);
+        let manager_paths = ManagerPaths::new(manager_home);
+
+        let client = Arc::new(MockClient {
+            healthy: true,
+            version: "0.19.2".into(),
+            config_content: "version = \"0.19.2\"\n".into(),
+        });
+
+        let use_case = BackupUseCase::new(
+            client,
+            Arc::new(MockServiceManager),
+            landscape_paths,
+            manager_paths,
+        );
+
+        Ok((tmp, use_case))
+    }
+
+    #[tokio::test]
+    async fn test_create_minimal_backup() -> Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, use_case) = setup()?;
+
+        let entry = use_case.create(None, false, false).await?;
+        assert_eq!(entry.scope, BackupScope::Minimal);
+        assert!(entry.path.exists());
+        assert!(entry.filename.ends_with(".lkb"));
+        assert!(entry.file_size > 0);
+        assert!(!entry.backup_id.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_empty() -> Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, use_case) = setup()?;
+
+        let entries = use_case.list()?;
+        assert!(entries.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_not_found() -> Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, use_case) = setup()?;
+
+        let result = use_case.resolve("nonexistent-id");
+        match result {
+            Err(AppError::BackupNotFound(_)) => Ok(()),
+            other => Err(format!("expected BackupNotFound, got {other:?}").into()),
+        }
+    }
+}
