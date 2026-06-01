@@ -44,7 +44,9 @@ impl CliMessages {
             "error.suggestion.generic" => "请检查日志或使用 -v 获取详细信息",
             "self.version" => "lkit {version}",
             "backup.created" => "备份创建成功: {id}",
-            "backup.restore_ready" => "恢复已就绪，SSH 可安全断开。完成后执行 cat {status_file} 查看结果",
+            "backup.restore_ready" => {
+                "恢复已就绪，SSH 可安全断开。完成后执行 cat {status_file} 查看结果"
+            }
             "backup.restore_ok" => "恢复完成",
             "backup.restore_failed_rolled_back" => "恢复失败，已自动回滚到原状态",
             "backup.extracted" => "已解压到 {path}",
@@ -53,7 +55,9 @@ impl CliMessages {
             "backup.checksum_mismatch" => "备份文件校验失败，文件可能已损坏",
             "backup.space_insufficient" => "磁盘空间不足",
             "backup.trim_failed" => "自动备份清理失败: {error}",
-            "backup.full_warning" => "警告: 完整备份将打包整个 Landscape 目录，包括日志、地理数据、指标等运行时数据，体积可能达到数百 MB，生成时间较长，强烈不建议使用。",
+            "backup.full_warning" => {
+                "警告: 完整备份将打包整个 Landscape 目录，包括日志、地理数据、指标等运行时数据，体积可能达到数百 MB，生成时间较长，强烈不建议使用。"
+            }
             "backup.corrupted" => "备份文件已损坏: {filename}",
             "backup.menu.title" => "Backup Management",
             "backup.menu.list" => "[1] List backups",
