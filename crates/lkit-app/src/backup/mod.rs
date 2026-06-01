@@ -91,6 +91,8 @@ impl BackupUseCase {
         fs::create_dir_all(&self.manager_paths.backup_dir)
             .map_err(|e| AppError::Backup(format!("mkdir backup_dir: {e}")))?;
 
+        clean_orphan_tmps(&self.manager_paths.backup_dir);
+
         let scope = if all { BackupScope::Full } else { BackupScope::Minimal };
 
         if all {
@@ -377,6 +379,25 @@ impl BackupUseCase {
 }
 
 // ── helpers ──
+
+/// Remove stale `.tmp-*` files from `dir` that are older than 1 hour.
+/// These are left behind when a previous `create()` process was interrupted.
+fn clean_orphan_tmps(dir: &Path) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with(".tmp-") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata()
+            && let Ok(modified) = meta.modified()
+            && modified.elapsed().unwrap_or_default().as_secs() > 3600
+        {
+            let _ = fs::remove_file(entry.path()); // best-effort: clean orphan tmp file
+        }
+    }
+}
 
 fn read_metadata_from_path(path: &Path) -> Result<BackupMetadata, AppError> {
     let mut file = fs::File::open(path).map_err(|e| AppError::Backup(format!("open: {e}")))?;
