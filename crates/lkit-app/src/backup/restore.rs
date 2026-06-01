@@ -67,7 +67,7 @@ impl BackupUseCase {
         // Guard: clean up staging dir on any error path
         let result = self.do_restore_foreground(entry, &staging_dir).await;
         if result.is_err() {
-            let _ = fs::remove_dir_all(&staging_dir);
+            let _ = fs::remove_dir_all(&staging_dir); // best-effort: clean staging on error
         }
         result
     }
@@ -116,12 +116,13 @@ impl BackupUseCase {
         self.copy_staging_to_home(staging_dir, &entry.scope)?;
 
         // 7. Cleanup staging (success path)
-        let _ = fs::remove_dir_all(staging_dir);
+        let _ = fs::remove_dir_all(staging_dir); // best-effort: clean staging after success
 
         // 8. Prepare status file path for caller
         let status_file =
             self.manager_paths.runtime_dir.join(format!("restore-{}", entry.backup_id));
-        let _ = fs::create_dir_all(&self.manager_paths.runtime_dir);
+        fs::create_dir_all(&self.manager_paths.runtime_dir)
+            .map_err(|e| AppError::Backup(format!("mkdir runtime_dir: {e}")))?;
 
         Ok(status_file)
     }
@@ -161,7 +162,7 @@ impl BackupUseCase {
         if healthy {
             // 3. Success — remove recovery snapshot
             let recovery_dir = self.recovery_path(backup_id);
-            let _ = fs::remove_dir_all(&recovery_dir);
+            let _ = fs::remove_dir_all(&recovery_dir); // best-effort: clean recovery snapshot after success
 
             let msg = format!("恢复结果: 成功\n备份 ID: {backup_id}\n信息: 恢复完成\n");
             if let Err(e) = fs::write(&status_file, &msg) {
@@ -177,10 +178,18 @@ impl BackupUseCase {
 
     /// Rollback: stop, rm failed HOME, mv recovery -> HOME, restart.
     async fn rollback(&self, backup_id: &str, status_file: &Path) -> Result<(), AppError> {
-        let _ = self.service_manager.stop().await;
+        let _ = self.service_manager.stop().await; // best-effort: rollback stop failure non-fatal
 
         let recovery_dir = self.recovery_path(backup_id);
-        let _ = fs::remove_dir_all(&self.landscape_paths.home);
+
+        if let Err(e) = fs::remove_dir_all(&self.landscape_paths.home) {
+            let msg = format!(
+                "恢复结果: 失败\n备份 ID: {backup_id}\n信息: 回滚失败: 无法删除当前目录 ({e})，recovery 目录保留在 {recovery_dir}\n",
+                recovery_dir = recovery_dir.display()
+            );
+            let _ = fs::write(status_file, &msg); // best-effort: report rm failure
+            return Err(AppError::Backup(format!("rollback rm HOME: {e}")));
+        }
 
         if recovery_dir.exists()
             && let Err(e) = fs::rename(&recovery_dir, &self.landscape_paths.home)
@@ -189,9 +198,7 @@ impl BackupUseCase {
                 "恢复结果: 失败\n备份 ID: {backup_id}\n信息: 回滚失败: {e}，recovery 目录保留在 {recovery_dir}\n",
                 recovery_dir = recovery_dir.display()
             );
-            if let Err(write_err) = fs::write(status_file, &msg) {
-                tracing::warn!("failed to write status file: {write_err}");
-            }
+            let _ = fs::write(status_file, &msg); // best-effort: report mv failure
             return Err(AppError::Backup(format!("rollback mv: {e}")));
         }
 

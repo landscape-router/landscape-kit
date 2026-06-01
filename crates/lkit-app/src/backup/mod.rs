@@ -154,7 +154,7 @@ impl BackupUseCase {
         fs::rename(&tmp_file, &final_path).map_err(|e| AppError::Backup(format!("rename: {e}")))?;
 
         // 8. Cleanup staging
-        let _ = fs::remove_dir_all(&staging_dir);
+        let _ = fs::remove_dir_all(&staging_dir); // best-effort: clean staging after success
 
         // 9. Trim auto backups if this is an auto backup
         if auto && let Err(e) = self.trim_auto_backups() {
@@ -325,7 +325,11 @@ impl BackupUseCase {
         let mut file =
             fs::File::open(&entry.path).map_err(|e| AppError::Backup(format!("open: {e}")))?;
 
-        extract_verified(&mut file, &entry.checksum, target)?;
+        let result = extract_verified(&mut file, &entry.checksum, target);
+        if result.is_err() {
+            let _ = fs::remove_dir_all(target); // best-effort: clean dirty extraction
+            result?;
+        }
 
         let binary = target.join("landscape-webserver");
         if binary.exists() {
