@@ -32,13 +32,13 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
                 init_file = args.init_file
             )
         }
-        Commands::Backup(_) => backup::run().await,
+        Commands::Backup(cmd) => backup::dispatch(cmd, state).await,
         Commands::Upgrade(_) => upgrade::run().await,
         Commands::Rollback(_) => rollback::run().await,
         Commands::Config(_) => config::run().await,
         Commands::SelfCmd(args) => self_cmd::run(args).await,
         Commands::Mirror(args) => mirror::run(args).await,
-        Commands::DoRestore(_) => anyhow::bail!("do-restore should be handled in main()"),
+        Commands::DoRestore(args) => backup::run_do_restore(&args.id_or_path, state).await,
     };
 
     if let Err(ref e) = result
@@ -47,6 +47,11 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
         let (exit_code, suggestion) = match app_err {
             lkit_app::AppError::PermissionDenied(_) => (2, msg("error.suggestion.permission")),
             lkit_app::AppError::NotFound(_) => (3, msg("error.suggestion.not_installed")),
+            lkit_app::AppError::Backup(_) => (1, msg("error.suggestion.generic")),
+            lkit_app::AppError::BackupNotFound(_) => (5, msg("error.suggestion.generic")),
+            lkit_app::AppError::SpaceInsufficient { .. } => (1, msg("error.suggestion.generic")),
+            lkit_app::AppError::ChecksumMismatch => (1, msg("error.suggestion.generic")),
+            lkit_app::AppError::BackupCorrupted(_) => (1, msg("error.suggestion.generic")),
             _ => (1, msg("error.suggestion.generic")),
         };
         eprintln!("Error: {:#}", e);

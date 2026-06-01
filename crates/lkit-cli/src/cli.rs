@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn parse_do_restore() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["lkit", "_do-restore", "abc123"])?;
+        let cli = Cli::try_parse_from(["lkit", "do-restore", "abc123"])?;
         if let Some(Commands::DoRestore(args)) = cli.command {
             assert_eq!(args.id_or_path, "abc123");
         } else {

@@ -49,7 +49,7 @@ ctrlc = "3"
 
 # System
 libc = "0.2"
-nix = { version = "0.29", features = ["user", "fs", "hostname"] }
+nix = { version = "0.29", features = ["user", "fs", "hostname", "process"] }
 
 # Config parsing
 toml = "0.8"
