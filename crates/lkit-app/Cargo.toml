@@ -16,6 +16,12 @@ toml = { workspace = true }
 toml_edit = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+sha2 = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+nix = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

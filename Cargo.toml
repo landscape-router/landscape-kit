@@ -59,6 +59,10 @@ toml_edit = "0.22"
 rusty-s3 = "0.9"
 axum = "0.8"
 sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+chrono = "0.4"
+rand = "0.8"
 futures = "0.3"
 
 # Zip
