@@ -38,6 +38,7 @@ pub async fn dispatch(cmd: Commands, state: &AppState) -> anyhow::Result<()> {
         Commands::Config(_) => config::run().await,
         Commands::SelfCmd(args) => self_cmd::run(args).await,
         Commands::Mirror(args) => mirror::run(args).await,
+        Commands::DoRestore(_) => anyhow::bail!("do-restore should be handled in main()"),
     };
 
     if let Err(ref e) = result
