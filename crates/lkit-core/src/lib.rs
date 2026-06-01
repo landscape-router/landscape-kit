@@ -11,6 +11,10 @@ pub mod source;
 pub mod system_detect;
 mod traits;
 
+pub use backup::{
+    AUTO_BACKUP_LIMIT, BackupEntry, BackupMetadata, BackupScope, HEADER_SIZE, HEADER_VERSION,
+    LKIT_VERSION, MAGIC, MAX_JSON_LEN, META_REGION_SIZE,
+};
 pub use download::{
     ArtifactDownloader, DownloadConfig, DownloadError, DownloadProgress, NoopProgress,
 };
@@ -23,10 +27,6 @@ pub use install::{
 pub use models::{
     ApiResponse, DiagnosticCheck, DiagnosticResult, ExportInitConfigResponse, ServiceState,
     SystemInfoResponse,
-};
-pub use backup::{
-    BackupEntry, BackupMetadata, BackupScope, AUTO_BACKUP_LIMIT, HEADER_SIZE, HEADER_VERSION,
-    LKIT_VERSION, MAGIC, META_REGION_SIZE,
 };
 pub use paths::{LandscapePaths, ManagerPaths};
 pub use source::name_parser::{ArchInfo, parse_arch};

@@ -58,10 +58,7 @@ mod tests {
         let err = AppError::BackupNotFound("20260601-xxxx-nope".into());
         assert_eq!(err.to_string(), "backup not found: 20260601-xxxx-nope");
 
-        let err = AppError::SpaceInsufficient {
-            need: 100,
-            available: 50,
-        };
+        let err = AppError::SpaceInsufficient { need: 100, available: 50 };
         assert!(err.to_string().contains("space insufficient"));
         assert!(err.to_string().contains("100"));
         assert!(err.to_string().contains("50"));

@@ -19,9 +19,7 @@ pub fn discover_binary(landscape_home: &Path) -> Result<PathBuf, AppError> {
         return Ok(fallback);
     }
 
-    Err(AppError::Backup(
-        "landscape-webserver binary not found".into(),
-    ))
+    Err(AppError::Backup("landscape-webserver binary not found".into()))
 }
 
 /// Walk /proc/[0-9]*/exe looking for a binary whose filename matches `name`.
