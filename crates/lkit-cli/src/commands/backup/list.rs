@@ -7,12 +7,7 @@ use super::format_size;
 pub(crate) async fn run(json: bool, state: &AppState) -> anyhow::Result<()> {
     use lkit_app::backup::BackupUseCase;
 
-    let use_case = BackupUseCase::new(
-        state.client.clone(),
-        state.service_manager.clone(),
-        state.landscape_paths.clone(),
-        state.manager_paths.clone(),
-    );
+    let use_case = BackupUseCase::from_state(state);
 
     let entries = use_case.list()?;
 
