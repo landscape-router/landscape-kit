@@ -1,5 +1,6 @@
 //! lkit-core: shared models, configuration types, error types, and cross-layer traits.
 
+pub mod backup;
 pub mod download;
 mod error;
 pub mod host;
@@ -22,6 +23,10 @@ pub use install::{
 pub use models::{
     ApiResponse, DiagnosticCheck, DiagnosticResult, ExportInitConfigResponse, ServiceState,
     SystemInfoResponse,
+};
+pub use backup::{
+    BackupEntry, BackupMetadata, BackupScope, AUTO_BACKUP_LIMIT, HEADER_SIZE, HEADER_VERSION,
+    LKIT_VERSION, MAGIC, META_REGION_SIZE,
 };
 pub use paths::{LandscapePaths, ManagerPaths};
 pub use source::name_parser::{ArchInfo, parse_arch};
