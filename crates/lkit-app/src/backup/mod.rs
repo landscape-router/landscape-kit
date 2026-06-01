@@ -1,6 +1,7 @@
 //! Backup use case — backup lifecycle operations.
 
 pub mod packer;
+pub mod restore;
 pub mod scanner;
 
 use std::fs;
@@ -11,8 +12,8 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use lkit_core::{
-    BackupEntry, BackupMetadata, BackupScope, LandscapePaths, LkitClient, ManagerPaths,
-    ServiceManager, AUTO_BACKUP_LIMIT, LKIT_VERSION, META_REGION_SIZE,
+    AUTO_BACKUP_LIMIT, BackupEntry, BackupMetadata, BackupScope, LKIT_VERSION, LandscapePaths,
+    LkitClient, META_REGION_SIZE, ManagerPaths, ServiceManager,
 };
 
 use crate::error::AppError;
@@ -36,7 +37,12 @@ impl BackupUseCase {
         landscape_paths: LandscapePaths,
         manager_paths: ManagerPaths,
     ) -> Self {
-        Self { client, service_manager, landscape_paths, manager_paths }
+        Self {
+            client,
+            service_manager,
+            landscape_paths,
+            manager_paths,
+        }
     }
 
     // ── create ──
@@ -77,7 +83,8 @@ impl BackupUseCase {
         // 5. Build staging
         let ts = Utc::now().format("%Y%m%d-%H%M%S").to_string();
         let rand_suffix: u32 = rand::random();
-        let staging_dir = self.manager_paths.tmp_dir.join(format!("staging-{ts}-{rand_suffix:08x}"));
+        let staging_dir =
+            self.manager_paths.tmp_dir.join(format!("staging-{ts}-{rand_suffix:08x}"));
         fs::create_dir_all(&staging_dir)
             .map_err(|e| AppError::Backup(format!("mkdir staging: {e}")))?;
 
@@ -91,19 +98,13 @@ impl BackupUseCase {
         } else {
             fs::copy(&binary_path, staging_dir.join("landscape-webserver"))
                 .map_err(|e| AppError::Backup(format!("copy binary: {e}")))?;
-            copy_dir_all(
-                &self.landscape_paths.static_dir,
-                &staging_dir.join("static"),
-            )?;
+            copy_dir_all(&self.landscape_paths.static_dir, &staging_dir.join("static"))?;
             fs::write(staging_dir.join("landscape_init.toml"), &init_content)
                 .map_err(|e| AppError::Backup(format!("write init: {e}")))?;
         }
 
         // 6. Build .lkb
-        let tmp_file = self
-            .manager_paths
-            .backup_dir
-            .join(format!(".tmp-{ts}-{rand_suffix:08x}"));
+        let tmp_file = self.manager_paths.backup_dir.join(format!(".tmp-{ts}-{rand_suffix:08x}"));
 
         let filename = {
             let mut file = fs::OpenOptions::new()
@@ -143,31 +144,25 @@ impl BackupUseCase {
 
             write_meta_region(&mut file, &metadata)?;
 
-            file.sync_all()
-                .map_err(|e| AppError::Backup(format!("fsync: {e}")))?;
+            file.sync_all().map_err(|e| AppError::Backup(format!("fsync: {e}")))?;
 
             filename
         };
 
         // 7. Rename to final name
         let final_path = self.manager_paths.backup_dir.join(&filename);
-        fs::rename(&tmp_file, &final_path)
-            .map_err(|e| AppError::Backup(format!("rename: {e}")))?;
+        fs::rename(&tmp_file, &final_path).map_err(|e| AppError::Backup(format!("rename: {e}")))?;
 
         // 8. Cleanup staging
         let _ = fs::remove_dir_all(&staging_dir);
 
         // 9. Trim auto backups if this is an auto backup
-        if auto {
-            if let Err(e) = self.trim_auto_backups() {
-                tracing::warn!("trim auto backups failed: {e}");
-            }
+        if auto && let Err(e) = self.trim_auto_backups() {
+            tracing::warn!("trim auto backups failed: {e}");
         }
 
         // 10. Return entry
-        let file_size = fs::metadata(&final_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let file_size = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
 
         let metadata = read_metadata_from_path(&final_path)?;
 
@@ -205,11 +200,8 @@ impl BackupUseCase {
             }
 
             let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            let filename = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let filename =
+                path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
 
             match read_metadata_from_path(&path) {
                 Ok(metadata) => {
@@ -259,11 +251,8 @@ impl BackupUseCase {
         let direct = Path::new(id_or_path);
         if direct.is_file() {
             let file_size = fs::metadata(direct).map(|m| m.len()).unwrap_or(0);
-            let filename = direct
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let filename =
+                direct.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
 
             let metadata = read_metadata_from_path(direct)?;
             return Ok(BackupEntry {
@@ -293,19 +282,13 @@ impl BackupUseCase {
             if path.extension().and_then(|e| e.to_str()) != Some("lkb") {
                 continue;
             }
-            let filename = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
             let expected_prefix = format!("lkit-backup-{id_or_path}");
             if filename.starts_with(&expected_prefix) {
                 let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 let filename = filename.to_string();
-                let metadata = match read_metadata_from_path(&path) {
-                    Ok(m) => m,
-                    Err(e) => return Err(e),
-                };
+                let metadata = read_metadata_from_path(&path)?;
                 return Ok(BackupEntry {
                     backup_id: metadata.backup_id,
                     created_at: metadata.created_at,
@@ -330,20 +313,17 @@ impl BackupUseCase {
 
     /// Extract a backup to `target` directory.
     pub fn extract(&self, entry: &BackupEntry, target: &Path, force: bool) -> Result<(), AppError> {
-        if target.exists() && target.read_dir().map_or(false, |mut d| d.next().is_some()) {
-            if !force {
-                return Err(AppError::Backup(format!(
-                    "target directory not empty: {}",
-                    target.display()
-                )));
-            }
+        if target.exists() && target.read_dir().is_ok_and(|mut d| d.next().is_some()) && !force {
+            return Err(AppError::Backup(format!(
+                "target directory not empty: {}",
+                target.display()
+            )));
         }
 
-        fs::create_dir_all(target)
-            .map_err(|e| AppError::Backup(format!("mkdir target: {e}")))?;
+        fs::create_dir_all(target).map_err(|e| AppError::Backup(format!("mkdir target: {e}")))?;
 
-        let mut file = fs::File::open(&entry.path)
-            .map_err(|e| AppError::Backup(format!("open: {e}")))?;
+        let mut file =
+            fs::File::open(&entry.path).map_err(|e| AppError::Backup(format!("open: {e}")))?;
 
         extract_verified(&mut file, &entry.checksum, target)?;
 
@@ -368,8 +348,7 @@ impl BackupUseCase {
 
     /// Delete a backup file.
     pub fn delete(&self, entry: &BackupEntry) -> Result<(), AppError> {
-        fs::remove_file(&entry.path)
-            .map_err(|e| AppError::Backup(format!("delete file: {e}")))?;
+        fs::remove_file(&entry.path).map_err(|e| AppError::Backup(format!("delete file: {e}")))?;
         Ok(())
     }
 
@@ -396,8 +375,7 @@ impl BackupUseCase {
 // ── helpers ──
 
 fn read_metadata_from_path(path: &Path) -> Result<BackupMetadata, AppError> {
-    let mut file = fs::File::open(path)
-        .map_err(|e| AppError::Backup(format!("open: {e}")))?;
+    let mut file = fs::File::open(path).map_err(|e| AppError::Backup(format!("open: {e}")))?;
     read_metadata(&mut file)
 }
 
@@ -411,16 +389,16 @@ pub(crate) fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), AppError> {
         .flatten()
     {
         let src_path = entry.path();
-        let file_name = src_path
-            .file_name()
-            .ok_or_else(|| AppError::Backup("invalid filename".into()))?;
+        let file_name =
+            src_path.file_name().ok_or_else(|| AppError::Backup("invalid filename".into()))?;
         let dst_path = dst.join(file_name);
 
         if src_path.is_dir() {
             copy_dir_all(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path)
-                .map_err(|e| AppError::Backup(format!("copy {src_path}: {e}", src_path = src_path.display())))?;
+            fs::copy(&src_path, &dst_path).map_err(|e| {
+                AppError::Backup(format!("copy {src_path}: {e}", src_path = src_path.display()))
+            })?;
         }
     }
 
@@ -430,9 +408,8 @@ pub(crate) fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), AppError> {
 /// Estimate the total byte size of all files under a directory.
 fn dir_size(dir: &Path) -> Result<u64, AppError> {
     let mut total = 0u64;
-    for entry in fs::read_dir(dir)
-        .map_err(|e| AppError::Backup(format!("read_dir: {e}")))?
-        .flatten()
+    for entry in
+        fs::read_dir(dir).map_err(|e| AppError::Backup(format!("read_dir: {e}")))?.flatten()
     {
         let path = entry.path();
         if path.is_dir() {
@@ -454,10 +431,7 @@ pub(crate) fn check_space(need_bytes: u64, check_path: &Path) -> Result<(), AppE
     let required = need_bytes + safety_margin;
 
     if required > available {
-        return Err(AppError::SpaceInsufficient {
-            need: required,
-            available,
-        });
+        return Err(AppError::SpaceInsufficient { need: required, available });
     }
 
     Ok(())
