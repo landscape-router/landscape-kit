@@ -58,8 +58,10 @@ impl BackupUseCase {
         }
     }
 
-    /// Foreground phase: verify, extract, stop, replace files, then hint and return.
-    pub async fn restore_foreground(&self, entry: &BackupEntry) -> Result<(), AppError> {
+    /// Foreground phase: verify, extract, stop, replace files.
+    ///
+    /// Returns the status file path for the caller to display.
+    pub async fn restore_foreground(&self, entry: &BackupEntry) -> Result<PathBuf, AppError> {
         let staging_dir = self.build_staging_dir()?;
 
         // 1. Space precheck for extraction
@@ -103,14 +105,12 @@ impl BackupUseCase {
         // 7. Cleanup staging
         let _ = fs::remove_dir_all(&staging_dir);
 
-        // 8. Print hint
+        // 8. Prepare status file path for caller
         let status_file =
             self.manager_paths.runtime_dir.join(format!("restore-{}", entry.backup_id));
         let _ = fs::create_dir_all(&self.manager_paths.runtime_dir);
 
-        eprintln!("恢复已就绪，SSH 可安全断开。完成后执行 cat {}", status_file.display());
-
-        Ok(())
+        Ok(status_file)
     }
 
     /// Detached phase: start Landscape, health check, rollback on failure.
@@ -133,7 +133,9 @@ impl BackupUseCase {
             let msg = format!(
                 "恢复结果: 失败\n备份 ID: {backup_id}\n信息: 启动失败，已保持停止状态，recovery 目录保留供人工排查\n"
             );
-            let _ = fs::write(&status_file, &msg);
+            if let Err(e) = fs::write(&status_file, &msg) {
+                tracing::warn!("failed to write status file: {e}");
+            }
             return Err(AppError::Backup(
                 "start failed after retries, manual intervention required".into(),
             ));
@@ -149,7 +151,9 @@ impl BackupUseCase {
             let _ = fs::remove_dir_all(&recovery_dir);
 
             let msg = format!("恢复结果: 成功\n备份 ID: {backup_id}\n信息: 恢复完成\n");
-            let _ = fs::write(&status_file, &msg);
+            if let Err(e) = fs::write(&status_file, &msg) {
+                tracing::warn!("failed to write status file: {e}");
+            }
             Ok(())
         } else {
             // 4. Failure -> rollback
@@ -172,7 +176,9 @@ impl BackupUseCase {
                 "恢复结果: 失败\n备份 ID: {backup_id}\n信息: 回滚失败: {e}，recovery 目录保留在 {recovery_dir}\n",
                 recovery_dir = recovery_dir.display()
             );
-            let _ = fs::write(status_file, &msg);
+            if let Err(write_err) = fs::write(status_file, &msg) {
+                tracing::warn!("failed to write status file: {write_err}");
+            }
             return Err(AppError::Backup(format!("rollback mv: {e}")));
         }
 
@@ -188,7 +194,9 @@ impl BackupUseCase {
 
         let msg =
             format!("恢复结果: 失败\n备份 ID: {backup_id}\n信息: health check 超时，已自动回滚\n");
-        let _ = fs::write(status_file, &msg);
+        if let Err(e) = fs::write(status_file, &msg) {
+            tracing::warn!("failed to write status file: {e}");
+        }
         Ok(())
     }
 
@@ -239,14 +247,16 @@ impl BackupUseCase {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(
+                fs::set_permissions(
                     self.landscape_paths.home.join("landscape-webserver"),
                     fs::Permissions::from_mode(0o755),
-                );
-                let _ = fs::set_permissions(
+                )
+                .map_err(|e| AppError::Backup(format!("chmod binary: {e}")))?;
+                fs::set_permissions(
                     self.landscape_paths.home.join("landscape_init.toml"),
                     fs::Permissions::from_mode(0o644),
-                );
+                )
+                .map_err(|e| AppError::Backup(format!("chmod init: {e}")))?;
             }
 
             // Do NOT create landscape_init.lock — Landscape will re-init from init
