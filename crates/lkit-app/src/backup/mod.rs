@@ -45,6 +45,16 @@ impl BackupUseCase {
         }
     }
 
+    /// Create a BackupUseCase from shared application state.
+    pub fn from_state(state: &crate::AppState) -> Self {
+        Self::new(
+            state.client.clone(),
+            state.service_manager.clone(),
+            state.landscape_paths.clone(),
+            state.manager_paths.clone(),
+        )
+    }
+
     // ── create ──
 
     /// Create a new backup.
@@ -74,7 +84,7 @@ impl BackupUseCase {
         let estimated_need = if all {
             dir_size(&self.landscape_paths.home)?
         } else {
-            binary_path.metadata().map(|m| m.len()).unwrap_or(0)
+            binary_path.metadata().map_err(|e| AppError::Backup(format!("stat binary: {e}")))?.len()
                 + dir_size(&self.landscape_paths.static_dir).unwrap_or(0)
                 + init_content.len() as u64
         } + META_REGION_SIZE;

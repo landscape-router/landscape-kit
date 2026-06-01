@@ -50,12 +50,7 @@ pub(crate) async fn dispatch(cmd: BackupCmd, state: &AppState) -> anyhow::Result
 pub(crate) async fn run_do_restore(backup_id: &str, state: &AppState) -> anyhow::Result<()> {
     let _ = nix::unistd::setsid();
 
-    let use_case = lkit_app::backup::BackupUseCase::new(
-        state.client.clone(),
-        state.service_manager.clone(),
-        state.landscape_paths.clone(),
-        state.manager_paths.clone(),
-    );
+    let use_case = lkit_app::backup::BackupUseCase::from_state(state);
 
     use_case.restore_detached(backup_id).await?;
     Ok(())

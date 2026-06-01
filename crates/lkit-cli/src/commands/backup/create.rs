@@ -10,12 +10,7 @@ use crate::messages::CliMessages;
 pub(crate) async fn run(args: BackupCreateArgs, state: &AppState) -> anyhow::Result<()> {
     use lkit_app::backup::BackupUseCase;
 
-    let use_case = BackupUseCase::new(
-        state.client.clone(),
-        state.service_manager.clone(),
-        state.landscape_paths.clone(),
-        state.manager_paths.clone(),
-    );
+    let use_case = BackupUseCase::from_state(state);
 
     let entry = use_case.create(args.remark, false, args.all).await?;
 
