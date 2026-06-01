@@ -62,11 +62,7 @@ fn menu_items() -> Vec<MenuItem> {
         },
         MenuItem {
             label_key: "menu.backup",
-            action: MenuAction::NotImplemented("M3"),
-        },
-        MenuItem {
-            label_key: "menu.restore",
-            action: MenuAction::NotImplemented("M3"),
+            action: MenuAction::Dispatch(Commands::Backup(crate::cli::BackupCmd { action: None })),
         },
         MenuItem {
             label_key: "menu.upgrade",
