@@ -29,7 +29,10 @@ pub enum Commands {
     /// 安装 Landscape
     Install(InstallArgs),
     /// 备份管理
-    Backup(BackupArgs),
+    Backup(BackupCmd),
+    /// (hidden) Detached restore phase
+    #[command(hide = true)]
+    DoRestore(BackupRestoreArgs),
     /// 升级管理
     Upgrade(UpgradeArgs),
     /// 回滚管理
@@ -107,8 +110,77 @@ pub struct InstallArgs {
     pub force: bool,
 }
 
+/// 备份命令包装，允许无子命令时回退到交互菜单。
+#[derive(Parser, Clone)]
+pub struct BackupCmd {
+    /// 子命令；省略时进入交互菜单。
+    #[command(subcommand)]
+    pub action: Option<BackupAction>,
+}
+
+/// 备份子命令。
+#[derive(Subcommand, Clone)]
+pub enum BackupAction {
+    /// 创建备份
+    Create(BackupCreateArgs),
+    /// 列出备份
+    List(BackupListArgs),
+    /// 恢复备份
+    Restore(BackupRestoreArgs),
+    /// 解压备份到指定目录
+    Extract(BackupExtractArgs),
+    /// 删除备份
+    Delete(BackupDeleteArgs),
+}
+
+/// 创建备份参数。
+#[derive(Args, Clone)]
+pub struct BackupCreateArgs {
+    /// Remark for the backup
+    #[arg(long)]
+    pub remark: Option<String>,
+
+    /// Full backup (entire LANDSCAPE_HOME)
+    #[arg(long)]
+    pub all: bool,
+}
+
+/// 列出备份参数。
 #[derive(Args, Clone, Copy)]
-pub struct BackupArgs {}
+pub struct BackupListArgs {
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// 恢复备份参数。
+#[derive(Args, Clone)]
+pub struct BackupRestoreArgs {
+    /// Backup ID or path to .lkb file
+    pub id_or_path: String,
+}
+
+/// 解压备份参数。
+#[derive(Args, Clone)]
+pub struct BackupExtractArgs {
+    /// Backup ID or path to .lkb file
+    pub id_or_path: String,
+
+    /// Target directory
+    #[arg(long)]
+    pub target: std::path::PathBuf,
+
+    /// Force overwrite if target is non-empty
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// 删除备份参数。
+#[derive(Args, Clone)]
+pub struct BackupDeleteArgs {
+    /// Backup ID or path to .lkb file
+    pub id_or_path: String,
+}
 
 #[derive(Args, Clone, Copy)]
 pub struct UpgradeArgs {}
@@ -352,6 +424,74 @@ mod tests {
             assert!(matches!(args.action, MirrorAction::Sync(_)));
         } else {
             return Err("expected Mirror".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_backup_no_subcommand() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["lkit", "backup"])?;
+        if let Some(Commands::Backup(cmd)) = cli.command {
+            assert!(cmd.action.is_none());
+        } else {
+            return Err("expected Backup".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_backup_create() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["lkit", "backup", "create", "--remark", "test"])?;
+        if let Some(Commands::Backup(cmd)) = cli.command {
+            if let Some(BackupAction::Create(args)) = cmd.action {
+                assert_eq!(args.remark.as_deref(), Some("test"));
+                assert!(!args.all);
+            } else {
+                return Err("expected Create".into());
+            }
+        } else {
+            return Err("expected Backup".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_backup_list_json() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["lkit", "backup", "list", "--json"])?;
+        if let Some(Commands::Backup(cmd)) = cli.command {
+            if let Some(BackupAction::List(args)) = cmd.action {
+                assert!(args.json);
+            } else {
+                return Err("expected List".into());
+            }
+        } else {
+            return Err("expected Backup".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_backup_restore() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["lkit", "backup", "restore", "abc123"])?;
+        if let Some(Commands::Backup(cmd)) = cli.command {
+            if let Some(BackupAction::Restore(args)) = cmd.action {
+                assert_eq!(args.id_or_path, "abc123");
+            } else {
+                return Err("expected Restore".into());
+            }
+        } else {
+            return Err("expected Backup".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_do_restore() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["lkit", "_do-restore", "abc123"])?;
+        if let Some(Commands::DoRestore(args)) = cli.command {
+            assert_eq!(args.id_or_path, "abc123");
+        } else {
+            return Err("expected DoRestore".into());
         }
         Ok(())
     }
