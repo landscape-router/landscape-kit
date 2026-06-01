@@ -1,5 +1,6 @@
 //! lkit-app: use case layer — business logic for install, backup, upgrade, status, diagnose, config.
 
+pub mod backup;
 pub mod diagnose;
 pub mod install;
 pub mod logs;
