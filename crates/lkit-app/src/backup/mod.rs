@@ -153,7 +153,10 @@ impl BackupUseCase {
                 .and_then(|h| h.into_string().ok())
                 .unwrap_or_else(|| "unknown".into());
 
-            let short_hash = &checksum[7..15];
+            let short_hash = checksum
+                .strip_prefix("sha256:")
+                .and_then(|h| h.get(..8))
+                .unwrap_or(&checksum[..8.min(checksum.len())]);
 
             let backup_id = format!("{ts}-{short_hash}");
             let filename = format!("lkit-backup-{backup_id}.lkb");
@@ -392,8 +395,7 @@ impl BackupUseCase {
 
     fn trim_auto_backups(&self) -> Result<(), AppError> {
         let entries = self.list()?;
-        let mut auto_entries: Vec<&BackupEntry> = entries.iter().filter(|e| e.auto).collect();
-        auto_entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        let auto_entries: Vec<&BackupEntry> = entries.iter().filter(|e| e.auto).collect();
 
         if auto_entries.len() <= AUTO_BACKUP_LIMIT {
             return Ok(());
@@ -435,7 +437,7 @@ fn read_metadata_from_path(path: &Path) -> Result<BackupMetadata, AppError> {
 }
 
 /// Recursively copy a directory tree.
-pub(crate) fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), AppError> {
+pub(super) fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), AppError> {
     fs::create_dir_all(dst)
         .map_err(|e| AppError::Backup(format!("mkdir {dst}: {e}", dst = dst.display())))?;
 
@@ -477,7 +479,7 @@ fn dir_size(dir: &Path) -> Result<u64, AppError> {
 }
 
 /// Check that `need_bytes + 20MB` is available on the partition containing `check_path`.
-pub(crate) fn check_space(need_bytes: u64, check_path: &Path) -> Result<(), AppError> {
+pub(super) fn check_space(need_bytes: u64, check_path: &Path) -> Result<(), AppError> {
     let stat = nix::sys::statvfs::statvfs(check_path)
         .map_err(|e| AppError::Backup(format!("statvfs: {e}")))?;
 
