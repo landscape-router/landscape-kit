@@ -61,5 +61,7 @@ pub(crate) async fn run(args: BackupRestoreArgs, state: &AppState) -> anyhow::Re
 
     drop(child);
 
-    Ok(())
+    // Exit immediately — the detached child handles the rest.
+    // Spec S3.3 foreground step 10: exit 0
+    std::process::exit(0);
 }

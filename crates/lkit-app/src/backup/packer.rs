@@ -1,7 +1,7 @@
 //! .lkb file format: streaming build, parse, and checksum verification.
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Component, Path};
 
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -136,7 +136,21 @@ pub fn extract_verified(
     let decoder = GzDecoder::new(&mut tee);
     let mut archive = Archive::new(decoder);
 
-    archive.unpack(target_dir).map_err(|e| AppError::Backup(format!("extract failed: {e}")))?;
+    for entry in archive.entries().map_err(|e| AppError::Backup(format!("list entries: {e}")))? {
+        let mut entry = entry.map_err(|e| AppError::Backup(format!("read entry: {e}")))?;
+        let entry_path = entry.path().map_err(|e| AppError::Backup(format!("entry path: {e}")))?;
+
+        // Reject path traversal: no ParentDir or RootDir components
+        for component in entry_path.components() {
+            if matches!(component, Component::ParentDir | Component::RootDir) {
+                return Err(AppError::BackupCorrupted("path traversal detected".into()));
+            }
+        }
+
+        entry
+            .unpack_in(target_dir)
+            .map_err(|e| AppError::Backup(format!("extract failed: {e}")))?;
+    }
 
     let digest = hasher.finalize();
     let actual = format!("sha256:{digest:x}");
