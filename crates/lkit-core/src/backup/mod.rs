@@ -46,6 +46,7 @@ pub struct BackupEntry {
     /// SHA256 checksum of the tar.gz data.
     pub checksum: String,
     /// File name on disk.
+    #[serde(skip)]
     pub filename: String,
     /// File size in bytes.
     pub file_size: u64,

@@ -8,6 +8,7 @@ use lkit_app::AppState;
 use lkit_app::backup::BackupUseCase;
 
 use crate::cli::BackupRestoreArgs;
+use crate::messages::CliMessages;
 
 use super::format_size;
 
@@ -40,7 +41,11 @@ pub(crate) async fn run(args: BackupRestoreArgs, state: &AppState) -> anyhow::Re
     }
 
     // Foreground phase
-    use_case.restore_foreground(&entry).await?;
+    let status_file = use_case.restore_foreground(&entry).await?;
+
+    let mut params = std::collections::HashMap::new();
+    params.insert("status_file", status_file.to_str().unwrap_or("?"));
+    eprintln!("{}", CliMessages::format("backup.restore_ready", &params));
 
     // Detach using process_group(0) — child calls setsid() at startup
     use std::process::{Command, Stdio};
