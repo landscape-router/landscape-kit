@@ -103,7 +103,18 @@ impl BackupUseCase {
         fs::create_dir_all(&staging_dir)
             .map_err(|e| AppError::Backup(format!("mkdir staging: {e}")))?;
 
-        let result = self.do_create(&staging_dir, &binary_path, &init_content, remark, auto, all, &ts, rand_suffix).await;
+        let result = self
+            .do_create(
+                &staging_dir,
+                &binary_path,
+                &init_content,
+                remark,
+                auto,
+                all,
+                &ts,
+                rand_suffix,
+            )
+            .await;
         if result.is_err() {
             let _ = fs::remove_dir_all(&staging_dir);
         }
