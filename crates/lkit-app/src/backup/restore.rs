@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lkit_core::{BackupEntry, BackupScope};
+use rand::Rng;
 
 use crate::AppError;
 
@@ -222,7 +223,7 @@ impl BackupUseCase {
 
     fn build_staging_dir(&self) -> Result<PathBuf, AppError> {
         let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
-        let rand_suffix: u32 = rand::random();
+        let rand_suffix: u32 = rand::rng().random();
         let staging_dir =
             self.manager_paths.tmp_dir.join(format!("staging-restore-{ts}-{rand_suffix:08x}"));
         fs::create_dir_all(&staging_dir)

@@ -15,6 +15,7 @@ use lkit_core::{
     AUTO_BACKUP_LIMIT, BackupEntry, BackupMetadata, BackupScope, LKIT_VERSION, LandscapePaths,
     LkitClient, META_REGION_SIZE, ManagerPaths, ServiceManager,
 };
+use rand::Rng;
 
 use crate::error::AppError;
 
@@ -92,7 +93,7 @@ impl BackupUseCase {
 
         // 5. Build staging
         let ts = Utc::now().format("%Y%m%d-%H%M%S").to_string();
-        let rand_suffix: u32 = rand::random();
+        let rand_suffix: u32 = rand::rng().random();
         let staging_dir =
             self.manager_paths.tmp_dir.join(format!("staging-{ts}-{rand_suffix:08x}"));
         fs::create_dir_all(&staging_dir)
