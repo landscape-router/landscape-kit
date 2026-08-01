@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/lkit-cli"]
+resolver = "3"
