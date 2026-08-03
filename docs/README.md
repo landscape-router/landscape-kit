@@ -13,6 +13,7 @@
 
 ## 设计
 
+- [lkit 自发布与安装入口](release/lkit.md)
 - [安装布局与状态](deployment/layout-and-state.md)
 - [事务与中断恢复](deployment/transactions-and-recovery.md)
 - [初始化与凭据](interaction/initialization-and-credentials.md)

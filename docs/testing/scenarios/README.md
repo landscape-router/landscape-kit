@@ -18,6 +18,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
+| lkit 自发布与引导安装 | `LKR-01` 至 `LKR-04` | [lkit-release.md](functional/lkit-release.md) |
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
 | 首次安装 | `INS-01` 至 `INS-12` | [install.md](functional/install.md) |
 | 版本升级、降级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
@@ -41,10 +42,11 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 优先补充能够改变发布判断的场景：
 
 1. [`PUB-08`](functional/publish.md#pub-08)：生产 RustFS 上的真实 Release 发布后安装 smoke；
-2. [`RB-06`](functional/rollback.md#rb-06)：自动回滚自身失败及退出码 `6`；
-3. [`SW-02`](functional/switch.md#sw-02)：显式降级到历史版本；
-4. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
-5. [`SM-07`](functional/service-manager.md#sm-07)：service-manager 迁移失败恢复。
+2. [`LKR-01`](functional/lkit-release.md#lkr-01)、[`LKR-04`](functional/lkit-release.md#lkr-04)：首次真实 lkit Release 与公开安装 smoke；
+3. [`RB-06`](functional/rollback.md#rb-06)：自动回滚自身失败及退出码 `6`；
+4. [`SW-02`](functional/switch.md#sw-02)：显式降级到历史版本；
+5. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
+6. [`SM-07`](functional/service-manager.md#sm-07)：service-manager 迁移失败恢复。
 
 现有 [发布、安装与成功切换](lifecycle.md)、[失败切换与自动回滚](rollback.md)和
 [扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。公开

@@ -24,6 +24,19 @@ The repository is a Cargo workspace made up of four crates:
 
 Specifications and design documents live in [`docs/`](docs/README.md). A Chinese-language version of this readme is available at [README.zh.md](README.zh.md).
 
+## Installing Landscape
+
+Install the latest `lkit` release and start the interactive Landscape installation on a supported
+Debian x86_64 or aarch64 host:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install
+```
+
+The installer verifies the selected binary against the release `SHA256SUMS` before atomically
+installing it at `/usr/local/bin/lkit`. See the [lkit release specification](docs/release/lkit.md)
+for the release assets, version policy, and manual publishing procedure.
+
 ## Building and Testing
 
 ```sh

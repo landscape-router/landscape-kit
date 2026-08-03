@@ -7,3 +7,11 @@ members = [
 ]
 default-members = ["crates/lkit-cli"]
 resolver = "3"
+
+[profile.dist]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

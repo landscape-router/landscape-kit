@@ -1,0 +1,157 @@
+name: Release lkit
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lkit-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Validate release version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release tag must be a stable SemVer in vX.Y.Z form" >&2
+            exit 1
+          fi
+          package_version=$(cargo metadata --locked --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "lkit-cli"))')
+          version=${TAG#v}
+          if [[ $package_version != "$version" ]]; then
+            echo "tag version $version does not match lkit-cli package version $package_version" >&2
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build workspace
+        run: cargo build --locked
+
+      - name: Run Rust tests
+        run: cargo test --features test-support
+
+      - name: Check installer scripts
+        run: |
+          shellcheck scripts/install-lkit.sh scripts/test-install-lkit.sh
+          scripts/test-install-lkit.sh
+
+  build:
+    name: Build lkit (${{ matrix.architecture }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+            elf_machine: Advanced Micro Devices X86-64
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+            elf_machine: AArch64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Build distribution binary
+        run: cargo build --locked --profile dist -p lkit-cli --bin lkit
+
+      - name: Stage and verify binary
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          ELF_MACHINE: ${{ matrix.elf_machine }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir -p dist
+          install -m 0755 target/dist/lkit "dist/lkit-$ARCHITECTURE"
+          binary="dist/lkit-$ARCHITECTURE"
+          file "$binary" | grep -F "stripped"
+          readelf -h "$binary" | grep -F "Machine:" | grep -F "$ELF_MACHINE"
+          ldd "$binary" >/dev/null
+          actual_version=$("$binary" --version)
+          [[ $actual_version == "lkit $VERSION" ]]
+          size=$(stat -c '%s' "$binary")
+          limit=$((5 * 1024 * 1024))
+          if ((size > limit)); then
+            echo "$binary is $size bytes, exceeding the $limit byte release limit" >&2
+            exit 1
+          fi
+          printf '### %s\n\n- Size: %s bytes\n- Limit: %s bytes\n' \
+            "$ARCHITECTURE" "$size" "$limit" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lkit-${{ matrix.architecture }}
+          path: dist/lkit-${{ matrix.architecture }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub Release
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lkit-*
+          path: dist
+          merge-multiple: true
+
+      - name: Prepare release assets
+        run: |
+          install -m 0755 scripts/install-lkit.sh dist/install.sh
+          cd dist
+          sha256sum lkit-aarch64 lkit-x86_64 install.sh >SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            dist/lkit-x86_64 \
+            dist/lkit-aarch64 \
+            dist/SHA256SUMS \
+            dist/install.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes

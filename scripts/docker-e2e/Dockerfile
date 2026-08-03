@@ -1,16 +1,17 @@
-ARG RUST_IMAGE=rustlang/rust:nightly-bookworm@sha256:2dfa88d232ef2b009a8d046d276cad3ad44998eb29d1054f54d0471b9bfad0bd
+ARG RUST_IMAGE=rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa
 ARG DEBIAN_IMAGE=debian:12.11-slim@sha256:b1a741487078b369e78119849663d7f1a5341ef2768798f7b7406c4240f86aef
 
 FROM ${RUST_IMAGE} AS builder
 WORKDIR /workspace
-COPY Cargo.toml Cargo.lock rustfmt.toml ./
+COPY Cargo.toml Cargo.lock rustfmt.toml rust-toolchain.toml ./
 COPY crates ./crates
-RUN cargo build --locked --release --features test-support -p lkit-cli --bin lkit \
+RUN cargo build --locked --profile dist --features test-support -p lkit-cli --bin lkit \
     && cargo build --locked --release -p lkit-publish --bin lkit-publish \
     && cargo build --locked --release -p lkit-test-fixture \
        --bin lkit-fixture-release --bin landscape-webserver --bin lkit-test-systemctl
 RUN mkdir -p /output/bin \
-    && cp target/release/lkit target/release/lkit-publish \
+    && cp target/dist/lkit /output/bin/ \
+    && cp target/release/lkit-publish \
        target/release/lkit-fixture-release target/release/landscape-webserver \
        target/release/lkit-test-systemctl /output/bin/
 

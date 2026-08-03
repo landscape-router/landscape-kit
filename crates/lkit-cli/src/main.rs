@@ -16,7 +16,7 @@ use clap::Parser;
 use commands::Commands;
 
 #[derive(Debug, Parser)]
-#[command(name = "lkit")]
+#[command(name = "lkit", version)]
 struct Cli {
     #[arg(long, hide = true)]
     internal_systemd_worker: bool,
@@ -57,5 +57,20 @@ async fn main() -> ExitCode {
         Commands::Repair(args) => commands::repair::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::Cli;
+
+    #[test]
+    fn reports_package_version() {
+        assert_eq!(
+            Cli::command().render_version().to_string().trim(),
+            concat!("lkit ", env!("CARGO_PKG_VERSION"))
+        );
     }
 }

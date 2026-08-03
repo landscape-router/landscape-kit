@@ -24,6 +24,24 @@
 
 规格与设计文档见 [`docs/`](docs/README.md)。本说明的英文版见 [README.md](README.md)。
 
+## 安装 Landscape
+
+使用官方 GitHub Release 源安装最新版 `lkit`，并进入 Landscape 交互式安装：
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install
+```
+
+使用 Landscape 镜像仓库安装：
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install --repository https://l1s3.whileaway.dev/landscape/
+```
+
+安装器会根据架构选择二进制，通过 Release 的 `SHA256SUMS` 校验后原子安装到
+`/usr/local/bin/lkit`。发布产物、版本规则和手动发布步骤见
+[`lkit` 自发布规范](docs/release/lkit.md)。
+
 ## 构建与测试
 
 ```sh

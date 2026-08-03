@@ -6,6 +6,7 @@ systemd 只承担协议与进程托管的薄集成验证。
 | 层次 | 入口 | 环境 | 默认频率 | 主要覆盖 |
 | --- | --- | --- | --- | --- |
 | Rust 单元与 fixture E2E | `cargo test --features test-support` | 普通用户 | 提交前（当前由开发者执行） | workflow、fake systemctl、健康检查、失败清理 |
+| lkit 安装器 | `scripts/test-install-lkit.sh` | 普通用户、命令替身 | 提交前、正式 tag | 架构选择、校验、原子替换、参数透传 |
 | RustFS 发布集成 | `scripts/test-publish-http-repository.sh` | Docker | `dev`、`main`、手动 | S3 发布、manifest、stable pointer、失败原子性 |
 | Docker 功能 E2E | `scripts/test-docker-lifecycle.sh` | 普通 Docker 容器、fake systemctl | `dev`、`main`、手动 | S1-S4、S6-S9 安装、切换、备份、回滚和迁移 |
 | systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、systemd worker、前端断连 |
