@@ -8,11 +8,7 @@ Run formatting and build before committing:
 
 ```sh
 cargo fmt
-cargo build --locked
-cargo test --features test-support
 ```
-
-If no Rust code was changed, running the full Rust test suite is not required.
 
 ## Project Layout
 

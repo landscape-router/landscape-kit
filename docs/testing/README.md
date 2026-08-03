@@ -38,7 +38,7 @@ manager 可达性要求没有放宽。
 ## systemd 兼容性 Smoke
 
 nspawn 层配置 `preflight: skip` 和 `execution: systemd_worker`，只验证真实 systemd
-行为。完整宿主预检由 Debian/QEMU 或实际受支持主机的验收负责，不与业务状态机矩阵
+行为。完整宿主预检由 glibc Linux VM 或实际受支持主机的验收负责，不与业务状态机矩阵
 重复绑定。
 
 nspawn 不是上述功能矩阵的严格 systemd 重跑，也不是常规 PR 或发布门禁。它只抽样验证

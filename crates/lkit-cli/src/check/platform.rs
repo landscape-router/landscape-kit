@@ -6,7 +6,7 @@ pub fn run() -> Vec<CheckResult> {
     vec![
         runtime_root(),
         platform_linux(),
-        platform_debian(),
+        platform_distribution(),
         platform_architecture(),
     ]
 }
@@ -34,33 +34,34 @@ fn platform_linux() -> CheckResult {
         result.set(Status::Pass, os, "系统为 Linux")
     } else {
         result
-            .set(Status::Error, os, "首版只支持 Linux 主机")
-            .suggestion("在 Debian Linux 主机上执行本命令")
+            .set(Status::Error, os, "只支持 Linux 主机")
+            .suggestion("在使用 glibc 的 Linux 主机上执行本命令")
     }
 }
 
-fn platform_debian() -> CheckResult {
-    platform_debian_from(Path::new(OS_RELEASE_PATH))
+fn platform_distribution() -> CheckResult {
+    platform_distribution_from(Path::new(OS_RELEASE_PATH))
 }
 
-pub(crate) fn platform_debian_from(os_release_path: &Path) -> CheckResult {
-    let mut result = CheckResult::new("platform.debian", "发行版");
-    match os_release_id(os_release_path) {
-        Some(id) => {
-            result.value = id.clone();
-            if id == "debian" {
-                result.set(Status::Pass, id, "发行版为 Debian")
-            } else {
-                result
-                    .set(Status::Error, id, "首版只支持 Debian 发行版")
-                    .suggestion("在 Debian Linux 主机上执行本命令")
-            }
-        }
-        None => result.set(
-            Status::Unknown,
-            "无法读取",
-            "无法读取 /etc/os-release 中的发行版 ID",
+pub(crate) fn platform_distribution_from(os_release_path: &Path) -> CheckResult {
+    distribution_result(os_release_id(os_release_path))
+}
+
+fn distribution_result(id: Option<String>) -> CheckResult {
+    let result = CheckResult::new("platform.distribution", "发行版");
+    match id {
+        Some(id) => result.set(
+            Status::Pass,
+            id,
+            "已识别 Linux 发行版；兼容性由运行能力检查决定",
         ),
+        None => result
+            .set(
+                Status::Warning,
+                "无法读取",
+                "无法读取 /etc/os-release 中的发行版 ID；不因发行版名称阻断安装",
+            )
+            .suggestion("确认主机使用 glibc，并根据缺失依赖的检查结果安装相应软件包"),
     }
 }
 
@@ -80,6 +81,27 @@ fn os_release_id(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     content.lines().find_map(|line| {
         let rest = line.trim().strip_prefix("ID=")?;
-        Some(rest.trim().trim_matches('"').to_string())
+        let id = rest.trim().trim_matches('"');
+        (!id.is_empty()).then(|| id.to_string())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_debian_distribution_is_informational() {
+        let result = distribution_result(Some("fedora".into()));
+        assert_eq!(result.id, "platform.distribution");
+        assert_eq!(result.status, Status::Pass);
+        assert_eq!(result.value, "fedora");
+    }
+
+    #[test]
+    fn unreadable_distribution_does_not_block_installation() {
+        let result = distribution_result(None);
+        assert_eq!(result.status, Status::Warning);
+        assert!(!result.suggestion.is_empty());
+    }
 }

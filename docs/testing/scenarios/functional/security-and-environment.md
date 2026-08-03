@@ -41,3 +41,12 @@
 - 证据：[check 验收标准](../../../check.md#验收标准)
 - 缺口：端口冲突和状态聚合已有直接测试；平台、root、内核能力、依赖缺失及 CLI
   退出码仍缺少可控场景测试。
+
+## ENV-03
+
+**发行版 ID 不作为安装白名单，依赖错误按包管理器提供安装建议**
+
+- 测试层：Rust 单元、Shell 安装器测试
+- 状态：`部分覆盖`
+- 证据：[check 适用范围](../../../check.md#适用范围)、[安装入口](../../../release/lkit.md#安装入口)
+- 缺口：Fedora、Arch Linux 和 openSUSE 的完整宿主 preflight 仍需低频 VM smoke。

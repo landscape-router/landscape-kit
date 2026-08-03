@@ -40,6 +40,15 @@ case ${1:-} in
 esac
 SH
 
+cat >"$fake_bin/ldd" <<'SH'
+#!/usr/bin/env bash
+if [[ ${FAKE_LDD_FLAVOR:-glibc} == musl ]]; then
+  printf 'musl libc (x86_64)\n' >&2
+  exit 1
+fi
+printf 'ldd (GNU libc) 2.36\n'
+SH
+
 cat >"$fake_bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -96,7 +105,7 @@ case "${1:-}" in
 esac
 SH
 
-chmod 0755 "$fake_bin/id" "$fake_bin/uname" "$fake_bin/curl" \
+chmod 0755 "$fake_bin/id" "$fake_bin/uname" "$fake_bin/ldd" "$fake_bin/curl" \
   "$fixture_directory/lkit-x86_64" "$fixture_directory/lkit-aarch64"
 (
   cd "$fixture_directory"
@@ -110,6 +119,7 @@ run_installer() {
     FAKE_ID_U="${FAKE_ID_U:-0}" \
     FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
     FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" \
+    FAKE_LDD_FLAVOR="${FAKE_LDD_FLAVOR:-glibc}" \
     FAKE_CURL_FAIL_ASSET="${FAKE_CURL_FAIL_ASSET:-}" \
     FAKE_CURL_CORRUPT_ASSET="${FAKE_CURL_CORRUPT_ASSET:-}" \
     LKIT_INSTALL_PATH="$destination" \
@@ -133,6 +143,11 @@ fi
 if FAKE_UNAME_S=Darwin run_installer >/dev/null 2>&1; then
   fail "non-Linux platform was accepted"
 fi
+if musl_output=$(FAKE_LDD_FLAVOR=musl run_installer 2>&1); then
+  fail "musl platform was accepted"
+fi
+[[ $musl_output == *"musl-based distributions"* ]] \
+  || fail "musl rejection did not explain the glibc binary requirement"
 if FAKE_ID_U=1000 run_installer >/dev/null 2>&1; then
   fail "non-root installation was accepted"
 fi

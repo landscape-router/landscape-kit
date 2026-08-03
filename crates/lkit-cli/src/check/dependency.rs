@@ -5,6 +5,21 @@ use std::process::Command;
 
 use super::model::{CheckResult, Status};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PackageManager {
+    Apt,
+    Dnf,
+    Yum,
+    Pacman,
+    Zypper,
+}
+
+#[derive(Clone, Copy)]
+enum DependencyPackage {
+    Iproute,
+    Ppp,
+}
+
 pub fn run() -> Vec<CheckResult> {
     vec![iproute2(), tc(), pppd(), container_runtime()]
 }
@@ -23,7 +38,7 @@ fn iproute2() -> CheckResult {
                 "未找到",
                 "未找到 ip 命令（属于 iproute2 软件包）",
             )
-            .suggestion("安装 iproute2：apt install iproute2"),
+            .suggestion(install_suggestion(DependencyPackage::Iproute)),
     }
 }
 
@@ -36,7 +51,7 @@ fn tc() -> CheckResult {
                 "未找到",
                 "未找到 tc 命令（属于 iproute2 软件包）",
             )
-            .suggestion("安装 iproute2：apt install iproute2");
+            .suggestion(install_suggestion(DependencyPackage::Iproute));
     };
     let path_display = path.display().to_string();
     result.value = path_display.clone();
@@ -87,7 +102,7 @@ fn pppd() -> CheckResult {
                 "未找到",
                 "未找到 pppd 命令（用于 PPPoE 拨号）",
             )
-            .suggestion("安装 PPP：apt install ppp"),
+            .suggestion(install_suggestion(DependencyPackage::Ppp)),
     }
 }
 
@@ -123,4 +138,92 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 
 fn is_executable(metadata: &Metadata) -> bool {
     metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+}
+
+fn install_suggestion(package: DependencyPackage) -> String {
+    install_suggestion_for(package, detect_package_manager())
+}
+
+fn detect_package_manager() -> Option<PackageManager> {
+    [
+        ("apt-get", PackageManager::Apt),
+        ("dnf", PackageManager::Dnf),
+        ("yum", PackageManager::Yum),
+        ("pacman", PackageManager::Pacman),
+        ("zypper", PackageManager::Zypper),
+    ]
+    .into_iter()
+    .find_map(|(command, manager)| find_in_path(command).map(|_| manager))
+}
+
+fn install_suggestion_for(package: DependencyPackage, manager: Option<PackageManager>) -> String {
+    let command = match (manager, package) {
+        (Some(PackageManager::Apt), DependencyPackage::Iproute) => "apt install iproute2",
+        (Some(PackageManager::Apt), DependencyPackage::Ppp) => "apt install ppp",
+        (Some(PackageManager::Dnf), DependencyPackage::Iproute) => "dnf install iproute",
+        (Some(PackageManager::Dnf), DependencyPackage::Ppp) => "dnf install ppp",
+        (Some(PackageManager::Yum), DependencyPackage::Iproute) => "yum install iproute",
+        (Some(PackageManager::Yum), DependencyPackage::Ppp) => "yum install ppp",
+        (Some(PackageManager::Pacman), DependencyPackage::Iproute) => "pacman -S iproute2",
+        (Some(PackageManager::Pacman), DependencyPackage::Ppp) => "pacman -S ppp",
+        (Some(PackageManager::Zypper), DependencyPackage::Iproute) => "zypper install iproute2",
+        (Some(PackageManager::Zypper), DependencyPackage::Ppp) => "zypper install ppp",
+        (None, DependencyPackage::Iproute) => {
+            return "安装提供 `ip` 和 `tc` 命令的软件包（通常名为 `iproute2`，Fedora/RHEL 中名为 `iproute`）".into();
+        }
+        (None, DependencyPackage::Ppp) => {
+            return "安装提供 `pppd` 命令的 `ppp` 软件包；软件包名通常不是 `pppd`".into();
+        }
+    };
+    let package_note = match package {
+        DependencyPackage::Iproute => "",
+        DependencyPackage::Ppp => "；软件包名是 `ppp`，不是 `pppd`",
+    };
+    format!("以 root 身份运行 `{command}`（普通用户在命令前加 `sudo`）{package_note}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_apt_package_names() {
+        assert!(
+            install_suggestion_for(DependencyPackage::Iproute, Some(PackageManager::Apt))
+                .contains("apt install iproute2")
+        );
+        assert!(
+            install_suggestion_for(DependencyPackage::Ppp, Some(PackageManager::Apt))
+                .contains("apt install ppp")
+        );
+    }
+
+    #[test]
+    fn uses_fedora_iproute_package_name() {
+        assert!(
+            install_suggestion_for(DependencyPackage::Iproute, Some(PackageManager::Dnf))
+                .contains("dnf install iproute")
+        );
+    }
+
+    #[test]
+    fn supports_other_common_package_managers() {
+        for (manager, expected) in [
+            (PackageManager::Yum, "yum install ppp"),
+            (PackageManager::Pacman, "pacman -S ppp"),
+            (PackageManager::Zypper, "zypper install ppp"),
+        ] {
+            assert!(
+                install_suggestion_for(DependencyPackage::Ppp, Some(manager)).contains(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_manager_still_explains_the_required_commands() {
+        assert!(
+            install_suggestion_for(DependencyPackage::Ppp, None)
+                .contains("软件包名通常不是 `pppd`")
+        );
+    }
 }

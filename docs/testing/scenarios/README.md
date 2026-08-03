@@ -26,7 +26,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
 | Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
-| 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-02` | [security-and-environment.md](functional/security-and-environment.md) |
+| 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

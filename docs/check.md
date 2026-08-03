@@ -10,7 +10,7 @@
 
 ## 适用范围
 
-- 首版只支持 Debian Linux 主机。
+- 支持使用 glibc 的 Linux 主机；当前发布产物不支持 Alpine 等 musl 发行版。
 - 内核版本要求为 `6.9` 或更高版本。
 - 命令必须以 `root` 身份运行。
 - 检查过程只读，不修改主机状态。
@@ -18,7 +18,8 @@
 - 不修改 `/etc/resolv.conf`、sysctl、网络接口、路由、防火墙或 SELinux 配置。
 - 不通过短暂占用端口的方式进行探测。
 
-非 Linux、非 Debian 或非 root 环境应报告错误，并仍尽可能输出已经能够完成的检查结果。
+非 Linux 或非 root 环境应报告错误，并仍尽可能输出已经能够完成的检查结果。发行版名称
+只用于诊断，不作为部署门槛；依赖安装建议根据主机上实际可用的包管理器选择。
 
 ## 结果模型
 
@@ -51,12 +52,14 @@
 | --- | --- | --- |
 | `runtime.root` | 当前有效用户 ID 是否为 `0` | `error` |
 | `platform.linux` | 当前系统是否为 Linux | `error` |
-| `platform.debian` | `/etc/os-release` 的发行版 ID 是否为 `debian` | `error` |
+| `platform.distribution` | 记录 `/etc/os-release` 的发行版 ID，供诊断使用 | `pass` 或 `warning` |
 | `platform.architecture` | 记录当前 CPU 架构，供后续安装包选择和诊断使用 | `pass` 或 `warning` |
 
 首版已知发布产物优先支持 `x86_64` 和 `aarch64`。检测到这两个架构时报告 `pass`；其他架构不直接判定为无法运行，但报告 `warning`，提示安装包或 eBPF 产物可能不可用。无法读取架构时报告 `unknown`。
 
-发行版版本不作为首版的最低版本门槛；首版只要求 Debian，并单独检查内核版本 `6.9+`。
+发行版及其版本不使用白名单。兼容性由 Linux、架构、内核版本和后续运行能力检查决定；
+`/etc/os-release` 无法读取时只报告 `warning`。发布安装脚本在能够识别 musl 时提前拒绝，
+避免安装当前 glibc 动态链接产物后才执行失败。
 
 ### 2. 内核版本与配置
 
@@ -116,7 +119,18 @@ BPF JIT 使用只读方式检查 `/proc/sys/net/core/bpf_jit_enable`：值为 `1
 | `dependency.tc` | `tc` 命令存在且可执行，并支持 BPF 相关功能 | `error` 或 `unknown` |
 | `dependency.pppd` | `pppd` 命令存在且可执行，用于 PPPoE 拨号 | `error` |
 
-通常这些命令由 Debian 的 `iproute2` 和 PPP 软件包提供。报告中应显示缺失的具体命令，而不是只显示“依赖缺失”。
+报告中应显示缺失的具体命令和适用于当前包管理器的安装建议，而不是只显示“依赖缺失”。
+常见映射如下：
+
+| 包管理器 | `ip` / `tc` | `pppd` |
+| --- | --- | --- |
+| Debian/Ubuntu `apt` | `iproute2` | `ppp` |
+| Fedora/RHEL `dnf` 或 `yum` | `iproute` | `ppp` |
+| Arch Linux `pacman` | `iproute2` | `ppp` |
+| openSUSE `zypper` | `iproute2` | `ppp` |
+
+尤其应明确 `pppd` 是命令名，软件包名通常是 `ppp`。无法识别包管理器时，提示用户安装
+提供相应命令的软件包，不猜测一条可能不可用的安装命令。
 
 `tc` 的 BPF 能力检查使用只读命令 `tc filter help`：命令必须成功退出，且合并后的标准输出和标准错误中（大小写不敏感）包含 `bpf`。`tc` 命令不存在时报告 `error`，因为 `iproute2` 是硬性依赖；命令存在但执行失败或输出无法读取时报告 `unknown`；命令成功但帮助文本不包含 `bpf` 时报告 `error`。不执行 `tc filter add` 等会改变网络状态的命令。
 
@@ -191,10 +205,10 @@ CLI 按以下顺序输出，保证人工阅读和未来日志解析稳定：
 
 ## 验收标准
 
-- 满足全部硬性条件的 Debian 主机报告无错误并返回 `0`。
+- 满足全部硬性条件的 glibc Linux 主机报告无错误并返回 `0`，非 Debian 的发行版 ID 不产生错误。
 - 缺少 Docker/Podman 时只产生警告，仍返回 `0`。
 - 缺少 `ip`、`pppd`、BTF 或核心 BPF/Cgroup 能力时产生错误并返回非零值；无法读取配置或系统接口时产生 `unknown` 并返回非零值。
 - 发现 `53`、`6300` 或 `6443` 端口冲突时产生错误，并尽可能显示占用者。
-- 非 root、非 Debian 或低于内核 `6.9` 时产生错误。
+- 非 root、非 Linux 或低于内核 `6.9` 时产生错误。
 - 检查过程中不修改任何系统文件或服务状态，不短暂监听或占用被检查端口。
 - 检查结果可被未来 `install` 调用，而不需要解析 CLI 文本。

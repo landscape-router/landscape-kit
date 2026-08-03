@@ -30,8 +30,8 @@ git push origin v0.1.0
 
 | 文件 | 内容 |
 | --- | --- |
-| `lkit-x86_64` | Debian GNU/Linux x86_64 裸二进制 |
-| `lkit-aarch64` | Debian GNU/Linux aarch64 裸二进制 |
+| `lkit-x86_64` | glibc Linux x86_64 裸二进制 |
+| `lkit-aarch64` | glibc Linux aarch64 裸二进制 |
 | `SHA256SUMS` | 两个二进制及安装脚本的 SHA-256 |
 | `install.sh` | latest Release 安装入口 |
 
@@ -66,26 +66,28 @@ strip = "symbols"
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
 ```
 
-安装 `lkit` 后立即进入现有的 Landscape 交互式安装：
+交互式安装推荐分两步执行，确保 `lkit` 直接连接当前终端的 `/dev/tty`：
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+sudo lkit install
 ```
 
 显式使用 Landscape 镜像仓库安装：
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install --repository https://l1s3.whileaway.dev/landscape/
+sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 ```
 
 `install` 后面的参数原样传给 `lkit install`。安装器只支持 Linux `x86_64` 和
-`aarch64`，强制使用 HTTPS，下载对应二进制和 `SHA256SUMS`，校验成功并执行
+`aarch64` 的 glibc 发布产物；识别到 musl 时给出明确错误。安装器强制使用 HTTPS，
+下载对应二进制和 `SHA256SUMS`，校验成功并执行
 `lkit --version` 自检后才原子替换目标文件。下载、校验、自检或替换失败时保留原有
 二进制。
 
-管道不会成为密码输入源。`lkit install` 仍从 `/dev/tty` 隐藏读取并确认管理员密码；
-无 TTY 的自动化环境仍必须使用权限受限的 `--password-file`，安装脚本不增加明文密码
-参数。
+为兼容已有调用，安装脚本仍接受 `install` 及其后续参数并原样转发；只有调用环境确实
+提供 `/dev/tty` 时才能交互输入密码。管道和标准输入不会成为密码输入源。无 TTY 的
+自动化环境必须使用权限受限的 `--password-file`，安装脚本不增加明文密码参数。
 
 SHA-256 防止下载损坏或资产不一致；其信任来源仍是 GitHub Release 和 HTTPS。首版不使用
 UPX、nightly `build-std`、GPG 签名或 artifact attestation。

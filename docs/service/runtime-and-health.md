@@ -9,7 +9,8 @@ v1 固定检查：
 - TCP/UDP `53`；
 - TCP `6300`；
 - TCP `6443`；
-- `check.md` 定义的 root、Debian、内核、BPF、Cgroup、依赖、服务和 DNS 风险。
+- `check.md` 定义的 root、Linux、内核、BPF、Cgroup、依赖、服务和 DNS 风险；发行版 ID
+  只用于诊断，不作为门槛。
 
 结果规则：
 

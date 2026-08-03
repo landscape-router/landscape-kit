@@ -25,27 +25,24 @@ pub(crate) fn run_preflight(
     for group in &report.groups {
         for result in &group.results {
             let result = match result.id {
-                "platform.debian"
+                "platform.distribution"
                     if runtime.os_release_path
                         != Path::new(crate::check::platform::OS_RELEASE_PATH) =>
                 {
-                    &crate::check::platform::platform_debian_from(&runtime.os_release_path)
+                    &crate::check::platform::platform_distribution_from(&runtime.os_release_path)
                 }
                 _ => result,
             };
             match result.status {
                 Status::Pass => {}
                 Status::Warning => {
-                    eprintln!(
-                        "install: warning: {}: {} ({})",
-                        result.title, result.reason, result.id
-                    );
+                    eprintln!("install: warning: {}", result_message(result));
                 }
                 Status::Error | Status::Unknown => {
                     if managed_occupancy_ok(canonical_root, state, result, allow_sha_drift) {
                         continue;
                     }
-                    failures.push(format!("{}: {}", result.id, result.reason));
+                    failures.push(result_message(result));
                 }
             }
         }
@@ -55,6 +52,15 @@ pub(crate) fn run_preflight(
     } else {
         Err(InstallError::Preflight(failures.join("; ")))
     }
+}
+
+fn result_message(result: &crate::check::model::CheckResult) -> String {
+    let mut message = format!("{}: {}", result.id, result.reason);
+    if !result.suggestion.is_empty() {
+        message.push_str("；建议：");
+        message.push_str(&result.suggestion);
+    }
+    message
 }
 
 /// 端口检查占用者全部是当前受管进程时放行;无法识别或非受管占用者不放行。
@@ -96,5 +102,22 @@ fn managed_occupancy_ok(
                 .map(|process| super::process::is_managed(&process, canonical_root, state))
                 .unwrap_or(false)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::model::CheckResult;
+
+    #[test]
+    fn preflight_message_keeps_remediation_suggestion() {
+        let result = CheckResult::new("dependency.pppd", "pppd 命令")
+            .set(Status::Error, "未找到", "未找到 pppd 命令")
+            .suggestion("运行 `apt install ppp`");
+        assert_eq!(
+            result_message(&result),
+            "dependency.pppd: 未找到 pppd 命令；建议：运行 `apt install ppp`"
+        );
     }
 }

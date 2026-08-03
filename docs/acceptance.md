@@ -63,3 +63,5 @@
   幂等恢复事务前 enabled/active 状态。
 - 参数错误返回 `2`，普通安全失败返回 `1`，并发锁冲突使用 `1` 并输出明确错误。
 - 密码、API token、Authorization header 和带 query/fragment 的 URL 不进入终端输出或事务日志。
+- 非 Debian 的 glibc Linux 发行版不因 `/etc/os-release` 的 `ID` 被拒绝；仍必须通过完整
+  的内核、BPF、Cgroup、依赖、端口和服务检查。依赖错误保留可执行的包管理器安装建议。

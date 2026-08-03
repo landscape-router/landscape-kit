@@ -26,16 +26,19 @@ Specifications and design documents live in [`docs/`](docs/README.md). A Chinese
 
 ## Installing Landscape
 
-Install the latest `lkit` release and start the interactive Landscape installation on a supported
-Debian x86_64 or aarch64 host:
+On a glibc-based Linux x86_64 or aarch64 host, install `lkit` first and then start the interactive
+Landscape installation directly from the terminal:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+sudo lkit install
 ```
 
 The installer verifies the selected binary against the release `SHA256SUMS` before atomically
-installing it at `/usr/local/bin/lkit`. See the [lkit release specification](docs/release/lkit.md)
-for the release assets, version policy, and manual publishing procedure.
+installing it at `/usr/local/bin/lkit`. Distribution names are not allowlisted; `lkit` checks the
+kernel and required host capabilities before deployment. Current release binaries do not support
+musl-based distributions such as Alpine. See the [lkit release specification](docs/release/lkit.md)
+for details.
 
 ## Building and Testing
 

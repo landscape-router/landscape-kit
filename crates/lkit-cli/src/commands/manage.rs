@@ -238,7 +238,7 @@ fn resolve_credentials(
             Ok(password) => password,
             Err(plan::InstallError::NonInteractive(reason)) => {
                 return Err(plan::InstallError::ParameterUsage(format!(
-                    "--password-file is required in non-interactive mode: {reason}"
+                    "--password-file is required in non-interactive mode: {reason}; install lkit first and run `sudo lkit install ...` directly from a terminal, or provide a root-owned 0400/0600 password file"
                 )));
             }
             Err(error) => return Err(error),
@@ -362,16 +362,7 @@ fn check_environment(runtime: &InstallRuntime) -> Result<(), plan::InstallError>
             "must run as root (uid 0)".into(),
         ));
     }
-    if !is_debian(&runtime.os_release_path) {
-        return Err(plan::InstallError::UnsupportedPlatform(
-            "requires Debian Linux".into(),
-        ));
-    }
     Ok(())
-}
-
-fn is_debian(path: &std::path::Path) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|content| os_release_id_is_debian(&content))
 }
 
 fn resolve_runtime(_args: &InstallRequest) -> Result<InstallRuntime, plan::InstallError> {
@@ -380,8 +371,4 @@ fn resolve_runtime(_args: &InstallRequest) -> Result<InstallRuntime, plan::Insta
         return InstallRuntime::from_test_file(path);
     }
     Ok(InstallRuntime::production())
-}
-
-fn os_release_id_is_debian(content: &str) -> bool {
-    content.lines().any(|line| line == "ID=debian")
 }

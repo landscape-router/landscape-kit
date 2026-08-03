@@ -26,20 +26,23 @@
 
 ## 安装 Landscape
 
-使用官方 GitHub Release 源安装最新版 `lkit`，并进入 Landscape 交互式安装：
+当前支持使用 glibc 的 Linux `x86_64` 和 `aarch64` 主机。先安装最新版 `lkit`，再从终端
+直接进入 Landscape 交互式安装：
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+sudo lkit install
 ```
 
 使用 Landscape 镜像仓库安装：
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh -s -- install --repository https://l1s3.whileaway.dev/landscape/
+sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 ```
 
 安装器会根据架构选择二进制，通过 Release 的 `SHA256SUMS` 校验后原子安装到
-`/usr/local/bin/lkit`。发布产物、版本规则和手动发布步骤见
+`/usr/local/bin/lkit`。发行版名称不再使用白名单；部署前由 `lkit` 检查内核和实际运行
+能力。当前发布二进制不支持 Alpine 等 musl 发行版。发布产物、版本规则和手动发布步骤见
 [`lkit` 自发布规范](docs/release/lkit.md)。
 
 ## 构建与测试

@@ -249,7 +249,7 @@ Release 资产使用元数据中的 `browser_download_url` 下载。`SHASUM256su
 - `aarch64` 原始资产使用 `landscape-webserver-aarch64`；
 - 共享静态资产使用 `static.zip`；
 - SHA-256 从 `SHASUM256sum.txt` 读取；
-- v1 Debian 安装不选择 `-musl` 或实验架构资产。
+- v1 glibc Linux 安装不选择 `-musl` 或实验架构资产。
 
 ## 后端压缩格式
 

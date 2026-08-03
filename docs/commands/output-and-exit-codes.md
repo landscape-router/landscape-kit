@@ -41,7 +41,7 @@
 - 不自动修改防火墙、SELinux、sysctl、Cgroup 或内核配置。
 - 不自动安装系统软件包、PPP 或容器运行时。
 - 不自动迁移 `/root/.landscape-router` 等旧手工部署。
-- 不支持非 Debian 发行版。
+- 当前发布产物不支持 Alpine 等 musl 发行版。
 - 不支持 `x86_64` 和 `aarch64` 以外架构。
 - 不允许安装 prerelease。
 - 不实现 AWS S3 profile、region 或 access key 鉴权。
