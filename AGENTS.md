@@ -12,6 +12,8 @@ cargo build --locked
 cargo test --features test-support
 ```
 
+If no Rust code was changed, running the full Rust test suite is not required.
+
 ## Project Layout
 
 - `crates/` — Cargo workspace members: `lkit-cli` (the `lkit` binary), `lkit-publish`, `lkit-repository`, `lkit-test-fixture`.

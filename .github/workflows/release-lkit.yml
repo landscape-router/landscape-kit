@@ -42,6 +42,12 @@ jobs:
           fi
           echo "version=$version" >>"$GITHUB_OUTPUT"
 
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: release-verify
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -78,6 +84,12 @@ jobs:
       - name: Check out landscape-kit
         uses: actions/checkout@v4
 
+      - name: Cache Rust distribution build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: release-dist-${{ matrix.architecture }}
+
       - name: Build distribution binary
         run: cargo build --locked --profile dist -p lkit-cli --bin lkit
 
@@ -94,10 +106,13 @@ jobs:
           readelf -h "$binary" | grep -F "Machine:" | grep -F "$ELF_MACHINE"
           ldd "$binary" >/dev/null
           actual_version=$("$binary" --version)
-          [[ $actual_version == "lkit $VERSION" ]]
+          if [ "$actual_version" != "lkit $VERSION" ]; then
+            echo "$binary reported unexpected version: $actual_version" >&2
+            exit 1
+          fi
           size=$(stat -c '%s' "$binary")
           limit=$((5 * 1024 * 1024))
-          if ((size > limit)); then
+          if [ "$size" -gt "$limit" ]; then
             echo "$binary is $size bytes, exceeding the $limit byte release limit" >&2
             exit 1
           fi

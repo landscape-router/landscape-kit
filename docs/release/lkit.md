@@ -38,6 +38,10 @@ git push origin v0.1.0
 两种架构都在原生 GitHub runner 上、固定的 Rust Bookworm 容器中构建，不使用交叉编译。
 `rust-toolchain.toml` 固定编译器版本；Cargo.lock 固定 Rust 依赖。
 
+验证任务和每个架构的分发构建任务分别缓存 Cargo 下载及编译产物。分发缓存按架构隔离，
+并随 Rust 工具链、依赖锁文件和相关构建输入失效；失败的任务也保存可复用缓存，避免重跑
+Release 时从头编译。
+
 分发二进制使用 workspace 的 `dist` profile：
 
 ```toml
