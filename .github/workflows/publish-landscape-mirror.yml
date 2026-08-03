@@ -84,6 +84,9 @@ jobs:
           zstd --ultra -19 --threads=0 --rm dist/landscape-webserver-x86_64
           zstd --ultra -19 --threads=0 --rm dist/landscape-webserver-aarch64
 
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
       - name: Build repository publisher
         run: cargo build --locked --release -p lkit-publish
 
