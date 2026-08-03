@@ -1,0 +1,53 @@
+name: Test publish-http-repository
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-publish/**
+      - crates/lkit-repository/**
+      - scripts/test-publish-http-repository.sh
+      - .github/workflows/test-publish-http-repository.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustfs-publish-test:
+    name: RustFS publish integration test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTFS_IMAGE: rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
+      RUSTFS_TEST_REQUIRE: "1"
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Cache RustFS test image
+        id: image-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/rustfs-image.tar
+          key: rustfs-1.0.0-beta.11-84ce557a0245a06a
+
+      - name: Load cached RustFS image
+        if: steps.image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/rustfs-image.tar
+
+      - name: Pull and stage RustFS image
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull "$RUSTFS_IMAGE"
+          docker save "$RUSTFS_IMAGE" -o /tmp/rustfs-image.tar
+
+      - name: Build publisher
+        run: cargo build --locked -p lkit-publish
+
+      - name: Run RustFS publish integration test
+        env:
+          LKIT_PUBLISH_BIN: target/debug/lkit-publish
+        run: scripts/test-publish-http-repository.sh

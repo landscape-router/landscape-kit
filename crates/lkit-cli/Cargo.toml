@@ -3,11 +3,44 @@ name = "lkit-cli"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+test-support = ["dep:lkit-test-fixture"]
+
 [[bin]]
 name = "lkit"
 path = "src/main.rs"
 
+[[bin]]
+name = "lkit-landscape-fixture"
+path = "src/bin/lkit-landscape-fixture.rs"
+required-features = ["test-support"]
+
+[[bin]]
+name = "lkit-test-systemctl"
+path = "src/bin/lkit-test-systemctl.rs"
+required-features = ["test-support"]
+
 [dependencies]
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6.5", features = ["derive"] }
 dotenvy = "0.15.7"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+libc = "0.2"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "fs", "io-util", "time"] }
+unicode-width = "0.2"
+futures-util = "0.3"
+flate2 = "1"
+tar = "0.4"
+lkit-repository = { path = "../lkit-repository" }
+reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "stream"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+url = "2"
+uuid = { version = "1", features = ["v7"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+zstd = "0.13"
+lkit-test-fixture = { path = "../lkit-test-fixture", optional = true }

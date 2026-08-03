@@ -1,0 +1,46 @@
+# Landscape Kit
+
+`lkit` 是用于管理 [Landscape](https://landscape.canonical.com/) 实例的命令行工具：支持首次安装、版本切换、修复、状态协调与服务管理器迁移。
+
+本仓库是一个 Cargo workspace，包含四个 crate：
+
+| Crate | 职责 |
+| --- | --- |
+| `crates/lkit-cli` | `lkit` 二进制：命令层、领域逻辑与 workflow |
+| `crates/lkit-publish` | `lkit-publish` 二进制：打包发布并发布到仓库 |
+| `crates/lkit-repository` | 仓库协议库，CLI 与发布器共享 |
+| `crates/lkit-test-fixture` | 测试 fixture：模拟 `systemctl`、HTTPS webserver 与测试仓库 |
+
+## 命令
+
+- `check` — 主机环境检查。
+- `install` — 首次安装。
+- `switch` — 切换到指定 stable 版本。
+- `repair` — 修复静态页面或后端二进制。
+- `reconcile` — 接受并记录初始化文件、service unit 或仓库来源变化。
+- `service-manager` — 在 systemd 与外部进程管理之间迁移。
+
+## 文档
+
+规格与设计文档见 [`docs/`](docs/README.md)。本说明的英文版见 [README.md](README.md)。
+
+## 构建与测试
+
+```sh
+cargo build --locked
+cargo test --features test-support
+```
+
+依赖 fixture 二进制的测试需要启用 `test-support` feature。RustFS 发布集成测试不混入 `cargo test`，单独运行：
+
+```sh
+RUSTFS_IMAGE=<固定镜像> scripts/test-publish-http-repository.sh
+```
+Docker 功能 E2E 可在 Linux x86_64 本地运行；原生 aarch64 覆盖由 CI 执行：
+
+```sh
+scripts/test-docker-lifecycle.sh
+```
+
+测试分层及低频/手动执行的真实 systemd nspawn 兼容性 smoke test 见
+[`docs/testing/README.md`](docs/testing/README.md)。

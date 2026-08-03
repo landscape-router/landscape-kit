@@ -1,0 +1,28 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_TEST_ACCESS_KEY:-lkit-test-access-key}
+      RUSTFS_SECRET_KEY: ${RUSTFS_TEST_SECRET_KEY:-lkit-test-secret-key}
+    volumes:
+      - rustfs-data:/data
+
+  e2e:
+    build:
+      context: .
+      dockerfile: scripts/docker-e2e/Dockerfile
+    depends_on:
+      - rustfs
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_TEST_ACCESS_KEY:-lkit-test-access-key}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_TEST_SECRET_KEY:-lkit-test-secret-key}
+      AWS_REGION: us-east-1
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_BUCKET: ${LKIT_E2E_BUCKET:?LKIT_E2E_BUCKET is required}
+      RUSTFS_PUBLIC_BASE_URL: http://rustfs:9000/${LKIT_E2E_BUCKET:?LKIT_E2E_BUCKET is required}
+      LKIT_E2E_RESULTS: /results/result.json
+    volumes:
+      - ${LKIT_E2E_RESULTS_DIR:?LKIT_E2E_RESULTS_DIR is required}:/results
+
+volumes:
+  rustfs-data:

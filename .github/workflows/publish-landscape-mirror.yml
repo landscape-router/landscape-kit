@@ -1,0 +1,93 @@
+name: Publish Landscape mirror
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable Landscape version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: landscape-mirror-publish
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  RUSTFS_ENDPOINT: https://l1s3.whileaway.dev
+  RUSTFS_BUCKET: landscape
+  RUSTFS_PUBLIC_BASE_URL: https://l1s3.whileaway.dev/landscape
+  LANDSCAPE_REPOSITORY: ThisSeanZhang/landscape
+
+jobs:
+  publish:
+    name: Mirror ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version must be a stable SemVer without the v prefix" >&2
+            exit 1
+          fi
+
+      - name: Resolve official release tag
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          tags=$(gh api --paginate "/repos/${LANDSCAPE_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | select(.draft == false) | .tag_name' \
+            | awk -v version="$VERSION" '$0 == version || $0 == "v" version')
+          count=$(printf '%s\n' "$tags" | sed '/^$/d' | wc -l)
+          if [[ "$count" -ne 1 ]]; then
+            echo "expected exactly one release tag for ${VERSION}, found ${count}" >&2
+            exit 1
+          fi
+          echo "tag=$(printf '%s\n' "$tags" | sed '/^$/d')" >> "$GITHUB_OUTPUT"
+
+      - name: Download official release assets
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$LANDSCAPE_REPOSITORY" \
+            --dir dist \
+            --pattern 'landscape-webserver-x86_64' \
+            --pattern 'landscape-webserver-aarch64' \
+            --pattern 'static.zip' \
+            --pattern 'SHASUM256sum.txt'
+
+      - name: Verify official checksums
+        working-directory: dist
+        run: |
+          sha256sum --ignore-missing --check SHASUM256sum.txt
+          for asset in landscape-webserver-x86_64 landscape-webserver-aarch64 static.zip; do
+            grep -Eq "^[0-9a-f]{64} [ *]${asset}$" SHASUM256sum.txt
+          done
+
+      - name: Compress webserver assets
+        run: |
+          zstd --ultra -19 --threads=0 --rm dist/landscape-webserver-x86_64
+          zstd --ultra -19 --threads=0 --rm dist/landscape-webserver-aarch64
+
+      - name: Build repository publisher
+        run: cargo build --locked --release -p lkit-publish
+
+      - name: Publish mirror
+        env:
+          VERSION: ${{ inputs.version }}
+        run: target/release/lkit-publish --version "$VERSION" --directory dist
