@@ -17,8 +17,8 @@ scripts/test-install-lkit.sh
 提交版本变更后创建并推送 tag，例如：
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 `.github/workflows/release-lkit.yml` 会重新校验 tag、Cargo 版本和测试结果。任一架构构建
