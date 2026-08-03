@@ -86,6 +86,8 @@ jobs:
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Build repository publisher
         run: cargo build --locked --release -p lkit-publish
