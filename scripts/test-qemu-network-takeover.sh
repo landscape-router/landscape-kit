@@ -191,6 +191,23 @@ wait_for_ssh() {
   return 1
 }
 
+wait_for_takeover_ready() {
+  local deadline=$((SECONDS + 240))
+  while ((SECONDS < deadline)); do
+    if lan_ssh "jq -e '.phase == \"awaiting_network_confirmation\"' /var/lib/landscape/transactions/*.json" \
+      >/dev/null 2>&1; then
+      return 0
+    fi
+    if lan_ssh "jq -e '.phase == \"failed\" or .phase == \"rolled_back\"' /var/lib/landscape/transactions/*.json" \
+      >/dev/null 2>&1; then
+      return 1
+    fi
+    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
+    sleep 2
+  done
+  return 1
+}
+
 wan_ssh() {
   ssh "${ssh_common[@]}" -p "$active_ssh_port" root@127.0.0.1 "$@"
 }
@@ -312,7 +329,11 @@ start_takeover() {
     echo "$scenario VM did not expose SSH on br_lan" >&2
     return 1
   }
-  lan_ssh "jq -e '.phase == \"awaiting_network_confirmation\"' /var/lib/landscape/transactions/*.json" >/dev/null
+  wait_for_takeover_ready || {
+    collect_guest_diagnostics "$scenario"
+    echo "$scenario takeover did not reach network confirmation" >&2
+    return 1
+  }
   lan_ssh "ip -4 -o address show dev br_lan | grep -q '192.168.10.1/24'"
   lan_ssh "bridge -j link show master br_lan | jq -e 'length == 1'" >/dev/null
   lan_ssh "! ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"

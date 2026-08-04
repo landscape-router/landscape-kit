@@ -835,6 +835,19 @@ mod tests {
         }
     }
 
+    struct FailSecondDocs {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl DocsProbe for FailSecondDocs {
+        async fn docs_ok(&self) -> bool {
+            // Target startup succeeds, target observation fails, then rollback probes recover.
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                != 1
+        }
+    }
+
     fn test_options() -> HealthOptions<FakeDocs> {
         HealthOptions {
             docs: FakeDocs,
@@ -2165,12 +2178,16 @@ esac
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         init_watcher(root.canonical.join("data"), stop.clone());
 
-        let docs_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let docs = ToggleDocs {
-            ok: docs_flag.clone(),
+        let install_options = HealthOptions {
+            docs: FakeDocs,
+            ports: ports.clone(),
+            startup_timeout: Duration::from_secs(5),
+            stable_duration: Duration::from_millis(100),
         };
         let options = HealthOptions {
-            docs,
+            docs: FailSecondDocs {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            },
             ports: ports.clone(),
             startup_timeout: Duration::from_secs(5),
             stable_duration: Duration::from_millis(100),
@@ -2182,21 +2199,12 @@ esac
             &credentials(),
             ManagerChoice::Systemd,
             &systemd,
-            &options,
+            &install_options,
         )
         .await
         .unwrap();
         let state = super::super::state::load_state(&root).unwrap().unwrap();
         assert_eq!(state.active_version, "1.2.3");
-
-        // 让目标版本稳定观察失败(约 1s),随后恢复 /api/docs 以便回滚健康检查通过。
-        let docs_flag = docs_flag.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
-            docs_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-            std::thread::sleep(Duration::from_millis(1300));
-            docs_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        });
 
         let target = provider
             .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
