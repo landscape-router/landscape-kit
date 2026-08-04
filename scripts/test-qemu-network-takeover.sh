@@ -120,7 +120,7 @@ mac-address=52:54:00:12:34:01
 method=auto
 
 [ipv6]
-method=disabled
+method=link-local
 EOF
 chmod 0600 "$rootfs/etc/NetworkManager/system-connections/wan.nmconnection"
 cat >"$rootfs/etc/NetworkManager/system-connections/lan.nmconnection" <<'EOF'
