@@ -245,6 +245,18 @@ sysctl net.ipv4.ip_forward kernel.unprivileged_bpf_disabled'
   wan_ssh "$diagnostic_command" >"$output" 2>&1 || true
 }
 
+assert_lan() {
+  local scenario=$1
+  local description=$2
+  local command=$3
+  if lan_ssh "$command"; then
+    return
+  fi
+  collect_guest_diagnostics "$scenario"
+  echo "$scenario assertion failed: $description" >&2
+  return 1
+}
+
 boot_vm() {
   local scenario=$1
   local disk=$test_root/$scenario.ext4
@@ -334,12 +346,17 @@ start_takeover() {
     echo "$scenario takeover did not reach network confirmation" >&2
     return 1
   }
-  lan_ssh "ip -4 -o address show dev br_lan | grep -q '192.168.10.1/24'"
-  lan_ssh "bridge -j link show master br_lan | jq -e 'length == 1'" >/dev/null
-  lan_ssh "! ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
+  assert_lan "$scenario" "br_lan management address" \
+    "ip -4 -o address show dev br_lan | grep -q '192.168.10.1/24'"
+  assert_lan "$scenario" "one physical LAN member in br_lan" \
+    "ip -j link show master br_lan | jq -e 'length == 1'" >/dev/null
+  assert_lan "$scenario" "WAN has no IPv4 address" \
+    "! ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
   for unit in NetworkManager.service firewalld.service systemd-resolved.service; do
-    [[ $(lan_ssh "systemctl is-enabled $unit || true") == masked ]]
-    [[ $(lan_ssh "systemctl is-active $unit || true") == inactive ]]
+    assert_lan "$scenario" "$unit is masked" \
+      "test \"\$(systemctl is-enabled $unit || true)\" = masked"
+    assert_lan "$scenario" "$unit is inactive" \
+      "test \"\$(systemctl is-active $unit || true)\" = inactive"
   done
 }
 
