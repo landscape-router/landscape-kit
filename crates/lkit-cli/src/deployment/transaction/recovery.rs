@@ -14,6 +14,16 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
 ) -> Result<(), InstallError> {
     match transaction.operation {
         Operation::Install => {
+            if matches!(
+                transaction.phase,
+                Phase::AwaitingNetworkConfirmation | Phase::Finalizing
+            ) {
+                return Err(InstallError::BlockedByTransaction(format!(
+                    "network takeover {} is {}; use `lkit network confirm` or `lkit network rollback`",
+                    transaction.transaction_id,
+                    transaction.phase.key()
+                )));
+            }
             let install_completed = matches!(
                 super::super::state::load_state(root).ok().flatten(),
                 Some(state) if state.active_version
@@ -26,7 +36,15 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
             if let Err(error) =
                 transaction::cleanup_failed_first_install(root, transaction, systemd)
             {
-                let _ = transaction::mark_phase(root, transaction, Phase::Failed);
+                if transaction.network_takeover.is_none() {
+                    let _ = transaction::mark_phase(root, transaction, Phase::Failed);
+                }
+                return Err(error);
+            }
+            if let Some(network) = transaction.network_takeover.as_ref()
+                && let Err(error) =
+                    crate::network::takeover::cleanup_failed_takeover(root, network, systemd)
+            {
                 return Err(error);
             }
             transaction::mark_phase(root, transaction, Phase::Failed)?;

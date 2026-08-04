@@ -46,7 +46,7 @@ lkit install \
 - unit 已注册、enabled 且 active；
 - MainPID 非零；
 - `/proc/<pid>/exe` SHA 等于 state 中记录的后端 SHA；
-- TCP/UDP 53、TCP 6300、TCP 6443 通过健康检查；
+- UDP 53、TCP 6300、TCP 6443 通过健康检查；
 - HTTPS `/api/docs` 返回成功；
 - 初始化文件存在且 fixture API token 权限为 `0400`。
 

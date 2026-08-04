@@ -29,7 +29,8 @@
 - `none → systemd` 迁移要求 `/dev/tty` 确认外部实例已停止并确认端口释放；启动验证成功后提交 `manager: systemd`，失败时撤销 systemd 接管但不尝试恢复未知的外部启动方式。
 - `none → systemd` 可以接管 `initialization.status: pending` 的安装，并在完整初始化验证成功后提交为 `complete`。
 - service manager 迁移不能与版本切换、仓库变化或 repair 合并执行。
-- systemd 环境的运行态验证固定检查 `53`、`6300`、`6443` 和 `/api/docs`；无 systemd 环境不执行运行态验证。
+- systemd 环境的运行态验证固定检查 UDP `53`、TCP `6300`、TCP `6443` 和
+  `/api/docs`；无 systemd 环境不执行运行态验证。
 - systemd 环境按本文执行 180 秒启动等待和 10 秒稳定观察；无 systemd 环境不执行这些检查。
 
 ### 备份与回滚

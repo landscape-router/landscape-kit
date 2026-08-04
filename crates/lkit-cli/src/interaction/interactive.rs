@@ -44,6 +44,92 @@ impl Tty {
         Ok(line == "yes")
     }
 
+    pub(crate) fn input(&mut self, prompt: &str) -> Result<String, InstallError> {
+        self.write_prompt(prompt)?;
+        self.read_line()
+    }
+
+    pub(crate) fn input_default(
+        &mut self,
+        prompt: &str,
+        default: &str,
+    ) -> Result<String, InstallError> {
+        let value = self.input(&format!("{prompt} [{default}]: "))?;
+        if value.trim().is_empty() {
+            Ok(default.to_string())
+        } else {
+            Ok(value.trim().to_string())
+        }
+    }
+
+    pub(crate) fn select_one(
+        &mut self,
+        prompt: &str,
+        options: &[String],
+    ) -> Result<usize, InstallError> {
+        if options.is_empty() {
+            return Err(InstallError::ParameterUsage(
+                "selection requires at least one option".into(),
+            ));
+        }
+        self.write_prompt(&format!("{prompt}\n"))?;
+        for (index, option) in options.iter().enumerate() {
+            self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
+        }
+        let raw = self.input("Select one interface: ")?;
+        let selected = raw.trim().parse::<usize>().map_err(|_| {
+            InstallError::ParameterUsage("interface selection must be a number".into())
+        })?;
+        if !(1..=options.len()).contains(&selected) {
+            return Err(InstallError::ParameterUsage(format!(
+                "interface selection must be between 1 and {}",
+                options.len()
+            )));
+        }
+        Ok(selected - 1)
+    }
+
+    pub(crate) fn select_many(
+        &mut self,
+        prompt: &str,
+        options: &[String],
+    ) -> Result<Vec<usize>, InstallError> {
+        if options.is_empty() {
+            return Err(InstallError::ParameterUsage(
+                "selection requires at least one option".into(),
+            ));
+        }
+        self.write_prompt(&format!("{prompt}\n"))?;
+        for (index, option) in options.iter().enumerate() {
+            self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
+        }
+        let raw = self.input("Select one or more interfaces (comma separated): ")?;
+        let mut selected = Vec::new();
+        for part in raw.split(',') {
+            let value = part.trim().parse::<usize>().map_err(|_| {
+                InstallError::ParameterUsage(
+                    "LAN interface selections must be comma-separated numbers".into(),
+                )
+            })?;
+            if !(1..=options.len()).contains(&value) {
+                return Err(InstallError::ParameterUsage(format!(
+                    "LAN interface selection must be between 1 and {}",
+                    options.len()
+                )));
+            }
+            let index = value - 1;
+            if !selected.contains(&index) {
+                selected.push(index);
+            }
+        }
+        if selected.is_empty() {
+            return Err(InstallError::ParameterUsage(
+                "at least one LAN interface must be selected".into(),
+            ));
+        }
+        Ok(selected)
+    }
+
     /// 隐藏输入密码并要求二次确认。失败时不输出任何内容。
     pub(crate) fn read_password(&mut self, prompt: &str) -> Result<String, InstallError> {
         let first = self.read_password_once(&format!("{prompt}: "))?;

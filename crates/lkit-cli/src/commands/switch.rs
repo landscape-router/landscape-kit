@@ -38,6 +38,7 @@ pub async fn run(args: &Switch) -> ExitCode {
         allow_no_backup: args.allow_no_backup,
         accept_service_change: args.accept_service_change,
         force: false,
+        takeover_network: false,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     })

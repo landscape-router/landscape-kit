@@ -16,6 +16,7 @@ pub(crate) fn run_preflight(
     state: Option<&InstallState>,
     allow_sha_drift: bool,
     runtime: &InstallRuntime,
+    network_takeover: bool,
 ) -> Result<(), InstallError> {
     if runtime.preflight == PreflightPolicy::Skip {
         return Ok(());
@@ -33,6 +34,17 @@ pub(crate) fn run_preflight(
                 }
                 _ => result,
             };
+            if network_takeover
+                && matches!(
+                    result.id,
+                    "service.network_manager"
+                        | "service.systemd_resolved"
+                        | "service.firewalld"
+                        | "port.dns"
+                )
+            {
+                continue;
+            }
             match result.status {
                 Status::Pass => {}
                 Status::Warning => {

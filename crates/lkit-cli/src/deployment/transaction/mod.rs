@@ -14,7 +14,7 @@ use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::systemd::Systemd;
 
-pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 2;
+pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 3;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +44,8 @@ pub(crate) enum Phase {
     Stopping,
     Activating,
     Verifying,
+    AwaitingNetworkConfirmation,
+    Finalizing,
     RollingBack,
     Committed,
     RolledBack,
@@ -58,6 +60,8 @@ impl Phase {
             Self::Stopping => "stopping",
             Self::Activating => "activating",
             Self::Verifying => "verifying",
+            Self::AwaitingNetworkConfirmation => "awaiting_network_confirmation",
+            Self::Finalizing => "finalizing",
             Self::RollingBack => "rolling_back",
             Self::Committed => "committed",
             Self::RolledBack => "rolled_back",
@@ -106,6 +110,26 @@ pub(crate) struct SystemdBefore {
     pub active: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct HostServiceBefore {
+    pub unit: String,
+    pub installed: bool,
+    pub active: bool,
+    pub enable_state: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct NetworkTakeoverTransaction {
+    pub plan: crate::network::config::NetworkPlan,
+    pub host_services: Vec<HostServiceBefore>,
+    pub confirmation_deadline: DateTime<Utc>,
+    pub rollback_service: String,
+    pub rollback_timer: String,
+    pub boot_rollback_service: String,
+    pub recovery_binary: String,
+    pub pending_state: String,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Registration {
     pub kind: RegistrationKind,
@@ -141,6 +165,8 @@ pub(crate) struct TransactionFile {
     pub static_backup: Option<StaticBackupRef>,
     pub systemd_before: Option<SystemdBefore>,
     pub resolv_conf_backup: Option<String>,
+    #[serde(default)]
+    pub network_takeover: Option<NetworkTakeoverTransaction>,
     pub log_path: String,
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -171,6 +197,7 @@ impl TransactionFile {
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
+            network_takeover: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -204,6 +231,7 @@ impl TransactionFile {
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
+            network_takeover: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -251,6 +279,7 @@ impl TransactionFile {
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
+            network_takeover: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -287,6 +316,7 @@ impl TransactionFile {
             static_backup: None,
             systemd_before: Some(systemd_before),
             resolv_conf_backup: None,
+            network_takeover: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -331,6 +361,14 @@ pub(crate) fn mark_phase(
     updated.phase = phase;
     updated.updated_at = Utc::now();
     write_transaction(root, &updated)
+}
+
+pub(crate) fn persist(
+    root: &InstallRoot,
+    transaction: &TransactionFile,
+) -> Result<(), InstallError> {
+    validate_transaction(transaction)?;
+    write_transaction(root, transaction)
 }
 
 pub(crate) fn find_unfinished(root: &InstallRoot) -> Result<Option<TransactionFile>, InstallError> {
@@ -506,7 +544,7 @@ mod tests {
         let transaction = install_transaction(&root);
         assert_eq!(transaction.operation, Operation::Install);
         assert_eq!(transaction.phase, Phase::Preparing);
-        assert_eq!(transaction.schema_version, 2);
+        assert_eq!(transaction.schema_version, 3);
         assert_eq!(
             transaction.target_release.as_deref(),
             Some("releases/1.2.3")
@@ -587,7 +625,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 3;
+        transaction.schema_version = 4;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);

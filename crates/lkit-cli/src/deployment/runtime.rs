@@ -23,6 +23,12 @@ pub(crate) struct InstallRuntime {
     pub preflight: PreflightPolicy,
     pub managed_uid: u32,
     pub os_release_path: PathBuf,
+    pub sys_class_net: PathBuf,
+    pub ip_command: PathBuf,
+    pub selinux_fs_path: PathBuf,
+    pub selinux_config_path: PathBuf,
+    pub network_confirm_timeout: Duration,
+    pub test_runtime_path: Option<PathBuf>,
     pub systemd: Systemd,
     pub export_base_url: String,
     pub health_base_url: String,
@@ -38,6 +44,12 @@ impl InstallRuntime {
             preflight: PreflightPolicy::Full,
             managed_uid: 0,
             os_release_path: PathBuf::from("/etc/os-release"),
+            sys_class_net: PathBuf::from("/sys/class/net"),
+            ip_command: PathBuf::from("/usr/sbin/ip"),
+            selinux_fs_path: PathBuf::from("/sys/fs/selinux"),
+            selinux_config_path: PathBuf::from("/etc/selinux/config"),
+            network_confirm_timeout: Duration::from_secs(600),
+            test_runtime_path: None,
             systemd: Systemd::host(),
             export_base_url: "https://127.0.0.1:6443".into(),
             health_base_url: "https://127.0.0.1:6443".into(),
@@ -65,7 +77,7 @@ impl InstallRuntime {
                 path.display()
             ))
         })?;
-        config.build()
+        config.build(path)
     }
 
     #[cfg(feature = "test-support")]
@@ -95,6 +107,16 @@ struct TestRuntimeConfig {
     execution: TestExecutionPolicy,
     managed_uid: u32,
     os_release_path: PathBuf,
+    #[serde(default = "default_sys_class_net")]
+    sys_class_net: PathBuf,
+    #[serde(default = "default_ip_command")]
+    ip_command: PathBuf,
+    #[serde(default = "default_selinux_fs")]
+    selinux_fs_path: PathBuf,
+    #[serde(default = "default_selinux_config")]
+    selinux_config_path: PathBuf,
+    #[serde(default = "default_network_confirm_timeout_ms")]
+    network_confirm_timeout_ms: u64,
     systemd: TestSystemdConfig,
     health: TestHealthConfig,
     export_base_url: String,
@@ -102,7 +124,7 @@ struct TestRuntimeConfig {
 
 #[cfg(feature = "test-support")]
 impl TestRuntimeConfig {
-    fn build(self) -> Result<InstallRuntime, InstallError> {
+    fn build(self, source_path: &Path) -> Result<InstallRuntime, InstallError> {
         if self.schema_version != 1 {
             return Err(InstallError::ParameterUsage(format!(
                 "unsupported test runtime schema version {}",
@@ -120,6 +142,12 @@ impl TestRuntimeConfig {
             preflight: self.preflight.into(),
             managed_uid: self.managed_uid,
             os_release_path: self.os_release_path,
+            sys_class_net: self.sys_class_net,
+            ip_command: self.ip_command,
+            selinux_fs_path: self.selinux_fs_path,
+            selinux_config_path: self.selinux_config_path,
+            network_confirm_timeout: Duration::from_millis(self.network_confirm_timeout_ms),
+            test_runtime_path: Some(source_path.to_path_buf()),
             systemd: Systemd {
                 systemctl: self.systemd.systemctl,
                 system_unit_dir: self.systemd.system_unit_dir,
@@ -151,6 +179,31 @@ impl TestRuntimeConfig {
             stable_duration: Duration::from_millis(self.health.stable_duration_ms),
         })
     }
+}
+
+#[cfg(feature = "test-support")]
+fn default_sys_class_net() -> PathBuf {
+    PathBuf::from("/sys/class/net")
+}
+
+#[cfg(feature = "test-support")]
+fn default_ip_command() -> PathBuf {
+    PathBuf::from("/usr/sbin/ip")
+}
+
+#[cfg(feature = "test-support")]
+fn default_selinux_fs() -> PathBuf {
+    PathBuf::from("/sys/fs/selinux")
+}
+
+#[cfg(feature = "test-support")]
+fn default_selinux_config() -> PathBuf {
+    PathBuf::from("/etc/selinux/config")
+}
+
+#[cfg(feature = "test-support")]
+fn default_network_confirm_timeout_ms() -> u64 {
+    600_000
 }
 
 #[cfg(feature = "test-support")]

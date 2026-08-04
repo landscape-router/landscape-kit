@@ -23,7 +23,7 @@ v1 固定检查：
 功能测试或真实 systemd 的薄集成测试。该设置不是生产 CLI 参数；生产构建始终执行
 本节完整预检，`allow_non_root` 也不再隐式跳过其中若干检查项。
 
-首版不自动：
+普通安装不自动：
 
 - 卸载或停止 NetworkManager；
 - 停止、禁用或 mask `systemd-resolved`；
@@ -32,7 +32,10 @@ v1 固定检查：
 - 调整防火墙、SELinux、sysctl、Cgroup 或内核配置；
 - 安装 `iproute2`、`pppd`、Docker 或 Podman。
 
-未来 remediation 流程必须单独设计显式授权、变更预览、备份和恢复规则。
+`lkit install --takeover-network` 是停止、disable 和 mask NetworkManager、firewalld 与
+systemd-resolved 的唯一显式例外。它不卸载软件包，不修改 SELinux；SELinux 已加载或配置为
+enabled/permissive 时在任何变更前拒绝。接管使用独立的持久回滚机制，见
+[网络接管](../network/takeover.md)。
 
 ## 进程与旧部署识别
 
@@ -266,7 +269,7 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 - TCP `6300` 正常监听；
 - TCP `6443` 正常监听；
-- TCP 和 UDP `53` 均正常监听；
+- UDP `53` 正常监听；当前 Landscape 的普通 DNS listener 不监听 TCP `53`；
 - 监听套接字属于目标 Landscape PID；
 - `https://127.0.0.1:6443/api/docs` 返回 `2xx` 或 `3xx`；
 - HTTPS 检查允许 Landscape 自签名证书。

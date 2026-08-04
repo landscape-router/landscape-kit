@@ -181,13 +181,9 @@ fn health(reason: String) -> InstallError {
     InstallError::HealthCheck(reason)
 }
 
-/// 默认固定端口列表:TCP/UDP 53、TCP 6300、TCP 6443。
+/// 默认固定端口列表:UDP 53、TCP 6300、TCP 6443。
 pub(crate) fn default_port_checks() -> Vec<PortCheck> {
     vec![
-        PortCheck {
-            protocol: Protocol::Tcp,
-            port: 53,
-        },
         PortCheck {
             protocol: Protocol::Udp,
             port: 53,
@@ -381,16 +377,16 @@ mod tests {
     #[test]
     fn provides_default_ports() {
         let checks = default_port_checks();
-        assert_eq!(checks.len(), 4);
+        assert_eq!(checks.len(), 3);
         assert_eq!(
             checks[0],
             PortCheck {
-                protocol: Protocol::Tcp,
+                protocol: Protocol::Udp,
                 port: 53
             }
         );
         assert_eq!(
-            checks[3],
+            checks[2],
             PortCheck {
                 protocol: Protocol::Tcp,
                 port: 6443
