@@ -269,7 +269,7 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 - TCP `6300` 正常监听；
 - TCP `6443` 正常监听；
-- TCP 和 UDP `53` 均正常监听；
+- UDP `53` 正常监听；当前 Landscape 的普通 DNS listener 不监听 TCP `53`；
 - 监听套接字属于目标 Landscape PID；
 - `https://127.0.0.1:6443/api/docs` 返回 `2xx` 或 `3xx`；
 - HTTPS 检查允许 Landscape 自签名证书。
