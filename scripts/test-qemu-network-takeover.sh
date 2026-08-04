@@ -199,6 +199,35 @@ lan_ssh() {
   ssh "${ssh_common[@]}" root@192.168.10.1 "$@"
 }
 
+collect_guest_diagnostics() {
+  local scenario=$1
+  local output=$artifact_dir/$scenario-guest-diagnostics.log
+  local diagnostic_command='set +e
+echo "== landscape journal =="
+journalctl -b --no-pager -u landscape-router.service
+echo "== landscape files =="
+find /var/lib/landscape -maxdepth 4 -type f -printf "%p\n" | sort
+echo "== landscape logs =="
+find /var/lib/landscape/data/logs -maxdepth 1 -type f -exec sh -c '\''for file do echo "--- $file"; tail -n 300 "$file"; done'\'' sh {} +
+echo "== transactions =="
+for file in /var/lib/landscape/transactions/*.json; do test -f "$file" && { echo "--- $file"; cat "$file"; }; done
+echo "== service state =="
+systemctl --no-pager --full status landscape-router.service NetworkManager.service firewalld.service systemd-resolved.service
+echo "== network state =="
+ip -details link show
+ip -4 address show
+ip -4 route show table all
+echo "== kernel state =="
+uname -a
+mount
+sysctl net.ipv4.ip_forward kernel.unprivileged_bpf_disabled'
+
+  if lan_ssh "$diagnostic_command" >"$output" 2>&1; then
+    return
+  fi
+  wan_ssh "$diagnostic_command" >"$output" 2>&1 || true
+}
+
 boot_vm() {
   local scenario=$1
   local disk=$test_root/$scenario.ext4
@@ -231,6 +260,7 @@ boot_vm() {
     echo "$scenario VM did not expose SSH through its WAN" >&2
     return 1
   }
+  wan_ssh 'systemctl set-environment RUST_BACKTRACE=1 LANDSCAPE_LOG_TERMINAL=true'
   wan_ssh 'systemctl is-active NetworkManager firewalld systemd-resolved ssh' >/dev/null
 }
 
@@ -273,6 +303,8 @@ start_takeover() {
   local install_status=$?
   set -e
   if [[ $install_status -ne 0 && $install_status -ne 124 && $install_status -ne 255 ]]; then
+    wait_for_ssh wan || true
+    collect_guest_diagnostics "$scenario"
     echo "takeover command failed before the expected SSH disconnect (status $install_status)" >&2
     return 1
   fi
