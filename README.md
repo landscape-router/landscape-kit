@@ -1,6 +1,6 @@
 # Landscape Kit
 
-`lkit` is a command-line tool for managing a [Landscape](https://landscape.canonical.com/) instance: first-time installation, version switching, repair, state reconciliation, and service manager migration.
+`lkit` is an interactive terminal console and command-line tool for managing a [Landscape](https://landscape.canonical.com/) instance: first-time installation, version switching, repair, state reconciliation, and service manager migration.
 
 The repository is a Cargo workspace made up of four crates:
 
@@ -31,8 +31,11 @@ Landscape installation directly from the terminal:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
-sudo lkit install
+sudo lkit
 ```
+
+The bare command opens the Ratatui management console. Scripts and CI should use explicit
+subcommands such as `lkit --non-interactive install ...`.
 
 The installer verifies the selected binary against the release `SHA256SUMS` before atomically
 installing it at `/usr/local/bin/lkit`. Distribution names are not allowlisted; `lkit` checks the

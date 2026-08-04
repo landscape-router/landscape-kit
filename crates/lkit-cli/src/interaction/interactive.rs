@@ -3,11 +3,21 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::plan::InstallError;
 
 const TTY_PATH: &str = "/dev/tty";
 pub(crate) const SYSTEMD_WORKER_TTY_ENV: &str = "LKIT_INTERNAL_SYSTEMD_WORKER_TTY";
+static NON_INTERACTIVE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn configure(non_interactive: bool) {
+    NON_INTERACTIVE.store(non_interactive, Ordering::SeqCst);
+}
+
+pub(crate) fn is_non_interactive() -> bool {
+    NON_INTERACTIVE.load(Ordering::SeqCst)
+}
 
 /// 所有交互输入输出只通过终端设备,不读取 stdin,避免消费管道数据。
 /// 通常使用 `/dev/tty`; systemd worker 直接打开前端传入的原终端设备,
@@ -18,6 +28,11 @@ pub(crate) struct Tty {
 
 impl Tty {
     pub(crate) fn open() -> Result<Self, InstallError> {
+        if is_non_interactive() {
+            return Err(InstallError::NonInteractive(
+                "interactive terminal access is disabled by --non-interactive".into(),
+            ));
+        }
         let path = std::env::var_os(SYSTEMD_WORKER_TTY_ENV)
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)

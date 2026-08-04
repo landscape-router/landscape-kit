@@ -70,8 +70,10 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landsc
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
-sudo lkit install
+sudo lkit
 ```
+
+裸命令进入 Ratatui 管理控制台；自动化仍使用显式 `lkit install` 子命令。
 
 显式使用 Landscape 镜像仓库安装：
 

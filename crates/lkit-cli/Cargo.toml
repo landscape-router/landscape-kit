@@ -24,6 +24,7 @@ required-features = ["test-support"]
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6.5", features = ["derive"] }
+crossterm = "0.29"
 dotenvy = "0.15.7"
 libc = "0.2"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }

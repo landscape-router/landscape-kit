@@ -5,12 +5,13 @@ use std::ffi::CStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{TcpListener, UdpSocket};
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
@@ -260,6 +261,7 @@ esac
             )
             .args([
                 "install",
+                "--non-interactive",
                 "--version",
                 VERSION,
                 "--repository",
@@ -273,6 +275,34 @@ esac
             .arg(&self.runtime_config)
             .output()
             .unwrap()
+    }
+
+    fn password_prompt_command(&self, pty: &Pty) -> Command {
+        let mut command = Command::new(LKIT);
+        command
+            .env(
+                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+                &self.world.systemctl_config,
+            )
+            .args([
+                "install",
+                "--version",
+                VERSION,
+                "--repository",
+                &self.repository.base_url,
+                "--install-dir",
+            ])
+            .arg(&self.install_root)
+            .args([
+                "--admin-user",
+                "admin",
+                "--service-manager",
+                "none",
+                "--test-runtime",
+            ])
+            .arg(&self.runtime_config);
+        attach_pty(&mut command, pty);
+        command
     }
 
     fn service_log(&self) -> String {
@@ -340,7 +370,7 @@ esac
 
 struct Pty {
     master: File,
-    _slave: File,
+    slave: File,
     slave_path: PathBuf,
 }
 
@@ -349,6 +379,12 @@ impl Pty {
         let mut master = 0;
         let mut slave = 0;
         let mut name = [0 as libc::c_char; 128];
+        let size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
         assert_eq!(
             unsafe {
                 libc::openpty(
@@ -356,7 +392,7 @@ impl Pty {
                     &mut slave,
                     name.as_mut_ptr(),
                     std::ptr::null(),
-                    std::ptr::null(),
+                    &size,
                 )
             },
             0
@@ -367,9 +403,67 @@ impl Pty {
             .into();
         Self {
             master: unsafe { File::from_raw_fd(master) },
-            _slave: unsafe { File::from_raw_fd(slave) },
+            slave: unsafe { File::from_raw_fd(slave) },
             slave_path,
         }
+    }
+
+    fn read_until(&mut self, expected: &str, timeout: Duration) -> String {
+        let deadline = Instant::now() + timeout;
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let mut descriptor = libc::pollfd {
+                fd: self.master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let timeout_ms = remaining.as_millis().min(100) as libc::c_int;
+            let ready = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
+            if ready < 0 {
+                panic!("poll pty: {}", std::io::Error::last_os_error());
+            }
+            if ready == 0 || descriptor.revents & libc::POLLIN == 0 {
+                continue;
+            }
+            let mut buffer = [0_u8; 4096];
+            let size = self.master.read(&mut buffer).unwrap();
+            output.extend_from_slice(&buffer[..size]);
+            if String::from_utf8_lossy(&output).contains(expected) {
+                return String::from_utf8_lossy(&output).into_owned();
+            }
+        }
+        panic!(
+            "timed out waiting for {expected:?}; pty output:\n{}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+
+    fn echo_enabled(&self) -> bool {
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::tcgetattr(self.slave.as_raw_fd(), &mut termios) },
+            0
+        );
+        termios.c_lflag & libc::ECHO != 0
+    }
+}
+
+fn attach_pty(command: &mut Command, pty: &Pty) {
+    command
+        .stdin(Stdio::from(pty.slave.try_clone().unwrap()))
+        .stdout(Stdio::from(pty.slave.try_clone().unwrap()))
+        .stderr(Stdio::from(pty.slave.try_clone().unwrap()));
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
 }
 
@@ -445,6 +539,89 @@ fn installs_and_verifies_fixture_through_full_cli() {
             .join(format!("releases/{VERSION}/landscape-webserver"))
             .canonicalize()
             .unwrap()
+    );
+}
+
+#[test]
+fn ctrl_c_during_password_restores_terminal_echo() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("password-sigint", "healthy", 10_000);
+    let mut pty = Pty::open();
+    assert!(pty.echo_enabled());
+    let mut child = harness.password_prompt_command(&pty).spawn().unwrap();
+    let output = pty.read_until("Enter admin password: ", Duration::from_secs(10));
+    assert!(!pty.echo_enabled(), "password input did not disable echo");
+    assert_eq!(
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) },
+        0
+    );
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(130), "pty output:\n{output}");
+    assert!(pty.echo_enabled(), "Ctrl+C did not restore terminal echo");
+}
+
+#[test]
+fn explicit_non_interactive_mode_ignores_available_tty() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("explicit-non-interactive", "healthy", 10_000);
+    let mut pty = Pty::open();
+    let mut command = harness.password_prompt_command(&pty);
+    command.arg("--non-interactive");
+    let mut child = command.spawn().unwrap();
+    let output = pty.read_until(
+        "--password-file is required in non-interactive mode",
+        Duration::from_secs(10),
+    );
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(2), "pty output:\n{output}");
+    assert!(!output.contains("Enter admin password"));
+    assert!(pty.echo_enabled());
+}
+
+#[test]
+fn bare_lkit_console_restores_terminal_on_exit() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut pty = Pty::open();
+    let mut command = Command::new(LKIT);
+    attach_pty(&mut command, &pty);
+    let mut child = command.spawn().unwrap();
+    let entered = pty.read_until("Landscape Kit", Duration::from_secs(5));
+    assert!(
+        entered.contains("\x1b[?1049h"),
+        "console did not enter alternate screen: {entered:?}"
+    );
+    pty.master.write_all(b"\x1b").unwrap();
+    let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
+    let status = child.wait().unwrap();
+    assert!(status.success(), "console exit failed: {exited:?}");
+    assert!(
+        pty.echo_enabled(),
+        "console exit did not restore terminal echo"
+    );
+}
+
+#[test]
+fn ctrl_c_leaves_bare_lkit_console_and_restores_terminal() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut pty = Pty::open();
+    let mut command = Command::new(LKIT);
+    attach_pty(&mut command, &pty);
+    let mut child = command.spawn().unwrap();
+    let entered = pty.read_until("Landscape Kit", Duration::from_secs(5));
+    assert!(
+        entered.contains("\x1b[?1049h"),
+        "console did not enter alternate screen: {entered:?}"
+    );
+    assert_eq!(
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) },
+        0
+    );
+    let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(130), "console output: {exited:?}");
+    assert!(
+        pty.echo_enabled(),
+        "console Ctrl+C did not restore terminal echo"
     );
 }
 

@@ -5,7 +5,7 @@ use clap::Args;
 
 use super::manage::{InstallRequest, RequestMode, ServiceManagerArg};
 
-#[derive(Debug, Args)]
+#[derive(Args)]
 pub struct Install {
     /// Target version: `<version>` or `latest`
     #[arg(long, value_name = "VERSION")]
@@ -22,6 +22,9 @@ pub struct Install {
     /// First-install password read from a restricted file
     #[arg(long, value_name = "PATH")]
     pub password_file: Option<PathBuf>,
+    /// Password captured by the interactive console. Never populated by CLI parsing.
+    #[arg(skip)]
+    pub(crate) interactive_password: Option<String>,
     /// Service manager: `systemd` or `none`
     #[arg(long, value_enum)]
     pub service_manager: Option<ServiceManagerArg>,
@@ -36,6 +39,26 @@ pub struct Install {
     pub test_runtime: Option<PathBuf>,
 }
 
+impl std::fmt::Debug for Install {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Install")
+            .field("version", &self.version)
+            .field("repository", &self.repository)
+            .field("install_dir", &self.install_dir)
+            .field("admin_user", &self.admin_user)
+            .field("password_file", &self.password_file)
+            .field(
+                "interactive_password",
+                &self.interactive_password.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("service_manager", &self.service_manager)
+            .field("force", &self.force)
+            .field("takeover_network", &self.takeover_network)
+            .finish_non_exhaustive()
+    }
+}
+
 pub async fn run(args: &Install) -> ExitCode {
     super::manage::run_request(&InstallRequest {
         mode: RequestMode::Install,
@@ -44,6 +67,7 @@ pub async fn run(args: &Install) -> ExitCode {
         install_dir: args.install_dir.clone(),
         admin_user: args.admin_user.clone(),
         password_file: args.password_file.clone(),
+        interactive_password: args.interactive_password.clone(),
         service_manager: args.service_manager,
         repair_static: false,
         repair_binary: false,

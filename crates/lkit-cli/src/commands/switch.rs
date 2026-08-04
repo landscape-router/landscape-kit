@@ -32,6 +32,7 @@ pub async fn run(args: &Switch) -> ExitCode {
         install_dir: args.install_dir.clone(),
         admin_user: None,
         password_file: None,
+        interactive_password: None,
         service_manager: None,
         repair_static: false,
         repair_binary: false,

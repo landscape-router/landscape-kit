@@ -1,6 +1,7 @@
 mod backup;
 mod check;
 mod commands;
+mod console;
 mod deployment;
 mod interaction;
 mod network;
@@ -21,8 +22,11 @@ use commands::Commands;
 struct Cli {
     #[arg(long, hide = true)]
     internal_systemd_worker: bool,
+    /// Do not open a terminal or prompt for input
+    #[arg(long, global = true)]
+    non_interactive: bool,
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[tokio::main]
@@ -40,9 +44,65 @@ async fn main() -> ExitCode {
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
+    interaction::interactive::configure(cli.non_interactive);
+    let Some(command) = cli.command else {
+        if cli.non_interactive || cli.internal_systemd_worker {
+            eprintln!("lkit: a subcommand is required in non-interactive mode");
+            return ExitCode::from(2);
+        }
+        let interrupt = match interaction::presentation::InterruptGuard::install_console() {
+            Ok(interrupt) => interrupt,
+            Err(error) => {
+                eprintln!("lkit: unable to install Ctrl+C handler: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let action = console::run();
+        drop(interrupt);
+        return match action {
+            Ok(console::ConsoleAction::Quit) => ExitCode::SUCCESS,
+            Ok(console::ConsoleAction::Command { command, args }) => {
+                run_command(command, Some(args), false).await
+            }
+            Err(error) => {
+                eprintln!("lkit: unable to start interactive console: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    };
+    run_command(command, None, cli.internal_systemd_worker).await
+}
 
-    if !cli.internal_systemd_worker && systemd_worker::should_delegate(&cli.command) {
-        return match systemd_worker::delegate() {
+async fn run_command(
+    mut command: Commands,
+    delegated_args: Option<Vec<String>>,
+    internal_worker: bool,
+) -> ExitCode {
+    let delegated = !internal_worker && systemd_worker::should_delegate(&command);
+    let interrupt = match interaction::presentation::InterruptGuard::install(delegated) {
+        Ok(interrupt) => interrupt,
+        Err(error) => {
+            eprintln!("lkit: unable to install Ctrl+C handler: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if delegated {
+        let args = match delegated_args {
+            Some(args) => args,
+            None => match systemd_worker::string_args() {
+                Ok(args) => args,
+                Err(error) => {
+                    eprintln!("lkit: {error}");
+                    return ExitCode::FAILURE;
+                }
+            },
+        };
+        let interactive_password = match &mut command {
+            Commands::Install(install) => install.interactive_password.take(),
+            _ => None,
+        };
+        return match systemd_worker::delegate(&interrupt, args, interactive_password) {
             Ok(code) => code,
             Err(error) => {
                 eprintln!("install: unable to delegate operation to systemd: {error}");
@@ -51,7 +111,7 @@ async fn main() -> ExitCode {
         };
     }
 
-    match cli.command {
+    match command {
         Commands::Check(args) => commands::check::run(&args),
         Commands::Install(args) => commands::install::run(&args).await,
         Commands::Network(args) => commands::network::run(&args).await,
@@ -64,7 +124,7 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
     use super::Cli;
 
@@ -74,5 +134,22 @@ mod tests {
             Cli::command().render_version().to_string().trim(),
             concat!("lkit ", env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[test]
+    fn accepts_non_interactive_before_or_after_subcommand() {
+        for args in [
+            ["lkit", "--non-interactive", "install"],
+            ["lkit", "install", "--non-interactive"],
+        ] {
+            assert!(Cli::try_parse_from(args).unwrap().non_interactive);
+        }
+    }
+
+    #[test]
+    fn accepts_bare_command_for_interactive_console() {
+        let cli = Cli::try_parse_from(["lkit"]).unwrap();
+        assert!(cli.command.is_none());
+        assert!(!cli.non_interactive);
     }
 }

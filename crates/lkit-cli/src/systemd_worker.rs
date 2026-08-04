@@ -13,7 +13,7 @@ use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::state::StateServiceManager;
 use crate::interaction::interactive::SYSTEMD_WORKER_TTY_ENV;
 use crate::interaction::presentation::{
-    OPERATIONS_DIR, PRESENTATION_EVENTS_ENV, WorkerPresentation,
+    InterruptGuard, OPERATIONS_DIR, PRESENTATION_EVENTS_ENV, WorkerPresentation,
 };
 use crate::service::systemd::{Availability, Systemd};
 
@@ -30,12 +30,19 @@ struct WorkerRequest {
     systemctl: PathBuf,
     terminal: Option<PathBuf>,
     presentation_path: PathBuf,
+    #[serde(default)]
+    credential_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct WorkerResult {
     schema_version: u64,
     exit_code: i32,
+}
+
+enum WaitOutcome {
+    Completed(ExitCode),
+    Interrupted,
 }
 
 pub(crate) fn should_delegate(command: &Commands) -> bool {
@@ -115,12 +122,15 @@ fn load_manager(install_dir: Option<&Path>) -> Option<StateServiceManager> {
     )
 }
 
-pub(crate) fn delegate() -> Result<ExitCode, String> {
+pub(crate) fn delegate(
+    interrupt: &InterruptGuard,
+    mut args: Vec<String>,
+    interactive_password: Option<String>,
+) -> Result<ExitCode, String> {
     let systemd = Systemd::host();
     if !matches!(systemd.probe(), Availability::Available { .. }) {
         return Err("the systemd manager is not available".into());
     }
-
     let operation_id = Uuid::now_v7().to_string();
     let directory = PathBuf::from(OPERATIONS_DIR);
     std::fs::create_dir_all(&directory)
@@ -133,15 +143,23 @@ pub(crate) fn delegate() -> Result<ExitCode, String> {
     let stdout_path = directory.join(format!("{operation_id}.stdout.log"));
     let stderr_path = directory.join(format!("{operation_id}.stderr.log"));
     let presentation_path = directory.join(format!("{operation_id}.presentation.jsonl"));
+    let credential_path = directory.join(format!("{operation_id}.credential"));
     let unit_name = format!("lkit-operation-{operation_id}.service");
     let unit_path = systemd.run_systemd_dir.join(&unit_name);
     let executable =
         std::env::current_exe().map_err(|error| format!("resolve current executable: {error}"))?;
-    let args = string_args()?;
     let environment = string_environment()?;
     let working_directory =
         std::env::current_dir().map_err(|error| format!("resolve current directory: {error}"))?;
     let terminal = terminal_path();
+    let has_credential = interactive_password.is_some();
+    if let Some(password) = interactive_password {
+        create_private_secret_file(&credential_path, password.as_bytes())?;
+        args.extend([
+            "--password-file".into(),
+            credential_path.display().to_string(),
+        ]);
+    }
     let request = WorkerRequest {
         schema_version: 1,
         args,
@@ -152,29 +170,57 @@ pub(crate) fn delegate() -> Result<ExitCode, String> {
         systemctl: systemd.systemctl.clone(),
         terminal,
         presentation_path: presentation_path.clone(),
+        credential_path: has_credential.then(|| credential_path.clone()),
     };
-    write_private_json(&request_path, &request)?;
+    if let Err(error) = write_private_json(&request_path, &request) {
+        cleanup_files(&[&credential_path]);
+        return Err(error);
+    }
     let unit = render_unit(&executable, &request_path, &stdout_path, &stderr_path);
     if let Err(error) = write_unit(&unit_path, &unit) {
-        cleanup_files(&[&request_path]);
+        cleanup_files(&[&request_path, &credential_path]);
         return Err(error);
     }
     if let Err(error) = create_private_file(&presentation_path) {
-        cleanup_files(&[&request_path, &unit_path]);
+        cleanup_files(&[&request_path, &unit_path, &credential_path]);
         return Err(error);
     }
 
     if let Err(error) = systemctl(&systemd.systemctl, &["daemon-reload"]) {
-        cleanup_files(&[&request_path, &unit_path, &presentation_path]);
+        cleanup_files(&[
+            &request_path,
+            &unit_path,
+            &presentation_path,
+            &credential_path,
+        ]);
         return Err(error);
     }
     if let Err(error) = systemctl(
         &systemd.systemctl,
         &["start", "--no-block", unit_name.as_str()],
     ) {
-        cleanup_files(&[&request_path, &unit_path, &presentation_path]);
+        cleanup_files(&[
+            &request_path,
+            &unit_path,
+            &presentation_path,
+            &credential_path,
+        ]);
         let _ = systemctl(&systemd.systemctl, &["daemon-reload"]);
         return Err(error);
+    }
+
+    if interrupt.requested() {
+        return interrupt_worker(
+            &systemd.systemctl,
+            &unit_name,
+            &request_path,
+            &result_path,
+            &unit_path,
+            &stdout_path,
+            &stderr_path,
+            &presentation_path,
+            &credential_path,
+        );
     }
 
     let result = wait_for_result(
@@ -184,13 +230,67 @@ pub(crate) fn delegate() -> Result<ExitCode, String> {
         &stdout_path,
         &stderr_path,
         &presentation_path,
+        interrupt,
     );
-    cleanup_files(&[&request_path, &result_path, &unit_path, &presentation_path]);
+    if matches!(result, Ok(WaitOutcome::Interrupted)) {
+        return interrupt_worker(
+            &systemd.systemctl,
+            &unit_name,
+            &request_path,
+            &result_path,
+            &unit_path,
+            &stdout_path,
+            &stderr_path,
+            &presentation_path,
+            &credential_path,
+        );
+    }
+    cleanup_files(&[
+        &request_path,
+        &result_path,
+        &unit_path,
+        &presentation_path,
+        &credential_path,
+    ]);
     if result.is_ok() {
         cleanup_files(&[&stdout_path, &stderr_path]);
     }
     let _ = systemctl(&systemd.systemctl, &["daemon-reload"]);
-    result
+    result.map(|outcome| match outcome {
+        WaitOutcome::Completed(code) => code,
+        WaitOutcome::Interrupted => unreachable!("interrupted outcome handled above"),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn interrupt_worker(
+    systemctl_path: &Path,
+    unit_name: &str,
+    request_path: &Path,
+    result_path: &Path,
+    unit_path: &Path,
+    stdout_path: &Path,
+    stderr_path: &Path,
+    presentation_path: &Path,
+    credential_path: &Path,
+) -> Result<ExitCode, String> {
+    if let Err(error) = systemctl(systemctl_path, &["stop", unit_name]) {
+        eprintln!(
+            "install: warning: Ctrl+C restored the terminal, but the delegated operation could not be stopped and may still be running: {error}"
+        );
+        return Ok(ExitCode::from(130));
+    }
+    cleanup_files(&[
+        request_path,
+        result_path,
+        unit_path,
+        stdout_path,
+        stderr_path,
+        presentation_path,
+        credential_path,
+    ]);
+    let _ = systemctl(systemctl_path, &["daemon-reload"]);
+    Ok(ExitCode::from(130))
 }
 
 pub(crate) fn run_worker(request_path: &Path) -> ExitCode {
@@ -219,6 +319,13 @@ fn run_worker_inner(request_path: &Path) -> Result<i32, String> {
         ));
     }
     let _ = std::fs::remove_file(request_path);
+    let _credential = match request.credential_path.as_deref() {
+        Some(path) => {
+            validate_credential_path(path)?;
+            Some(RemoveFile::new(path))
+        }
+        None => None,
+    };
 
     let executable =
         std::env::current_exe().map_err(|error| format!("resolve worker executable: {error}"))?;
@@ -261,7 +368,7 @@ fn run_worker_inner(request_path: &Path) -> Result<i32, String> {
     Ok(exit_code)
 }
 
-fn string_args() -> Result<Vec<String>, String> {
+pub(crate) fn string_args() -> Result<Vec<String>, String> {
     std::env::args_os()
         .skip(1)
         .map(|value| {
@@ -367,6 +474,57 @@ fn create_private_file(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("create {}: {error}", path.display()))
 }
 
+fn create_private_secret_file(path: &Path, content: &[u8]) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| format!("create internal credential file: {error}"))?;
+    if let Err(error) = file.write_all(content).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("write internal credential file: {error}"));
+    }
+    Ok(())
+}
+
+fn validate_credential_path(path: &Path) -> Result<(), String> {
+    if path.parent() != Some(Path::new(OPERATIONS_DIR))
+        || !path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(".credential"))
+    {
+        return Err(format!(
+            "internal credential path must be under {OPERATIONS_DIR}"
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect internal credential file: {error}"))?;
+    if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
+        return Err("internal credential file must be root-only regular file".into());
+    }
+    Ok(())
+}
+
+struct RemoveFile {
+    path: PathBuf,
+}
+
+impl RemoveFile {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+        }
+    }
+}
+
+impl Drop for RemoveFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 fn validate_request_path(path: &Path) -> Result<(), String> {
     if path.parent() != Some(Path::new(OPERATIONS_DIR)) {
         return Err(format!("worker request must be under {OPERATIONS_DIR}"));
@@ -402,12 +560,17 @@ fn wait_for_result(
     stdout_path: &Path,
     stderr_path: &Path,
     presentation_path: &Path,
-) -> Result<ExitCode, String> {
+    interrupt: &InterruptGuard,
+) -> Result<WaitOutcome, String> {
     let mut stdout = None;
     let mut stderr = None;
     let mut presentation = WorkerPresentation::new();
     let mut inactive_polls = 0_u8;
     loop {
+        if interrupt.requested() {
+            presentation.finish();
+            return Ok(WaitOutcome::Interrupted);
+        }
         presentation.drain(presentation_path)?;
         drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
         drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
@@ -426,7 +589,9 @@ fn wait_for_result(
             drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
             drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
             presentation.finish();
-            return Ok(ExitCode::from(result.exit_code.clamp(0, 255) as u8));
+            return Ok(WaitOutcome::Completed(ExitCode::from(
+                result.exit_code.clamp(0, 255) as u8,
+            )));
         }
 
         if worker_unit_has_stopped(systemctl_path, unit_name)? {
@@ -495,5 +660,27 @@ fn drain_log(
 fn cleanup_files(paths: &[&Path]) {
     for path in paths {
         let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_credential_file_is_private_and_removed_by_guard() {
+        let path = std::env::temp_dir().join(format!(
+            "lkit-worker-credential-{}-{}.credential",
+            std::process::id(),
+            Uuid::now_v7()
+        ));
+        create_private_secret_file(&path, b"Secret123").unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(metadata.mode() & 0o077, 0);
+        assert_eq!(std::fs::read(&path).unwrap(), b"Secret123");
+        {
+            let _credential = RemoveFile::new(&path);
+        }
+        assert!(!path.exists());
     }
 }

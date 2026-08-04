@@ -1,6 +1,6 @@
 # Landscape Kit
 
-`lkit` 是用于管理 [Landscape](https://landscape.canonical.com/) 实例的命令行工具：支持首次安装、版本切换、修复、状态协调与服务管理器迁移。
+`lkit` 是用于管理 [Landscape](https://landscape.canonical.com/) 实例的交互终端控制台和命令行工具：支持首次安装、版本切换、修复、状态协调与服务管理器迁移。
 
 本仓库是一个 Cargo workspace，包含四个 crate：
 
@@ -31,8 +31,11 @@
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
-sudo lkit install
+sudo lkit
 ```
+
+裸命令进入 Ratatui 管理控制台。脚本和 CI 应使用明确子命令，例如
+`lkit --non-interactive install ...`。
 
 使用 Landscape 镜像仓库安装：
 

@@ -19,7 +19,6 @@ pub(crate) enum RequestMode {
     ServiceManager,
 }
 
-#[derive(Debug)]
 pub(crate) struct InstallRequest {
     pub(crate) mode: RequestMode,
     /// Target version: `<version>` or `latest`
@@ -36,6 +35,9 @@ pub(crate) struct InstallRequest {
 
     /// First-install password read from a restricted file
     pub(crate) password_file: Option<PathBuf>,
+
+    /// First-install password captured by the interactive console.
+    pub(crate) interactive_password: Option<String>,
 
     /// Service manager: `systemd` or `none`
     pub(crate) service_manager: Option<ServiceManagerArg>,
@@ -301,17 +303,25 @@ fn resolve_credentials(
         .admin_user
         .clone()
         .unwrap_or_else(|| "admin".to_string());
-    let password = match &args.password_file {
-        Some(path) => credentials::read_password_file(path, managed_uid)?,
-        None => match crate::interaction::interactive::read_password("Enter admin password") {
-            Ok(password) => password,
-            Err(plan::InstallError::NonInteractive(reason)) => {
-                return Err(plan::InstallError::ParameterUsage(format!(
-                    "--password-file is required in non-interactive mode: {reason}; install lkit first and run `sudo lkit install ...` directly from a terminal, or provide a root-owned 0400/0600 password file"
-                )));
+    let password = match (&args.interactive_password, &args.password_file) {
+        (Some(password), None) => password.clone(),
+        (None, Some(path)) => credentials::read_password_file(path, managed_uid)?,
+        (None, None) => {
+            match crate::interaction::interactive::read_password("Enter admin password") {
+                Ok(password) => password,
+                Err(plan::InstallError::NonInteractive(reason)) => {
+                    return Err(plan::InstallError::ParameterUsage(format!(
+                        "--password-file is required in non-interactive mode: {reason}; install lkit first and run `sudo lkit install ...` directly from a terminal, or provide a root-owned 0400/0600 password file"
+                    )));
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
-        },
+        }
+        (Some(_), Some(_)) => {
+            return Err(plan::InstallError::ParameterUsage(
+                "interactive password and --password-file cannot be combined".into(),
+            ));
+        }
     };
     credentials::validate_password(&password)?;
     Ok(Credentials {
@@ -377,7 +387,7 @@ async fn execute(
         &normalized.canonical,
         plan::UsageFlags {
             admin_user: args.admin_user.is_some(),
-            password_file: args.password_file.is_some(),
+            password_file: args.password_file.is_some() || args.interactive_password.is_some(),
             repair_static: args.repair_static,
             repair_binary: args.repair_binary,
             accept_service_change: args.accept_service_change,
@@ -467,4 +477,47 @@ fn resolve_runtime(_args: &InstallRequest) -> Result<InstallRuntime, plan::Insta
         return InstallRuntime::from_test_file(path);
     }
     Ok(InstallRuntime::production())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_password(password: Option<&str>) -> InstallRequest {
+        InstallRequest {
+            mode: RequestMode::Install,
+            version: None,
+            repository: None,
+            install_dir: None,
+            admin_user: Some("admin".into()),
+            password_file: None,
+            interactive_password: password.map(str::to_string),
+            service_manager: None,
+            repair_static: false,
+            repair_binary: false,
+            allow_no_backup: false,
+            accept_service_change: false,
+            force: false,
+            takeover_network: false,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        }
+    }
+
+    #[test]
+    fn resolves_console_password_without_opening_a_tty() {
+        let request = request_with_password(Some("Secret123"));
+        let credentials = resolve_credentials(&request, unsafe { libc::geteuid() }).unwrap();
+        assert_eq!(credentials.admin_user, "admin");
+        assert_eq!(credentials.password, "Secret123");
+    }
+
+    #[test]
+    fn validates_console_password_complexity() {
+        let request = request_with_password(Some("lowercase1"));
+        assert!(matches!(
+            resolve_credentials(&request, unsafe { libc::geteuid() }),
+            Err(plan::InstallError::InvalidPassword(_))
+        ));
+    }
 }

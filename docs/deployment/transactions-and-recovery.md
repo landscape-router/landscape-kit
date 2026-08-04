@@ -197,6 +197,11 @@ Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
 时，worker 仍删除临时 unit 和请求文件，但结果、stdout/stderr 与展示事件可能保留到主机
 重启或管理员手工清理。不得将这些运行时残留描述为已完整自动清理。
 
+Ratatui Install 面板收集的密码不进入原始参数、环境或 request JSON。需要委托时，前端在
+同一 root-only operations 目录创建 `<id>.credential`，权限固定为 `0600`，内部子命令只
+接收该路径。worker 完成或前端成功停止 operation unit 后删除；停止失败时保留，避免仍在
+运行的 worker 读取失败。该文件与其他 `/run` 残留一样最迟在主机重启时消失。
+
 operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling terminal。
 前端存在终端时，请求文件只记录其 `/dev` 设备路径；worker 中真正执行命令的子进程以
 `O_NOCTTY` 直接打开该设备完成交互。业务命令的退出码写入结果 JSON，wrapper 在结果
@@ -208,6 +213,9 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 
 - SSH、终端或调用 lkit 的前端进程消失后，operation unit 与其 cgroup 不受影响，继续
   完成提交或自动回滚；
+- 前端收到显式 Ctrl+C 时先恢复原始终端属性和光标，再停止对应 operation unit 及其
+  cgroup，清理运行时文件并返回 `130`；停止失败时输出 warning、保留现场并提示 operation
+  可能仍在运行；
 - 手工 `lkit network rollback` 同样进入 operation unit，避免 NetworkManager 恢复后
   当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚已经位于独立恢复 unit，不再次委派；
 - 交互确认仍通过原终端完成，但 unit 不接管该终端；若终端在破坏性阶段前消失，确认

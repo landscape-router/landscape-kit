@@ -2030,6 +2030,7 @@ version = "0.1.2"
 dependencies = [
  "chrono",
  "clap",
+ "crossterm",
  "dotenvy",
  "flate2",
  "futures-util",

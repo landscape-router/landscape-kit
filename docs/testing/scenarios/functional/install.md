@@ -64,7 +64,8 @@
 - 测试层：Rust 单元、CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
 - 证据：[初始化与凭据](../../../interaction/initialization-and-credentials.md)、[首次安装场景](../lifecycle.md#首次安装)
-- 边界：端到端保密扫描单列在 `SEC-02`。
+- 边界：Ratatui 掩码、确认和 Debug 脱敏由控制台单元测试覆盖；端到端保密扫描单列在
+  `SEC-02`。
 
 ## INS-09
 
@@ -110,3 +111,23 @@
 - 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：Ratatui 视图通过内存 TestBackend 验证，不要求测试进程连接真实终端；CLI fixture
   使用 `--password-file` 和捕获输出运行，并断言 stdout/stderr 不含 ANSI 转义序列。
+
+## INS-14
+
+**显式非交互参数禁止 TTY 提示和动态输出**
+
+- 测试层：Clap 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：`--non-interactive` 在子命令前后均可解析；完整安装使用密码文件并断言输出不含
+  ANSI 控制序列。额外 PTY 场景证明终端可用时该参数仍禁止密码提示并要求密码文件。
+
+## INS-15
+
+**Ctrl+C 恢复终端并取消当前安装**
+
+- 测试层：PTY CLI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[输出与退出码](../../../commands/output-and-exit-codes.md)、[事务托管](../../../deployment/transactions-and-recovery.md#systemd-托管操作)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 缺口：真实 systemd smoke 尚未直接验证 Ctrl+C 会停止临时 operation unit。
+- 说明：PTY 场景在密码回显关闭后发送 SIGINT，断言退出状态为 `130` 且 `ECHO` 已恢复。

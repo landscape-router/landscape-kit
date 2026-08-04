@@ -35,10 +35,17 @@ admin_pass = "<password>"
 
 - 默认用户名为 `admin`；
 - `--admin-user` 可覆盖，拒绝空值和控制字符；
+- Ratatui Install 面板直接收集并掩码显示密码和确认密码，不要求用户创建密码文件；
 - 交互模式通过 `/dev/tty` 隐藏输入密码并要求二次确认；
 - 无法打开 `/dev/tty` 时必须使用 `--password-file`；
 - 不提供明文密码命令行参数；
 - 不把密码写入日志、状态或事务文件。
+
+控制台 inline 安装在内存中传递密码。systemd 托管安装使用
+`/run/lkit/operations/<id>.credential` 作为 root-only `0600` 的短生命周期内部通道；该
+文件不是用户输入接口；request JSON 只记录路径，不记录密码内容。worker 与前端按
+完成或取消路径清理。若
+operation unit 无法停止则保留现场，不能提前删除仍可能被运行中 worker 使用的凭据。
 
 ### 交互规则
 
@@ -47,9 +54,17 @@ admin_pass = "<password>"
 stderr 转发通道，保证 warning 不会因两条输出通道竞争而插入密码提示之后。隐藏输入完成后
 始终输出换行，使两次密码提示和后续消息各自占一行。无法打开 `/dev/tty` 时视为非交互模式。
 
-公开安装说明因此推荐先通过管道安装 `lkit`，再直接从终端运行 `sudo lkit install ...`。
+公开安装说明因此推荐先通过管道安装 `lkit`，再直接从终端运行 `sudo lkit` 并从 Install
+面板启动；脚本继续使用明确的 `lkit install ...` 子命令。
 把下载脚本与 `install` 合并在同一条管道命令中时，调用环境仍可能没有可打开的
 `/dev/tty`；此时不会回退到 stdin，而是要求 `--password-file`。
+
+全局 `--non-interactive` 即使在 `/dev/tty` 可用时也禁止打开终端。自动化调用应显式使用
+该参数并提供所需的 `--password-file`、`--accept-*` 等专用参数，避免伪终端、CI runner
+或测试框架改变交互判断。未指定 `--version` 的首次安装在该模式下使用 `latest`。
+
+命令启动时保存原始终端属性。收到 Ctrl+C 后，在退出前恢复包括密码输入期间关闭的
+`ECHO` 在内的属性，并显示光标，避免调用结束后 shell 留在不可见输入状态。
 
 交互确认必须要求用户输入完整的 ASCII `yes`；空输入、其他内容、EOF 或中断都视为拒绝并停止当前操作。如果拒绝发生在事务创建后，保留当前事务，由下次执行按中断恢复规则处理。
 
