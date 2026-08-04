@@ -48,7 +48,11 @@ pub(crate) fn run_preflight(
             match result.status {
                 Status::Pass => {}
                 Status::Warning => {
-                    eprintln!("install: warning: {}", result_message(result));
+                    crate::interaction::presentation::warning(
+                        result.id,
+                        &result.reason,
+                        &result.suggestion,
+                    );
                 }
                 Status::Error | Status::Unknown => {
                     if managed_occupancy_ok(canonical_root, state, result, allow_sha_drift) {

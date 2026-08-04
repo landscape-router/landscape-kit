@@ -23,3 +23,7 @@ lkit install [--version <VERSION>] [--repository [<BASE_URL>]]
 交互式安装建议先单独安装 `lkit`，再从终端运行 `sudo lkit install ...`，确保进程可以
 通过 `/dev/tty` 隐藏读取密码。无 TTY 的自动化环境必须使用 root 所有且权限为 `0400` 或
 `0600` 的 `--password-file`。
+
+交互终端中，部署前 warning 在密码提示前分行显示，隐藏输入的两次提示各自占一行。
+下载后端和静态资源时分别显示包含已下载字节数、总字节数、百分比、速率和 ETA 的进度条；
+stderr 不是终端时不输出动态进度，避免污染脚本日志。

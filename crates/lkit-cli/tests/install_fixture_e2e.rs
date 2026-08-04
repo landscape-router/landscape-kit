@@ -386,6 +386,10 @@ fn installs_and_verifies_fixture_through_full_cli() {
         String::from_utf8_lossy(&output.stderr),
         harness.service_log()
     );
+    assert!(
+        !output.stdout.contains(&0x1b) && !output.stderr.contains(&0x1b),
+        "non-interactive output contains terminal control sequences"
+    );
 
     let state: serde_json::Value = serde_json::from_slice(
         &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),

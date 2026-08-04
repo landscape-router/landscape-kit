@@ -190,9 +190,12 @@ Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
 `/run/lkit/operations/<id>.json`，文件仅 root 可读，worker 读取后立即删除；该文件
 可能短暂包含仓库环境凭据，因此不得复制到事务日志或安装根目录。stdout/stderr 写入
 同目录临时日志，仍在连接的前端持续转发；结果使用 root-only JSON 原子提交。
-`/run/lkit/operations` 固定为 root-only `0700`。前端保持连接时，在读取结果和日志后删除
-这些文件；前端已经消失时，worker 仍删除临时 unit 和请求文件，但结果与 stdout/stderr
-可能保留到主机重启或管理员手工清理。不得将这些运行时残留描述为已完整自动清理。
+`/run/lkit/operations` 固定为 root-only `0700`。下载进度另写入同目录的 root-only
+`<id>.presentation.jsonl`，只包含资产显示名称、字节数、耗时和状态，不包含 URL、凭据或
+初始化配置。前端 stderr 为终端时使用 Ratatui inline viewport 消费这些事件；非交互前端
+消费但不渲染。前端保持连接时，在读取结果、日志和展示事件后删除这些文件；前端已经消失
+时，worker 仍删除临时 unit 和请求文件，但结果、stdout/stderr 与展示事件可能保留到主机
+重启或管理员手工清理。不得将这些运行时残留描述为已完整自动清理。
 
 operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling terminal。
 前端存在终端时，请求文件只记录其 `/dev` 设备路径；worker 中真正执行命令的子进程以

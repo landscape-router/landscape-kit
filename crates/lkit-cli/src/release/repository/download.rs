@@ -15,6 +15,7 @@ use url::Url;
 use super::AssetEncoding;
 pub(crate) use super::archive::{MAX_DECOMPRESSED_BYTES, decompress_zstd, extract_static_archive};
 use super::{Asset, RepositoryError};
+use crate::interaction::presentation::DownloadProgress;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const METADATA_TIMEOUT: Duration = Duration::from_secs(60);
@@ -125,6 +126,7 @@ impl DownloadClient {
         &self,
         version: &Version,
         asset: &Asset,
+        label: &str,
         temp_path: &Path,
     ) -> Result<(), RepositoryError> {
         let mut seed = jitter_seed();
@@ -162,13 +164,19 @@ impl DownloadClient {
                 return Err(RepositoryError::UnexpectedStatus(status));
             }
 
-            match write_asset_response(version, asset, temp_path, response).await {
-                Ok(()) => return Ok(()),
+            let mut progress = DownloadProgress::new(label, asset.size);
+            match write_asset_response(version, asset, temp_path, response, &mut progress).await {
+                Ok(()) => {
+                    progress.finish();
+                    return Ok(());
+                }
                 Err(error) if error.is_retryable() && attempt < MAX_ATTEMPTS - 1 => {
+                    progress.abandon_retrying();
                     let _ = tokio::fs::remove_file(temp_path).await;
                     self.sleep_backoff(attempt, &mut seed).await;
                 }
                 Err(error) => {
+                    progress.abandon_failed();
                     let _ = tokio::fs::remove_file(temp_path).await;
                     return Err(error);
                 }
@@ -219,6 +227,7 @@ async fn write_asset_response(
     asset: &Asset,
     temp_path: &Path,
     response: Response,
+    progress: &mut DownloadProgress,
 ) -> Result<(), RepositoryError> {
     let mut file = tokio::fs::File::create(temp_path)
         .await
@@ -247,6 +256,7 @@ async fn write_asset_response(
         }
         hasher.update(&chunk);
         file.write_all(&chunk).await.map_err(RepositoryError::Io)?;
+        progress.set_position(written);
     }
     if written != asset.size {
         return Err(RepositoryError::AssetSizeMismatch {
@@ -565,7 +575,7 @@ mod tests {
         let version = Version::parse("0.19.2").unwrap();
         let temp = std::env::temp_dir().join("lkit-download-test.zst");
         client
-            .download_asset(&version, &asset, &temp)
+            .download_asset(&version, &asset, "test asset", &temp)
             .await
             .unwrap();
         assert_eq!(std::fs::read(&temp).unwrap(), payload);
@@ -594,7 +604,7 @@ mod tests {
         let version = Version::parse("0.19.2").unwrap();
         let temp = std::env::temp_dir().join("lkit-download-size.bin");
         let error = client
-            .download_asset(&version, &asset, &temp)
+            .download_asset(&version, &asset, "test asset", &temp)
             .await
             .unwrap_err();
         assert!(matches!(error, RepositoryError::AssetSizeMismatch { .. }));
@@ -622,7 +632,7 @@ mod tests {
         let version = Version::parse("0.19.2").unwrap();
         let temp = std::env::temp_dir().join("lkit-download-test.bin");
         let error = client
-            .download_asset(&version, &asset, &temp)
+            .download_asset(&version, &asset, "test asset", &temp)
             .await
             .unwrap_err();
         assert!(matches!(error, RepositoryError::AssetSha256Mismatch { .. }));

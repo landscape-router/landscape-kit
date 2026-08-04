@@ -160,7 +160,9 @@ impl Tty {
         self.write_prompt(prompt)?;
         let result = self.read_line();
         let _ = unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) };
+        let newline = self.write_prompt("\n");
         let line = result?;
+        newline?;
         if line.is_empty() {
             return Err(InstallError::InvalidPassword(
                 "interactive password must not be empty".into(),
@@ -170,10 +172,18 @@ impl Tty {
     }
 
     fn write_prompt(&mut self, prompt: &str) -> Result<(), InstallError> {
-        let result = self
-            .file
-            .write_all(prompt.as_bytes())
-            .and_then(|_| self.file.flush());
+        // Delegated commands share stderr with preflight messages so the
+        // frontend observes warnings and prompts in their original order.
+        let result = if std::env::var_os(SYSTEMD_WORKER_TTY_ENV).is_some() {
+            let mut stderr = std::io::stderr().lock();
+            stderr
+                .write_all(prompt.as_bytes())
+                .and_then(|_| stderr.flush())
+        } else {
+            self.file
+                .write_all(prompt.as_bytes())
+                .and_then(|_| self.file.flush())
+        };
         match result {
             // pty 主端已关闭时写入返回 EIO/EPIPE,视为输入流已结束。
             Err(error)
@@ -380,5 +390,11 @@ mod tests {
         drop(tty);
         let output = writer.join().unwrap();
         assert!(!output.contains("Secret123"), "password leaked: {output}");
+        assert!(
+            output
+                .replace("\r\n", "\n")
+                .contains("password: \npassword (again): "),
+            "password prompts were not separated: {output:?}"
+        );
     }
 }

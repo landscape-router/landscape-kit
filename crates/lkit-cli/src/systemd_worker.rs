@@ -12,10 +12,12 @@ use crate::commands::network::NetworkAction;
 use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::state::StateServiceManager;
 use crate::interaction::interactive::SYSTEMD_WORKER_TTY_ENV;
+use crate::interaction::presentation::{
+    OPERATIONS_DIR, PRESENTATION_EVENTS_ENV, WorkerPresentation,
+};
 use crate::service::systemd::{Availability, Systemd};
 
 const WORKER_COMMAND: &str = "__systemd-worker";
-const OPERATIONS_DIR: &str = "/run/lkit/operations";
 
 #[derive(Debug, Deserialize, Serialize)]
 struct WorkerRequest {
@@ -27,6 +29,7 @@ struct WorkerRequest {
     unit_path: PathBuf,
     systemctl: PathBuf,
     terminal: Option<PathBuf>,
+    presentation_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -129,6 +132,7 @@ pub(crate) fn delegate() -> Result<ExitCode, String> {
     let result_path = directory.join(format!("{operation_id}.result.json"));
     let stdout_path = directory.join(format!("{operation_id}.stdout.log"));
     let stderr_path = directory.join(format!("{operation_id}.stderr.log"));
+    let presentation_path = directory.join(format!("{operation_id}.presentation.jsonl"));
     let unit_name = format!("lkit-operation-{operation_id}.service");
     let unit_path = systemd.run_systemd_dir.join(&unit_name);
     let executable =
@@ -147,20 +151,28 @@ pub(crate) fn delegate() -> Result<ExitCode, String> {
         unit_path: unit_path.clone(),
         systemctl: systemd.systemctl.clone(),
         terminal,
+        presentation_path: presentation_path.clone(),
     };
     write_private_json(&request_path, &request)?;
     let unit = render_unit(&executable, &request_path, &stdout_path, &stderr_path);
-    write_unit(&unit_path, &unit)?;
+    if let Err(error) = write_unit(&unit_path, &unit) {
+        cleanup_files(&[&request_path]);
+        return Err(error);
+    }
+    if let Err(error) = create_private_file(&presentation_path) {
+        cleanup_files(&[&request_path, &unit_path]);
+        return Err(error);
+    }
 
     if let Err(error) = systemctl(&systemd.systemctl, &["daemon-reload"]) {
-        cleanup_files(&[&request_path, &unit_path]);
+        cleanup_files(&[&request_path, &unit_path, &presentation_path]);
         return Err(error);
     }
     if let Err(error) = systemctl(
         &systemd.systemctl,
         &["start", "--no-block", unit_name.as_str()],
     ) {
-        cleanup_files(&[&request_path, &unit_path]);
+        cleanup_files(&[&request_path, &unit_path, &presentation_path]);
         let _ = systemctl(&systemd.systemctl, &["daemon-reload"]);
         return Err(error);
     }
@@ -171,8 +183,9 @@ pub(crate) fn delegate() -> Result<ExitCode, String> {
         &result_path,
         &stdout_path,
         &stderr_path,
+        &presentation_path,
     );
-    cleanup_files(&[&request_path, &result_path, &unit_path]);
+    cleanup_files(&[&request_path, &result_path, &unit_path, &presentation_path]);
     if result.is_ok() {
         cleanup_files(&[&stdout_path, &stderr_path]);
     }
@@ -226,6 +239,7 @@ fn run_worker_inner(request_path: &Path) -> Result<i32, String> {
     } else {
         command.env_remove(SYSTEMD_WORKER_TTY_ENV);
     }
+    command.env(PRESENTATION_EVENTS_ENV, &request.presentation_path);
     let status = command
         .status()
         .map_err(|error| format!("run delegated lkit command: {error}"))?;
@@ -343,6 +357,16 @@ fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), String>
     std::fs::rename(&temporary, path).map_err(|error| format!("commit {}: {error}", path.display()))
 }
 
+fn create_private_file(path: &Path) -> Result<(), String> {
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map(|_| ())
+        .map_err(|error| format!("create {}: {error}", path.display()))
+}
+
 fn validate_request_path(path: &Path) -> Result<(), String> {
     if path.parent() != Some(Path::new(OPERATIONS_DIR)) {
         return Err(format!("worker request must be under {OPERATIONS_DIR}"));
@@ -377,13 +401,16 @@ fn wait_for_result(
     result_path: &Path,
     stdout_path: &Path,
     stderr_path: &Path,
+    presentation_path: &Path,
 ) -> Result<ExitCode, String> {
     let mut stdout = None;
     let mut stderr = None;
+    let mut presentation = WorkerPresentation::new();
     let mut inactive_polls = 0_u8;
     loop {
-        drain_log(stdout_path, &mut stdout, false)?;
-        drain_log(stderr_path, &mut stderr, true)?;
+        presentation.drain(presentation_path)?;
+        drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
+        drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
         if result_path.is_file() {
             let content = std::fs::read(result_path)
                 .map_err(|error| format!("read worker result: {error}"))?;
@@ -395,8 +422,10 @@ fn wait_for_result(
                     result.schema_version
                 ));
             }
-            drain_log(stdout_path, &mut stdout, false)?;
-            drain_log(stderr_path, &mut stderr, true)?;
+            presentation.drain(presentation_path)?;
+            drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
+            drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
+            presentation.finish();
             return Ok(ExitCode::from(result.exit_code.clamp(0, 255) as u8));
         }
 
@@ -433,7 +462,12 @@ fn worker_unit_has_stopped(systemctl_path: &Path, unit_name: &str) -> Result<boo
     ))
 }
 
-fn drain_log(path: &Path, file: &mut Option<File>, to_stderr: bool) -> Result<(), String> {
+fn drain_log(
+    path: &Path,
+    file: &mut Option<File>,
+    to_stderr: bool,
+    presentation: &mut WorkerPresentation,
+) -> Result<(), String> {
     if file.is_none() {
         *file = File::open(path).ok();
     }
@@ -446,6 +480,7 @@ fn drain_log(path: &Path, file: &mut Option<File>, to_stderr: bool) -> Result<()
     if content.is_empty() {
         return Ok(());
     }
+    presentation.before_log();
     if to_stderr {
         eprint!("{content}");
     } else {

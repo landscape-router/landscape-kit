@@ -64,7 +64,12 @@ pub(crate) async fn fetch_webserver_asset(
     let webserver = &release.assets.webserver;
     let webserver_raw = target_dir.join("webserver.download");
     client
-        .download_asset(&release.version, webserver, &webserver_raw)
+        .download_asset(
+            &release.version,
+            webserver,
+            "Landscape webserver",
+            &webserver_raw,
+        )
         .await?;
     let webserver_binary = target_dir.join(WEBSERVER_BINARY);
     match webserver.encoding {
@@ -97,7 +102,12 @@ pub(crate) async fn fetch_static_asset(
     let static_archive = &release.assets.static_archive;
     let static_zip = target_dir.join("static.zip");
     client
-        .download_asset(&release.version, static_archive, &static_zip)
+        .download_asset(
+            &release.version,
+            static_archive,
+            "Landscape static assets",
+            &static_zip,
+        )
         .await?;
     extract_static_archive(
         &release.version,

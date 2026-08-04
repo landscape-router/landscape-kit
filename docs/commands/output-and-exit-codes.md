@@ -12,6 +12,11 @@
 8. 成功结果或回滚结果；
 9. 后续人工提醒。
 
+交互终端中的 warning 使用标题、原因和建议分行显示。资产下载使用动态进度条；非终端
+stderr 不输出进度控制字符。systemd worker 只写结构化进度事件，由仍然连接且 stderr 为
+终端的前端使用 Ratatui inline viewport 渲染；普通 stdout/stderr 仍按事务规范记录并转发。
+CI、`Command::output()` 和其他非交互调用只消费进度事件，不产生 ANSI 控制序列。
+
 不得输出：
 
 - 管理员密码；

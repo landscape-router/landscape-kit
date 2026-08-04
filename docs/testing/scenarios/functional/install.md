@@ -100,3 +100,13 @@
 - 测试层：Rust 事务测试
 - 状态：`已覆盖`
 - 证据：[事务恢复](../../../deployment/transactions-and-recovery.md)
+
+## INS-13
+
+**交互安装显示有序提示和下载进度，非交互安装保持纯文本输出**
+
+- 测试层：Rust Ratatui TestBackend、PTY 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：Ratatui 视图通过内存 TestBackend 验证，不要求测试进程连接真实终端；CLI fixture
+  使用 `--password-file` 和捕获输出运行，并断言 stdout/stderr 不含 ANSI 转义序列。
