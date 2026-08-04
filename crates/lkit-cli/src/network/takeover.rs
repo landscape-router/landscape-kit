@@ -456,9 +456,9 @@ fn selinux_enabled(fs_path: &Path, config_path: &Path) -> Result<bool, InstallEr
     }))
 }
 
-fn resolve_runtime(args: &Network) -> Result<InstallRuntime, InstallError> {
+fn resolve_runtime(_args: &Network) -> Result<InstallRuntime, InstallError> {
     #[cfg(feature = "test-support")]
-    if let Some(path) = args.test_runtime.as_deref() {
+    if let Some(path) = _args.test_runtime.as_deref() {
         return InstallRuntime::from_test_file(path);
     }
     Ok(InstallRuntime::production())

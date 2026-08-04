@@ -15,8 +15,8 @@ if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
 fi
 
 required_commands=(
-  curl ip jq mke2fs mmdebstrap python3 qemu-img qemu-system-x86_64
-  ssh ssh-keygen timeout
+  curl dpkg-deb ip jq mke2fs mmdebstrap python3 qemu-img qemu-system-x86_64
+  sha256sum ssh ssh-keygen timeout
 )
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -71,10 +71,25 @@ ssh_key=$test_root/id_ed25519
 ssh-keygen -q -t ed25519 -N '' -f "$ssh_key"
 public_key=$(<"$ssh_key.pub")
 rootfs=$test_root/rootfs
+keyring_deb=$test_root/debian-archive-keyring.deb
+keyring_root=$test_root/debian-keyring
+curl --fail --location --silent --show-error \
+  https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb \
+  --output "$keyring_deb"
+printf '%s  %s\n' \
+  9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac \
+  "$keyring_deb" | sha256sum --check --status
+dpkg-deb --extract "$keyring_deb" "$keyring_root"
+archive_keyring=$keyring_root/usr/share/keyrings/debian-archive-keyring.gpg
+[[ -f $archive_keyring ]] || {
+  echo "verified Debian archive keyring package did not contain its keyring" >&2
+  exit 1
+}
 
 mmdebstrap \
   --variant=minbase \
   --architectures=amd64 \
+  --keyring="$archive_keyring" \
   --include=systemd,systemd-sysv,dbus,linux-image-cloud-amd64,openssh-server,network-manager,firewalld,systemd-resolved,ppp,iproute2,nftables,curl,ca-certificates,jq,procps,kmod \
   trixie "$rootfs" https://deb.debian.org/debian
 
