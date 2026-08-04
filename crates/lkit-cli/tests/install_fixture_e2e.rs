@@ -591,6 +591,19 @@ fn bare_lkit_console_restores_terminal_on_exit() {
         "console did not enter alternate screen: {entered:?}"
     );
     pty.master.write_all(b"\x1b").unwrap();
+    let armed = pty.read_until("Exit armed", Duration::from_secs(5));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "console exited after one Esc: {armed:?}"
+    );
+    assert!(!armed.contains("Confirm exit"));
+    pty.master.write_all(b"\x1b").unwrap();
+    let confirmation = pty.read_until("Confirm exit", Duration::from_secs(5));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "console exited while showing confirmation: {confirmation:?}"
+    );
+    pty.master.write_all(b"\r").unwrap();
     let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
     let status = child.wait().unwrap();
     assert!(status.success(), "console exit failed: {exited:?}");

@@ -27,11 +27,19 @@ lkit --non-interactive install ... # 严格非交互命令模式
 除 Overview 和 Install 外的面板在对应管理能力实现前明确显示不可用，不执行隐式操作。
 后续功能继续加入相同侧栏外壳，不改变 CLI 子命令契约。
 
-Install 面板提供版本、仓库类型、自定义仓库 URL、安装根目录、管理员用户名、密码、密码
-确认、service manager 和网络接管选项。版本默认 `latest`，也可直接编辑为精确 stable
-版本；HTTP repository protocol v1 没有版本目录接口，因此首版不伪造远端版本列表。密码
-和确认密码在界面中只显示等长 `*`，提交前检查两次输入相同并复用 Landscape 密码复杂度
-规则；用户无需为控制台安装准备密码文件。
+Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认、service
+manager 和网络接管选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。
+版本默认 `latest`，也可直接编辑为精确 stable 版本；HTTP repository protocol v1 没有版本
+目录接口，因此首版不伪造远端版本列表。密码和确认密码在界面中只显示等长 `*`，提交前
+检查两次输入相同并复用 Landscape 密码复杂度规则；用户无需为控制台安装准备密码文件。
+表单为当前选中项显示配置含义和影响；宽终端在表单右侧显示，窄终端空间允许时显示在
+表单下方。
+
+首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
+pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个
+焦点项；Enter 或 Right 展开按组排列的检查结果，显示检查值、非通过原因和处理建议，详情
+中使用 Up/Down、PageUp/PageDown 滚动，Esc 收起。R 可随时重新检查。该结果用于部署前诊断，
+不显示在 Overview：安装完成后 Landscape 自身占用的服务端口不应被当作部署前端口冲突。
 
 表单在执行前使用与命令模式相同的版本、用户名、路径和仓库校验。开始安装后先退出
 alternate screen、恢复终端，再把结构化 `Install` 请求交给共享命令分发。需要 systemd
@@ -44,9 +52,13 @@ inline 安装只在内存中传递控制台密码。systemd worker 需要跨进�
 
 ## 输入与恢复
 
-侧栏和表单使用方向键移动，Tab 在侧栏与面板间切换，Enter 编辑或激活当前项，Esc 和
-Ctrl+C 退出。编辑状态支持普通字符、退格和终端 paste 事件，单字段最多接收 1024 个字符。
-控制台底栏按当前焦点显示 Up/Down、Left/Right、Enter、Tab、Esc、编辑和退格的操作提示。
+侧栏和表单使用方向键移动：Right 或 Enter 从侧栏进入面板，Left 从任意面板（包括
+Install）返回侧栏；Install 使用 Up/Down 在检查汇总和表单字段间移动，Right 或 Enter/Space
+切换枚举和开关。Tab 在侧栏与面板间切换，Enter 编辑或激活当前项。非编辑状态第一次 Esc
+只进入等待状态，连续第二次 Esc 才打开居中的退出确认层；确认层使用 Enter 退出、Esc 取消。
+第一次 Esc 后的任意其他按键取消等待并继续原操作。编辑状态的 Esc 只结束编辑，Ctrl+C 仍
+立即退出。编辑状态支持普通字符、退格和终端 paste 事件，单字段最多接收 1024 个字符。
+控制台底栏按当前焦点显示可用操作。
 
 控制台的 RAII terminal guard 在正常退出和错误返回时关闭 raw mode、离开 alternate
 screen 并显示光标。进程级 Ctrl+C guard 另外保存原始 termios；收到信号时恢复终端，覆盖
