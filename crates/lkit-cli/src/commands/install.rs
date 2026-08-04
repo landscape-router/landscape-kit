@@ -28,6 +28,9 @@ pub struct Install {
     /// Prompt the user to manually clean the existing directory before a clean install
     #[arg(long)]
     pub force: bool,
+    /// Interactively hand wired interfaces and host network services to Landscape
+    #[arg(long)]
+    pub takeover_network: bool,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -47,6 +50,7 @@ pub async fn run(args: &Install) -> ExitCode {
         allow_no_backup: false,
         accept_service_change: false,
         force: args.force,
+        takeover_network: args.takeover_network,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     })
@@ -79,6 +83,13 @@ mod tests {
         assert_eq!(install.repository, Some(None));
         assert_eq!(install.version.as_deref(), Some("0.19.2"));
         assert_eq!(install.service_manager, Some(ServiceManagerArg::None));
+        assert!(!install.takeover_network);
+    }
+
+    #[test]
+    fn parses_network_takeover_flag() {
+        let install = parse(&["install", "--takeover-network"]).unwrap();
+        assert!(install.takeover_network);
     }
 
     #[test]

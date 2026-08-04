@@ -2,7 +2,7 @@
 
 ## 事务文件
 
-### Schema v2
+### Schema v3
 
 每次首次安装、同版本修复、版本切换或 service manager 迁移创建：
 
@@ -14,7 +14,7 @@
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "transaction_id": "0198c3d2-0000-7000-8000-000000000001",
   "operation": "switch",
   "phase": "prepared",
@@ -42,6 +42,7 @@
     "active": true
   },
   "resolv_conf_backup": "backups/0198c3d2-0000-7000-8000-000000000001/host/resolv.conf",
+  "network_takeover": null,
   "log_path": "logs/0198c3d2-0000-7000-8000-000000000001.log",
   "started_at": "2026-08-01T16:20:00Z",
   "updated_at": "2026-08-01T16:30:00Z"
@@ -62,6 +63,8 @@
 - `stopping`；
 - `activating`；
 - `verifying`；
+- `awaiting_network_confirmation`；
+- `finalizing`；
 - `rolling_back`；
 - `committed`；
 - `rolled_back`；
@@ -110,6 +113,13 @@ false。读取旧 v1 文件时缺失该字段按 false 处理。
 
 `resolv_conf_backup` 是安装根目录相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 和无 systemd 事务不修改运行状态时，该字段为 null。
 
+`network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
+接口与 MAC、Landscape 网络计划、NetworkManager/firewalld/systemd-resolved 的原始
+installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制和待提交安装状态路径。
+字段不得包含 PPPoE 凭据。接管事务在 `awaiting_network_confirmation` 或 `finalizing`
+期间不允许通用中断恢复猜测结果，只能执行 `lkit network confirm` 或
+`lkit network rollback`。
+
 恢复时必须按 `systemd_before` 恢复注册链接以及 enabled/active 状态，并通过 `resolv_conf_backup` 找到对应主机备份。缺少必要字段、备份不可用或现场出现无法安全覆盖的所有权冲突时，不猜测原状态，事务标记为 `failed` 并要求人工处理。
 
 `log_path` 是必填的安装根目录相对路径，固定指向 `logs/<transaction-id>.log`，不得逃逸安装根目录。
@@ -125,7 +135,8 @@ false。读取旧 v1 文件时缺失该字段按 false 处理。
 
 首次安装的 `from_version` 和 `previous_current` 可以为 `null`。事务对象允许未知字段并忽略，以便向后兼容；已定义字段缺失、类型错误或组合不满足上述 operation 规则时，事务损坏。事务不得保存密码、初始化 TOML 内容、API token 或预签名 URL。
 
-Schema v2 相对 v1 新增 `stopping`。读取器兼容 v1；新事务一律写 v2。v1 的
+Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
+`awaiting_network_confirmation`、`finalizing`。读取器兼容 v1/v2；新事务一律写 v3。v1 的
 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating”的窗口，恢复时按可能已经
 停止处理。
 
@@ -160,6 +171,8 @@ Schema v2 相对 v1 新增 `stopping`。读取器兼容 v1；新事务一律写 
   - `service_migration` 从 `systemd` 到 `none`：按 `systemd_before` 恢复注册链接和 enabled/active 状态，不修改 `current` 或 data；
   - `service_migration` 从 `none` 到 `systemd`：停止本次 systemd 服务，按 `systemd_before` 撤销注册状态并恢复 `/etc/resolv.conf`，保持已提交状态为 `manager: "none"`，不尝试重新启动外部实例；
 - `rolling_back`：继续事务已经选择的回滚路径，不重新尝试目标版本；
+- `awaiting_network_confirmation` 或 `finalizing`：普通命令不自动处理，要求使用网络
+  子命令；超时 timer 或未确认重启执行同一幂等回滚入口；
 - `committed`：不恢复；
 - `rolled_back`：不重复恢复；
 - `failed`：阻断新安装并要求人工诊断。
@@ -192,6 +205,8 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 
 - SSH、终端或调用 lkit 的前端进程消失后，operation unit 与其 cgroup 不受影响，继续
   完成提交或自动回滚；
+- 手工 `lkit network rollback` 同样进入 operation unit，避免 NetworkManager 恢复后
+  当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚已经位于独立恢复 unit，不再次委派；
 - 交互确认仍通过原终端完成，但 unit 不接管该终端；若终端在破坏性阶段前消失，确认
   读取失败并安全停止；
 - systemd worker 不配置自动重试，业务失败不会重复执行整条命令；

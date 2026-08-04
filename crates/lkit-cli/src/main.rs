@@ -3,6 +3,7 @@ mod check;
 mod commands;
 mod deployment;
 mod interaction;
+mod network;
 mod release;
 mod report;
 mod service;
@@ -53,6 +54,7 @@ async fn main() -> ExitCode {
     match cli.command {
         Commands::Check(args) => commands::check::run(&args),
         Commands::Install(args) => commands::install::run(&args).await,
+        Commands::Network(args) => commands::network::run(&args).await,
         Commands::Switch(args) => commands::switch::run(&args).await,
         Commands::Repair(args) => commands::repair::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,

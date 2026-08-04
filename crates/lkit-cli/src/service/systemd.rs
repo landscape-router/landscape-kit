@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::plan::InstallError;
+use super::transaction::HostServiceBefore;
 use super::transaction::{RegistrationKind, SystemdBefore};
 
 pub(crate) const UNIT_NAME: &str = "landscape-router.service";
@@ -341,6 +342,120 @@ pub(crate) fn stop(systemd: &Systemd) -> Result<(), InstallError> {
 
 pub(crate) fn daemon_reload(systemd: &Systemd) -> Result<(), InstallError> {
     run_systemctl(systemd, &["daemon-reload"], None).map(|_| ())
+}
+
+pub(crate) fn inspect_host_service(
+    systemd: &Systemd,
+    unit: &str,
+) -> Result<HostServiceBefore, InstallError> {
+    validate_unit_name(unit)?;
+    let load = unit_property(systemd, unit, "LoadState")?;
+    let installed = !matches!(load.as_str(), "not-found" | "error" | "");
+    let active = installed && unit_query(systemd, "is-active", unit)? == "active";
+    let enable_state = if installed {
+        unit_query(systemd, "is-enabled", unit)?
+    } else {
+        "not-found".into()
+    };
+    Ok(HostServiceBefore {
+        unit: unit.to_string(),
+        installed,
+        active,
+        enable_state,
+    })
+}
+
+pub(crate) fn stop_disable_mask_host_service(
+    systemd: &Systemd,
+    before: &HostServiceBefore,
+) -> Result<(), InstallError> {
+    if !before.installed {
+        return Ok(());
+    }
+    unit_command(systemd, "stop", &before.unit)?;
+    if matches!(
+        before.enable_state.as_str(),
+        "enabled" | "enabled-runtime" | "linked" | "linked-runtime" | "alias"
+    ) {
+        unit_command(systemd, "disable", &before.unit)?;
+    }
+    unit_command(systemd, "mask", &before.unit)
+}
+
+pub(crate) fn restore_host_service(
+    systemd: &Systemd,
+    before: &HostServiceBefore,
+) -> Result<(), InstallError> {
+    if !before.installed {
+        return Ok(());
+    }
+    unit_command(systemd, "unmask", &before.unit)?;
+    match before.enable_state.as_str() {
+        "enabled" | "linked" | "alias" => unit_command(systemd, "enable", &before.unit)?,
+        "enabled-runtime" | "linked-runtime" => {
+            run_systemctl(systemd, &["enable", "--runtime", &before.unit], None)?;
+        }
+        "masked" | "masked-runtime" => unit_command(systemd, "mask", &before.unit)?,
+        _ => {}
+    }
+    if before.active {
+        unit_command(systemd, "start", &before.unit)?;
+    } else {
+        unit_command(systemd, "stop", &before.unit)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn unit_command(systemd: &Systemd, verb: &str, unit: &str) -> Result<(), InstallError> {
+    validate_unit_name(unit)?;
+    run_systemctl(systemd, &[verb, unit], None).map(|_| ())
+}
+
+pub(crate) fn unit_query(
+    systemd: &Systemd,
+    verb: &str,
+    unit: &str,
+) -> Result<String, InstallError> {
+    validate_unit_name(unit)?;
+    let output = systemctl_output(systemd, &[verb, unit])?;
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !value.is_empty() {
+        Ok(value)
+    } else if output.status.success() {
+        Ok("active".into())
+    } else {
+        Ok(if verb == "is-enabled" {
+            "not-found".into()
+        } else {
+            "inactive".into()
+        })
+    }
+}
+
+pub(crate) fn unit_property(
+    systemd: &Systemd,
+    unit: &str,
+    property: &str,
+) -> Result<String, InstallError> {
+    validate_unit_name(unit)?;
+    if property.is_empty() || !property.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(systemd_error("invalid systemd property name".into()));
+    }
+    let argument = format!("--property={property}");
+    let (_, output) = run_systemctl(systemd, &["show", &argument, "--value", unit], None)?;
+    Ok(output.trim().to_string())
+}
+
+fn validate_unit_name(unit: &str) -> Result<(), InstallError> {
+    if unit.is_empty()
+        || unit.len() > 255
+        || !unit.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-' | b'.' | b'@')
+        })
+    {
+        return Err(systemd_error(format!("invalid systemd unit name {unit:?}")));
+    }
+    Ok(())
 }
 
 /// 停止服务并确认受管进程退出。`wait_for_exit` 返回进程是否已退出,

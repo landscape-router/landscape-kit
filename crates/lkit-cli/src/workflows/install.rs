@@ -27,6 +27,7 @@ use super::state::{
 pub(crate) use super::switch::{SwitchArgs, SwitchOptions, SwitchOutcome, switch_version};
 use super::systemd::{self, Availability, Systemd};
 use super::transaction::{Phase, Registration, RegistrationKind, SystemdBefore};
+use crate::deployment::runtime::InstallRuntime;
 
 /// 服务管理模式选择。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +51,7 @@ pub(crate) enum ServiceManager {
 pub(crate) struct FirstInstallOutcome {
     pub release: Release,
     pub manager: ServiceManager,
+    pub pending_network_address: Option<std::net::Ipv4Addr>,
 }
 
 pub(crate) async fn first_install<P: DocsProbe>(
@@ -60,6 +62,56 @@ pub(crate) async fn first_install<P: DocsProbe>(
     manager_choice: ManagerChoice,
     systemd: &Systemd,
     health_options: &HealthOptions<P>,
+) -> Result<FirstInstallOutcome, InstallError> {
+    first_install_impl(
+        root,
+        provider,
+        target,
+        credentials,
+        manager_choice,
+        systemd,
+        health_options,
+        None,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn first_install_with_network<P: DocsProbe>(
+    root: &InstallRoot,
+    provider: &ReleaseProvider,
+    target: &TargetVersion,
+    credentials: &Credentials,
+    manager_choice: ManagerChoice,
+    systemd: &Systemd,
+    health_options: &HealthOptions<P>,
+    network: &crate::network::config::NetworkPlan,
+    runtime: &InstallRuntime,
+) -> Result<FirstInstallOutcome, InstallError> {
+    first_install_impl(
+        root,
+        provider,
+        target,
+        credentials,
+        manager_choice,
+        systemd,
+        health_options,
+        Some(network),
+        Some(runtime),
+    )
+    .await
+}
+
+async fn first_install_impl<P: DocsProbe>(
+    root: &InstallRoot,
+    provider: &ReleaseProvider,
+    target: &TargetVersion,
+    credentials: &Credentials,
+    manager_choice: ManagerChoice,
+    systemd: &Systemd,
+    health_options: &HealthOptions<P>,
+    network: Option<&crate::network::config::NetworkPlan>,
+    runtime: Option<&InstallRuntime>,
 ) -> Result<FirstInstallOutcome, InstallError> {
     let architecture = Architecture::host().ok_or_else(|| {
         InstallError::UnsupportedPlatform("only x86_64 and aarch64 are supported".into())
@@ -72,12 +124,26 @@ pub(crate) async fn first_install<P: DocsProbe>(
         TargetVersion::Version(version) => provider.release(version, architecture).await?,
     };
     let manager = select_manager(manager_choice, systemd)?;
-    let transaction = super::transaction::TransactionFile::new_install(root, &release.version)?;
+    if network.is_some() && manager != ServiceManager::Systemd {
+        return Err(InstallError::ParameterUsage(
+            "network takeover requires the systemd service manager".into(),
+        ));
+    }
+    let mut transaction = super::transaction::TransactionFile::new_install(root, &release.version)?;
+    if let Some(network) = network {
+        let runtime = runtime.ok_or_else(|| {
+            InstallError::CorruptedTransaction("network takeover runtime is missing".into())
+        })?;
+        transaction.network_takeover = Some(crate::network::takeover::prepare_transaction(
+            &transaction.transaction_id,
+            network,
+            runtime,
+        )?);
+    }
     super::transaction::begin(root, &transaction)?;
-    let mut transaction = transaction;
-    let result: Result<Release, InstallError> = async {
+    let result: Result<(Release, bool), InstallError> = async {
         let built = build_release(root, &release).await?;
-        let init_config = build_init_config(&release.version, credentials)?;
+        let init_config = build_init_config(&release.version, credentials, network)?;
         write_init_config(root, &init_config)?;
         let activation = if manager == ServiceManager::Systemd {
             let before = capture_systemd_before(systemd)?;
@@ -93,7 +159,26 @@ pub(crate) async fn first_install<P: DocsProbe>(
                 "backups/{}/host/resolv.conf",
                 transaction.transaction_id
             ));
+            if let Some(takeover) = transaction.network_takeover.as_mut() {
+                let runtime = runtime.ok_or_else(|| {
+                    InstallError::CorruptedTransaction(
+                        "network takeover runtime disappeared".into(),
+                    )
+                })?;
+                crate::network::takeover::refresh_confirmation_deadline(takeover, runtime)?;
+            }
+            super::transaction::persist(root, &transaction)?;
             super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
+            if let Some(takeover) = transaction.network_takeover.as_ref() {
+                let runtime = runtime.ok_or_else(|| {
+                    InstallError::CorruptedTransaction(
+                        "network takeover runtime disappeared".into(),
+                    )
+                })?;
+                crate::network::takeover::arm_recovery(root, takeover, runtime)?;
+                super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
+                crate::network::takeover::stop_host_services(takeover, systemd)?;
+            }
             UnitActivation {
                 unit_sha: unit_sha.clone(),
                 initialization: InitializationState {
@@ -159,15 +244,43 @@ pub(crate) async fn first_install<P: DocsProbe>(
             health::observe_stable(&options).await?;
         }
         let state = build_state(root, provider, &release, architecture, &built, &activation);
-        super::state::write_state(root, &state)?;
-        super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
-        Ok(release)
+        if let Some(takeover) = transaction.network_takeover.as_ref() {
+            crate::network::takeover::write_pending_state(root, takeover, &state)?;
+            super::transaction::mark_phase(root, &transaction, Phase::AwaitingNetworkConfirmation)?;
+            Ok((release, true))
+        } else {
+            super::state::write_state(root, &state)?;
+            super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
+            Ok((release, false))
+        }
     }
     .await;
     match result {
-        Ok(release) => Ok(FirstInstallOutcome { release, manager }),
+        Ok((release, pending_network)) => Ok(FirstInstallOutcome {
+            release,
+            manager,
+            pending_network_address: pending_network.then(|| {
+                network
+                    .expect("pending network has a plan")
+                    .management_address()
+                    .address
+            }),
+        }),
         Err(error) => {
-            if let Err(cleanup_error) =
+            if let Some(takeover) = transaction.network_takeover.as_ref() {
+                let _ = super::transaction::mark_phase(root, &transaction, Phase::RollingBack);
+                let cleanup =
+                    super::transaction::cleanup_failed_first_install(root, &transaction, systemd)
+                        .and_then(|()| {
+                            crate::network::takeover::cleanup_failed_takeover(
+                                root, takeover, systemd,
+                            )
+                        });
+                if let Err(cleanup_error) = cleanup {
+                    eprintln!("install: network takeover cleanup failed: {cleanup_error}");
+                    return Err(error);
+                }
+            } else if let Err(cleanup_error) =
                 super::transaction::cleanup_failed_first_install(root, &transaction, systemd)
             {
                 eprintln!("install: first install cleanup failed: {cleanup_error}");
@@ -454,7 +567,21 @@ struct AdminAuth<'a> {
 fn build_init_config(
     version: &semver::Version,
     credentials: &Credentials,
+    network: Option<&crate::network::config::NetworkPlan>,
 ) -> Result<String, InstallError> {
+    if let Some(network) = network {
+        let config = crate::network::config::LandscapeInit::new(
+            version,
+            &credentials.admin_user,
+            &credentials.password,
+            network,
+        )?;
+        return toml::to_string(&config).map_err(|error| {
+            InstallError::ParameterUsage(format!(
+                "failed to serialize Landscape network init config: {error}"
+            ))
+        });
+    }
     let config = InitConfigFile {
         version: &version.to_string(),
         config: InitAuth {
@@ -2156,6 +2283,7 @@ esac
                 admin_user: "admin".into(),
                 password: "Secret123".into(),
             },
+            None,
         )
         .unwrap();
         assert_eq!(

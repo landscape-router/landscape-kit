@@ -56,6 +56,9 @@ pub(crate) struct InstallRequest {
     /// Prompt the user to manually clean the existing directory before a clean install
     pub(crate) force: bool,
 
+    /// Interactively configure Landscape as the host network owner.
+    pub(crate) takeover_network: bool,
+
     #[cfg(feature = "test-support")]
     pub(crate) test_runtime: Option<PathBuf>,
 }
@@ -178,6 +181,45 @@ async fn run_first_install(
         Some(ServiceManagerArg::None) => pipeline::ManagerChoice::None,
         None => pipeline::ManagerChoice::Auto,
     };
+    let network_plan = if args.takeover_network {
+        if let Err(error) =
+            crate::network::discovery::ensure_management_bridge_absent(&runtime.sys_class_net)
+        {
+            eprintln!("install: {error}");
+            return exit_code(&error);
+        }
+        let (interfaces, routes) = match crate::network::discovery::discover(
+            &runtime.sys_class_net,
+            &runtime.ip_command,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("install: {error}");
+                return exit_code(&error);
+            }
+        };
+        let mut tty = match crate::interaction::interactive::Tty::open() {
+            Ok(tty) => tty,
+            Err(error) => {
+                eprintln!("install: network takeover requires an interactive terminal: {error}");
+                return exit_code(&error);
+            }
+        };
+        match crate::network::discovery::prompt_plan(
+            &interfaces,
+            &routes,
+            std::env::var("SSH_CONNECTION").ok().as_deref(),
+            &mut tty,
+        ) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                eprintln!("install: {error}");
+                return exit_code(&error);
+            }
+        }
+    } else {
+        None
+    };
     let health_options = match runtime.health_options() {
         Ok(options) => options,
         Err(error) => {
@@ -185,28 +227,55 @@ async fn run_first_install(
             return exit_code(&error);
         }
     };
-    match pipeline::first_install(
-        &plan.root,
-        &provider,
-        &plan.target,
-        &credentials,
-        manager_choice,
-        &runtime.systemd,
-        &health_options,
-    )
-    .await
-    {
+    let result = if let Some(network) = network_plan.as_ref() {
+        pipeline::first_install_with_network(
+            &plan.root,
+            &provider,
+            &plan.target,
+            &credentials,
+            manager_choice,
+            &runtime.systemd,
+            &health_options,
+            network,
+            runtime,
+        )
+        .await
+    } else {
+        pipeline::first_install(
+            &plan.root,
+            &provider,
+            &plan.target,
+            &credentials,
+            manager_choice,
+            &runtime.systemd,
+            &health_options,
+        )
+        .await
+    };
+    match result {
         Ok(outcome) => {
-            println!(
-                "install: committed first install of {}",
-                outcome.release.version
-            );
+            if outcome.pending_network_address.is_some() {
+                println!(
+                    "install: activated {} and is awaiting network confirmation",
+                    outcome.release.version
+                );
+            } else {
+                println!(
+                    "install: committed first install of {}",
+                    outcome.release.version
+                );
+            }
             match outcome.manager {
                 pipeline::ServiceManager::Systemd => {
                     println!(
                         "install: systemd unit landscape-router.service is registered, enabled, and running"
                     );
-                    println!("install: management interface https://127.0.0.1:6443");
+                    if let Some(address) = outcome.pending_network_address {
+                        println!("install: network takeover is awaiting confirmation");
+                        println!("install: reconnect to {address} and run `lkit network confirm`");
+                    } else {
+                        println!("install: management interface https://127.0.0.1:6443");
+                    }
                 }
                 pipeline::ServiceManager::None => {
                     println!(
@@ -256,6 +325,19 @@ async fn execute(
     runtime: &InstallRuntime,
 ) -> Result<(plan::Plan, lock::InstallLock), plan::InstallError> {
     check_environment(runtime)?;
+    if args.takeover_network {
+        if args.mode != RequestMode::Install {
+            return Err(plan::InstallError::ParameterUsage(
+                "--takeover-network is only valid for first install".into(),
+            ));
+        }
+        if args.service_manager == Some(ServiceManagerArg::None) {
+            return Err(plan::InstallError::ParameterUsage(
+                "--takeover-network requires --service-manager systemd".into(),
+            ));
+        }
+        crate::network::takeover::preflight(runtime)?;
+    }
     let target = match &args.version {
         Some(value) => plan::TargetVersion::parse(value)?,
         None => plan::TargetVersion::Latest,
@@ -271,6 +353,16 @@ async fn execute(
     let lock = lock::acquire_install_lock(&normalized)?;
     if let Some(transaction) = transaction::find_unfinished(&normalized)? {
         let health = runtime.health_options()?;
+        if matches!(
+            transaction.phase,
+            transaction::Phase::AwaitingNetworkConfirmation | transaction::Phase::Finalizing
+        ) {
+            return Err(plan::InstallError::BlockedByTransaction(format!(
+                "network takeover {} is {}; use `lkit network status`, `lkit network confirm`, or `lkit network rollback`",
+                transaction.transaction_id,
+                transaction.phase.key()
+            )));
+        }
         transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
             .await?;
     }
@@ -298,12 +390,14 @@ async fn execute(
         &loaded,
         runtime,
         args.repair_binary,
+        args.takeover_network,
     )?;
     pipeline::run_preflight(
         &normalized.canonical,
         loaded.as_ref(),
         args.repair_binary,
         runtime,
+        args.takeover_network,
     )?;
     let repository = match &args.repository {
         None => plan::RepositoryChoice::Github,
@@ -324,6 +418,7 @@ fn check_host_conflicts(
     loaded: &Option<state::InstallState>,
     runtime: &InstallRuntime,
     allow_sha_drift: bool,
+    network_takeover: bool,
 ) -> Result<(), plan::InstallError> {
     let old = std::path::Path::new("/root/.landscape-router");
     if old.exists() {
@@ -334,6 +429,7 @@ fn check_host_conflicts(
     let ports: Vec<(crate::service::process::Protocol, u16)> = runtime
         .health_ports
         .iter()
+        .filter(|check| !network_takeover || check.port != 53)
         .map(|check| (check.protocol, check.port))
         .collect();
     match (presence, loaded) {

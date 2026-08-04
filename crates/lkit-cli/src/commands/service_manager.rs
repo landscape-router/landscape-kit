@@ -31,6 +31,7 @@ pub async fn run(args: &ServiceManager) -> ExitCode {
         allow_no_backup: false,
         accept_service_change: false,
         force: false,
+        takeover_network: false,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     })

@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::commands::network::NetworkAction;
 use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::state::StateServiceManager;
 use crate::interaction::interactive::SYSTEMD_WORKER_TTY_ENV;
@@ -40,6 +41,9 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
     }
     match command {
         Commands::Check(_) | Commands::Reconcile(_) => false,
+        Commands::Network(args) => {
+            matches!(args.action, NetworkAction::Rollback { automatic: false })
+        }
         Commands::Install(args) => {
             if args.force || args.service_manager == Some(ServiceManagerArg::None) {
                 return false;
@@ -80,6 +84,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Repair(args) => args.test_runtime.as_deref(),
         Commands::Reconcile(args) => args.test_runtime.as_deref(),
         Commands::ServiceManager(args) => args.test_runtime.as_deref(),
+        Commands::Network(args) => args.test_runtime.as_deref(),
     };
     let Some(path) = path else {
         return false;

@@ -36,3 +36,19 @@
 - 测试层：systemd-nspawn
 - 状态：`低频 smoke`
 - 证据：[nspawn 兼容性 smoke](../nspawn-systemd.md)
+
+## SYS-05
+
+**KVM 虚拟机中停止宿主网络服务后 Landscape 创建 br_lan，SSH 可从新地址重新连接并确认**
+
+- 测试层：QEMU/KVM
+- 状态：`低频 smoke`
+- 证据：[QEMU 网络接管](../qemu-network-takeover.md)
+
+## SYS-06
+
+**KVM 虚拟机中未确认超时或重启会恢复接管前网络及宿主服务**
+
+- 测试层：QEMU/KVM
+- 状态：`低频 smoke`
+- 证据：[QEMU 网络接管](../qemu-network-takeover.md)

@@ -11,6 +11,8 @@ use lkit_test_fixture::{FIXTURE_CONFIG_ENV, SYSTEMCTL_CONFIG_ENV, SystemctlFixtu
 const UNIT_NAME: &str = "landscape-router.service";
 const ENABLED_FILE: &str = "enabled";
 const PID_FILE: &str = "main.pid";
+const ACTIVE_FILE: &str = "active";
+const MASKED_FILE: &str = "masked";
 
 pub fn main() -> ExitCode {
     match run() {
@@ -43,10 +45,9 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         [show, property, value, unit]
             if show == "show" && property == "--property=ActiveState" && value == "--value" =>
         {
-            ensure_unit(unit)?;
             println!(
                 "{}",
-                if active_pid(config).is_some() {
+                if unit_is_active(config, unit) {
                     "active"
                 } else {
                     "inactive"
@@ -56,12 +57,25 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         [show, property, value, unit]
             if show == "show" && property == "--property=MainPID" && value == "--value" =>
         {
-            ensure_unit(unit)?;
-            println!("{}", active_pid(config).unwrap_or(0));
+            println!(
+                "{}",
+                if unit == UNIT_NAME {
+                    active_pid(config).unwrap_or(0)
+                } else {
+                    0
+                }
+            );
+        }
+        [show, property, value, unit]
+            if show == "show" && property == "--property=LoadState" && value == "--value" =>
+        {
+            println!("{}", load_state(config, unit));
         }
         [command, unit] if command == "is-enabled" => {
-            ensure_unit(unit)?;
-            if enabled_path(config).is_file() {
+            if masked_path(config, unit).is_file() {
+                println!("masked");
+                exit_code = ExitCode::from(1);
+            } else if unit_is_enabled(config, unit) {
                 println!("enabled");
             } else {
                 println!("disabled");
@@ -69,14 +83,12 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
             }
         }
         [command, quiet, unit] if command == "is-enabled" && quiet == "--quiet" => {
-            ensure_unit(unit)?;
-            if !enabled_path(config).is_file() {
+            if !unit_is_enabled(config, unit) || masked_path(config, unit).is_file() {
                 exit_code = ExitCode::from(1);
             }
         }
         [command, unit] if command == "is-active" => {
-            ensure_unit(unit)?;
-            if active_pid(config).is_some() {
+            if unit_is_active(config, unit) {
                 println!("active");
             } else {
                 println!("inactive");
@@ -84,31 +96,39 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
             }
         }
         [command, quiet, unit] if command == "is-active" && quiet == "--quiet" => {
-            ensure_unit(unit)?;
-            if active_pid(config).is_none() {
+            if !unit_is_active(config, unit) {
                 exit_code = ExitCode::from(3);
             }
         }
         [command, unit] if command == "enable" => {
-            ensure_unit(unit)?;
-            std::fs::write(enabled_path(config), b"enabled\n").context("write enabled marker")?;
+            ensure_installed(config, unit)?;
+            write_marker(&enabled_path(config, unit), b"enabled\n")?;
+        }
+        [command, runtime, unit] if command == "enable" && runtime == "--runtime" => {
+            ensure_installed(config, unit)?;
+            write_marker(&enabled_path(config, unit), b"enabled-runtime\n")?;
         }
         [command, unit] if command == "disable" => {
-            ensure_unit(unit)?;
-            remove_if_exists(&enabled_path(config))?;
+            remove_if_exists(&enabled_path(config, unit))?;
+        }
+        [command, unit] if command == "mask" => {
+            ensure_installed(config, unit)?;
+            write_marker(&masked_path(config, unit), b"masked\n")?;
+        }
+        [command, unit] if command == "unmask" => {
+            remove_if_exists(&masked_path(config, unit))?;
         }
         [command, unit] if command == "start" => {
-            ensure_unit(unit)?;
-            start(config)?;
+            ensure_installed(config, unit)?;
+            start(config, unit)?;
         }
         [command, unit] if command == "stop" => {
-            ensure_unit(unit)?;
-            stop(config)?;
+            stop(config, unit)?;
         }
         [command, unit] if command == "restart" => {
-            ensure_unit(unit)?;
-            stop(config)?;
-            start(config)?;
+            ensure_installed(config, unit)?;
+            stop(config, unit)?;
+            start(config, unit)?;
         }
         [command] if command == "daemon-reload" => {}
         _ => anyhow::bail!("unsupported systemctl arguments: {args:?}"),
@@ -116,12 +136,18 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
     Ok(exit_code)
 }
 
-fn ensure_unit(unit: &str) -> Result<()> {
-    anyhow::ensure!(unit == UNIT_NAME, "unsupported unit {unit:?}");
+fn ensure_installed(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
+    anyhow::ensure!(
+        load_state(config, unit) != "not-found",
+        "unit {unit:?} is not installed"
+    );
     Ok(())
 }
 
-fn start(config: &SystemctlFixtureConfig) -> Result<()> {
+fn start(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
+    if unit != UNIT_NAME {
+        return write_marker(&active_path(config, unit), b"active\n");
+    }
     if active_pid(config).is_some() {
         return Ok(());
     }
@@ -158,7 +184,10 @@ fn start(config: &SystemctlFixtureConfig) -> Result<()> {
     write_pid(config, child.id())
 }
 
-fn stop(config: &SystemctlFixtureConfig) -> Result<()> {
+fn stop(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
+    if unit != UNIT_NAME {
+        return remove_if_exists(&active_path(config, unit));
+    }
     let Some(pid) = read_pid(config) else {
         remove_if_exists(&pid_path(config))?;
         return Ok(());
@@ -254,12 +283,58 @@ fn signal(pid: u32, signal: i32) -> Result<()> {
     Err(std::io::Error::last_os_error()).with_context(|| format!("signal process {pid}"))
 }
 
-fn enabled_path(config: &SystemctlFixtureConfig) -> PathBuf {
-    config.state_dir.join(ENABLED_FILE)
+fn load_state(config: &SystemctlFixtureConfig, unit: &str) -> &'static str {
+    if masked_path(config, unit).is_file() {
+        "masked"
+    } else if config.unit_dir.join(unit).exists() {
+        "loaded"
+    } else {
+        "not-found"
+    }
+}
+
+fn unit_is_active(config: &SystemctlFixtureConfig, unit: &str) -> bool {
+    if unit == UNIT_NAME {
+        active_pid(config).is_some()
+    } else {
+        active_path(config, unit).is_file()
+    }
+}
+
+fn unit_is_enabled(config: &SystemctlFixtureConfig, unit: &str) -> bool {
+    enabled_path(config, unit).is_file()
+}
+
+fn unit_state_dir(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
+    if unit == UNIT_NAME {
+        config.state_dir.clone()
+    } else {
+        config.state_dir.join("units").join(unit)
+    }
+}
+
+fn enabled_path(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
+    unit_state_dir(config, unit).join(ENABLED_FILE)
+}
+
+fn active_path(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
+    unit_state_dir(config, unit).join(ACTIVE_FILE)
+}
+
+fn masked_path(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
+    unit_state_dir(config, unit).join(MASKED_FILE)
 }
 
 fn pid_path(config: &SystemctlFixtureConfig) -> PathBuf {
     config.state_dir.join(PID_FILE)
+}
+
+fn write_marker(path: &Path, content: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create marker directory {}", parent.display()))?;
+    }
+    std::fs::write(path, content).with_context(|| format!("write marker {}", path.display()))
 }
 
 fn remove_if_exists(path: &Path) -> Result<()> {

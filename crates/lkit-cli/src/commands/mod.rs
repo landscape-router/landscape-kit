@@ -2,6 +2,7 @@ pub mod check;
 mod existing;
 pub mod install;
 mod manage;
+pub mod network;
 pub mod reconcile;
 pub mod repair;
 pub mod service_manager;
@@ -12,6 +13,7 @@ use clap::Subcommand;
 pub use check::Check;
 pub use install::Install;
 pub(crate) use manage::ServiceManagerArg;
+pub use network::Network;
 pub use reconcile::Reconcile;
 pub use repair::Repair;
 pub use service_manager::ServiceManager;
@@ -21,6 +23,7 @@ pub use switch::Switch;
 pub enum Commands {
     Check(Check),
     Install(Install),
+    Network(Network),
     Switch(Switch),
     Repair(Repair),
     Reconcile(Reconcile),

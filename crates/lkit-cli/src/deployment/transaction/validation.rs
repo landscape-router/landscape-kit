@@ -15,6 +15,16 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             "transaction phase stopping requires schema version 2".into(),
         ));
     }
+    if transaction.schema_version < 3
+        && matches!(
+            transaction.phase,
+            Phase::AwaitingNetworkConfirmation | Phase::Finalizing
+        )
+    {
+        return Err(corrupted(
+            "network confirmation phases require schema version 3".into(),
+        ));
+    }
     if transaction.started_at > transaction.updated_at {
         return Err(corrupted("started_at must not be after updated_at".into()));
     }
@@ -40,6 +50,14 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             .as_ref()
             .map(|backup| backup.target.as_str()),
         transaction.resolv_conf_backup.as_deref(),
+        transaction
+            .network_takeover
+            .as_ref()
+            .map(|network| network.recovery_binary.as_str()),
+        transaction
+            .network_takeover
+            .as_ref()
+            .map(|network| network.pending_state.as_str()),
         Some(transaction.log_path.as_str()),
     ]
     .into_iter()
@@ -90,8 +108,28 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                     "install transaction must record the target version and release".into(),
                 ));
             }
+            if let Some(network) = &transaction.network_takeover {
+                network.plan.validate()?;
+                if transaction.schema_version < 3 {
+                    return Err(corrupted(
+                        "network takeover install requires transaction schema version 3".into(),
+                    ));
+                }
+                for unit in [
+                    &network.rollback_service,
+                    &network.rollback_timer,
+                    &network.boot_rollback_service,
+                ] {
+                    if !is_safe_unit_name(unit) {
+                        return Err(corrupted(format!(
+                            "invalid network recovery unit name {unit}"
+                        )));
+                    }
+                }
+            }
         }
         Operation::Switch => {
+            reject_network_takeover(transaction, "switch")?;
             if transaction.no_backup && has_backup {
                 return Err(corrupted(
                     "no-backup switch must not record a .lkb backup".into(),
@@ -122,6 +160,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             }
         }
         Operation::Repair => {
+            reject_network_takeover(transaction, "repair")?;
             if transaction.no_backup {
                 return Err(corrupted(
                     "repair transaction must not record no_backup".into(),
@@ -163,6 +202,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             }
         }
         Operation::ServiceMigration => {
+            reject_network_takeover(transaction, "service migration")?;
             if has_backup || has_static_backup || has_versions {
                 return Err(corrupted(
                     "service migration must not record backups, static backups, or version changes"
@@ -209,4 +249,24 @@ fn is_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn reject_network_takeover(
+    transaction: &TransactionFile,
+    operation: &str,
+) -> Result<(), InstallError> {
+    if transaction.network_takeover.is_some() {
+        return Err(corrupted(format!(
+            "{operation} transaction must not record network takeover state"
+        )));
+    }
+    Ok(())
+}
+
+fn is_safe_unit_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-' | b'.' | b'@')
+        })
 }

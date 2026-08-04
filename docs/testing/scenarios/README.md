@@ -27,6 +27,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
+| 网络接管 | `NET-01` 至 `NET-08` | [network-takeover.md](functional/network-takeover.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 
@@ -35,7 +36,7 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
-| 真实 manager 兼容性 | `SYS-01` 至 `SYS-04` | [systemd-smoke.md](systemd-smoke.md) |
+| 真实 manager 与网络兼容性 | `SYS-01` 至 `SYS-06` | [systemd-smoke.md](systemd-smoke.md) |
 
 ## 当前优先缺口
 

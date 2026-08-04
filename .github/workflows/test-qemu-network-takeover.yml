@@ -1,0 +1,91 @@
+name: QEMU network takeover
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-cli/**
+      - crates/lkit-repository/**
+      - scripts/test-qemu-network-takeover.sh
+      - .github/workflows/test-qemu-network-takeover.yml
+  push:
+    branches: [main]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-cli/**
+      - crates/lkit-repository/**
+      - scripts/test-qemu-network-takeover.sh
+      - .github/workflows/test-qemu-network-takeover.yml
+  schedule:
+    - cron: "31 5 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: qemu-network-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qemu-network:
+    name: QEMU/KVM network takeover (observational)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require hardware virtualization
+        run: |
+          sudo test -c /dev/kvm
+          sudo test -r /dev/kvm
+          sudo test -w /dev/kvm
+
+      - name: Install QEMU test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs jq mmdebstrap openssh-client python3 qemu-system-x86 qemu-utils
+
+      - name: Build production lkit
+        run: cargo build --locked --release -p lkit-cli --bin lkit
+
+      - name: Run real network takeover
+        env:
+          LKIT_QEMU_PREBUILT: ${{ github.workspace }}/target/release/lkit
+          LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/qemu-network-artifacts
+        run: |
+          sudo --preserve-env=LKIT_QEMU_PREBUILT,LKIT_QEMU_ARTIFACT_DIR \
+            scripts/test-qemu-network-takeover.sh
+
+      - name: Upload VM diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-network-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/qemu-network-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+  promotion-readiness:
+    name: Report 20-run promotion readiness
+    if: always() && github.event_name != 'pull_request'
+    needs: qemu-network
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check prior completed runs
+        run: |
+          conclusions=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/test-qemu-network-takeover.yml/runs?status=completed&per_page=20" \
+            --jq '[.workflow_runs[].conclusion]')
+          count=$(jq 'length' <<<"$conclusions")
+          successes=$(jq '[.[] | select(. == "success")] | length' <<<"$conclusions")
+          if [[ $count -eq 20 && $successes -eq 20 ]]; then
+            echo "QEMU network takeover has 20 consecutive successful completed runs and is ready for branch-protection promotion." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "QEMU network takeover promotion readiness: $successes successful runs among the latest $count completed runs; 20 consecutive successes are required." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

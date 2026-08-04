@@ -1,0 +1,37 @@
+name: Test Rust workspace
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - .github/workflows/test-rust.yml
+  push:
+    branches: [dev, main]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - .github/workflows/test-rust.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-workspace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build workspace
+        run: cargo build --locked --workspace --features test-support
+      - name: Run unit and fixture tests
+        run: cargo test --locked --workspace --features test-support
