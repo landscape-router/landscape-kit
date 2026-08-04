@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 use chrono::{Duration as ChronoDuration, Utc};
 
@@ -13,7 +13,7 @@ use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, plan, root, state, transaction};
 use crate::service::{health, systemd};
 
-use super::config::NetworkPlan;
+use super::config::{NetworkMode, NetworkPlan};
 
 const HOST_SERVICES: [&str; 3] = [
     "NetworkManager.service",
@@ -275,6 +275,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
             stable_duration: health_options.stable_duration,
         };
         health::wait_for_startup(&options).await?;
+        clear_inherited_wan_ipv4(&network.plan, &runtime.ip_command)?;
         pending.phase = transaction::Phase::Finalizing;
         pending.updated_at = Utc::now();
         transaction::persist(root, &pending)?;
@@ -293,6 +294,23 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
     transaction::mark_phase(root, &pending, transaction::Phase::Committed)?;
     let _ = std::fs::remove_file(root.canonical.join(&network.pending_state));
     println!("network: confirmed Landscape network takeover");
+    Ok(())
+}
+
+fn clear_inherited_wan_ipv4(plan: &NetworkPlan, ip_command: &Path) -> Result<(), InstallError> {
+    let NetworkMode::RoutedLan { wan, .. } = &plan.mode else {
+        return Ok(());
+    };
+    let output = Command::new(ip_command)
+        .args(["-4", "address", "flush", "dev", wan])
+        .output()
+        .map_err(InstallError::Io)?;
+    if !output.status.success() {
+        return Err(InstallError::HealthCheck(format!(
+            "cannot remove the inherited IPv4 addresses from WAN {wan}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
     Ok(())
 }
 
@@ -485,5 +503,30 @@ mod tests {
     fn recovery_unit_command_keeps_test_runtime() {
         let path = Path::new("/tmp/runtime file.json");
         assert_eq!(unit_quote(path), "\"/tmp/runtime file.json\"");
+    }
+
+    #[test]
+    fn only_routed_lan_confirmation_flushes_wan_ipv4() {
+        let mut plan = NetworkPlan {
+            mode: NetworkMode::RoutedLan {
+                wan: "ens3".into(),
+                lan: vec!["ens4".into()],
+                management: "192.168.10.1/24".parse().unwrap(),
+                dhcp_start: "192.168.10.100".parse().unwrap(),
+                dhcp_end: "192.168.10.254".parse().unwrap(),
+            },
+            selected_macs: Vec::new(),
+        };
+        assert!(matches!(
+            clear_inherited_wan_ipv4(&plan, Path::new("/bin/false")),
+            Err(InstallError::HealthCheck(_))
+        ));
+
+        plan.mode = NetworkMode::WanOnly {
+            wan: "ens3".into(),
+            address: "198.51.100.20/24".parse().unwrap(),
+            gateway: "198.51.100.1".parse().unwrap(),
+        };
+        assert!(clear_inherited_wan_ipv4(&plan, Path::new("/bin/false")).is_ok());
     }
 }

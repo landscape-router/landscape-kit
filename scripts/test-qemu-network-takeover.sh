@@ -350,8 +350,8 @@ start_takeover() {
     "ip -4 -o address show dev br_lan | grep -q '192.168.10.1/24'"
   assert_lan "$scenario" "one physical LAN member in br_lan" \
     "ip -j link show master br_lan | jq -e 'length == 1'" >/dev/null
-  assert_lan "$scenario" "WAN has no IPv4 address" \
-    "! ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
+  assert_lan "$scenario" "WAN keeps its inherited IPv4 address before confirmation" \
+    "ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
   for unit in NetworkManager.service firewalld.service systemd-resolved.service; do
     assert_lan "$scenario" "$unit is masked" \
       "test \"\$(systemctl is-enabled $unit || true)\" = masked"
@@ -386,6 +386,8 @@ boot_vm confirm
 start_takeover confirm
 lan_ssh '/usr/local/bin/lkit network confirm --install-dir /var/lib/landscape' \
   >"$artifact_dir/confirm-command.log" 2>&1
+assert_lan confirm "confirmed WAN has no inherited IPv4 address" \
+  "! ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
 lan_ssh "jq -e '.phase == \"committed\"' /var/lib/landscape/transactions/*.json" >/dev/null
 lan_ssh "jq -e '.active_version != null' /var/lib/landscape/state/install-state.json" >/dev/null
 lan_ssh "! find /etc/systemd/system -maxdepth 1 -name 'lkit-network-*' | grep -q ."

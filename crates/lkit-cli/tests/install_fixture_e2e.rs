@@ -156,12 +156,16 @@ case "$*" in
   "-j -4 route show default")
     printf '%s\n' '[{{"dev":"ens3","gateway":"198.51.100.1"}}]'
     ;;
+  "-4 address flush dev ens3")
+    printf '%s\n' post > '{}'
+    ;;
   *)
     echo "unsupported fake ip arguments: $*" >&2
     exit 2
     ;;
 esac
 "#,
+                ip_state.display(),
                 ip_state.display()
             ),
         )
@@ -536,9 +540,13 @@ fn network_takeover_waits_for_reconnected_ssh_confirmation() {
     assert!(timer_start < resolved_stop);
     assert!(resolved_stop < network_manager_stop);
 
-    std::fs::write(&harness.ip_state, b"post\n").unwrap();
     let confirm = harness.network_command(&["confirm"]);
     assert_success(&confirm);
+    assert_eq!(
+        std::fs::read_to_string(&harness.ip_state).unwrap(),
+        "post\n",
+        "confirmation did not remove the inherited WAN IPv4 address"
+    );
     let state: serde_json::Value = serde_json::from_slice(
         &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
     )

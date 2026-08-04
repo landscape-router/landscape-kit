@@ -28,6 +28,8 @@ PPPoE 用户名、密码或 MTU。它保存三个服务的原始状态，然后�
 LAN 物理接口加入 bridge。管理地址默认 `192.168.10.1/24`，可在交互中修改；默认 DHCP
 范围为子网内 `.100` 到最后一个可用地址。初始化配置只设置 WAN route、WAN firewall、
 `br_lan` 的 LAN route 和 DHCP，不为 WAN 设置静态 IP、DHCP、PPPoE、NAT 或默认网关。
+等待确认期间保留原网络管理器遗留的 WAN IPv4，作为尚未确认时的恢复入口；只有确认命令
+通过新管理地址、接口和 Landscape 健康校验后，才清除该 WAN IPv4 并提交事务。
 
 ## 确认与回滚
 
@@ -41,6 +43,8 @@ LAN 物理接口加入 bridge。管理地址默认 `192.168.10.1/24`，可在交
 NetworkManager 最后停止。Landscape 启动并通过健康检查后，安装状态仍不提交。用户必须
 断开旧连接，重新执行 `ssh root@<管理地址>`，然后运行 `lkit network confirm`。确认会
 检查 SSH 服务端地址、接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
+双网口模式还会在这些检查成功后清除 WAN 上继承的 IPv4；清除失败时不提交，恢复 timer
+继续有效。
 
 期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit。恢复不
 依赖原安装进程或原 SSH 连接存活。

@@ -47,6 +47,7 @@
 - 测试层：CLI fixture E2E、QEMU/KVM
 - 状态：`部分覆盖`
 - 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[QEMU 网络接管](../../qemu-network-takeover.md)
+- 说明：双网口在确认前保留继承的 WAN IPv4，确认检查通过后清除；清除失败不提交。
 
 ## NET-07
 
