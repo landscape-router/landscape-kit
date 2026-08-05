@@ -18,6 +18,10 @@ stderr 不输出进度控制字符。systemd worker 只写结构化进度事件�
 CI、`Command::output()` 和其他非交互调用只消费进度事件，不产生 ANSI 控制序列。
 显式 `--non-interactive` 在终端存在时也禁用提示和 Ratatui inline 渲染。
 
+用户可见文案支持英文和简体中文，语言选择与不翻译的机器契约见
+[命令行本地化](../interaction/i18n.md)。语言只改变文案，不改变输出顺序、结构化事件、
+状态键或退出码。
+
 不得输出：
 
 - 管理员密码；

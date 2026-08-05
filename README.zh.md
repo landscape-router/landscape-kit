@@ -37,6 +37,9 @@ sudo lkit
 裸命令进入 Ratatui 管理控制台。脚本和 CI 应使用明确子命令，例如
 `lkit --non-interactive install ...`。
 
+界面会跟随系统 locale，支持英文和简体中文。使用 `lkit --lang zh ...` 或设置
+`LKIT_LANG=zh` 可覆盖系统设置；不支持的语言回退到英文。
+
 使用 Landscape 镜像仓库安装：
 
 ```sh

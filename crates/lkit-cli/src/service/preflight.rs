@@ -73,7 +73,7 @@ pub(crate) fn run_preflight(
 fn result_message(result: &crate::check::model::CheckResult) -> String {
     let mut message = format!("{}: {}", result.id, result.reason);
     if !result.suggestion.is_empty() {
-        message.push_str("；建议：");
+        message.push_str(crate::tr!("; suggestion: ", "；建议："));
         message.push_str(&result.suggestion);
     }
     message
@@ -128,12 +128,12 @@ mod tests {
 
     #[test]
     fn preflight_message_keeps_remediation_suggestion() {
-        let result = CheckResult::new("dependency.pppd", "pppd 命令")
-            .set(Status::Error, "未找到", "未找到 pppd 命令")
-            .suggestion("运行 `apt install ppp`");
+        let result = CheckResult::new("dependency.pppd", "pppd command")
+            .set(Status::Error, "not found", "pppd command not found")
+            .suggestion("run `apt install ppp`");
         assert_eq!(
             result_message(&result),
-            "dependency.pppd: 未找到 pppd 命令；建议：运行 `apt install ppp`"
+            "dependency.pppd: pppd command not found; suggestion: run `apt install ppp`"
         );
     }
 }

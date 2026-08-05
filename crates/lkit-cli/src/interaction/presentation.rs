@@ -44,10 +44,10 @@ impl SavedTermios {
 }
 
 pub(crate) fn warning(id: &str, reason: &str, suggestion: &str) {
-    eprintln!("install: warning [{id}]");
+    eprintln!("install: {} [{id}]", crate::tr!("warning", "警告"));
     eprintln!("  {reason}");
     if !suggestion.is_empty() {
-        eprintln!("  建议：{suggestion}");
+        eprintln!("  {}{suggestion}", crate::tr!("Suggestion: ", "建议："));
     }
 }
 

@@ -12,9 +12,19 @@ struct Listener {
 
 pub fn run() -> Vec<CheckResult> {
     vec![
-        port_check("port.dns", "DNS 端口", 53, true),
-        port_check("port.http", "HTTP 管理端口", 6300, false),
-        port_check("port.https", "HTTPS 管理端口", 6443, false),
+        port_check("port.dns", crate::tr!("DNS port", "DNS 端口"), 53, true),
+        port_check(
+            "port.http",
+            crate::tr!("HTTP management port", "HTTP 管理端口"),
+            6300,
+            false,
+        ),
+        port_check(
+            "port.https",
+            crate::tr!("HTTPS management port", "HTTPS 管理端口"),
+            6443,
+            false,
+        ),
     ]
 }
 
@@ -48,16 +58,19 @@ fn port_check(id: &'static str, title: &'static str, port: u16, include_udp: boo
     }
     let mut result = build_port_result(id, title, port, listeners.clone());
     for error in &read_errors {
-        result = result.detail(format!("无法读取监听信息：{error}"));
+        result = result.detail(crate::trf!(
+            ("Unable to read listener information: {error}"),
+            ("无法读取监听信息：{error}")
+        ));
     }
     if listeners.is_empty() && !read_errors.is_empty() {
         result = result
             .set(
                 Status::Unknown,
-                format!("{port} 无法确认"),
-                "无法读取全部所需的内核监听表，不能确认端口空闲",
+                crate::trf!(("{port} unknown"), ("{port} 无法确认")),
+                crate::tr!("Unable to read all required kernel listener tables; the port cannot be confirmed as free", "无法读取全部所需的内核监听表，不能确认端口空闲"),
             )
-            .suggestion("以 root 身份运行并确认 /proc/net 相关文件可读取");
+            .suggestion(crate::tr!("Run as root and confirm that the relevant /proc/net files are readable", "以 root 身份运行并确认 /proc/net 相关文件可读取"));
     }
     result
 }
@@ -94,26 +107,61 @@ fn build_port_result(
 ) -> CheckResult {
     let mut result = CheckResult::new(id, title);
     if listeners.is_empty() {
-        return result.set(Status::Pass, format!("{port} 无监听"), "端口空闲");
+        return result.set(
+            Status::Pass,
+            crate::trf!(("{port} not listening"), ("{port} 无监听")),
+            crate::tr!("Port is free", "端口空闲"),
+        );
     }
     result = result.set(
         Status::Error,
-        format!("{port} 已被占用"),
-        "端口被其他服务监听，Landscape 无法启动该服务",
+        crate::trf!(("{port} occupied"), ("{port} 已被占用")),
+        crate::tr!(
+            "Another service is listening on this port, so Landscape cannot start the service",
+            "端口被其他服务监听，Landscape 无法启动该服务"
+        ),
     );
-    result.suggestion = "停止占用该端口的服务，或为其更换端口".to_string();
+    result.suggestion = crate::tr!(
+        "Stop the service using this port or move it to another port",
+        "停止占用该端口的服务，或为其更换端口"
+    )
+    .to_string();
     for listener in &listeners {
         match &listener.process {
             Some((comm, pid)) => {
-                result = result.detail(format!(
-                    "{} {}:{} 被 {}（pid={}）占用",
-                    listener.protocol, listener.address, listener.port, comm, pid
+                result = result.detail(crate::trf!(
+                    (
+                        "{} {}:{} is used by {} (pid={})",
+                        listener.protocol,
+                        listener.address,
+                        listener.port,
+                        comm,
+                        pid
+                    ),
+                    (
+                        "{} {}:{} 被 {}（pid={}）占用",
+                        listener.protocol,
+                        listener.address,
+                        listener.port,
+                        comm,
+                        pid
+                    )
                 ))
             }
             None => {
-                result = result.detail(format!(
-                    "{} {}:{} 被监听，但监听者信息不可读取",
-                    listener.protocol, listener.address, listener.port
+                result = result.detail(crate::trf!(
+                    (
+                        "{} {}:{} is listening, but owner information is unreadable",
+                        listener.protocol,
+                        listener.address,
+                        listener.port
+                    ),
+                    (
+                        "{} {}:{} 被监听，但监听者信息不可读取",
+                        listener.protocol,
+                        listener.address,
+                        listener.port
+                    )
                 ))
             }
         }
@@ -210,9 +258,9 @@ mod tests {
 
     #[test]
     fn free_port_reports_pass() {
-        let result = build_port_result("port.test", "测试端口", 1234, Vec::new());
+        let result = build_port_result("port.test", "test port", 1234, Vec::new());
         assert_eq!(result.status, Status::Pass);
-        assert_eq!(result.value, "1234 无监听");
+        assert_eq!(result.value, "1234 not listening");
     }
 
     #[test]
@@ -223,9 +271,9 @@ mod tests {
             port: 53,
             process: Some(("named".to_string(), "123".to_string())),
         }];
-        let result = build_port_result("port.test", "测试端口", 53, listeners);
+        let result = build_port_result("port.test", "test port", 53, listeners);
         assert_eq!(result.status, Status::Error);
-        assert_eq!(result.value, "53 已被占用");
+        assert_eq!(result.value, "53 occupied");
         assert!(
             result
                 .details
@@ -242,13 +290,13 @@ mod tests {
             port: 53,
             process: None,
         }];
-        let result = build_port_result("port.test", "测试端口", 53, listeners);
+        let result = build_port_result("port.test", "test port", 53, listeners);
         assert_eq!(result.status, Status::Error);
         assert!(
             result
                 .details
                 .iter()
-                .any(|d| d.contains("监听者信息不可读取"))
+                .any(|d| d.contains("owner information is unreadable"))
         );
     }
 }

@@ -54,7 +54,13 @@ async fn run_installed_inner(
             ServiceManagerArg::None => TransactionServiceManager::None,
         };
         if target == current_manager(&state) {
-            println!("install: service manager is already {}", target.key());
+            println!(
+                "install: {}",
+                crate::trf!(
+                    ("service manager is already {}", target.key()),
+                    ("服务管理器已经是 {}", target.key())
+                )
+            );
             return Ok(ExitCode::SUCCESS);
         }
         let health = runtime.health_options()?;
@@ -86,7 +92,13 @@ async fn run_installed_inner(
         let health = runtime.health_options()?;
         if args.repair_static {
             crate::workflows::repair::repair_static(&plan.root, &provider, &state).await?;
-            println!("install: static pages restored from the published release assets");
+            println!(
+                "install: {}",
+                crate::tr!(
+                    "static pages restored from the published release assets",
+                    "已从发布资产恢复静态页面"
+                )
+            );
             return Ok(ExitCode::SUCCESS);
         }
         let data_dir = plan.root.canonical.join("data");
@@ -111,18 +123,32 @@ async fn run_installed_inner(
         .await
         {
             Ok(crate::workflows::repair::RepairOutcome::Committed) => {
-                println!("install: the active backend binary was restored and verified");
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        "the active backend binary was restored and verified",
+                        "已恢复并验证活动后端二进制文件"
+                    )
+                );
                 Ok(ExitCode::SUCCESS)
             }
             Ok(crate::workflows::repair::RepairOutcome::RolledBack) => {
                 eprintln!(
-                    "install: repairing the backend failed; rolled back to the previous binary"
+                    "install: {}",
+                    crate::tr!(
+                        "repairing the backend failed; rolled back to the previous binary",
+                        "后端修复失败；已回滚到之前的二进制文件"
+                    )
                 );
                 Ok(ExitCode::from(5))
             }
             Ok(crate::workflows::repair::RepairOutcome::RollbackFailed { reason }) => {
                 eprintln!(
-                    "install: repairing the backend failed and automatic rollback also failed: {reason}; manual recovery is required"
+                    "install: {}",
+                    crate::trf!(
+                        ("repairing the backend failed and automatic rollback also failed: {reason}; manual recovery is required"),
+                        ("后端修复失败，自动回滚也失败：{reason}；需要手动恢复")
+                    )
                 );
                 Ok(ExitCode::from(6))
             }
@@ -190,27 +216,55 @@ async fn run_installed_inner(
         .await
         {
             Ok(pipeline::SwitchOutcome::Committed { version, backup_id }) => {
-                println!("install: switched to version {version}");
+                println!(
+                    "install: {}",
+                    crate::trf!(
+                        ("switched to version {version}"),
+                        ("已切换到版本 {version}")
+                    )
+                );
                 match backup_id {
                     Some(backup_id) => {
-                        println!("install: backup {backup_id} preserved in backups/");
+                        println!(
+                            "install: {}",
+                            crate::trf!(
+                                ("backup {backup_id} preserved in backups/"),
+                                ("备份 {backup_id} 已保存在 backups/")
+                            )
+                        );
                     }
                     None => {
-                        println!("install: no backup was created (--allow-no-backup)");
+                        println!(
+                            "install: {}",
+                            crate::tr!(
+                                "no backup was created (--allow-no-backup)",
+                                "未创建备份（--allow-no-backup）"
+                            )
+                        );
                     }
                 }
                 Ok(ExitCode::SUCCESS)
             }
             Ok(pipeline::SwitchOutcome::RolledBack { version, backup_id }) => {
+                let backup = backup_id.map_or_else(String::new, |id| {
+                    crate::trf!((" using backup {id}"), ("，使用备份 {id}"))
+                });
                 eprintln!(
-                    "install: switching to the target version failed; rolled back to {version}{}",
-                    backup_id.map_or_else(String::new, |id| format!(" using backup {id}"))
+                    "install: {}",
+                    crate::trf!(
+                        ("switching to the target version failed; rolled back to {version}{backup}"),
+                        ("切换到目标版本失败；已回滚到 {version}{backup}")
+                    )
                 );
                 Ok(ExitCode::from(5))
             }
             Ok(pipeline::SwitchOutcome::RollbackFailed { version, .. }) => {
                 eprintln!(
-                    "install: switching failed and automatic rollback to {version} also failed; manual recovery is required"
+                    "install: {}",
+                    crate::trf!(
+                        ("switching failed and automatic rollback to {version} also failed; manual recovery is required"),
+                        ("切换失败，自动回滚到 {version} 也失败；需要手动恢复")
+                    )
                 );
                 Ok(ExitCode::from(6))
             }
@@ -224,7 +278,13 @@ async fn run_installed_inner(
         && data.join("landscape.toml").is_file()
     {
         crate::workflows::repair::observe_initialization(&plan.root, &state)?;
-        println!("install: observed initialization completion; initialization is now complete");
+        println!(
+            "install: {}",
+            crate::tr!(
+                "observed initialization completion; initialization is now complete",
+                "已观察到初始化完成；初始化状态现已完成"
+            )
+        );
         return Ok(ExitCode::SUCCESS);
     }
     same_version_install(
@@ -236,8 +296,14 @@ async fn run_installed_inner(
     )
     .await?;
     println!(
-        "install: version {} is already installed and verified",
-        state.active_version
+        "install: {}",
+        crate::trf!(
+            (
+                "version {} is already installed and verified",
+                state.active_version
+            ),
+            ("版本 {} 已安装并通过验证", state.active_version)
+        )
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -297,9 +363,10 @@ async fn same_version_install(
         let changed = state.service.definition_sha256.as_deref() != Some(actual.as_str());
         if changed {
             if !args.accept_service_change {
-                let accepted = crate::interaction::interactive::confirm(
-                    "the managed service unit changed; keep it as-is?",
-                )?;
+                let accepted = crate::interaction::interactive::confirm(crate::tr!(
+                    "the managed service unit changed; keep it as-is? Type `yes`: ",
+                    "受管服务 unit 已更改；是否原样保留？请输入 `yes`："
+                ))?;
                 if !accepted {
                     return Err(plan::InstallError::UserRefused(
                         "user refused to keep the modified service unit".into(),
@@ -309,13 +376,21 @@ async fn same_version_install(
             updated.service.definition_sha256 = Some(actual);
         } else if args.accept_service_change {
             eprintln!(
-                "install: warning: no managed service unit change detected; --accept-service-change ignored"
+                "install: {}",
+                crate::tr!(
+                    "warning: no managed service unit change detected; --accept-service-change ignored",
+                    "警告：未检测到受管服务 unit 更改；已忽略 --accept-service-change"
+                )
             );
         }
         pipeline::verify_unit_ownership(root, systemd)?;
     } else if args.accept_service_change {
         eprintln!(
-            "install: warning: no managed service unit exists; --accept-service-change ignored"
+            "install: {}",
+            crate::tr!(
+                "warning: no managed service unit exists; --accept-service-change ignored",
+                "警告：不存在受管服务 unit；已忽略 --accept-service-change"
+            )
         );
     }
 

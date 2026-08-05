@@ -51,3 +51,12 @@
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)、[`lkit check` 规格](../../../check.md)
 - 说明：覆盖检查汇总、检查与表单间的焦点移动、分组详情、非通过原因与建议，以及 Esc 收起
   详情而不触发退出确认；检查任务通过后台线程运行。
+
+## UI-06
+
+**控制台即时切换并在底栏显示语言**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台输入规格](../../../interaction/console.md)、[本地化规格](../../../interaction/i18n.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：断言英文底栏、`L` 切换后的中文导航与中文底栏，并验证文本编辑状态下 `l` 仍写入字段而不切换语言。

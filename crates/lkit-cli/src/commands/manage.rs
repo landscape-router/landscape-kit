@@ -95,12 +95,22 @@ pub(crate) async fn run_request(args: &InstallRequest) -> ExitCode {
         }
         (RequestMode::Install, plan::StatePresence::Installed) => {
             eprintln!(
-                "install: an installation already exists; use switch, repair, reconcile, or service-manager"
+                "install: {}",
+                crate::tr!(
+                    "an installation already exists; use switch, repair, reconcile, or service-manager",
+                    "安装已存在；请使用 switch、repair、reconcile 或 service-manager"
+                )
             );
             ExitCode::from(2)
         }
         (_, plan::StatePresence::FirstInstall) => {
-            eprintln!("install: this command requires an existing installation");
+            eprintln!(
+                "install: {}",
+                crate::tr!(
+                    "this command requires an existing installation",
+                    "此命令需要已有安装"
+                )
+            );
             ExitCode::from(2)
         }
         (_, plan::StatePresence::Installed) => super::existing::run(args, &plan, &runtime).await,
@@ -123,7 +133,11 @@ pub(super) fn exit_code(error: &plan::InstallError) -> ExitCode {
 fn run_force(args: &InstallRequest) -> ExitCode {
     if args.repair_static || args.repair_binary || args.accept_service_change {
         eprintln!(
-            "install: --force cannot be combined with --repair-static, --repair-binary, or any --accept-* flag"
+            "install: {}",
+            crate::tr!(
+                "--force cannot be combined with --repair-static, --repair-binary, or any --accept-* flag",
+                "--force 不能与 --repair-static、--repair-binary 或任何 --accept-* 参数组合使用"
+            )
         );
         return ExitCode::from(2);
     }
@@ -145,15 +159,30 @@ fn run_force(args: &InstallRequest) -> ExitCode {
         }
     };
     eprintln!(
-        "install: install root is {}",
+        "install: {} {}",
+        crate::tr!("install root is", "安装根目录为"),
         normalized.canonical.display()
     );
-    eprintln!("install: --force does not delete, move, overwrite, or quarantine any file");
     eprintln!(
-        "install: the install root may contain databases, credentials, certificates, backups, and user files"
+        "install: {}",
+        crate::tr!(
+            "--force does not delete, move, overwrite, or quarantine any file",
+            "--force 不会删除、移动、覆盖或隔离任何文件"
+        )
     );
     eprintln!(
-        "install: manually inspect and delete the entire install root, then re-run `lkit install` without --force"
+        "install: {}",
+        crate::tr!(
+            "the install root may contain databases, credentials, certificates, backups, and user files",
+            "安装根目录可能包含数据库、凭据、证书、备份和用户文件"
+        )
+    );
+    eprintln!(
+        "install: {}",
+        crate::tr!(
+            "manually inspect and delete the entire install root, then re-run `lkit install` without --force",
+            "请手动检查并删除整个安装根目录，然后重新运行不带 --force 的 `lkit install`"
+        )
     );
     ExitCode::FAILURE
 }
@@ -203,7 +232,13 @@ async fn run_first_install(
         let mut tty = match crate::interaction::interactive::Tty::open() {
             Ok(tty) => tty,
             Err(error) => {
-                eprintln!("install: network takeover requires an interactive terminal: {error}");
+                eprintln!(
+                    "install: {}",
+                    crate::trf!(
+                        ("network takeover requires an interactive terminal: {error}"),
+                        ("网络接管需要交互终端：{error}")
+                    )
+                );
                 return exit_code(&error);
             }
         };
@@ -258,30 +293,65 @@ async fn run_first_install(
         Ok(outcome) => {
             if outcome.pending_network_address.is_some() {
                 println!(
-                    "install: activated {} and is awaiting network confirmation",
-                    outcome.release.version
+                    "install: {}",
+                    crate::trf!(
+                        (
+                            "activated {} and is awaiting network confirmation",
+                            outcome.release.version
+                        ),
+                        ("已激活 {}，正在等待网络确认", outcome.release.version)
+                    )
                 );
             } else {
                 println!(
-                    "install: committed first install of {}",
-                    outcome.release.version
+                    "install: {}",
+                    crate::trf!(
+                        ("committed first install of {}", outcome.release.version),
+                        ("已提交首次安装 {}", outcome.release.version)
+                    )
                 );
             }
             match outcome.manager {
                 pipeline::ServiceManager::Systemd => {
                     println!(
-                        "install: systemd unit landscape-router.service is registered, enabled, and running"
+                        "install: {}",
+                        crate::tr!(
+                            "systemd unit landscape-router.service is registered, enabled, and running",
+                            "systemd unit landscape-router.service 已注册、启用并正在运行"
+                        )
                     );
                     if let Some(address) = outcome.pending_network_address {
-                        println!("install: network takeover is awaiting confirmation");
-                        println!("install: reconnect to {address} and run `lkit network confirm`");
+                        println!(
+                            "install: {}",
+                            crate::tr!(
+                                "network takeover is awaiting confirmation",
+                                "网络接管正在等待确认"
+                            )
+                        );
+                        println!(
+                            "install: {}",
+                            crate::trf!(
+                                ("reconnect to {address} and run `lkit network confirm`"),
+                                ("重新连接到 {address} 并运行 `lkit network confirm`")
+                            )
+                        );
                     } else {
-                        println!("install: management interface https://127.0.0.1:6443");
+                        println!(
+                            "install: {}",
+                            crate::tr!(
+                                "management interface https://127.0.0.1:6443",
+                                "管理界面 https://127.0.0.1:6443"
+                            )
+                        );
                     }
                 }
                 pipeline::ServiceManager::None => {
                     println!(
-                        "install: initialization is pending; start the service manually with:"
+                        "install: {}",
+                        crate::tr!(
+                            "initialization is pending; start the service manually with:",
+                            "初始化等待中；请使用以下命令手动启动服务："
+                        )
                     );
                     println!("{}", pipeline::reference_command(&plan.root));
                 }
@@ -307,7 +377,10 @@ fn resolve_credentials(
         (Some(password), None) => password.clone(),
         (None, Some(path)) => credentials::read_password_file(path, managed_uid)?,
         (None, None) => {
-            match crate::interaction::interactive::read_password("Enter admin password") {
+            match crate::interaction::interactive::read_password(crate::tr!(
+                "Enter admin password",
+                "输入管理员密码"
+            )) {
                 Ok(password) => password,
                 Err(plan::InstallError::NonInteractive(reason)) => {
                     return Err(plan::InstallError::ParameterUsage(format!(
@@ -433,7 +506,11 @@ fn check_host_conflicts(
     let old = std::path::Path::new("/root/.landscape-router");
     if old.exists() {
         eprintln!(
-            "install: warning: found an old manual deployment at /root/.landscape-router; v1 does not migrate it and rejects deployments that could overwrite it or conflict on the fixed ports; a dedicated migration flow will be provided in the future"
+            "install: {}",
+            crate::tr!(
+                "warning: found an old manual deployment at /root/.landscape-router; v1 does not migrate it and rejects deployments that could overwrite it or conflict on the fixed ports; a dedicated migration flow will be provided in the future",
+                "警告：发现旧的手动部署 /root/.landscape-router；v1 不会迁移它，并拒绝可能覆盖它或与固定端口冲突的部署；未来将提供专用迁移流程"
+            )
         );
     }
     let ports: Vec<(crate::service::process::Protocol, u16)> = runtime
@@ -465,7 +542,7 @@ fn check_host_conflicts(
 fn check_environment(runtime: &InstallRuntime) -> Result<(), plan::InstallError> {
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(plan::InstallError::UnsupportedPlatform(
-            "must run as root (uid 0)".into(),
+            crate::tr!("must run as root (uid 0)", "必须以 root 身份运行（uid 0）").into(),
         ));
     }
     Ok(())

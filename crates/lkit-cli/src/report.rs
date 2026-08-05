@@ -24,9 +24,10 @@ pub fn render(report: &CheckReport, verbose: bool, color: bool) -> String {
         let title = paint(group.title, "1", color);
         out.push_str(&format!("[{}] {title}\n", index + 1));
         out.push_str(&format!(
-            "{}│ {}│ 结果\n",
-            pad("状态", STATUS_WIDTH),
-            pad("检查项", id_width)
+            "{}│ {}│ {}\n",
+            pad(crate::tr!("STATUS", "状态"), STATUS_WIDTH),
+            pad(crate::tr!("CHECK", "检查项"), id_width),
+            crate::tr!("RESULT", "结果")
         ));
         out.push_str(&format!(
             "{}┼ {}┼{}\n",
@@ -49,7 +50,10 @@ pub fn render(report: &CheckReport, verbose: bool, color: bool) -> String {
                 out.push_str(&continuation(id_width, &result.suggestion));
             }
             if verbose {
-                out.push_str(&continuation(id_width, &format!("标题：{}", result.title)));
+                out.push_str(&continuation(
+                    id_width,
+                    &crate::trf!(("Title: {}", result.title), ("标题：{}", result.title)),
+                ));
                 for detail in &result.details {
                     out.push_str(&continuation(id_width, detail));
                 }
@@ -58,18 +62,45 @@ pub fn render(report: &CheckReport, verbose: bool, color: bool) -> String {
         out.push('\n');
     }
 
-    out.push_str(&format!(
-        "汇总：{} 通过 / {} 警告 / {} 错误 / {} 未知\n",
-        report.counts.pass, report.counts.warning, report.counts.error, report.counts.unknown
+    out.push_str(&crate::trf!(
+        (
+            "Summary: {} passed / {} warnings / {} errors / {} unknown\n",
+            report.counts.pass,
+            report.counts.warning,
+            report.counts.error,
+            report.counts.unknown
+        ),
+        (
+            "汇总：{} 通过 / {} 警告 / {} 错误 / {} 未知\n",
+            report.counts.pass,
+            report.counts.warning,
+            report.counts.error,
+            report.counts.unknown
+        )
     ));
     let conclusion = match report.summary {
-        Status::Error => "存在部署阻断项，不建议继续部署。",
-        Status::Unknown => "存在无法完成的检查，不能确认环境满足要求。",
-        Status::Warning => "未发现硬性错误，存在需人工确认的风险。",
-        Status::Pass => "环境满足部署条件，可以继续部署。",
+        Status::Error => crate::tr!(
+            "Deployment blockers were found; continuing is not recommended.",
+            "存在部署阻断项，不建议继续部署。"
+        ),
+        Status::Unknown => crate::tr!(
+            "Some checks could not be completed; host readiness cannot be confirmed.",
+            "存在无法完成的检查，不能确认环境满足要求。"
+        ),
+        Status::Warning => crate::tr!(
+            "No hard errors were found, but some risks require review.",
+            "未发现硬性错误，存在需人工确认的风险。"
+        ),
+        Status::Pass => crate::tr!(
+            "The host meets deployment requirements.",
+            "环境满足部署条件，可以继续部署。"
+        ),
     };
     let conclusion = paint(conclusion, status_color(report.summary), color);
-    out.push_str(&format!("结论：{conclusion}\n"));
+    out.push_str(&crate::trf!(
+        ("Conclusion: {conclusion}\n"),
+        ("结论：{conclusion}\n")
+    ));
     out
 }
 
@@ -144,14 +175,14 @@ mod tests {
         assert!(text.contains("│"));
         assert!(text.contains("ERROR"));
         assert!(text.contains("必须以 root 身份运行"));
-        assert!(text.contains("结论：存在部署阻断项，不建议继续部署。"));
+        assert!(text.contains("Conclusion: Deployment blockers were found"));
         assert!(!text.contains("\x1b["));
     }
 
     #[test]
     fn aligns_columns_by_display_width() {
         let text = render(&sample_report(), false, false);
-        let header = text.lines().find(|line| line.contains("状态")).unwrap();
+        let header = text.lines().find(|line| line.contains("STATUS")).unwrap();
         let row = text.lines().find(|line| line.contains("linux")).unwrap();
         let header_cells: Vec<&str> = header.split('│').collect();
         let row_cells: Vec<&str> = row.split('│').collect();
@@ -177,7 +208,7 @@ mod tests {
             .clone()
             .detail("使用 sudo 后重试");
         let text = render(&report, true, false);
-        assert!(text.contains("标题：运行身份"));
+        assert!(text.contains("Title: 运行身份"));
         assert!(text.contains("使用 sudo 后重试"));
     }
 }

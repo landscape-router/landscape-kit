@@ -15,12 +15,14 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use unicode_width::UnicodeWidthStr;
 
 use crate::check;
 use crate::check::model::{CheckReport, Status};
 use crate::commands::install::Install;
 use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::{plan, root, state};
+use crate::i18n::Language;
 use crate::interaction::credentials;
 
 const FORM_FIELDS: usize = 10;
@@ -35,7 +37,11 @@ pub(crate) enum ConsoleAction {
 
 pub(crate) fn run() -> Result<ConsoleAction, String> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return Err("a terminal is required; use an lkit subcommand for command mode".into());
+        return Err(crate::tr!(
+            "a terminal is required; use an lkit subcommand for command mode",
+            "需要终端；命令模式请使用 lkit 子命令"
+        )
+        .into());
     }
     let mut terminal = ConsoleTerminal::start()?;
     let mut app = ConsoleApp::new();
@@ -119,13 +125,13 @@ impl Menu {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Overview => "Overview",
-            Self::Install => "Install",
-            Self::Versions => "Versions",
-            Self::Configuration => "Configuration",
-            Self::Services => "Services",
-            Self::Network => "Network",
-            Self::Diagnostics => "Diagnostics",
+            Self::Overview => crate::tr!("Overview", "概览"),
+            Self::Install => crate::tr!("Install", "安装"),
+            Self::Versions => crate::tr!("Versions", "版本"),
+            Self::Configuration => crate::tr!("Configuration", "配置"),
+            Self::Services => crate::tr!("Services", "服务"),
+            Self::Network => crate::tr!("Network", "网络"),
+            Self::Diagnostics => crate::tr!("Diagnostics", "诊断"),
         }
     }
 }
@@ -172,8 +178,10 @@ impl Preflight {
             return;
         }
         let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
         std::thread::spawn(move || {
-            let _ = sender.send(check::run_all());
+            let report = crate::i18n::with_language(language, check::run_all);
+            let _ = sender.send(report);
         });
         self.state = PreflightState::Running(receiver);
         self.scroll = 0;
@@ -191,9 +199,18 @@ impl Preflight {
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
-                self.state = PreflightState::Failed("check worker stopped unexpectedly".into());
+                self.state = PreflightState::Failed(
+                    crate::tr!("check worker stopped unexpectedly", "检查 worker 意外停止").into(),
+                );
             }
         }
+    }
+
+    fn restart(&mut self) {
+        self.state = PreflightState::NotRun;
+        self.expanded = false;
+        self.scroll = 0;
+        self.start();
     }
 
     fn scroll_down(&mut self, amount: u16) {
@@ -254,6 +271,10 @@ impl ConsoleApp {
                 }
                 _ => {}
             }
+            return None;
+        }
+        if !self.install.editing && language_toggle_key(&key) {
+            self.toggle_language();
             return None;
         }
         if self.preflight.expanded && self.menu() == Menu::Install {
@@ -358,6 +379,16 @@ impl ConsoleApp {
         None
     }
 
+    fn toggle_language(&mut self) {
+        crate::i18n::configure(crate::i18n::current().toggled());
+        self.exit_state = ExitState::Idle;
+        self.notice = "Ready".into();
+        self.snapshot = Snapshot::load(&self.install.install_dir);
+        if !matches!(&self.preflight.state, PreflightState::NotRun) {
+            self.preflight.restart();
+        }
+    }
+
     fn handle_editing_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
         match key.code {
             KeyCode::Enter | KeyCode::Esc => self.install.editing = false,
@@ -400,29 +431,61 @@ impl ConsoleApp {
 
     fn hints(&self) -> &'static str {
         if self.exit_state == ExitState::Confirming {
-            "Enter Exit  Esc Cancel"
+            crate::tr!("Enter Exit  Esc Cancel", "Enter 退出  Esc 取消")
         } else if self.exit_state == ExitState::Armed {
-            "Press Esc again for exit confirmation  Any other key cancels"
+            crate::tr!(
+                "Press Esc again for exit confirmation  Any other key cancels",
+                "再次按 Esc 确认退出  其他按键取消"
+            )
         } else if self.preflight.expanded && self.menu() == Menu::Install {
-            "Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close"
+            crate::tr!(
+                "Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close",
+                "上/下 滚动  PgUp/PgDn 翻页  R 重跑  Esc 关闭"
+            )
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
-            "Type Edit  Backspace Delete  Enter/Esc Finish"
+            crate::tr!(
+                "Type Edit  Backspace Delete  Enter/Esc Finish",
+                "输入 编辑  Backspace 删除  Enter/Esc 完成"
+            )
         } else {
             match (self.focus, self.menu()) {
                 (Focus::Navigation, _) => {
-                    "Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Confirm"
+                    crate::tr!(
+                        "Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Confirm",
+                        "上/下 菜单  右/Enter 打开  Tab 切换  Esc Esc 确认"
+                    )
                 }
                 (Focus::Panel, Menu::Install) if self.install.checks_selected => {
-                    "Enter Details  R Re-run  Down Settings  Left Menu  Esc Esc Confirm"
+                    crate::tr!(
+                        "Enter Details  R Re-run  Down Settings  Left Menu  Esc Esc Confirm",
+                        "Enter 详情  R 重跑  下 设置  左 菜单  Esc Esc 确认"
+                    )
                 }
                 (Focus::Panel, Menu::Install) => {
-                    "Up/Down Field  Left Menu  Right Change  Enter Select  Tab Menu  Esc Esc Confirm"
+                    crate::tr!(
+                        "Up/Down Field  Left Menu  Right Change  Enter Select  Tab Menu  Esc Esc Confirm",
+                        "上/下 字段  左 菜单  右 更改  Enter 选择  Tab 菜单  Esc Esc 确认"
+                    )
                 }
-                (Focus::Panel, _) => "Left Menu  Tab Switch  Esc Esc Confirm",
+                (Focus::Panel, _) => crate::tr!(
+                    "Left Menu  Tab Switch  Esc Esc Confirm",
+                    "左 菜单  Tab 切换  Esc Esc 确认"
+                ),
             }
         }
     }
+
+    fn language_switch_available(&self) -> bool {
+        self.exit_state != ExitState::Confirming && !self.install.editing
+    }
+}
+
+fn language_toggle_key(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('l' | 'L'))
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -436,8 +499,8 @@ impl RepositoryMode {
     fn label(self) -> &'static str {
         match self {
             Self::Github => "GitHub",
-            Self::Mirror => "HTTP mirror",
-            Self::Custom => "Custom HTTP",
+            Self::Mirror => crate::tr!("HTTP mirror", "HTTP 镜像"),
+            Self::Custom => crate::tr!("Custom HTTP", "自定义 HTTP"),
         }
     }
 
@@ -462,7 +525,7 @@ enum ManagerMode {
 impl ManagerMode {
     fn label(self) -> &'static str {
         match self {
-            Self::Auto => "Auto",
+            Self::Auto => crate::tr!("Auto", "自动"),
             Self::Systemd => "systemd",
             Self::None => "none",
         }
@@ -552,46 +615,82 @@ impl InstallForm {
     fn selected_help(&self) -> (&'static str, &'static str) {
         match self.selected {
             0 => (
-                "Version",
-                "Release to install. Use latest for the newest stable release or enter an exact stable version such as 1.2.3.",
+                crate::tr!("Version", "版本"),
+                crate::tr!(
+                    "Release to install. Use latest for the newest stable release or enter an exact stable version such as 1.2.3.",
+                    "要安装的发布版本。使用 latest 获取最新稳定版，或输入 1.2.3 这样的精确稳定版本。"
+                ),
             ),
             1 => (
-                "Repository",
-                "Release source. Choose GitHub, the default HTTP mirror, or a custom protocol v1 HTTP repository.",
+                crate::tr!("Repository", "仓库"),
+                crate::tr!(
+                    "Release source. Choose GitHub, the default HTTP mirror, or a custom protocol v1 HTTP repository.",
+                    "发布源。可选择 GitHub、默认 HTTP 镜像或自定义 protocol v1 HTTP 仓库。"
+                ),
             ),
             2 => (
-                "Repository URL",
-                "Base URL of the custom protocol v1 repository. Remote repositories require HTTPS; loopback HTTP is allowed.",
+                crate::tr!("Repository URL", "仓库 URL"),
+                crate::tr!(
+                    "Base URL of the custom protocol v1 repository. Remote repositories require HTTPS; loopback HTTP is allowed.",
+                    "自定义 protocol v1 仓库的基础 URL。远程仓库必须使用 HTTPS；回环地址允许 HTTP。"
+                ),
             ),
             3 => (
-                "Install root",
-                "Absolute directory that stores releases, configuration, state, transactions, and backups.",
+                crate::tr!("Install root", "安装根目录"),
+                crate::tr!(
+                    "Absolute directory that stores releases, configuration, state, transactions, and backups.",
+                    "保存发布版本、配置、状态、事务和备份的绝对目录。"
+                ),
             ),
             4 => (
-                "Admin user",
-                "Username for the initial Landscape administrator account.",
+                crate::tr!("Admin user", "管理员用户"),
+                crate::tr!(
+                    "Username for the initial Landscape administrator account.",
+                    "初始 Landscape 管理员账户的用户名。"
+                ),
             ),
             5 => (
-                "Password",
-                "Password for the initial administrator. It remains masked and is validated before installation starts.",
+                crate::tr!("Password", "密码"),
+                crate::tr!(
+                    "Password for the initial administrator. It remains masked and is validated before installation starts.",
+                    "初始管理员密码。密码始终隐藏，并在安装开始前进行验证。"
+                ),
             ),
             6 => (
-                "Confirm password",
-                "Enter the administrator password again to prevent typing mistakes.",
+                crate::tr!("Confirm password", "确认密码"),
+                crate::tr!(
+                    "Enter the administrator password again to prevent typing mistakes.",
+                    "再次输入管理员密码，避免输入错误。"
+                ),
             ),
             7 => (
-                "Service manager",
-                "Choose automatic detection, explicit systemd supervision, or no service manager.",
+                crate::tr!("Service manager", "服务管理器"),
+                crate::tr!(
+                    "Choose automatic detection, explicit systemd supervision, or no service manager.",
+                    "选择自动检测、明确使用 systemd，或不使用服务管理器。"
+                ),
             ),
             8 => (
-                "Network takeover",
-                "Allow Landscape to reconfigure host interfaces and network services during installation.",
+                crate::tr!("Network takeover", "网络接管"),
+                crate::tr!(
+                    "Allow Landscape to reconfigure host interfaces and network services during installation.",
+                    "允许 Landscape 在安装期间重新配置主机网卡和网络服务。"
+                ),
             ),
             9 => (
-                "Start installation",
-                "Validate the form, leave the console, and start the installation using these settings.",
+                crate::tr!("Start installation", "开始安装"),
+                crate::tr!(
+                    "Validate the form, leave the console, and start the installation using these settings.",
+                    "验证表单、退出控制台，并使用这些设置开始安装。"
+                ),
             ),
-            _ => ("Install", "Configure the Landscape installation."),
+            _ => (
+                crate::tr!("Install", "安装"),
+                crate::tr!(
+                    "Configure the Landscape installation.",
+                    "配置 Landscape 安装。"
+                ),
+            ),
         }
     }
 
@@ -654,7 +753,11 @@ impl InstallForm {
             }
         };
         if self.password != self.password_confirmation {
-            return Err("password confirmation does not match".into());
+            return Err(crate::tr!(
+                "password confirmation does not match",
+                "两次输入的密码不一致"
+            )
+            .into());
         }
         credentials::validate_password(&self.password).map_err(|error| error.to_string())?;
         let password = std::mem::take(&mut self.password);
@@ -737,10 +840,10 @@ impl Snapshot {
 
     fn badge(&self) -> (&'static str, Color) {
         match self {
-            Self::RootRequired => ("Root required", Color::Yellow),
-            Self::NotInstalled => ("Not installed", Color::Yellow),
-            Self::Installed { .. } => ("Installed", Color::Green),
-            Self::Unavailable(_) => ("Attention required", Color::Red),
+            Self::RootRequired => (crate::tr!("Root required", "需要 root"), Color::Yellow),
+            Self::NotInstalled => (crate::tr!("Not installed", "未安装"), Color::Yellow),
+            Self::Installed { .. } => (crate::tr!("Installed", "已安装"), Color::Green),
+            Self::Unavailable(_) => (crate::tr!("Attention required", "需要处理"), Color::Red),
         }
     }
 }
@@ -748,7 +851,7 @@ impl Snapshot {
 fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     if frame.area().width < 72 || frame.area().height < 18 {
         frame.render_widget(
-            Paragraph::new("Terminal too small")
+            Paragraph::new(crate::tr!("Terminal too small", "终端尺寸过小"))
                 .alignment(Alignment::Center)
                 .block(Block::bordered().title("Landscape Kit")),
             frame.area(),
@@ -769,22 +872,62 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
         Layout::horizontal([Constraint::Length(24), Constraint::Min(24)]).areas(body);
     render_navigation(frame, app, navigation);
     render_panel(frame, app, panel);
+    render_status(frame, app, status);
+    if app.exit_state == ExitState::Confirming {
+        render_exit_confirmation(frame);
+    }
+}
+
+fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+    frame.render_widget(Block::default().borders(Borders::TOP), area);
+    let content = Rect::new(
+        area.x,
+        area.y.saturating_add(1),
+        area.width,
+        area.height.saturating_sub(1),
+    );
+    let [summary, hints] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(content);
+    let language = language_status(crate::i18n::current(), app.language_switch_available());
+    let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
+        .saturating_add(2)
+        .min(summary.width);
+    let [notice, language_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(language_width)]).areas(summary);
     let notice_color = if app.notice == "Ready" {
         Color::DarkGray
     } else {
         Color::Red
     };
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(app.notice.as_str(), Style::default().fg(notice_color)),
-            Line::styled(app.hints(), Style::default().fg(Color::DarkGray)),
-        ])
-        .block(Block::default().borders(Borders::TOP)),
-        status,
+        Paragraph::new(if app.notice == "Ready" {
+            crate::tr!("Ready", "就绪")
+        } else {
+            app.notice.as_str()
+        })
+        .style(Style::default().fg(notice_color)),
+        notice,
     );
-    if app.exit_state == ExitState::Confirming {
-        render_exit_confirmation(frame);
+    frame.render_widget(
+        Paragraph::new(language)
+            .alignment(Alignment::Right)
+            .style(Style::default().fg(Color::Cyan)),
+        language_area,
+    );
+    frame.render_widget(
+        Paragraph::new(app.hints()).style(Style::default().fg(Color::DarkGray)),
+        hints,
+    );
+}
+
+fn language_status(language: Language, switch_available: bool) -> String {
+    match (language, switch_available) {
+        (Language::En, true) => "L  Language: English (en)",
+        (Language::En, false) => "Language: English (en)",
+        (Language::Zh, true) => "L  语言：中文 (zh)",
+        (Language::Zh, false) => "语言：中文 (zh)",
     }
+    .into()
 }
 
 fn render_exit_confirmation(frame: &mut Frame<'_>) {
@@ -801,15 +944,18 @@ fn render_exit_confirmation(frame: &mut Frame<'_>) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
-                "Exit Landscape Kit?",
+                crate::tr!("Exit Landscape Kit?", "退出 Landscape Kit？"),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
-            Line::raw("Press Enter to exit."),
-            Line::styled("Press Esc to cancel.", Style::default().fg(Color::DarkGray)),
+            Line::raw(crate::tr!("Press Enter to exit.", "按 Enter 退出。")),
+            Line::styled(
+                crate::tr!("Press Esc to cancel.", "按 Esc 取消。"),
+                Style::default().fg(Color::DarkGray),
+            ),
         ])
         .alignment(Alignment::Center)
-        .block(Block::bordered().title("Confirm exit")),
+        .block(Block::bordered().title(crate::tr!("Confirm exit", "确认退出"))),
         area,
     );
 }
@@ -846,7 +992,7 @@ fn render_navigation(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     };
     frame.render_stateful_widget(
         List::new(items)
-            .block(Block::bordered().title("Navigation"))
+            .block(Block::bordered().title(crate::tr!("Navigation", "导航")))
             .highlight_style(highlight)
             .highlight_symbol("> "),
         area,
@@ -864,7 +1010,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                     Line::styled(menu.label(), Style::default().add_modifier(Modifier::BOLD)),
                     Line::raw(""),
                     Line::styled(
-                        "Not available in this release",
+                        crate::tr!("Not available in this release", "当前版本暂不可用"),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ])
@@ -880,38 +1026,62 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let lines = match &app.snapshot {
         Snapshot::RootRequired => vec![
             Line::styled(
-                "Root privileges are required",
+                crate::tr!("Root privileges are required", "需要 root 权限"),
                 Style::default().fg(Color::Yellow),
             ),
             Line::raw(""),
-            Line::raw(format!("Install root  {}", app.install.install_dir)),
+            Line::raw(crate::trf!(
+                ("Install root  {}", app.install.install_dir),
+                ("安装根目录  {}", app.install.install_dir)
+            )),
         ],
         Snapshot::NotInstalled => vec![
             Line::styled(
-                "Landscape is not installed",
+                crate::tr!("Landscape is not installed", "Landscape 尚未安装"),
                 Style::default().fg(Color::Yellow),
             ),
             Line::raw(""),
-            Line::raw(format!("Install root  {}", app.install.install_dir)),
+            Line::raw(crate::trf!(
+                ("Install root  {}", app.install.install_dir),
+                ("安装根目录  {}", app.install.install_dir)
+            )),
         ],
         Snapshot::Installed {
             version,
             manager,
             initialized,
         } => vec![
-            Line::styled("Landscape is installed", Style::default().fg(Color::Green)),
+            Line::styled(
+                crate::tr!("Landscape is installed", "Landscape 已安装"),
+                Style::default().fg(Color::Green),
+            ),
             Line::raw(""),
-            Line::raw(format!("Version       {version}")),
-            Line::raw(format!("Service       {manager}")),
-            Line::raw(format!(
-                "Initialization {}",
-                if *initialized { "complete" } else { "pending" }
+            Line::raw(crate::trf!(
+                ("Version       {version}"),
+                ("版本         {version}")
             )),
-            Line::raw(format!("Install root  {}", app.install.install_dir)),
+            Line::raw(crate::trf!(
+                ("Service       {manager}"),
+                ("服务         {manager}")
+            )),
+            Line::raw(crate::trf!(
+                (
+                    "Initialization {}",
+                    if *initialized { "complete" } else { "pending" }
+                ),
+                (
+                    "初始化       {}",
+                    if *initialized { "完成" } else { "等待中" }
+                )
+            )),
+            Line::raw(crate::trf!(
+                ("Install root  {}", app.install.install_dir),
+                ("安装根目录  {}", app.install.install_dir)
+            )),
         ],
         Snapshot::Unavailable(error) => vec![
             Line::styled(
-                "Installation state needs attention",
+                crate::tr!("Installation state needs attention", "安装状态需要处理"),
                 Style::default().fg(Color::Red),
             ),
             Line::raw(""),
@@ -920,7 +1090,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(lines)
-            .block(Block::bordered().title("Overview"))
+            .block(Block::bordered().title(crate::tr!("Overview", "概览")))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -958,23 +1128,21 @@ fn render_install(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let (status, detail, color) = match &app.preflight.state {
         PreflightState::NotRun => (
-            "NOT RUN",
-            "Waiting to check this host".into(),
+            crate::tr!("NOT RUN", "未运行"),
+            crate::tr!("Waiting to check this host", "等待检查此主机").into(),
             Color::DarkGray,
         ),
-        PreflightState::Running(_) => ("RUNNING", "Checking this host...".into(), Color::Cyan),
+        PreflightState::Running(_) => (
+            crate::tr!("RUNNING", "运行中"),
+            crate::tr!("Checking this host...", "正在检查此主机...").into(),
+            Color::Cyan,
+        ),
         PreflightState::Complete(report) => (
             report.summary.label(),
-            format!(
-                "{} pass / {} warn / {} error / {} unknown",
-                report.counts.pass,
-                report.counts.warning,
-                report.counts.error,
-                report.counts.unknown
-            ),
+            preflight_counts(report),
             check_status_color(report.summary),
         ),
-        PreflightState::Failed(error) => ("FAILED", error.clone(), Color::Red),
+        PreflightState::Failed(error) => (crate::tr!("FAILED", "失败"), error.clone(), Color::Red),
     };
     let selected = app.focus == Focus::Panel && app.install.checks_selected;
     let style = if selected {
@@ -988,7 +1156,7 @@ fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect)
             Span::raw(detail),
         ]))
         .style(style)
-        .block(Block::bordered().title("Environment checks")),
+        .block(Block::bordered().title(crate::tr!("Environment checks", "环境检查"))),
         area,
     );
 }
@@ -996,7 +1164,7 @@ fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect)
 fn render_preflight_details(frame: &mut Frame<'_>, preflight: &Preflight, area: Rect) {
     frame.render_widget(
         Paragraph::new(preflight_detail_lines(preflight))
-            .block(Block::bordered().title("Environment checks"))
+            .block(Block::bordered().title(crate::tr!("Environment checks", "环境检查")))
             .wrap(Wrap { trim: true })
             .scroll((preflight.scroll, 0)),
         area,
@@ -1006,10 +1174,13 @@ fn render_preflight_details(frame: &mut Frame<'_>, preflight: &Preflight, area: 
 fn preflight_detail_lines(preflight: &Preflight) -> Vec<Line<'static>> {
     let PreflightState::Complete(report) = &preflight.state else {
         return vec![match &preflight.state {
-            PreflightState::NotRun => Line::raw("Checks have not run yet."),
-            PreflightState::Running(_) => {
-                Line::styled("Checking this host...", Style::default().fg(Color::Cyan))
+            PreflightState::NotRun => {
+                Line::raw(crate::tr!("Checks have not run yet.", "检查尚未运行。"))
             }
+            PreflightState::Running(_) => Line::styled(
+                crate::tr!("Checking this host...", "正在检查此主机..."),
+                Style::default().fg(Color::Cyan),
+            ),
             PreflightState::Failed(error) => {
                 Line::styled(error.clone(), Style::default().fg(Color::Red))
             }
@@ -1018,13 +1189,7 @@ fn preflight_detail_lines(preflight: &Preflight) -> Vec<Line<'static>> {
     };
     let mut lines = vec![
         Line::styled(
-            format!(
-                "{} pass / {} warn / {} error / {} unknown",
-                report.counts.pass,
-                report.counts.warning,
-                report.counts.error,
-                report.counts.unknown
-            ),
+            preflight_counts(report),
             Style::default().fg(check_status_color(report.summary)),
         ),
         Line::raw(""),
@@ -1074,6 +1239,25 @@ fn check_status_color(status: Status) -> Color {
     }
 }
 
+fn preflight_counts(report: &CheckReport) -> String {
+    crate::trf!(
+        (
+            "{} pass / {} warn / {} error / {} unknown",
+            report.counts.pass,
+            report.counts.warning,
+            report.counts.error,
+            report.counts.unknown
+        ),
+        (
+            "{} 通过 / {} 警告 / {} 错误 / {} 未知",
+            report.counts.pass,
+            report.counts.warning,
+            report.counts.error,
+            report.counts.unknown
+        )
+    )
+}
+
 fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let form = &app.install;
     let values = [
@@ -1086,18 +1270,18 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         mask(&form.password_confirmation),
         form.manager.label().into(),
         if form.takeover_network { "[x]" } else { "[ ]" }.into(),
-        "[ Start installation ]".into(),
+        crate::tr!("[ Start installation ]", "[ 开始安装 ]").into(),
     ];
     let labels = [
-        "Version",
-        "Repository",
-        "Repository URL",
-        "Install root",
-        "Admin user",
-        "Password",
-        "Confirm password",
-        "Service manager",
-        "Network takeover",
+        crate::tr!("Version", "版本"),
+        crate::tr!("Repository", "仓库"),
+        crate::tr!("Repository URL", "仓库 URL"),
+        crate::tr!("Install root", "安装根目录"),
+        crate::tr!("Admin user", "管理员用户"),
+        crate::tr!("Password", "密码"),
+        crate::tr!("Confirm password", "确认密码"),
+        crate::tr!("Service manager", "服务管理器"),
+        crate::tr!("Network takeover", "网络接管"),
         "",
     ];
     let lines: Vec<Line<'_>> = labels
@@ -1118,7 +1302,7 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                 Style::default().fg(Color::White)
             };
             let line = Line::from(vec![
-                Span::styled(format!("{label:<19}"), Style::default().fg(Color::DarkGray)),
+                Span::styled(display_pad(label, 19), Style::default().fg(Color::DarkGray)),
                 Span::styled(value, value_style),
                 Span::raw(if selected && form.editing { "_" } else { "" }),
             ]);
@@ -1130,7 +1314,7 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title("Install")),
+        Paragraph::new(lines).block(Block::bordered().title(crate::tr!("Install", "安装"))),
         area,
     );
 }
@@ -1138,15 +1322,18 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 fn render_install_help(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let (title, description) = if app.install.checks_selected {
         (
-            "Environment checks",
-            "Read-only deployment checks for platform, kernel, resources, dependencies, ports, services, and DNS.",
+            crate::tr!("Environment checks", "环境检查"),
+            crate::tr!(
+                "Read-only deployment checks for platform, kernel, resources, dependencies, ports, services, and DNS.",
+                "针对平台、内核、资源、依赖、端口、服务和 DNS 的只读部署检查。"
+            ),
         )
     } else {
         app.install.selected_help()
     };
     frame.render_widget(
         Paragraph::new(description)
-            .block(Block::bordered().title(format!("About: {title}")))
+            .block(Block::bordered().title(crate::trf!(("About: {title}"), ("说明：{title}"))))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -1156,6 +1343,13 @@ fn mask(value: &str) -> String {
     "*".repeat(value.chars().count())
 }
 
+fn display_pad(value: &str, width: usize) -> String {
+    format!(
+        "{value}{}",
+        " ".repeat(width.saturating_sub(UnicodeWidthStr::width(value)))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::Terminal;
@@ -1163,6 +1357,38 @@ mod tests {
 
     use super::*;
     use crate::check::model::{CheckGroup, CheckResult, StatusCounts};
+
+    struct LanguageGuard(Language);
+
+    impl LanguageGuard {
+        fn set(language: Language) -> Self {
+            let previous = crate::i18n::current();
+            crate::i18n::configure(language);
+            Self(previous)
+        }
+    }
+
+    impl Drop for LanguageGuard {
+        fn drop(&mut self) {
+            crate::i18n::configure(self.0);
+        }
+    }
+
+    fn terminal_content(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        let mut content = String::new();
+        for row in buffer.content.chunks(width) {
+            let mut column = 0;
+            while column < row.len() {
+                let symbol = row[column].symbol();
+                content.push_str(symbol);
+                column += UnicodeWidthStr::width(symbol).max(1);
+            }
+            content.push('\n');
+        }
+        content
+    }
 
     fn sample_preflight_report() -> CheckReport {
         CheckReport {
@@ -1195,6 +1421,7 @@ mod tests {
 
     #[test]
     fn renders_sidebar_and_install_form() {
+        let _language = LanguageGuard::set(Language::En);
         let backend = TestBackend::new(100, 28);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = ConsoleApp::new();
@@ -1217,6 +1444,50 @@ mod tests {
         assert!(content.contains("Environment checks"));
         assert!(content.contains("NOT RUN"));
         assert!(content.contains("Enter Details"));
+        assert!(content.contains("L  Language: English (en)"));
+    }
+
+    #[test]
+    fn language_key_switches_the_tui_and_updates_the_footer() {
+        let _language = LanguageGuard::set(Language::En);
+        let backend = TestBackend::new(100, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = ConsoleApp::new();
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let english = terminal_content(&terminal);
+        assert!(english.contains("Navigation"));
+        assert!(english.contains("L  Language: English (en)"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(crate::i18n::current(), Language::Zh);
+        let mut chinese_terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        chinese_terminal.draw(|frame| render(frame, &app)).unwrap();
+        let chinese = terminal_content(&chinese_terminal);
+        assert!(chinese.contains("导航"));
+        assert!(chinese.contains("L  语言：中文 (zh)"));
+        assert!(!chinese.contains("Language: English (en)"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+        assert_eq!(crate::i18n::current(), Language::En);
+    }
+
+    #[test]
+    fn language_key_remains_text_while_editing() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.install.checks_selected = false;
+        app.install.selected = 0;
+        app.install.editing = true;
+        app.install.version.clear();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+        assert_eq!(crate::i18n::current(), Language::En);
+        assert_eq!(app.install.version, "l");
+        assert!(!app.language_switch_available());
     }
 
     #[test]

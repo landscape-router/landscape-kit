@@ -148,7 +148,12 @@ pub(crate) fn delegate(
     let unit_path = systemd.run_systemd_dir.join(&unit_name);
     let executable =
         std::env::current_exe().map_err(|error| format!("resolve current executable: {error}"))?;
-    let environment = string_environment()?;
+    let mut environment = string_environment()?;
+    environment.retain(|(key, _)| key != crate::i18n::LANGUAGE_ENV);
+    environment.push((
+        crate::i18n::LANGUAGE_ENV.to_string(),
+        crate::i18n::current().code().to_string(),
+    ));
     let working_directory =
         std::env::current_dir().map_err(|error| format!("resolve current directory: {error}"))?;
     let terminal = terminal_path();
@@ -276,7 +281,11 @@ fn interrupt_worker(
 ) -> Result<ExitCode, String> {
     if let Err(error) = systemctl(systemctl_path, &["stop", unit_name]) {
         eprintln!(
-            "install: warning: Ctrl+C restored the terminal, but the delegated operation could not be stopped and may still be running: {error}"
+            "install: {}",
+            crate::trf!(
+                ("warning: Ctrl+C restored the terminal, but the delegated operation could not be stopped and may still be running: {error}"),
+                ("警告：Ctrl+C 已恢复终端，但无法停止委托操作，该操作可能仍在运行：{error}")
+            )
         );
         return Ok(ExitCode::from(130));
     }

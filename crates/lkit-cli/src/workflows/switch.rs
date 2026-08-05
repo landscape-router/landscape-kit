@@ -78,11 +78,19 @@ pub(crate) async fn switch_version<P: DocsProbe>(
     }
     if service_stopped {
         eprintln!(
-            "install: warning: the managed service is stopped; switching without a configuration snapshot; no .lkb backup will be created and automatic rollback cannot restore data modified by the target version"
+            "install: {}",
+            crate::tr!(
+                "warning: the managed service is stopped; switching without a configuration snapshot; no .lkb backup will be created and automatic rollback cannot restore data modified by the target version",
+                "警告：受管服务已停止；将在没有配置快照的情况下切换；不会创建 .lkb 备份，自动回滚无法恢复目标版本修改的数据"
+            )
         );
     } else if args.allow_no_backup {
         eprintln!(
-            "install: warning: the managed service is running; --allow-no-backup ignored and a .lkb backup will be created"
+            "install: {}",
+            crate::tr!(
+                "warning: the managed service is running; --allow-no-backup ignored and a .lkb backup will be created",
+                "警告：受管服务正在运行；已忽略 --allow-no-backup，并将创建 .lkb 备份"
+            )
         );
     }
 
@@ -154,9 +162,10 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                     .unwrap_or(true)
             })?;
         } else {
-            let accepted = (options.confirm)(
+            let accepted = (options.confirm)(crate::tr!(
                 "stop your Landscape instance with your own process manager, then confirm",
-            )?;
+                "请使用自己的进程管理器停止 Landscape 实例，然后输入 `yes`："
+            ))?;
             if !accepted {
                 return Err(InstallError::UserRefused(
                     "user refused to stop the running instance".into(),
@@ -234,7 +243,13 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                             backup_id,
                         }),
                         Err(rollback_error) => {
-                            eprintln!("install: automatic rollback failed: {rollback_error}");
+                            eprintln!(
+                                "install: {}",
+                                crate::trf!(
+                                    ("automatic rollback failed: {rollback_error}"),
+                                    ("自动回滚失败：{rollback_error}")
+                                )
+                            );
                             Ok(SwitchOutcome::RollbackFailed {
                                 version: from_version,
                                 reason: error.to_string(),
@@ -256,7 +271,13 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                             backup_id,
                         }),
                         Err(rollback_error) => {
-                            eprintln!("install: automatic rollback failed: {rollback_error}");
+                            eprintln!(
+                                "install: {}",
+                                crate::trf!(
+                                    ("automatic rollback failed: {rollback_error}"),
+                                    ("自动回滚失败：{rollback_error}")
+                                )
+                            );
                             Ok(SwitchOutcome::RollbackFailed {
                                 version: from_version,
                                 reason: error.to_string(),

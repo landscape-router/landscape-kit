@@ -37,6 +37,10 @@ sudo lkit
 The bare command opens the Ratatui management console. Scripts and CI should use explicit
 subcommands such as `lkit --non-interactive install ...`.
 
+The interface follows the system locale and supports English and simplified Chinese. Use
+`lkit --lang zh ...` or set `LKIT_LANG=zh` to override it; unsupported languages fall back to
+English.
+
 The installer verifies the selected binary against the release `SHA256SUMS` before atomically
 installing it at `/usr/local/bin/lkit`. Distribution names are not allowlisted; `lkit` checks the
 kernel and required host capabilities before deployment. Current release binaries do not support

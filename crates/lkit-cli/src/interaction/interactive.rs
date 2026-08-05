@@ -91,7 +91,7 @@ impl Tty {
         for (index, option) in options.iter().enumerate() {
             self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
         }
-        let raw = self.input("Select one interface: ")?;
+        let raw = self.input(crate::tr!("Select one interface: ", "请选择一个网卡："))?;
         let selected = raw.trim().parse::<usize>().map_err(|_| {
             InstallError::ParameterUsage("interface selection must be a number".into())
         })?;
@@ -118,7 +118,10 @@ impl Tty {
         for (index, option) in options.iter().enumerate() {
             self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
         }
-        let raw = self.input("Select one or more interfaces (comma separated): ")?;
+        let raw = self.input(crate::tr!(
+            "Select one or more interfaces (comma separated): ",
+            "请选择一个或多个网卡（用逗号分隔）："
+        ))?;
         let mut selected = Vec::new();
         for part in raw.split(',') {
             let value = part.trim().parse::<usize>().map_err(|_| {
@@ -148,7 +151,10 @@ impl Tty {
     /// 隐藏输入密码并要求二次确认。失败时不输出任何内容。
     pub(crate) fn read_password(&mut self, prompt: &str) -> Result<String, InstallError> {
         let first = self.read_password_once(&format!("{prompt}: "))?;
-        let second = self.read_password_once(&format!("{prompt} (again): "))?;
+        let second = self.read_password_once(&format!(
+            "{prompt}{}",
+            crate::tr!(" (again): ", "（再次输入）：")
+        ))?;
         if first != second {
             return Err(InstallError::InvalidPassword(
                 "password confirmation does not match".into(),

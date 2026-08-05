@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use lkit_repository::parse_stable_version;
 use semver::Version;
-use thiserror::Error;
 
 use super::repository::github::DEFAULT_REPOSITORY;
 use super::repository::http::HttpRepository;
@@ -198,64 +197,259 @@ pub(crate) fn build_plan(
     })
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub(crate) enum InstallError {
-    #[error("invalid version {value:?}: {reason}")]
     InvalidVersion { value: String, reason: String },
-    #[error("install directory must be an absolute path")]
     InstallDirNotAbsolute,
-    #[error("admin user must not be empty or contain control characters")]
     InvalidAdminUser,
-    #[error("parameter usage error: {0}")]
     ParameterUsage(String),
-    #[error("refused: {0}")]
     UserRefused(String),
-    #[error("preflight check failed: {0}")]
     Preflight(String),
-    #[error("install state is corrupted: {0}")]
     CorruptedState(String),
-    #[error("transaction is corrupted: {0}")]
     CorruptedTransaction(String),
-    #[error("blocked by an unfinished transaction: {0}")]
     BlockedByTransaction(String),
-    #[error("installation state shows activation drift: {0}")]
     ActivationDrift(String),
-    #[error("installation directory is dangerous or contains unknown content: {0}")]
     DangerousDirectory(String),
-    #[error("another install is in progress for this install root")]
     LockBusy,
-    #[error("unsupported platform: {0}")]
     UnsupportedPlatform(String),
-    #[error("the repository has no stable version for the host architecture")]
     NoStableVersion,
-    #[error("release {0} already exists")]
     ReleaseExists(String),
-    #[error("invalid password: {0}")]
     InvalidPassword(String),
-    #[error("invalid password file: {0}")]
     InvalidPasswordFile(String),
-    #[error("backup is invalid: {0}")]
     InvalidBackup(String),
-    #[error("config export failed: {0}")]
     ExportFailed(String),
-    #[error("the managed service is not running: {0}")]
     ServiceNotRunning(String),
-    #[error("non-interactive environment: {0}")]
     NonInteractive(String),
-    #[error("systemd operation failed: {0}")]
     Systemd(String),
-    #[error("health check failed: {0}")]
     HealthCheck(String),
-    #[error("conflicting process detected: {0}")]
     ProcessConflict(String),
-    #[error("host state backup failed: {0}")]
     ResolvBackup(String),
-    #[error("failed to write install state: {0}")]
-    StateWrite(#[from] serde_json::Error),
-    #[error("repository selection failed: {0}")]
-    Repository(#[from] RepositoryError),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    StateWrite(serde_json::Error),
+    Repository(RepositoryError),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidVersion { value, reason } => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("invalid version {value:?}: {reason}"),
+                    ("无效版本 {value:?}：{reason}")
+                )
+            ),
+            Self::InstallDirNotAbsolute => formatter.write_str(crate::tr!(
+                "install directory must be an absolute path",
+                "安装目录必须是绝对路径"
+            )),
+            Self::InvalidAdminUser => formatter.write_str(crate::tr!(
+                "admin user must not be empty or contain control characters",
+                "管理员用户名不能为空或包含控制字符"
+            )),
+            Self::ParameterUsage(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("parameter usage error: {reason}"),
+                    ("参数用法错误：{reason}")
+                )
+            ),
+            Self::UserRefused(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(("refused: {reason}"), ("已拒绝：{reason}"))
+            ),
+            Self::Preflight(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("preflight check failed: {reason}"),
+                    ("部署前检查失败：{reason}")
+                )
+            ),
+            Self::CorruptedState(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("install state is corrupted: {reason}"),
+                    ("安装状态已损坏：{reason}")
+                )
+            ),
+            Self::CorruptedTransaction(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("transaction is corrupted: {reason}"),
+                    ("事务已损坏：{reason}")
+                )
+            ),
+            Self::BlockedByTransaction(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("blocked by an unfinished transaction: {reason}"),
+                    ("被未完成事务阻止：{reason}")
+                )
+            ),
+            Self::ActivationDrift(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("installation state shows activation drift: {reason}"),
+                    ("安装状态存在激活漂移：{reason}")
+                )
+            ),
+            Self::DangerousDirectory(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("installation directory is dangerous or contains unknown content: {reason}"),
+                    ("安装目录危险或包含未知内容：{reason}")
+                )
+            ),
+            Self::LockBusy => formatter.write_str(crate::tr!(
+                "another install is in progress for this install root",
+                "此安装根目录已有另一个安装正在进行"
+            )),
+            Self::UnsupportedPlatform(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("unsupported platform: {reason}"),
+                    ("不支持的平台：{reason}")
+                )
+            ),
+            Self::NoStableVersion => formatter.write_str(crate::tr!(
+                "the repository has no stable version for the host architecture",
+                "仓库中没有适用于主机架构的稳定版本"
+            )),
+            Self::ReleaseExists(version) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("release {version} already exists"),
+                    ("发布版本 {version} 已存在")
+                )
+            ),
+            Self::InvalidPassword(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(("invalid password: {reason}"), ("密码无效：{reason}"))
+            ),
+            Self::InvalidPasswordFile(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("invalid password file: {reason}"),
+                    ("密码文件无效：{reason}")
+                )
+            ),
+            Self::InvalidBackup(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(("backup is invalid: {reason}"), ("备份无效：{reason}"))
+            ),
+            Self::ExportFailed(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("config export failed: {reason}"),
+                    ("配置导出失败：{reason}")
+                )
+            ),
+            Self::ServiceNotRunning(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("the managed service is not running: {reason}"),
+                    ("受管服务未运行：{reason}")
+                )
+            ),
+            Self::NonInteractive(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("non-interactive environment: {reason}"),
+                    ("非交互环境：{reason}")
+                )
+            ),
+            Self::Systemd(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("systemd operation failed: {reason}"),
+                    ("systemd 操作失败：{reason}")
+                )
+            ),
+            Self::HealthCheck(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("health check failed: {reason}"),
+                    ("健康检查失败：{reason}")
+                )
+            ),
+            Self::ProcessConflict(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("conflicting process detected: {reason}"),
+                    ("检测到冲突进程：{reason}")
+                )
+            ),
+            Self::ResolvBackup(reason) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("host state backup failed: {reason}"),
+                    ("主机状态备份失败：{reason}")
+                )
+            ),
+            Self::StateWrite(error) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("failed to write install state: {error}"),
+                    ("写入安装状态失败：{error}")
+                )
+            ),
+            Self::Repository(error) => write!(
+                formatter,
+                "{}",
+                crate::trf!(
+                    ("repository selection failed: {error}"),
+                    ("仓库选择失败：{error}")
+                )
+            ),
+            Self::Io(error) => write!(
+                formatter,
+                "{}",
+                crate::trf!(("I/O error: {error}"), ("I/O 错误：{error}"))
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InstallError {}
+
+impl From<serde_json::Error> for InstallError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::StateWrite(error)
+    }
+}
+
+impl From<RepositoryError> for InstallError {
+    fn from(error: RepositoryError) -> Self {
+        Self::Repository(error)
+    }
+}
+
+impl From<std::io::Error> for InstallError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 #[cfg(test)]

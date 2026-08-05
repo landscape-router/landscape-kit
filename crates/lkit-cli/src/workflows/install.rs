@@ -114,7 +114,13 @@ async fn first_install_impl<P: DocsProbe>(
     runtime: Option<&InstallRuntime>,
 ) -> Result<FirstInstallOutcome, InstallError> {
     let architecture = Architecture::host().ok_or_else(|| {
-        InstallError::UnsupportedPlatform("only x86_64 and aarch64 are supported".into())
+        InstallError::UnsupportedPlatform(
+            crate::tr!(
+                "only x86_64 and aarch64 are supported",
+                "仅支持 x86_64 和 aarch64"
+            )
+            .into(),
+        )
     })?;
     let release = match target {
         TargetVersion::Latest => provider
@@ -277,13 +283,25 @@ async fn first_install_impl<P: DocsProbe>(
                             )
                         });
                 if let Err(cleanup_error) = cleanup {
-                    eprintln!("install: network takeover cleanup failed: {cleanup_error}");
+                    eprintln!(
+                        "install: {}",
+                        crate::trf!(
+                            ("network takeover cleanup failed: {cleanup_error}"),
+                            ("网络接管清理失败：{cleanup_error}")
+                        )
+                    );
                     return Err(error);
                 }
             } else if let Err(cleanup_error) =
                 super::transaction::cleanup_failed_first_install(root, &transaction, systemd)
             {
-                eprintln!("install: first install cleanup failed: {cleanup_error}");
+                eprintln!(
+                    "install: {}",
+                    crate::trf!(
+                        ("first install cleanup failed: {cleanup_error}"),
+                        ("首次安装清理失败：{cleanup_error}")
+                    )
+                );
             }
             let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
             Err(error)

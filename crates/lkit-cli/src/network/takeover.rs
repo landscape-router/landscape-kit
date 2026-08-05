@@ -187,7 +187,11 @@ async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
     let runtime = resolve_runtime(args)?;
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(
-            "network commands must run as root (uid 0)".into(),
+            crate::tr!(
+                "network commands must run as root (uid 0)",
+                "network 命令必须以 root 身份运行（uid 0）"
+            )
+            .into(),
         ));
     }
     let selected = plan::select_install_root(
@@ -211,18 +215,34 @@ fn status(root: &InstallRoot) -> Result<(), InstallError> {
                 transaction.operation.key()
             ))
         })?;
-        println!("network: transaction {}", transaction.transaction_id);
-        println!("network: phase {}", transaction.phase.key());
         println!(
-            "network: management address {}",
+            "network: {} {}",
+            crate::tr!("transaction", "事务"),
+            transaction.transaction_id
+        );
+        println!(
+            "network: {} {}",
+            crate::tr!("phase", "阶段"),
+            transaction.phase.key()
+        );
+        println!(
+            "network: {} {}",
+            crate::tr!("management address", "管理地址"),
             network.plan.management_address()
         );
         println!(
-            "network: confirmation deadline {}",
+            "network: {} {}",
+            crate::tr!("confirmation deadline", "确认截止时间"),
             network.confirmation_deadline.to_rfc3339()
         );
     } else if state::load_state(root)?.is_some() {
-        println!("network: no takeover is awaiting confirmation");
+        println!(
+            "network: {}",
+            crate::tr!(
+                "no takeover is awaiting confirmation",
+                "没有等待确认的网络接管"
+            )
+        );
     } else {
         return Err(InstallError::ParameterUsage(
             "no Landscape installation or pending network takeover exists".into(),
@@ -293,7 +313,13 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
     state::write_state(root, &install_state)?;
     transaction::mark_phase(root, &pending, transaction::Phase::Committed)?;
     let _ = std::fs::remove_file(root.canonical.join(&network.pending_state));
-    println!("network: confirmed Landscape network takeover");
+    println!(
+        "network: {}",
+        crate::tr!(
+            "confirmed Landscape network takeover",
+            "已确认 Landscape 网络接管"
+        )
+    );
     Ok(())
 }
 
@@ -334,7 +360,13 @@ fn rollback(
     }
     remove_recovery_units(root, network, &runtime.systemd, automatic)?;
     transaction::mark_phase(root, &pending, transaction::Phase::RolledBack)?;
-    println!("network: restored the pre-install host network services");
+    println!(
+        "network: {}",
+        crate::tr!(
+            "restored the pre-install host network services",
+            "已恢复安装前的主机网络服务"
+        )
+    );
     Ok(())
 }
 
