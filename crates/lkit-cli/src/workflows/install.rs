@@ -1560,6 +1560,76 @@ esac
     }
 
     #[tokio::test]
+    async fn rejects_version_downgrade_before_transaction_or_asset_download() {
+        let (server, root, provider) = start_switch_repository(
+            "e2e-switch-downgrade",
+            "0.22.2",
+            "0.21.1",
+            b"webserver 0.21.1 payload",
+        );
+        first_install(
+            &root,
+            &provider,
+            &TargetVersion::Version(semver::Version::new(0, 22, 2)),
+            &credentials(),
+            ManagerChoice::None,
+            &Systemd::host(),
+            &none_options(),
+        )
+        .await
+        .unwrap();
+        let state = super::super::state::load_state(&root).unwrap().unwrap();
+        let target = provider
+            .release(&semver::Version::new(0, 21, 1), Architecture::X86_64)
+            .await
+            .unwrap();
+        let health = test_options();
+
+        let result = switch_version(
+            &root,
+            &provider,
+            &state,
+            target,
+            &SwitchArgs {
+                allow_no_backup: false,
+            },
+            &Systemd::host(),
+            &switch_options(&server.base, &health, true),
+        )
+        .await;
+
+        let Err(InstallError::ParameterUsage(reason)) = result else {
+            panic!("expected downgrade to be rejected, got {result:?}");
+        };
+        assert!(reason.contains("0.22.2"));
+        assert!(reason.contains("0.21.1"));
+        assert_eq!(
+            std::fs::read_link(root.canonical.join("current")).unwrap(),
+            std::path::PathBuf::from("releases/0.22.2")
+        );
+        assert_eq!(
+            super::super::state::load_state(&root)
+                .unwrap()
+                .unwrap()
+                .active_version,
+            "0.22.2"
+        );
+        assert!(!root.canonical.join("releases/0.21.1").exists());
+        assert!(
+            super::super::transaction::find_unfinished(&root)
+                .unwrap()
+                .is_none()
+        );
+        let transaction = load_transaction_json(&root);
+        assert_eq!(transaction["operation"], "install");
+        assert_eq!(transaction["target_version"], "0.22.2");
+        let requests = server.request_paths();
+        assert!(!requests.contains(&"/releases/0.21.1/landscape-webserver-x86_64.zst".to_string()));
+        assert!(!requests.contains(&"/releases/0.21.1/static.zip".to_string()));
+        let _ = std::fs::remove_dir_all(&root.install_root);
+    }
+
+    #[tokio::test]
     async fn refuses_switch_when_user_does_not_confirm() {
         let (server, root, provider) = start_switch_repository(
             "e2e-switch-refuse",

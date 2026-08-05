@@ -56,15 +56,27 @@ pub(crate) async fn switch_version<P: DocsProbe>(
     systemd: &Systemd,
     options: &SwitchOptions<'_, P>,
 ) -> Result<SwitchOutcome, InstallError> {
-    if release.version.to_string() == state.active_version {
-        return Err(InstallError::ParameterUsage(
-            "target version is already active".into(),
-        ));
-    }
-    let architecture = architecture_from_state(state);
     let from_version = parse_stable_version(&state.active_version).map_err(|error| {
         InstallError::CorruptedState(format!("invalid active version: {error}"))
     })?;
+    match release.version.cmp(&from_version) {
+        std::cmp::Ordering::Less => {
+            return Err(InstallError::ParameterUsage(crate::trf!(
+                (
+                    "downgrading from {from_version} to {} is not supported",
+                    release.version
+                ),
+                ("不支持从 {from_version} 降级到 {}", release.version)
+            )));
+        }
+        std::cmp::Ordering::Equal => {
+            return Err(InstallError::ParameterUsage(
+                crate::tr!("target version is already active", "目标版本已处于活动状态").into(),
+            ));
+        }
+        std::cmp::Ordering::Greater => {}
+    }
+    let architecture = architecture_from_state(state);
     check_initialization(root, state)?;
     verify_current_backend(root, state)?;
 

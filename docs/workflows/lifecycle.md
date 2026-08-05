@@ -78,14 +78,16 @@ systemd 环境继续执行：
 
 ### 5. 版本切换准备
 
-1. 验证当前后端摘要和 systemd 服务状态；
-2. 服务正在运行时，调用配置导出 API，创建包含当前二进制、静态页面、导出配置和
+1. 按 SemVer 比较当前活动版本和目标版本。目标版本更低时，在创建切换事务和下载目标
+   二进制、静态资产前拒绝；目标版本相同时转入同版本安装校验，只有更高版本可以继续；
+2. 验证当前后端摘要和 systemd 服务状态；
+3. 服务正在运行时，调用配置导出 API，创建包含当前二进制、静态页面、导出配置和
    `geo_tmp` 的 `.lkb`，并完整自校验；即使指定 `--allow-no-backup` 也不得跳过；
-3. systemd 服务已停止时，默认在创建事务前拒绝。仅显式 `--allow-no-backup` 时跳过导出
+4. systemd 服务已停止时，默认在创建事务前拒绝。仅显式 `--allow-no-backup` 时跳过导出
    和 `.lkb`，并在事务中记录 `no_backup: true` 且不记录 `backup`；
-4. systemd 环境备份 `/etc/resolv.conf`；无 systemd 环境不创建该主机状态备份；
-5. 记录 `previous_current`、可选备份和目标目录；
-6. 将事务标记为 `prepared`。
+5. systemd 环境备份 `/etc/resolv.conf`；无 systemd 环境不创建该主机状态备份；
+6. 记录 `previous_current`、可选备份和目标目录；
+7. 将事务标记为 `prepared`。
 
 需要备份时，在 `.lkb` 完整落盘并自校验前不得停止当前 Landscape。无备份例外只适用于
 已经停止的 systemd 服务，不适用于后端 repair 或无 systemd 环境。

@@ -23,7 +23,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Ratatui 管理控制台 | `UI-01` 至 `UI-06` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-06` | [i18n.md](functional/i18n.md) |
 | 首次安装 | `INS-01` 至 `INS-15` | [install.md](functional/install.md) |
-| 版本升级、降级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
+| 版本升级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
 | 备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
 | Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
@@ -47,9 +47,8 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 1. [`PUB-08`](functional/publish.md#pub-08)：生产 RustFS 上的真实 Release 发布后安装 smoke；
 2. [`LKR-01`](functional/lkit-release.md#lkr-01)、[`LKR-04`](functional/lkit-release.md#lkr-04)：首次真实 lkit Release 与公开安装 smoke；
 3. [`RB-06`](functional/rollback.md#rb-06)：自动回滚自身失败及退出码 `6`；
-4. [`SW-02`](functional/switch.md#sw-02)：显式降级到历史版本；
-5. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
-6. [`SM-07`](functional/service-manager.md#sm-07)：service-manager 迁移失败恢复。
+4. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
+5. [`SM-07`](functional/service-manager.md#sm-07)：service-manager 迁移失败恢复。
 
 现有 [发布、安装与成功切换](lifecycle.md)、[失败切换与自动回滚](rollback.md)和
 [扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。公开

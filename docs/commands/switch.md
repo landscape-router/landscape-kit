@@ -1,6 +1,9 @@
 # `lkit switch`
 
-将现有安装切换到指定 stable 版本，支持升级和降级。
+将现有安装切换到更高的 stable 版本。目标版本必须按 SemVer 高于当前活动版本；目标版本
+更低时返回参数用法错误，不创建切换事务，也不下载目标二进制和静态资产；目标版本相同
+时沿用既有的同版本安装校验，不执行版本切换。降级限制同时适用于精确版本和 `latest`
+解析出的版本。
 
 ```text
 lkit switch --version <VERSION> [--repository [<BASE_URL>]]
@@ -8,7 +11,7 @@ lkit switch --version <VERSION> [--repository [<BASE_URL>]]
             [--allow-no-backup]
 ```
 
-目标资产必须在停止当前服务前完成下载和校验。systemd 环境由 `lkit` 停止、激活、
+允许升级时，目标资产必须在停止当前服务前完成下载和校验。systemd 环境由 `lkit` 停止、激活、
 启动并验证。正常路径在停止服务前创建 `.lkb`，失败时用它重建旧版本；服务已经停止且
 用户显式指定 `--allow-no-backup` 时是唯一例外，此时仍恢复文件、服务状态、`current`
 和 `/etc/resolv.conf`，但无法从快照重建 data。无 systemd 环境要求用户确认已通过自己的

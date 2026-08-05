@@ -1,6 +1,7 @@
 # 版本切换场景
 
-`lkit switch` 同时支持向更高版本升级和向历史版本降级，两种方向必须分别验证。
+`lkit switch` 只允许向更高的 stable 版本升级。较低版本必须在改变安装前拒绝；相同版本
+沿用同版本安装校验，不创建版本切换事务。
 
 ## SW-01
 
@@ -12,11 +13,13 @@
 
 ## SW-02
 
-**显式切换到较低的历史 stable 版本**
+**显式切换到较低的历史 stable 版本时拒绝且不改变安装**
 
-- 测试层：Docker E2E
-- 状态：`待补充`
-- 说明：命令声明支持降级，但当前矩阵只执行向前升级；见 [`lkit switch`](../../../commands/switch.md)。
+- 测试层：Rust workflow
+- 状态：`已覆盖`
+- 证据：[版本切换工作流](../../../../crates/lkit-cli/src/workflows/install.rs)、[`lkit switch`](../../../commands/switch.md)
+- 说明：使用 `0.22.2 → 0.21.1` 断言返回参数用法错误，`current`、state 和既有事务不变，
+  且不下载目标二进制或静态资产。
 
 ## SW-03
 

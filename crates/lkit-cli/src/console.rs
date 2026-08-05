@@ -431,46 +431,49 @@ impl ConsoleApp {
 
     fn hints(&self) -> &'static str {
         if self.exit_state == ExitState::Confirming {
-            crate::tr!("Enter Exit  Esc Cancel", "Enter 退出  Esc 取消")
+            crate::tr!(
+                "Ctrl+C Exit  Enter Confirm  Esc Cancel",
+                "Ctrl+C 退出  Enter 确认  Esc 取消"
+            )
         } else if self.exit_state == ExitState::Armed {
             crate::tr!(
-                "Press Esc again for exit confirmation  Any other key cancels",
-                "再次按 Esc 确认退出  其他按键取消"
+                "Ctrl+C Exit  Press Esc again for exit confirmation  Any other key cancels",
+                "Ctrl+C 退出  再次按 Esc 打开退出确认  其他按键取消"
             )
         } else if self.preflight.expanded && self.menu() == Menu::Install {
             crate::tr!(
-                "Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close",
-                "上/下 滚动  PgUp/PgDn 翻页  R 重跑  Esc 关闭"
+                "Ctrl+C Exit  Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close",
+                "Ctrl+C 退出  上/下 滚动  PgUp/PgDn 翻页  R 重跑  Esc 关闭"
             )
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
             crate::tr!(
-                "Type Edit  Backspace Delete  Enter/Esc Finish",
-                "输入 编辑  Backspace 删除  Enter/Esc 完成"
+                "Ctrl+C Exit  Type Edit  Backspace Delete  Enter/Esc Finish",
+                "Ctrl+C 退出  输入 编辑  Backspace 删除  Enter/Esc 完成"
             )
         } else {
             match (self.focus, self.menu()) {
                 (Focus::Navigation, _) => {
                     crate::tr!(
-                        "Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Confirm",
-                        "上/下 菜单  右/Enter 打开  Tab 切换  Esc Esc 确认"
+                        "Ctrl+C Exit  Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Exit prompt",
+                        "Ctrl+C 退出  上/下 菜单  右/Enter 打开  Tab 切换  Esc Esc 退出确认"
                     )
                 }
                 (Focus::Panel, Menu::Install) if self.install.checks_selected => {
                     crate::tr!(
-                        "Enter Details  R Re-run  Down Settings  Left Menu  Esc Esc Confirm",
-                        "Enter 详情  R 重跑  下 设置  左 菜单  Esc Esc 确认"
+                        "Ctrl+C Exit  Enter Details  R Re-run  Down Settings  Left Menu  Esc Esc Exit prompt",
+                        "Ctrl+C 退出  Enter 详情  R 重跑  下 设置  左 菜单  Esc Esc 退出确认"
                     )
                 }
                 (Focus::Panel, Menu::Install) => {
                     crate::tr!(
-                        "Up/Down Field  Left Menu  Right Change  Enter Select  Tab Menu  Esc Esc Confirm",
-                        "上/下 字段  左 菜单  右 更改  Enter 选择  Tab 菜单  Esc Esc 确认"
+                        "Ctrl+C Exit  Up/Down Field  Left Menu  Right Change  Enter Select  Tab Menu  Esc Esc Exit prompt",
+                        "Ctrl+C 退出  上/下 字段  左 菜单  右 更改  Enter 选择  Tab 菜单  Esc Esc 退出确认"
                     )
                 }
                 (Focus::Panel, _) => crate::tr!(
-                    "Left Menu  Tab Switch  Esc Esc Confirm",
-                    "左 菜单  Tab 切换  Esc Esc 确认"
+                    "Ctrl+C Exit  Left Menu  Tab Switch  Esc Esc Exit prompt",
+                    "Ctrl+C 退出  左 菜单  Tab 切换  Esc Esc 退出确认"
                 ),
             }
         }
@@ -1457,6 +1460,7 @@ mod tests {
         terminal.draw(|frame| render(frame, &app)).unwrap();
         let english = terminal_content(&terminal);
         assert!(english.contains("Navigation"));
+        assert!(english.contains("Ctrl+C Exit"));
         assert!(english.contains("L  Language: English (en)"));
 
         app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
@@ -1465,6 +1469,7 @@ mod tests {
         chinese_terminal.draw(|frame| render(frame, &app)).unwrap();
         let chinese = terminal_content(&chinese_terminal);
         assert!(chinese.contains("导航"));
+        assert!(chinese.contains("Ctrl+C 退出"));
         assert!(chinese.contains("L  语言：中文 (zh)"));
         assert!(!chinese.contains("Language: English (en)"));
 
@@ -1536,6 +1541,7 @@ mod tests {
 
     #[test]
     fn renders_preflight_summary_and_expanded_results() {
+        let _language = LanguageGuard::set(Language::En);
         let backend = TestBackend::new(100, 28);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = ConsoleApp::new();
@@ -1567,6 +1573,8 @@ mod tests {
         assert!(details.contains("Operating system"));
         assert!(details.contains("Release availability is unknown"));
         assert!(details.contains("Confirm that a compatible release asset exists"));
+        assert!(details.contains("Ctrl+C Exit"));
+        assert!(details.contains("Esc Close"));
 
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(!app.preflight.expanded);
