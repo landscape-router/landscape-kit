@@ -1,0 +1,7 @@
+check.runtime_identity_and_platform = "Runtime identity and platform"
+check.kernel_version_and_capabilities = "Kernel version and capabilities"
+check.resource_limits = "Resource limits"
+check.required_commands_and_runtime_dependencies = "Required commands and runtime dependencies"
+check.port_conflicts = "Port conflicts"
+check.system_services_and_security_policy = "System services and security policy"
+check.dns_configuration_risks = "DNS configuration risks"

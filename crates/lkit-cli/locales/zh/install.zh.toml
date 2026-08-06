@@ -1,0 +1,3 @@
+install.cleanup_failed_network = "网络接管清理失败：%{cleanup_error}"
+install.cleanup_failed_first_install = "首次安装清理失败：%{cleanup_error}"
+install.only_x86_64_and_aarch64_supported = "仅支持 x86_64 和 aarch64"

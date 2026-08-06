@@ -14,28 +14,28 @@ pub fn run_all() -> CheckReport {
     let mut groups = Vec::new();
     for (title, results) in [
         (
-            crate::tr!("Runtime identity and platform", "运行身份与平台"),
+            crate::tr!(crate::keys::CHECK_RUNTIME_IDENTITY_AND_PLATFORM),
             platform::run(),
         ),
         (
-            crate::tr!("Kernel version and capabilities", "内核版本与内核能力"),
+            crate::tr!(crate::keys::CHECK_KERNEL_VERSION_AND_CAPABILITIES),
             kernel::run(),
         ),
-        (crate::tr!("Resource limits", "资源限制"), resource::run()),
         (
-            crate::tr!(
-                "Required commands and runtime dependencies",
-                "必需命令与运行时依赖"
-            ),
+            crate::tr!(crate::keys::CHECK_RESOURCE_LIMITS),
+            resource::run(),
+        ),
+        (
+            crate::tr!(crate::keys::CHECK_REQUIRED_COMMANDS_AND_RUNTIME_DEPENDENCIES),
             dependency::run(),
         ),
-        (crate::tr!("Port conflicts", "端口冲突"), ports::run()),
+        (crate::tr!(crate::keys::CHECK_PORT_CONFLICTS), ports::run()),
         (
-            crate::tr!("System services and security policy", "系统服务与安全策略"),
+            crate::tr!(crate::keys::CHECK_SYSTEM_SERVICES_AND_SECURITY_POLICY),
             service::run(),
         ),
         (
-            crate::tr!("DNS configuration risks", "DNS 配置风险"),
+            crate::tr!(crate::keys::CHECK_DNS_CONFIGURATION_RISKS),
             dns::run(),
         ),
     ] {

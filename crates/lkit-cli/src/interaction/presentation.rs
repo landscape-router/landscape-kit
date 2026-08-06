@@ -50,10 +50,16 @@ impl SavedTermios {
 }
 
 pub(crate) fn warning(id: &str, reason: &str, suggestion: &str) {
-    eprintln!("install: {} [{id}]", crate::tr!("warning", "警告"));
+    eprintln!(
+        "install: {} [{id}]",
+        crate::tr!(crate::keys::PRESENTATION_WARNING)
+    );
     eprintln!("  {reason}");
     if !suggestion.is_empty() {
-        eprintln!("  {}{suggestion}", crate::tr!("Suggestion: ", "建议："));
+        eprintln!(
+            "  {}{suggestion}",
+            crate::tr!(crate::keys::PRESENTATION_SUGGESTION_PREFIX)
+        );
     }
 }
 
@@ -441,10 +447,14 @@ fn render_operation(
     ])
     .areas(frame.area());
     let title = match result {
-        Some(OperationResult::Success) => crate::tr!("Installation complete", "安装完成"),
-        Some(OperationResult::Failed) => crate::tr!("Installation failed", "安装失败"),
-        Some(OperationResult::Cancelled) => crate::tr!("Installation cancelled", "安装已取消"),
-        None => crate::tr!("Installing Landscape", "正在安装 Landscape"),
+        Some(OperationResult::Success) => {
+            crate::tr!(crate::keys::PRESENTATION_INSTALLATION_COMPLETE)
+        }
+        Some(OperationResult::Failed) => crate::tr!(crate::keys::PRESENTATION_INSTALLATION_FAILED),
+        Some(OperationResult::Cancelled) => {
+            crate::tr!(crate::keys::PRESENTATION_INSTALLATION_CANCELLED)
+        }
+        None => crate::tr!(crate::keys::PRESENTATION_INSTALLING_LANDSCAPE),
     };
     frame.render_widget(
         Paragraph::new(title)
@@ -473,33 +483,30 @@ fn render_operation(
                 .label(label)
                 .gauge_style(Style::default().fg(Color::Cyan))
                 .use_unicode(false)
-                .block(Block::bordered().title(crate::tr!("Download", "下载"))),
+                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_DOWNLOAD))),
             progress,
         );
     } else {
         let status = match result {
-            Some(OperationResult::Success) => crate::tr!(
-                "The installation finished successfully.",
-                "安装已成功完成。"
-            ),
-            Some(OperationResult::Failed) => {
-                crate::tr!("The installation reported a failure.", "安装报告失败。")
+            Some(OperationResult::Success) => {
+                crate::tr!(crate::keys::PRESENTATION_INSTALLATION_FINISHED_SUCCESSFULLY)
             }
-            Some(OperationResult::Cancelled) => crate::tr!(
-                "The installation was stopped during download.",
-                "安装已在下载阶段停止。"
-            ),
+            Some(OperationResult::Failed) => {
+                crate::tr!(crate::keys::PRESENTATION_INSTALLATION_REPORTED_FAILURE)
+            }
+            Some(OperationResult::Cancelled) => {
+                crate::tr!(crate::keys::PRESENTATION_INSTALLATION_STOPPED_DURING_DOWNLOAD)
+            }
             None => match phase {
                 OperationPhase::Preparing => {
-                    crate::tr!("Preparing installation...", "正在准备安装……")
+                    crate::tr!(crate::keys::PRESENTATION_PREPARING_INSTALLATION)
                 }
                 OperationPhase::Downloading => {
-                    crate::tr!("Waiting for download progress...", "等待下载进度……")
+                    crate::tr!(crate::keys::PRESENTATION_WAITING_FOR_DOWNLOAD_PROGRESS)
                 }
-                OperationPhase::Applying => crate::tr!(
-                    "Applying configuration and starting services...",
-                    "正在应用配置并启动服务……"
-                ),
+                OperationPhase::Applying => {
+                    crate::tr!(crate::keys::PRESENTATION_APPLYING_CONFIGURATION)
+                }
             },
         };
         frame.render_widget(
@@ -512,7 +519,7 @@ fn render_operation(
                 } else {
                     Style::default()
                 })
-                .block(Block::bordered().title(crate::tr!("Status", "状态"))),
+                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_STATUS))),
             progress,
         );
     }
@@ -535,21 +542,18 @@ fn render_operation(
         .collect();
     frame.render_widget(
         Paragraph::new(log_lines)
-            .block(Block::bordered().title(crate::tr!("Output", "输出")))
+            .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_OUTPUT)))
             .wrap(Wrap { trim: true }),
         log_area,
     );
     let hint = if result.is_some() {
-        crate::tr!("Ctrl+C Close", "Ctrl+C 关闭")
+        crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
     } else if confirming_stop {
-        crate::tr!("Enter Stop  Esc Cancel", "Enter 停止  Esc 取消")
+        crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
     } else if phase == OperationPhase::Downloading {
-        crate::tr!("Ctrl+C Stop  Esc Stop options", "Ctrl+C 停止  Esc 停止选项")
+        crate::tr!(crate::keys::PRESENTATION_CTRL_C_STOP_ESC_OPTIONS)
     } else {
-        crate::tr!(
-            "Installation is in progress; stop requests are ignored",
-            "安装正在进行；停止请求将被忽略"
-        )
+        crate::tr!(crate::keys::PRESENTATION_INSTALLATION_IN_PROGRESS_STOP_IGNORED)
     };
     let footer_text = if notice.is_empty() {
         hint.to_string()
@@ -574,12 +578,9 @@ fn render_operation(
         );
         frame.render_widget(Clear, area);
         frame.render_widget(
-            Paragraph::new(crate::tr!(
-                "Stop the download? Press Enter to confirm or Esc to continue.",
-                "停止下载？按 Enter 确认，按 Esc 继续。"
-            ))
-            .alignment(Alignment::Center)
-            .block(Block::bordered().title(crate::tr!("Confirm stop", "确认停止"))),
+            Paragraph::new(crate::tr!(crate::keys::PRESENTATION_STOP_DOWNLOAD_CONFIRM))
+                .alignment(Alignment::Center)
+                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_CONFIRM_STOP))),
             area,
         );
     }
@@ -731,11 +732,7 @@ impl WorkerPresentation {
     }
 
     pub(crate) fn ignore_stop(&mut self) {
-        self.notice = crate::tr!(
-            "Installation is applying configuration; stopping is no longer available",
-            "正在应用安装配置；当前阶段不能停止"
-        )
-        .into();
+        self.notice = crate::tr!(crate::keys::PRESENTATION_INSTALLATION_IS_APPLYING).into();
         self.confirming_stop = false;
         self.render_screen();
     }

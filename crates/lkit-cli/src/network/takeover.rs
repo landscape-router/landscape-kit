@@ -187,11 +187,7 @@ async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
     let runtime = resolve_runtime(args)?;
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(
-            crate::tr!(
-                "network commands must run as root (uid 0)",
-                "network 命令必须以 root 身份运行（uid 0）"
-            )
-            .into(),
+            crate::tr!(crate::keys::TAKEOVER_NETWORK_COMMANDS_REQUIRE_ROOT).into(),
         ));
     }
     let selected = plan::select_install_root(
@@ -217,35 +213,32 @@ fn status(root: &InstallRoot) -> Result<(), InstallError> {
         })?;
         println!(
             "network: {} {}",
-            crate::tr!("transaction", "事务"),
+            crate::tr!(crate::keys::TAKEOVER_TRANSACTION),
             transaction.transaction_id
         );
         println!(
             "network: {} {}",
-            crate::tr!("phase", "阶段"),
+            crate::tr!(crate::keys::TAKEOVER_PHASE),
             transaction.phase.key()
         );
         println!(
             "network: {} {}",
-            crate::tr!("management address", "管理地址"),
+            crate::tr!(crate::keys::TAKEOVER_MANAGEMENT_ADDRESS),
             network
                 .plan
                 .management_address()
                 .map(|address| address.to_string())
-                .unwrap_or_else(|| crate::tr!("DHCP lease", "DHCP 租约").into())
+                .unwrap_or_else(|| crate::tr!(crate::keys::TAKEOVER_DHCP_LEASE).into())
         );
         println!(
             "network: {} {}",
-            crate::tr!("confirmation deadline", "确认截止时间"),
+            crate::tr!(crate::keys::TAKEOVER_CONFIRMATION_DEADLINE),
             network.confirmation_deadline.to_rfc3339()
         );
     } else if state::load_state(root)?.is_some() {
         println!(
             "network: {}",
-            crate::tr!(
-                "no takeover is awaiting confirmation",
-                "没有等待确认的网络接管"
-            )
+            crate::tr!(crate::keys::TAKEOVER_NO_TAKEOVER_AWAITING_CONFIRMATION)
         );
     } else {
         return Err(InstallError::ParameterUsage(
@@ -319,10 +312,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
     let _ = std::fs::remove_file(root.canonical.join(&network.pending_state));
     println!(
         "network: {}",
-        crate::tr!(
-            "confirmed Landscape network takeover",
-            "已确认 Landscape 网络接管"
-        )
+        crate::tr!(crate::keys::TAKEOVER_CONFIRMED_LANDSCAPE_TAKEOVER)
     );
     Ok(())
 }
@@ -395,10 +385,7 @@ fn rollback(
     transaction::mark_phase(root, &pending, transaction::Phase::RolledBack)?;
     println!(
         "network: {}",
-        crate::tr!(
-            "restored the pre-install host network services",
-            "已恢复安装前的主机网络服务"
-        )
+        crate::tr!(crate::keys::TAKEOVER_RESTORED_HOST_NETWORK_SERVICES)
     );
     Ok(())
 }

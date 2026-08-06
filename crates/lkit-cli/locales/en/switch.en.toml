@@ -1,0 +1,6 @@
+switch.downgrade_not_supported = "downgrading from %{from_version} to %{version} is not supported"
+switch.target_version_already_active = "target version is already active"
+switch.warning_service_stopped_no_backup = "warning: the managed service is stopped; switching without a configuration snapshot; no .lkb backup will be created and automatic rollback cannot restore data modified by the target version"
+switch.warning_allow_no_backup_ignored = "warning: the managed service is running; --allow-no-backup ignored and a .lkb backup will be created"
+switch.confirm_stop_with_own_manager = "stop your Landscape instance with your own process manager, then confirm"
+switch.rollback_failed = "automatic rollback failed: %{rollback_error}"

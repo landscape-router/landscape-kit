@@ -1,0 +1,3 @@
+systemd_worker.installation_complete = "installation complete"
+systemd_worker.installation_failed = "installation failed with exit code %{exit_code}"
+systemd_worker.stop_failed_warning = "warning: Ctrl+C restored the terminal, but the delegated operation could not be stopped and may still be running: %{error}"

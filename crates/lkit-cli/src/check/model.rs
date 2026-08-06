@@ -43,7 +43,7 @@ impl Status {
 #[derive(Debug, Clone)]
 pub struct CheckResult {
     pub id: &'static str,
-    pub title: &'static str,
+    pub title: String,
     pub status: Status,
     pub value: String,
     pub reason: String,
@@ -52,10 +52,10 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
-    pub fn new(id: &'static str, title: &'static str) -> Self {
+    pub fn new(id: &'static str, title: impl Into<String>) -> Self {
         Self {
             id,
-            title,
+            title: title.into(),
             status: Status::Pass,
             value: String::new(),
             reason: String::new(),
@@ -89,7 +89,7 @@ impl CheckResult {
 
 #[derive(Debug, Clone)]
 pub struct CheckGroup {
-    pub title: &'static str,
+    pub title: String,
     pub results: Vec<CheckResult>,
 }
 

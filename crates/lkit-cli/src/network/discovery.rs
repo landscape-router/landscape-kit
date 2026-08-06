@@ -97,14 +97,12 @@ pub(crate) fn prompt_plan(
 ) -> Result<NetworkPlan, InstallError> {
     let options: Vec<String> = interfaces.iter().map(format_interface).collect();
     let wan_index = tty.select_one(
-        crate::tr!("Select the WAN interface:", "选择 WAN 网卡："),
+        &crate::tr!(crate::keys::DISCOVERY_SELECT_WAN_INTERFACE),
         &options,
     )?;
     let wan = &interfaces[wan_index];
     let plan = if interfaces.len() == 1 {
-        if !tty.confirm(
-            crate::tr!("Landscape does not support single-arm WAN/LAN routing. Continue with WAN-only management mode? Type `yes`: ", "Landscape 不支持单臂 WAN/LAN 路由。是否继续使用仅 WAN 管理模式？请输入 `yes`："),
-        )? {
+        if !tty.confirm(&crate::tr!(crate::keys::DISCOVERY_SINGLE_ARM_CONFIRM))? {
             return Err(InstallError::UserRefused(
                 "single-interface WAN-only network takeover was not authorized".into(),
             ));
@@ -121,7 +119,7 @@ pub(crate) fn prompt_plan(
             .map(|iface| format_interface(iface))
             .collect();
         let selected_lan = tty.select_many(
-            crate::tr!("Select the LAN interfaces:", "选择 LAN 网卡："),
+            &crate::tr!(crate::keys::DISCOVERY_SELECT_LAN_INTERFACES),
             &lan_options,
         )?;
         if selected_lan.is_empty() {
@@ -129,21 +127,21 @@ pub(crate) fn prompt_plan(
         } else {
             let management: Ipv4Cidr = tty
                 .input_default(
-                    crate::tr!("Management IPv4 address", "管理 IPv4 地址"),
+                    &crate::tr!(crate::keys::DISCOVERY_MANAGEMENT_IPV4_ADDRESS),
                     DEFAULT_MANAGEMENT_CIDR,
                 )?
                 .parse()?;
             let (default_start, default_end) = management.default_pool()?;
             let dhcp_start = tty
                 .input_default(
-                    crate::tr!("LAN DHCP range start", "LAN DHCP 地址池起始地址"),
+                    &crate::tr!(crate::keys::DISCOVERY_LAN_DHCP_RANGE_START),
                     &default_start.to_string(),
                 )?
                 .parse::<Ipv4Addr>()
                 .map_err(|_| network_error("invalid LAN DHCP range start"))?;
             let dhcp_end = tty
                 .input_default(
-                    crate::tr!("LAN DHCP range end", "LAN DHCP 地址池结束地址"),
+                    &crate::tr!(crate::keys::DISCOVERY_LAN_DHCP_RANGE_END),
                     &default_end.to_string(),
                 )?
                 .parse::<Ipv4Addr>()

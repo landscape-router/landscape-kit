@@ -21,13 +21,13 @@ pub fn render(report: &CheckReport, verbose: bool, color: bool) -> String {
     let id_width = max_id_width + 2;
 
     for (index, group) in report.groups.iter().enumerate() {
-        let title = paint(group.title, "1", color);
+        let title = paint(&group.title, "1", color);
         out.push_str(&format!("[{}] {title}\n", index + 1));
         out.push_str(&format!(
             "{}│ {}│ {}\n",
-            pad(crate::tr!("STATUS", "状态"), STATUS_WIDTH),
-            pad(crate::tr!("CHECK", "检查项"), id_width),
-            crate::tr!("RESULT", "结果")
+            pad(&crate::tr!(crate::keys::REPORT_STATUS_HEADER), STATUS_WIDTH),
+            pad(&crate::tr!(crate::keys::REPORT_CHECK_HEADER), id_width),
+            crate::tr!(crate::keys::REPORT_RESULT_HEADER)
         ));
         out.push_str(&format!(
             "{}┼ {}┼{}\n",
@@ -52,7 +52,7 @@ pub fn render(report: &CheckReport, verbose: bool, color: bool) -> String {
             if verbose {
                 out.push_str(&continuation(
                     id_width,
-                    &crate::trf!(("Title: {}", result.title), ("标题：{}", result.title)),
+                    &crate::tr!(crate::keys::REPORT_TITLE_DETAIL, title = result.title),
                 ));
                 for detail in &result.details {
                     out.push_str(&continuation(id_width, detail));
@@ -62,44 +62,23 @@ pub fn render(report: &CheckReport, verbose: bool, color: bool) -> String {
         out.push('\n');
     }
 
-    out.push_str(&crate::trf!(
-        (
-            "Summary: {} passed / {} warnings / {} errors / {} unknown\n",
-            report.counts.pass,
-            report.counts.warning,
-            report.counts.error,
-            report.counts.unknown
-        ),
-        (
-            "汇总：{} 通过 / {} 警告 / {} 错误 / {} 未知\n",
-            report.counts.pass,
-            report.counts.warning,
-            report.counts.error,
-            report.counts.unknown
-        )
+    out.push_str(&crate::tr!(
+        crate::keys::REPORT_SUMMARY_LINE,
+        passed = report.counts.pass,
+        warnings = report.counts.warning,
+        errors = report.counts.error,
+        unknown = report.counts.unknown
     ));
     let conclusion = match report.summary {
-        Status::Error => crate::tr!(
-            "Deployment blockers were found; continuing is not recommended.",
-            "存在部署阻断项，不建议继续部署。"
-        ),
-        Status::Unknown => crate::tr!(
-            "Some checks could not be completed; host readiness cannot be confirmed.",
-            "存在无法完成的检查，不能确认环境满足要求。"
-        ),
-        Status::Warning => crate::tr!(
-            "No hard errors were found, but some risks require review.",
-            "未发现硬性错误，存在需人工确认的风险。"
-        ),
-        Status::Pass => crate::tr!(
-            "The host meets deployment requirements.",
-            "环境满足部署条件，可以继续部署。"
-        ),
+        Status::Error => crate::tr!(crate::keys::REPORT_CONCLUSION_BLOCKERS),
+        Status::Unknown => crate::tr!(crate::keys::REPORT_CONCLUSION_UNKNOWN),
+        Status::Warning => crate::tr!(crate::keys::REPORT_CONCLUSION_WARNING),
+        Status::Pass => crate::tr!(crate::keys::REPORT_CONCLUSION_PASS),
     };
-    let conclusion = paint(conclusion, status_color(report.summary), color);
-    out.push_str(&crate::trf!(
-        ("Conclusion: {conclusion}\n"),
-        ("结论：{conclusion}\n")
+    let conclusion = paint(&conclusion, status_color(report.summary), color);
+    out.push_str(&crate::tr!(
+        crate::keys::REPORT_CONCLUSION_LINE,
+        conclusion = conclusion
     ));
     out
 }
@@ -155,7 +134,7 @@ mod tests {
         ];
         CheckReport {
             groups: vec![CheckGroup {
-                title: "运行身份与平台",
+                title: "运行身份与平台".to_string(),
                 results,
             }],
             summary: Status::Error,

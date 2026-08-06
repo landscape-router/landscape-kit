@@ -2,11 +2,8 @@ use super::model::{CheckResult, Status};
 
 const RESOLV_CONF: &str = "/etc/resolv.conf";
 
-fn risk_note() -> &'static str {
-    crate::tr!(
-        "When Landscape starts its DNS service it may point /etc/resolv.conf at 127.0.0.1. If name resolution fails after Landscape stops, check this file first. This command is read-only and does not back up or modify the file.",
-        "Landscape 启动 DNS 服务时可能把 /etc/resolv.conf 指向 127.0.0.1；停止 Landscape 后若主机无法解析域名，请优先检查该文件。本命令只读，不自动备份或修改文件。"
-    )
+fn risk_note() -> String {
+    crate::tr!(crate::keys::DNS_RISK_NOTE)
 }
 
 pub fn run() -> Vec<CheckResult> {
@@ -22,21 +19,19 @@ fn resolv_conf() -> CheckResult {
                 let target = std::fs::read_link(RESOLV_CONF)
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|err| {
-                        crate::trf!(
-                            ("unable to read symlink target: {err}"),
-                            ("无法读取链接目标：{err}")
-                        )
+                        crate::tr!(crate::keys::DNS_UNABLE_READ_SYMLINK_TARGET, err = err)
                     });
-                result = result.detail(crate::trf!(
-                    ("{RESOLV_CONF} is a symlink -> {target}"),
-                    ("{RESOLV_CONF} 是符号链接 → {target}")
+                result = result.detail(crate::tr!(
+                    crate::keys::DNS_RESOLV_CONF_SYMLINK,
+                    RESOLV_CONF = RESOLV_CONF,
+                    target = target
                 ));
             }
             match std::fs::read_to_string(RESOLV_CONF) {
                 Ok(content) => {
                     let nameservers = parse_nameservers(&content);
                     let value = if nameservers.is_empty() {
-                        crate::tr!("no nameserver entries", "无 nameserver 条目").to_string()
+                        crate::tr!(crate::keys::DNS_NO_NAMESERVER_ENTRIES).to_string()
                     } else {
                         format!("nameserver: {}", nameservers.join(", "))
                     };
@@ -45,10 +40,7 @@ fn resolv_conf() -> CheckResult {
                             .set(
                                 Status::Warning,
                                 value,
-                                crate::tr!(
-                                    "The configuration has no usable nameserver",
-                                    "配置中没有可用的 nameserver"
-                                ),
+                                crate::tr!(crate::keys::DNS_NO_USABLE_NAMESERVER),
                             )
                             .suggestion(risk_note())
                     } else if meta.file_type().is_symlink() {
@@ -56,23 +48,24 @@ fn resolv_conf() -> CheckResult {
                             .set(
                                 Status::Warning,
                                 value,
-                                crate::tr!("The configuration file is a symlink, which creates a recovery risk", "配置文件是符号链接，存在可恢复性风险"),
+                                crate::tr!(crate::keys::DNS_SYMLINK_RECOVERY_RISK),
                             )
                             .suggestion(risk_note())
                     } else {
                         result.set(
                             Status::Pass,
                             value,
-                            crate::tr!("DNS configuration is valid", "DNS 配置正常"),
+                            crate::tr!(crate::keys::DNS_CONFIGURATION_VALID),
                         )
                     }
                 }
                 Err(err) => result.set(
                     Status::Unknown,
-                    crate::tr!("unreadable", "不可读取"),
-                    crate::trf!(
-                        ("{RESOLV_CONF} exists but cannot be read: {err}"),
-                        ("{RESOLV_CONF} 存在但无法读取：{err}")
+                    crate::tr!(crate::keys::DNS_UNREADABLE),
+                    crate::tr!(
+                        crate::keys::DNS_RESOLV_CONF_EXISTS_CANNOT_READ,
+                        RESOLV_CONF = RESOLV_CONF,
+                        err = err
                     ),
                 ),
             }
@@ -80,8 +73,11 @@ fn resolv_conf() -> CheckResult {
         Err(_) => result
             .set(
                 Status::Warning,
-                crate::tr!("missing", "不存在"),
-                crate::trf!(("{RESOLV_CONF} does not exist"), ("{RESOLV_CONF} 不存在")),
+                crate::tr!(crate::keys::DNS_MISSING),
+                crate::tr!(
+                    crate::keys::DNS_RESOLV_CONF_DOES_NOT_EXIST,
+                    RESOLV_CONF = RESOLV_CONF
+                ),
             )
             .suggestion(risk_note()),
     }

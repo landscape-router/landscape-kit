@@ -1,0 +1,3 @@
+interactive.select_one_interface = "Select one interface: "
+interactive.select_lan_interfaces = "Select LAN interfaces (comma separated, empty for WAN-only): "
+interactive.password_again = " (again): "

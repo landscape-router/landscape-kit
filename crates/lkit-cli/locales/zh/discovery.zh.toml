@@ -1,0 +1,6 @@
+discovery.select_wan_interface = "选择 WAN 网卡："
+discovery.single_arm_confirm = "Landscape 不支持单臂 WAN/LAN 路由。是否继续使用仅 WAN 管理模式？请输入 `yes`："
+discovery.select_lan_interfaces = "选择 LAN 网卡："
+discovery.management_ipv4_address = "管理 IPv4 地址"
+discovery.lan_dhcp_range_start = "LAN DHCP 地址池起始地址"
+discovery.lan_dhcp_range_end = "LAN DHCP 地址池结束地址"

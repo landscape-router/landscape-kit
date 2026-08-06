@@ -56,9 +56,9 @@ async fn run_installed_inner(
         if target == current_manager(&state) {
             println!(
                 "install: {}",
-                crate::trf!(
-                    ("service manager is already {}", target.key()),
-                    ("服务管理器已经是 {}", target.key())
+                crate::tr!(
+                    crate::keys::EXISTING_SERVICE_MANAGER_ALREADY,
+                    key = target.key()
                 )
             );
             return Ok(ExitCode::SUCCESS);
@@ -94,10 +94,7 @@ async fn run_installed_inner(
             crate::workflows::repair::repair_static(&plan.root, &provider, &state).await?;
             println!(
                 "install: {}",
-                crate::tr!(
-                    "static pages restored from the published release assets",
-                    "已从发布资产恢复静态页面"
-                )
+                crate::tr!(crate::keys::EXISTING_STATIC_PAGES_RESTORED)
             );
             return Ok(ExitCode::SUCCESS);
         }
@@ -125,29 +122,23 @@ async fn run_installed_inner(
             Ok(crate::workflows::repair::RepairOutcome::Committed) => {
                 println!(
                     "install: {}",
-                    crate::tr!(
-                        "the active backend binary was restored and verified",
-                        "已恢复并验证活动后端二进制文件"
-                    )
+                    crate::tr!(crate::keys::EXISTING_BACKEND_RESTORED_AND_VERIFIED)
                 );
                 Ok(ExitCode::SUCCESS)
             }
             Ok(crate::workflows::repair::RepairOutcome::RolledBack) => {
                 eprintln!(
                     "install: {}",
-                    crate::tr!(
-                        "repairing the backend failed; rolled back to the previous binary",
-                        "后端修复失败；已回滚到之前的二进制文件"
-                    )
+                    crate::tr!(crate::keys::EXISTING_REPAIR_FAILED_ROLLED_BACK)
                 );
                 Ok(ExitCode::from(5))
             }
             Ok(crate::workflows::repair::RepairOutcome::RollbackFailed { reason }) => {
                 eprintln!(
                     "install: {}",
-                    crate::trf!(
-                        ("repairing the backend failed and automatic rollback also failed: {reason}; manual recovery is required"),
-                        ("后端修复失败，自动回滚也失败：{reason}；需要手动恢复")
+                    crate::tr!(
+                        crate::keys::EXISTING_REPAIR_FAILED_ROLLBACK_FAILED,
+                        reason = reason
                     )
                 );
                 Ok(ExitCode::from(6))
@@ -218,28 +209,22 @@ async fn run_installed_inner(
             Ok(pipeline::SwitchOutcome::Committed { version, backup_id }) => {
                 println!(
                     "install: {}",
-                    crate::trf!(
-                        ("switched to version {version}"),
-                        ("已切换到版本 {version}")
-                    )
+                    crate::tr!(crate::keys::EXISTING_SWITCHED_TO_VERSION, version = version)
                 );
                 match backup_id {
                     Some(backup_id) => {
                         println!(
                             "install: {}",
-                            crate::trf!(
-                                ("backup {backup_id} preserved in backups/"),
-                                ("备份 {backup_id} 已保存在 backups/")
+                            crate::tr!(
+                                crate::keys::EXISTING_BACKUP_PRESERVED,
+                                backup_id = backup_id
                             )
                         );
                     }
                     None => {
                         println!(
                             "install: {}",
-                            crate::tr!(
-                                "no backup was created (--allow-no-backup)",
-                                "未创建备份（--allow-no-backup）"
-                            )
+                            crate::tr!(crate::keys::EXISTING_NO_BACKUP_CREATED)
                         );
                     }
                 }
@@ -247,13 +232,14 @@ async fn run_installed_inner(
             }
             Ok(pipeline::SwitchOutcome::RolledBack { version, backup_id }) => {
                 let backup = backup_id.map_or_else(String::new, |id| {
-                    crate::trf!((" using backup {id}"), ("，使用备份 {id}"))
+                    crate::tr!(crate::keys::EXISTING_ROLLED_BACK_USING_BACKUP, id = id)
                 });
                 eprintln!(
                     "install: {}",
-                    crate::trf!(
-                        ("switching to the target version failed; rolled back to {version}{backup}"),
-                        ("切换到目标版本失败；已回滚到 {version}{backup}")
+                    crate::tr!(
+                        crate::keys::EXISTING_SWITCH_FAILED_ROLLED_BACK,
+                        version = version,
+                        backup = backup
                     )
                 );
                 Ok(ExitCode::from(5))
@@ -261,9 +247,9 @@ async fn run_installed_inner(
             Ok(pipeline::SwitchOutcome::RollbackFailed { version, .. }) => {
                 eprintln!(
                     "install: {}",
-                    crate::trf!(
-                        ("switching failed and automatic rollback to {version} also failed; manual recovery is required"),
-                        ("切换失败，自动回滚到 {version} 也失败；需要手动恢复")
+                    crate::tr!(
+                        crate::keys::EXISTING_SWITCH_FAILED_ROLLBACK_FAILED,
+                        version = version
                     )
                 );
                 Ok(ExitCode::from(6))
@@ -280,10 +266,7 @@ async fn run_installed_inner(
         crate::workflows::repair::observe_initialization(&plan.root, &state)?;
         println!(
             "install: {}",
-            crate::tr!(
-                "observed initialization completion; initialization is now complete",
-                "已观察到初始化完成；初始化状态现已完成"
-            )
+            crate::tr!(crate::keys::EXISTING_OBSERVED_INITIALIZATION_COMPLETION)
         );
         return Ok(ExitCode::SUCCESS);
     }
@@ -297,12 +280,9 @@ async fn run_installed_inner(
     .await?;
     println!(
         "install: {}",
-        crate::trf!(
-            (
-                "version {} is already installed and verified",
-                state.active_version
-            ),
-            ("版本 {} 已安装并通过验证", state.active_version)
+        crate::tr!(
+            crate::keys::EXISTING_VERSION_INSTALLED_AND_VERIFIED,
+            version = state.active_version
         )
     );
     Ok(ExitCode::SUCCESS)
@@ -363,9 +343,8 @@ async fn same_version_install(
         let changed = state.service.definition_sha256.as_deref() != Some(actual.as_str());
         if changed {
             if !args.accept_service_change {
-                let accepted = crate::interaction::interactive::confirm(crate::tr!(
-                    "the managed service unit changed; keep it as-is? Type `yes`: ",
-                    "受管服务 unit 已更改；是否原样保留？请输入 `yes`："
+                let accepted = crate::interaction::interactive::confirm(&crate::tr!(
+                    crate::keys::EXISTING_KEEP_MODIFIED_UNIT
                 ))?;
                 if !accepted {
                     return Err(plan::InstallError::UserRefused(
@@ -377,20 +356,14 @@ async fn same_version_install(
         } else if args.accept_service_change {
             eprintln!(
                 "install: {}",
-                crate::tr!(
-                    "warning: no managed service unit change detected; --accept-service-change ignored",
-                    "警告：未检测到受管服务 unit 更改；已忽略 --accept-service-change"
-                )
+                crate::tr!(crate::keys::EXISTING_ACCEPT_SERVICE_CHANGE_IGNORED_UNIT)
             );
         }
         pipeline::verify_unit_ownership(root, systemd)?;
     } else if args.accept_service_change {
         eprintln!(
             "install: {}",
-            crate::tr!(
-                "warning: no managed service unit exists; --accept-service-change ignored",
-                "警告：不存在受管服务 unit；已忽略 --accept-service-change"
-            )
+            crate::tr!(crate::keys::EXISTING_ACCEPT_SERVICE_CHANGE_IGNORED_NO_UNIT)
         );
     }
 

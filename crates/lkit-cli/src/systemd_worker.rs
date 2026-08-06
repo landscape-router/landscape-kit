@@ -318,9 +318,9 @@ fn interrupt_worker(
     if let Err(error) = systemctl(systemctl_path, &["stop", unit_name]) {
         eprintln!(
             "install: {}",
-            crate::trf!(
-                ("warning: Ctrl+C restored the terminal, but the delegated operation could not be stopped and may still be running: {error}"),
-                ("警告：Ctrl+C 已恢复终端，但无法停止委托操作，该操作可能仍在运行：{error}")
+            crate::tr!(
+                crate::keys::SYSTEMD_WORKER_STOP_FAILED_WARNING,
+                error = error
             )
         );
         return Ok(ExitCode::from(130));
@@ -781,11 +781,11 @@ fn announce_completion(exit_code: u8) {
 
 fn completion_message(exit_code: u8) -> String {
     if exit_code == 0 {
-        crate::tr!("installation complete", "安装完成").into()
+        crate::tr!(crate::keys::SYSTEMD_WORKER_INSTALLATION_COMPLETE)
     } else {
-        crate::trf!(
-            ("installation failed with exit code {exit_code}"),
-            ("安装失败，退出码 {exit_code}")
+        crate::tr!(
+            crate::keys::SYSTEMD_WORKER_INSTALLATION_FAILED,
+            exit_code = exit_code
         )
     }
 }

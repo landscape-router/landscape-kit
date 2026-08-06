@@ -235,198 +235,145 @@ impl std::fmt::Display for InstallError {
             Self::InvalidVersion { value, reason } => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("invalid version {value:?}: {reason}"),
-                    ("无效版本 {value:?}：{reason}")
+                crate::tr!(
+                    crate::keys::PLAN_INVALID_VERSION,
+                    value = format!("{:?}", value),
+                    reason = reason
                 )
             ),
-            Self::InstallDirNotAbsolute => formatter.write_str(crate::tr!(
-                "install directory must be an absolute path",
-                "安装目录必须是绝对路径"
-            )),
-            Self::InvalidAdminUser => formatter.write_str(crate::tr!(
-                "admin user must not be empty or contain control characters",
-                "管理员用户名不能为空或包含控制字符"
-            )),
+            Self::InstallDirNotAbsolute => {
+                formatter.write_str(&crate::tr!(crate::keys::PLAN_INSTALL_DIR_NOT_ABSOLUTE))
+            }
+            Self::InvalidAdminUser => {
+                formatter.write_str(&crate::tr!(crate::keys::PLAN_INVALID_ADMIN_USER))
+            }
             Self::ParameterUsage(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("parameter usage error: {reason}"),
-                    ("参数用法错误：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_PARAMETER_USAGE_ERROR, reason = reason)
             ),
             Self::UserRefused(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(("refused: {reason}"), ("已拒绝：{reason}"))
+                crate::tr!(crate::keys::PLAN_REFUSED, reason = reason)
             ),
             Self::Preflight(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("preflight check failed: {reason}"),
-                    ("部署前检查失败：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_PREFLIGHT_CHECK_FAILED, reason = reason)
             ),
             Self::CorruptedState(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("install state is corrupted: {reason}"),
-                    ("安装状态已损坏：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_INSTALL_STATE_CORRUPTED, reason = reason)
             ),
             Self::CorruptedTransaction(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("transaction is corrupted: {reason}"),
-                    ("事务已损坏：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_TRANSACTION_CORRUPTED, reason = reason)
             ),
             Self::BlockedByTransaction(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("blocked by an unfinished transaction: {reason}"),
-                    ("被未完成事务阻止：{reason}")
+                crate::tr!(
+                    crate::keys::PLAN_BLOCKED_BY_UNFINISHED_TRANSACTION,
+                    reason = reason
                 )
             ),
             Self::ActivationDrift(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("installation state shows activation drift: {reason}"),
-                    ("安装状态存在激活漂移：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_ACTIVATION_DRIFT, reason = reason)
             ),
             Self::DangerousDirectory(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("installation directory is dangerous or contains unknown content: {reason}"),
-                    ("安装目录危险或包含未知内容：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_DANGEROUS_DIRECTORY, reason = reason)
             ),
-            Self::LockBusy => formatter.write_str(crate::tr!(
-                "another install is in progress for this install root",
-                "此安装根目录已有另一个安装正在进行"
-            )),
+            Self::LockBusy => formatter.write_str(&crate::tr!(crate::keys::PLAN_LOCK_BUSY)),
             Self::UnsupportedPlatform(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("unsupported platform: {reason}"),
-                    ("不支持的平台：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_UNSUPPORTED_PLATFORM, reason = reason)
             ),
-            Self::NoStableVersion => formatter.write_str(crate::tr!(
-                "the repository has no stable version for the host architecture",
-                "仓库中没有适用于主机架构的稳定版本"
-            )),
+            Self::NoStableVersion => {
+                formatter.write_str(&crate::tr!(crate::keys::PLAN_NO_STABLE_VERSION))
+            }
             Self::ReleaseExists(version) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("release {version} already exists"),
-                    ("发布版本 {version} 已存在")
-                )
+                crate::tr!(crate::keys::PLAN_RELEASE_EXISTS, version = version)
             ),
             Self::InvalidPassword(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(("invalid password: {reason}"), ("密码无效：{reason}"))
+                crate::tr!(crate::keys::PLAN_INVALID_PASSWORD, reason = reason)
             ),
             Self::InvalidPasswordFile(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("invalid password file: {reason}"),
-                    ("密码文件无效：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_INVALID_PASSWORD_FILE, reason = reason)
             ),
             Self::InvalidBackup(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(("backup is invalid: {reason}"), ("备份无效：{reason}"))
+                crate::tr!(crate::keys::PLAN_INVALID_BACKUP, reason = reason)
             ),
             Self::ExportFailed(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("config export failed: {reason}"),
-                    ("配置导出失败：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_EXPORT_FAILED, reason = reason)
             ),
             Self::ServiceNotRunning(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("the managed service is not running: {reason}"),
-                    ("受管服务未运行：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_SERVICE_NOT_RUNNING, reason = reason)
             ),
             Self::NonInteractive(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("non-interactive environment: {reason}"),
-                    ("非交互环境：{reason}")
+                crate::tr!(
+                    crate::keys::PLAN_NON_INTERACTIVE_ENVIRONMENT,
+                    reason = reason
                 )
             ),
             Self::Systemd(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("systemd operation failed: {reason}"),
-                    ("systemd 操作失败：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_SYSTEMD_OPERATION_FAILED, reason = reason)
             ),
             Self::HealthCheck(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("health check failed: {reason}"),
-                    ("健康检查失败：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_HEALTH_CHECK_FAILED, reason = reason)
             ),
             Self::ProcessConflict(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("conflicting process detected: {reason}"),
-                    ("检测到冲突进程：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_CONFLICTING_PROCESS, reason = reason)
             ),
             Self::ResolvBackup(reason) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("host state backup failed: {reason}"),
-                    ("主机状态备份失败：{reason}")
-                )
+                crate::tr!(crate::keys::PLAN_HOST_STATE_BACKUP_FAILED, reason = reason)
             ),
             Self::StateWrite(error) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("failed to write install state: {error}"),
-                    ("写入安装状态失败：{error}")
+                crate::tr!(
+                    crate::keys::PLAN_FAILED_TO_WRITE_INSTALL_STATE,
+                    error = error
                 )
             ),
             Self::Repository(error) => write!(
                 formatter,
                 "{}",
-                crate::trf!(
-                    ("repository selection failed: {error}"),
-                    ("仓库选择失败：{error}")
-                )
+                crate::tr!(crate::keys::PLAN_REPOSITORY_SELECTION_FAILED, error = error)
             ),
             Self::Io(error) => write!(
                 formatter,
                 "{}",
-                crate::trf!(("I/O error: {error}"), ("I/O 错误：{error}"))
+                crate::tr!(crate::keys::PLAN_IO_ERROR, error = error)
             ),
         }
     }

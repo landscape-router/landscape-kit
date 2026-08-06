@@ -82,22 +82,13 @@ async fn migrate_to_none(
         Ok(()) => {
             println!(
                 "install: {}",
-                crate::tr!(
-                    "service manager migrated to none; Landscape is stopped",
-                    "服务管理器已迁移为 none；Landscape 已停止"
-                )
+                crate::tr!(crate::keys::SERVICE_MANAGER_MIGRATED_TO_NONE)
             );
             println!(
                 "install: {}",
-                crate::trf!(
-                    (
-                        "start it manually with: {}",
-                        pipeline::reference_command(root)
-                    ),
-                    (
-                        "使用以下命令手动启动：{}",
-                        pipeline::reference_command(root)
-                    )
+                crate::tr!(
+                    crate::keys::SERVICE_MANAGER_START_MANUALLY_WITH,
+                    command = pipeline::reference_command(root)
                 )
             );
             Ok(())
@@ -233,17 +224,11 @@ async fn migrate_to_systemd<P: DocsProbe>(
         Ok(()) => {
             println!(
                 "install: {}",
-                crate::tr!(
-                    "service manager migrated to systemd; landscape-router.service is registered, enabled, and running",
-                    "服务管理器已迁移为 systemd；landscape-router.service 已注册、启用并正在运行"
-                )
+                crate::tr!(crate::keys::SERVICE_MANAGER_MIGRATED_TO_SYSTEMD)
             );
             println!(
                 "install: {}",
-                crate::tr!(
-                    "management interface https://127.0.0.1:6443",
-                    "管理界面 https://127.0.0.1:6443"
-                )
+                crate::tr!(crate::keys::MANAGE_MANAGEMENT_INTERFACE)
             );
             Ok(())
         }

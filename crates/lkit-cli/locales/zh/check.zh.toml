@@ -1,0 +1,7 @@
+check.runtime_identity_and_platform = "运行身份与平台"
+check.kernel_version_and_capabilities = "内核版本与内核能力"
+check.resource_limits = "资源限制"
+check.required_commands_and_runtime_dependencies = "必需命令与运行时依赖"
+check.port_conflicts = "端口冲突"
+check.system_services_and_security_policy = "系统服务与安全策略"
+check.dns_configuration_risks = "DNS 配置风险"

@@ -25,24 +25,21 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 fn iproute2() -> CheckResult {
-    let result = CheckResult::new("dependency.iproute2", crate::tr!("ip command", "ip 命令"));
+    let result = CheckResult::new(
+        "dependency.iproute2",
+        crate::tr!(crate::keys::DEPENDENCY_IP_COMMAND),
+    );
     match find_in_path("ip") {
         Some(path) => result.set(
             Status::Pass,
             path.display().to_string(),
-            crate::tr!(
-                "The ip command exists and is executable",
-                "ip 命令存在且可执行"
-            ),
+            crate::tr!(crate::keys::DEPENDENCY_IP_COMMAND_EXISTS_EXECUTABLE),
         ),
         None => result
             .set(
                 Status::Error,
-                crate::tr!("not found", "未找到"),
-                crate::tr!(
-                    "The ip command was not found (provided by the iproute2 package)",
-                    "未找到 ip 命令（属于 iproute2 软件包）"
-                ),
+                crate::tr!(crate::keys::DEPENDENCY_NOT_FOUND),
+                crate::tr!(crate::keys::DEPENDENCY_IP_COMMAND_NOT_FOUND),
             )
             .suggestion(install_suggestion(DependencyPackage::Iproute)),
     }
@@ -51,17 +48,14 @@ fn iproute2() -> CheckResult {
 fn tc() -> CheckResult {
     let mut result = CheckResult::new(
         "dependency.tc",
-        crate::tr!("tc command and BPF support", "tc 命令与 BPF 支持"),
+        crate::tr!(crate::keys::DEPENDENCY_TC_COMMAND_AND_BPF),
     );
     let Some(path) = find_in_path("tc") else {
         return result
             .set(
                 Status::Error,
-                crate::tr!("not found", "未找到"),
-                crate::tr!(
-                    "The tc command was not found (provided by the iproute2 package)",
-                    "未找到 tc 命令（属于 iproute2 软件包）"
-                ),
+                crate::tr!(crate::keys::DEPENDENCY_NOT_FOUND),
+                crate::tr!(crate::keys::DEPENDENCY_IP_COMMAND_NOT_FOUND),
             )
             .suggestion(install_suggestion(DependencyPackage::Iproute));
     };
@@ -75,24 +69,15 @@ fn tc() -> CheckResult {
                 result.set(
                     Status::Pass,
                     path_display,
-                    crate::tr!(
-                        "tc exists and supports BPF filters",
-                        "tc 存在且支持 BPF 过滤器"
-                    ),
+                    crate::tr!(crate::keys::DEPENDENCY_TC_EXISTS_SUPPORTS_BPF),
                 )
             } else if !output.status.success() {
                 result.set(
                     Status::Unknown,
                     path_display,
-                    crate::trf!(
-                        (
-                            "tc filter help failed (exit code {:?})",
-                            output.status.code()
-                        ),
-                        (
-                            "tc filter help 执行失败（退出码 {:?}）",
-                            output.status.code()
-                        )
+                    crate::tr!(
+                        crate::keys::DEPENDENCY_TC_FILTER_HELP_FAILED,
+                        exit_code = format!("{:?}", output.status.code())
                     ),
                 )
             } else {
@@ -100,47 +85,35 @@ fn tc() -> CheckResult {
                     .set(
                         Status::Error,
                         path_display,
-                        crate::tr!(
-                            "tc help does not mention bpf; BPF support is unavailable",
-                            "tc 帮助文本中未包含 bpf，BPF 支持不可用"
-                        ),
+                        crate::tr!(crate::keys::DEPENDENCY_TC_HELP_MENTIONS_BPF),
                     )
-                    .suggestion(crate::tr!(
-                        "Upgrade iproute2 or install a build with BPF support",
-                        "升级 iproute2 或安装支持 BPF 的版本"
-                    ))
+                    .suggestion(crate::tr!(crate::keys::DEPENDENCY_UPGRADE_IPROUTE2))
             }
         }
         Err(err) => result.set(
             Status::Unknown,
             path_display,
-            crate::trf!(
-                ("Unable to run tc filter help: {err}"),
-                ("无法执行 tc filter help：{err}")
-            ),
+            crate::tr!(crate::keys::DEPENDENCY_UNABLE_RUN_TC_FILTER_HELP, err = err),
         ),
     }
 }
 
 fn pppd() -> CheckResult {
-    let result = CheckResult::new("dependency.pppd", crate::tr!("pppd command", "pppd 命令"));
+    let result = CheckResult::new(
+        "dependency.pppd",
+        crate::tr!(crate::keys::DEPENDENCY_PPPD_COMMAND),
+    );
     match find_in_path("pppd") {
         Some(path) => result.set(
             Status::Pass,
             path.display().to_string(),
-            crate::tr!(
-                "The pppd command exists and is executable (used for PPPoE)",
-                "pppd 命令存在且可执行（用于 PPPoE 拨号）"
-            ),
+            crate::tr!(crate::keys::DEPENDENCY_PPPD_COMMAND_EXISTS),
         ),
         None => result
             .set(
                 Status::Error,
-                crate::tr!("not found", "未找到"),
-                crate::tr!(
-                    "The pppd command was not found (required for PPPoE)",
-                    "未找到 pppd 命令（用于 PPPoE 拨号）"
-                ),
+                crate::tr!(crate::keys::DEPENDENCY_NOT_FOUND),
+                crate::tr!(crate::keys::DEPENDENCY_PPPD_NOT_FOUND),
             )
             .suggestion(install_suggestion(DependencyPackage::Ppp)),
     }
@@ -149,10 +122,7 @@ fn pppd() -> CheckResult {
 fn container_runtime() -> CheckResult {
     let result = CheckResult::new(
         "dependency.container_runtime",
-        crate::tr!(
-            "Container runtime (optional dependency)",
-            "容器运行时（软依赖）"
-        ),
+        crate::tr!(crate::keys::DEPENDENCY_CONTAINER_RUNTIME),
     );
     let found = ["docker", "podman"]
         .iter()
@@ -161,13 +131,17 @@ fn container_runtime() -> CheckResult {
         Some(path) => result.set(
             Status::Pass,
             path.display().to_string(),
-            crate::tr!("docker or podman is available", "docker 或 podman 可用"),
+            crate::tr!(crate::keys::DEPENDENCY_DOCKER_OR_PODMAN_AVAILABLE),
         ),
         None => result
-            .set(Status::Warning, crate::tr!("not found", "未找到"), crate::tr!("Neither docker nor podman is available", "docker 与 podman 均不可用"))
-            .suggestion(
-                crate::tr!("A container runtime is not required for basic deployment; install and configure Docker or Podman before routing traffic to containers", "缺少容器运行时不阻断基础部署；需要将流量分流到容器时，必须安装并配置 Docker 或 Podman"),
-            ),
+            .set(
+                Status::Warning,
+                crate::tr!(crate::keys::DEPENDENCY_NOT_FOUND),
+                crate::tr!(crate::keys::DEPENDENCY_NO_CONTAINER_RUNTIME),
+            )
+            .suggestion(crate::tr!(
+                crate::keys::DEPENDENCY_CONTAINER_RUNTIME_NOT_REQUIRED
+            )),
     }
 }
 
@@ -215,22 +189,20 @@ fn install_suggestion_for(package: DependencyPackage, manager: Option<PackageMan
         (Some(PackageManager::Zypper), DependencyPackage::Iproute) => "zypper install iproute2",
         (Some(PackageManager::Zypper), DependencyPackage::Ppp) => "zypper install ppp",
         (None, DependencyPackage::Iproute) => {
-            return crate::tr!("Install the package that provides `ip` and `tc` (usually `iproute2`, or `iproute` on Fedora/RHEL)", "安装提供 `ip` 和 `tc` 命令的软件包（通常名为 `iproute2`，Fedora/RHEL 中名为 `iproute`）").into();
+            return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PROVIDING_IP_AND_TC).into();
         }
         (None, DependencyPackage::Ppp) => {
-            return crate::tr!("Install the `ppp` package that provides `pppd`; the package is usually not named `pppd`", "安装提供 `pppd` 命令的 `ppp` 软件包；软件包名通常不是 `pppd`").into();
+            return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PPP_PACKAGE).into();
         }
     };
     let package_note = match package {
-        DependencyPackage::Iproute => "",
-        DependencyPackage::Ppp => crate::tr!(
-            "; the package is named `ppp`, not `pppd`",
-            "；软件包名是 `ppp`，不是 `pppd`"
-        ),
+        DependencyPackage::Iproute => String::new(),
+        DependencyPackage::Ppp => crate::tr!(crate::keys::DEPENDENCY_PACKAGE_NAMED_PPP),
     };
-    crate::trf!(
-        ("Run `{command}` as root (prefix it with `sudo` as a regular user){package_note}"),
-        ("以 root 身份运行 `{command}`（普通用户在命令前加 `sudo`）{package_note}")
+    crate::tr!(
+        crate::keys::DEPENDENCY_RUN_INSTALL_COMMAND,
+        command = command,
+        package_note = package_note
     )
 }
 

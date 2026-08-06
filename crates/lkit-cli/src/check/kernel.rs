@@ -18,32 +18,41 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 fn kernel_version() -> CheckResult {
-    let mut result = CheckResult::new("kernel.version", crate::tr!("Kernel version", "内核版本"));
+    let mut result = CheckResult::new(
+        "kernel.version",
+        crate::tr!(crate::keys::KERNEL_KERNEL_VERSION),
+    );
     match std::fs::read_to_string("/proc/sys/kernel/osrelease") {
         Ok(raw) => {
             let version = raw.trim().to_string();
             result.value = version.clone();
             match parse_version(&version) {
-                Some((major, minor, _)) if (major, minor) >= (6, 9) => {
-                    result.set(Status::Pass, version, crate::tr!("The kernel meets the 6.9+ requirement", "内核版本满足 6.9+ 要求"))
-                }
+                Some((major, minor, _)) if (major, minor) >= (6, 9) => result.set(
+                    Status::Pass,
+                    version,
+                    crate::tr!(crate::keys::KERNEL_KERNEL_MEETS_6_9_REQUIREMENT),
+                ),
                 Some((_, _, _)) => result
                     .set(
                         Status::Error,
                         version.clone(),
-                        crate::trf!(("Kernel version is below the requirement: >= 6.9 required, current {version}"), ("内核版本低于要求：需要 >= 6.9，当前为 {version}")),
+                        crate::tr!(
+                            crate::keys::KERNEL_KERNEL_VERSION_BELOW_REQUIREMENT,
+                            version = version
+                        ),
                     )
-                    .suggestion(crate::tr!("Upgrade the kernel to version 6.9 or later and retry", "请升级内核到 6.9 或更高版本后重试")),
-                None => result.set(Status::Unknown, version, crate::tr!("Unable to parse the kernel version", "无法解析内核版本号")),
+                    .suggestion(crate::tr!(crate::keys::KERNEL_UPGRADE_KERNEL_6_9_OR_LATER)),
+                None => result.set(
+                    Status::Unknown,
+                    version,
+                    crate::tr!(crate::keys::KERNEL_UNABLE_PARSE_KERNEL_VERSION),
+                ),
             }
         }
         Err(err) => result.set(
             Status::Unknown,
-            crate::tr!("unavailable", "无法读取"),
-            crate::trf!(
-                ("Unable to read /proc/sys/kernel/osrelease: {err}"),
-                ("无法读取 /proc/sys/kernel/osrelease：{err}")
-            ),
+            crate::tr!(crate::keys::KERNEL_UNAVAILABLE),
+            crate::tr!(crate::keys::KERNEL_UNABLE_READ_OSRELEASE, err = err),
         ),
     }
 }
@@ -69,7 +78,7 @@ struct BpfProgGetNextIdAttr {
 fn bpf() -> CheckResult {
     let mut result = CheckResult::new(
         "kernel.bpf",
-        crate::tr!("BPF subsystem and BPF JIT", "BPF 子系统与 BPF JIT"),
+        crate::tr!(crate::keys::KERNEL_BPF_SUBSYSTEM_AND_JIT),
     );
     #[cfg(target_os = "linux")]
     {
@@ -88,73 +97,60 @@ fn bpf() -> CheckResult {
         };
         if ret == 0 {
             result = result.detail(crate::tr!(
-                "BPF_PROG_GET_NEXT_ID probe succeeded",
-                "BPF_PROG_GET_NEXT_ID 探测成功"
+                crate::keys::KERNEL_BPF_PROG_GET_NEXT_ID_PROBE_SUCCEEDED
             ));
         } else {
             let errno = std::io::Error::last_os_error();
             let is_root = unsafe { libc::geteuid() == 0 };
             match errno.raw_os_error() {
                 Some(libc::ENOENT) => {
-                    result = result.detail(crate::tr!(
-                        "BPF_PROG_GET_NEXT_ID returned ENOENT; the BPF subsystem is available",
-                        "BPF_PROG_GET_NEXT_ID 返回 ENOENT，BPF 子系统可用"
-                    ));
+                    result =
+                        result.detail(crate::tr!(crate::keys::KERNEL_BPF_PROG_GET_NEXT_ID_ENOENT));
                 }
                 Some(libc::ENOSYS) => {
                     return result
                         .set(
                             Status::Error,
-                            crate::tr!("BPF syscall unavailable", "BPF syscall 不可用"),
-                            crate::tr!(
-                                "The kernel does not support the BPF syscall (ENOSYS)",
-                                "内核不支持 BPF syscall（ENOSYS）"
-                            ),
+                            crate::tr!(crate::keys::KERNEL_BPF_SYSCALL_UNAVAILABLE),
+                            crate::tr!(crate::keys::KERNEL_KERNEL_DOES_NOT_SUPPORT_BPF_SYSCALL),
                         )
-                        .suggestion(crate::tr!(
-                            "Use a kernel that supports eBPF",
-                            "当前内核不支持 eBPF，请更换支持 eBPF 的内核"
-                        ));
+                        .suggestion(crate::tr!(crate::keys::KERNEL_USE_KERNEL_SUPPORTING_EBPF));
                 }
                 Some(libc::EPERM) | Some(libc::EACCES) if is_root => {
                     return result
                         .set(
                             Status::Error,
-                            crate::tr!("BPF denied", "BPF 被拒绝"),
-                            crate::tr!("The BPF syscall returned a permission error as root and may be blocked by seccomp or an LSM", "root 身份下 BPF syscall 仍返回权限错误，可能被 seccomp 或 LSM 拦截"),
+                            crate::tr!(crate::keys::KERNEL_BPF_DENIED),
+                            crate::tr!(crate::keys::KERNEL_BPF_PERMISSION_ERROR_AS_ROOT),
                         )
-                        .suggestion(crate::tr!("Check whether the process is restricted by seccomp or an LSM", "检查进程是否被 seccomp 或 LSM 限制"));
+                        .suggestion(crate::tr!(
+                            crate::keys::KERNEL_CHECK_SECCOMP_OR_LSM_RESTRICTION
+                        ));
                 }
                 Some(libc::EPERM) | Some(libc::EACCES) => {
                     return result
                         .set(
                             Status::Unknown,
-                            crate::tr!("permission denied", "权限不足"),
-                            crate::tr!(
-                                "The current identity cannot probe the BPF subsystem",
-                                "当前身份无权探测 BPF 子系统"
-                            ),
+                            crate::tr!(crate::keys::KERNEL_PERMISSION_DENIED),
+                            crate::tr!(crate::keys::KERNEL_CANNOT_PROBE_BPF_WITH_CURRENT_IDENTITY),
                         )
-                        .suggestion(crate::tr!(
-                            "Run lkit check as root",
-                            "请以 root 身份运行 lkit check"
-                        ));
+                        .suggestion(crate::tr!(crate::keys::KERNEL_RUN_LKIT_CHECK_AS_ROOT));
                 }
                 Some(other) => {
                     return result.set(
                         Status::Unknown,
                         format!("errno {other}"),
-                        crate::trf!(
-                            ("BPF probe returned an unexpected error: {errno}"),
-                            ("BPF 探测返回未预期错误：{errno}")
+                        crate::tr!(
+                            crate::keys::KERNEL_BPF_PROBE_UNEXPECTED_ERROR,
+                            errno = errno
                         ),
                     );
                 }
                 None => {
                     return result.set(
                         Status::Unknown,
-                        crate::tr!("unknown error", "未知错误"),
-                        crate::trf!(("BPF probe failed: {errno}"), ("BPF 探测失败：{errno}")),
+                        crate::tr!(crate::keys::KERNEL_UNKNOWN_ERROR),
+                        crate::tr!(crate::keys::KERNEL_BPF_PROBE_FAILED, errno = errno),
                     );
                 }
             }
@@ -166,71 +162,49 @@ fn bpf() -> CheckResult {
                 match value.as_str() {
                     "1" | "2" => result.set(
                         Status::Pass,
-                        crate::trf!(
-                            ("BPF subsystem available, JIT enabled ({value})"),
-                            ("BPF 子系统可用，JIT 已启用（{value}）")
-                        ),
-                        crate::tr!(
-                            "Both the BPF syscall and JIT are available",
-                            "BPF syscall 与 JIT 均可用"
-                        ),
+                        crate::tr!(crate::keys::KERNEL_BPF_AVAILABLE_JIT_ENABLED, value = value),
+                        crate::tr!(crate::keys::KERNEL_BPF_SYSCALL_AND_JIT_AVAILABLE),
                     ),
                     "0" => result
                         .set(
                             Status::Error,
-                            crate::trf!(("JIT disabled ({value})"), ("JIT 已禁用（{value}）")),
-                            crate::tr!("BPF JIT is disabled", "BPF JIT 处于禁用状态"),
+                            crate::tr!(crate::keys::KERNEL_JIT_DISABLED, value = value),
+                            crate::tr!(crate::keys::KERNEL_BPF_JIT_IS_DISABLED),
                         )
-                        .suggestion(crate::tr!(
-                            "Enable JIT: sysctl -w net.core.bpf_jit_enable=1",
-                            "启用 JIT：sysctl -w net.core.bpf_jit_enable=1"
-                        )),
+                        .suggestion(crate::tr!(crate::keys::KERNEL_ENABLE_JIT_SYSCTL)),
                     _ => result.set(
                         Status::Unknown,
                         value,
-                        crate::tr!("Unrecognized BPF JIT status", "无法识别 BPF JIT 状态"),
+                        crate::tr!(crate::keys::KERNEL_UNRECOGNIZED_BPF_JIT_STATUS),
                     ),
                 }
             }
             Err(err) => match config_value("CONFIG_BPF_JIT") {
                 Some('y') => result.set(
                     Status::Pass,
-                    crate::tr!(
-                        "JIT status file unreadable; built into kernel",
-                        "JIT 状态文件不可读，配置为内置"
-                    ),
-                    crate::trf!(
-                        ("{err}; kernel configuration has CONFIG_BPF_JIT=y"),
-                        ("{err}；内核配置 CONFIG_BPF_JIT=y")
-                    ),
+                    crate::tr!(crate::keys::KERNEL_JIT_STATUS_FILE_UNREADABLE_BUILTIN),
+                    crate::tr!(crate::keys::KERNEL_CONFIG_BPF_JIT_Y, err = err),
                 ),
                 Some('m') => result.set(
                     Status::Unknown,
-                    crate::tr!("JIT is a module", "JIT 为模块"),
-                    crate::tr!(
-                        "Unable to confirm whether the BPF JIT module is loaded",
-                        "无法确认 BPF JIT 模块是否已加载"
-                    ),
+                    crate::tr!(crate::keys::KERNEL_JIT_IS_A_MODULE),
+                    crate::tr!(crate::keys::KERNEL_UNABLE_CONFIRM_BPF_JIT_MODULE_LOADED),
                 ),
                 Some('n') => result
                     .set(
                         Status::Error,
                         "CONFIG_BPF_JIT=n",
-                        crate::tr!(
-                            "BPF JIT was disabled when the kernel was built",
-                            "内核编译时未启用 BPF JIT"
-                        ),
+                        crate::tr!(crate::keys::KERNEL_BPF_JIT_DISABLED_AT_BUILD),
                     )
                     .suggestion(crate::tr!(
-                        "Use a kernel built with CONFIG_BPF_JIT",
-                        "需使用启用 CONFIG_BPF_JIT 的内核"
+                        crate::keys::KERNEL_USE_KERNEL_WITH_CONFIG_BPF_JIT
                     )),
                 _ => result.set(
                     Status::Unknown,
-                    crate::tr!("unknown", "无法确认"),
-                    crate::trf!(
-                        ("Unable to read bpf_jit_enable ({err}) or the kernel configuration"),
-                        ("无法读取 bpf_jit_enable（{err}），也无法读取内核配置")
+                    crate::tr!(crate::keys::KERNEL_UNKNOWN),
+                    crate::tr!(
+                        crate::keys::KERNEL_UNABLE_READ_BPF_JIT_ENABLE_OR_CONFIG,
+                        err = err
                     ),
                 ),
             },
@@ -240,11 +214,8 @@ fn bpf() -> CheckResult {
     {
         result.set(
             Status::Unknown,
-            crate::tr!("not Linux", "非 Linux"),
-            crate::tr!(
-                "The current platform cannot probe BPF",
-                "当前平台无法探测 BPF"
-            ),
+            crate::tr!(crate::keys::KERNEL_NOT_LINUX),
+            crate::tr!(crate::keys::KERNEL_CURRENT_PLATFORM_CANNOT_PROBE_BPF),
         )
     }
 }
@@ -252,43 +223,38 @@ fn bpf() -> CheckResult {
 fn btf() -> CheckResult {
     let result = CheckResult::new(
         "kernel.btf",
-        crate::tr!("Kernel BTF information", "内核 BTF 信息"),
+        crate::tr!(crate::keys::KERNEL_KERNEL_BTF_INFORMATION),
     );
     let path = "/sys/kernel/btf/vmlinux";
     match std::fs::File::open(path) {
         Ok(_) => result.set(
             Status::Pass,
-            crate::tr!("present and readable", "存在且可读取"),
-            crate::tr!("Kernel BTF information is available", "内核 BTF 信息可用"),
+            crate::tr!(crate::keys::KERNEL_PRESENT_AND_READABLE),
+            crate::tr!(crate::keys::KERNEL_KERNEL_BTF_INFORMATION_AVAILABLE),
         ),
         Err(err) if Path::new(path).exists() => result.set(
             Status::Unknown,
-            crate::tr!("present but unreadable", "存在但不可读取"),
-            crate::trf!(
-                ("{path} exists but cannot be read: {err}"),
-                ("{path} 存在但无法读取：{err}")
+            crate::tr!(crate::keys::KERNEL_PRESENT_BUT_UNREADABLE),
+            crate::tr!(
+                crate::keys::KERNEL_BTF_EXISTS_BUT_CANNOT_READ,
+                path = path,
+                err = err
             ),
         ),
         Err(_) => result
             .set(
                 Status::Error,
-                crate::tr!("missing", "不存在"),
-                crate::trf!(
-                    ("{path} does not exist; the kernel does not provide BTF information"),
-                    ("{path} 不存在，内核未提供 BTF 信息")
-                ),
+                crate::tr!(crate::keys::KERNEL_MISSING),
+                crate::tr!(crate::keys::KERNEL_BTF_PATH_DOES_NOT_EXIST, path = path),
             )
-            .suggestion(crate::tr!(
-                "Use a kernel with BTF support, such as one built with CONFIG_DEBUG_INFO_BTF",
-                "需要支持 BTF 的内核（如启用 CONFIG_DEBUG_INFO_BTF 的内核）"
-            )),
+            .suggestion(crate::tr!(crate::keys::KERNEL_USE_KERNEL_WITH_BTF_SUPPORT)),
     }
 }
 
 fn cgroup() -> CheckResult {
     let result = CheckResult::new(
         "kernel.cgroup",
-        crate::tr!("Cgroup filesystem", "Cgroup 文件系统"),
+        crate::tr!(crate::keys::KERNEL_CGROUP_FILESYSTEM),
     );
     match std::fs::read_to_string("/proc/self/mounts") {
         Ok(mounts) => {
@@ -308,42 +274,30 @@ fn cgroup() -> CheckResult {
                     if std::fs::read_dir("/sys/fs/cgroup").is_ok() {
                         result.set(
                             Status::Pass,
-                            crate::trf!(("mounted ({fstype})"), ("已挂载（{fstype}）")),
-                            crate::tr!("The Cgroup filesystem is available", "Cgroup 文件系统可用"),
+                            crate::tr!(crate::keys::KERNEL_MOUNTED, fstype = fstype),
+                            crate::tr!(crate::keys::KERNEL_CGROUP_FILESYSTEM_AVAILABLE),
                         )
                     } else {
                         result.set(
                             Status::Unknown,
-                            crate::trf!(
-                                ("mounted ({fstype}) but unreadable"),
-                                ("已挂载（{fstype}）但不可读取")
-                            ),
-                            crate::tr!("/sys/fs/cgroup is unreadable", "/sys/fs/cgroup 不可读"),
+                            crate::tr!(crate::keys::KERNEL_MOUNTED_BUT_UNREADABLE, fstype = fstype),
+                            crate::tr!(crate::keys::KERNEL_CGROUP_FS_UNREADABLE),
                         )
                     }
                 }
                 None => result
                     .set(
                         Status::Error,
-                        crate::tr!("not mounted", "未挂载"),
-                        crate::tr!(
-                            "No Cgroup filesystem is mounted at /sys/fs/cgroup",
-                            "/sys/fs/cgroup 未挂载 Cgroup 文件系统"
-                        ),
+                        crate::tr!(crate::keys::KERNEL_NOT_MOUNTED),
+                        crate::tr!(crate::keys::KERNEL_NO_CGROUP_MOUNTED_AT_SYS_FS_CGROUP),
                     )
-                    .suggestion(crate::tr!(
-                        "Check whether the kernel has Cgroup support enabled",
-                        "检查内核是否启用 Cgroup 支持"
-                    )),
+                    .suggestion(crate::tr!(crate::keys::KERNEL_CHECK_CGROUP_SUPPORT_ENABLED)),
             }
         }
         Err(err) => result.set(
             Status::Unknown,
-            crate::tr!("unavailable", "无法读取"),
-            crate::trf!(
-                ("Unable to read /proc/self/mounts: {err}"),
-                ("无法读取 /proc/self/mounts：{err}")
-            ),
+            crate::tr!(crate::keys::KERNEL_UNAVAILABLE),
+            crate::tr!(crate::keys::KERNEL_UNABLE_READ_SELF_MOUNTS, err = err),
         ),
     }
 }
@@ -355,61 +309,40 @@ fn cgroup_cpu() -> CheckResult {
             if controllers.split_whitespace().any(|c| c == "cpu") {
                 result.set(
                     Status::Pass,
-                    crate::tr!("available", "可用"),
-                    crate::tr!(
-                        "The cgroup v2 CPU controller is enabled",
-                        "cgroup v2 CPU controller 已启用"
-                    ),
+                    crate::tr!(crate::keys::KERNEL_AVAILABLE),
+                    crate::tr!(crate::keys::KERNEL_CGROUP_V2_CPU_CONTROLLER_ENABLED),
                 )
             } else {
                 result
                     .set(
                         Status::Error,
-                        crate::tr!("disabled", "未启用"),
-                        crate::tr!(
-                            "The cgroup v2 CPU controller is not in the available list",
-                            "cgroup v2 CPU controller 未在可用列表中"
-                        ),
+                        crate::tr!(crate::keys::KERNEL_DISABLED),
+                        crate::tr!(crate::keys::KERNEL_CGROUP_V2_CPU_CONTROLLER_NOT_AVAILABLE),
                     )
-                    .suggestion(crate::tr!(
-                        "Add cpu to cgroup.controllers / subtree_control",
-                        "将 cpu 加入 cgroup.controllers / subtree_control"
-                    ))
+                    .suggestion(crate::tr!(crate::keys::KERNEL_ADD_CPU_TO_CONTROLLERS))
             }
         }
         Err(_) => {
             if Path::new("/sys/fs/cgroup/cpu").is_dir() {
                 result.set(
                     Status::Pass,
-                    crate::tr!("available", "可用"),
-                    crate::tr!(
-                        "The cgroup v1 cpu controller is mounted",
-                        "cgroup v1 cpu controller 已挂载"
-                    ),
+                    crate::tr!(crate::keys::KERNEL_AVAILABLE),
+                    crate::tr!(crate::keys::KERNEL_CGROUP_V1_CPU_CONTROLLER_MOUNTED),
                 )
             } else if Path::new("/sys/fs/cgroup").exists() {
                 result.set(
                     Status::Unknown,
-                    crate::tr!("unknown", "无法确认"),
-                    crate::tr!(
-                        "Unable to read cgroup controller information",
-                        "无法读取 cgroup 控制器信息"
-                    ),
+                    crate::tr!(crate::keys::KERNEL_UNKNOWN),
+                    crate::tr!(crate::keys::KERNEL_UNABLE_READ_CGROUP_CONTROLLER_INFORMATION),
                 )
             } else {
                 result
                     .set(
                         Status::Error,
-                        crate::tr!("not mounted", "未挂载"),
-                        crate::tr!(
-                            "The Cgroup filesystem is unavailable",
-                            "Cgroup 文件系统不可用"
-                        ),
+                        crate::tr!(crate::keys::KERNEL_NOT_MOUNTED),
+                        crate::tr!(crate::keys::KERNEL_CGROUP_FILESYSTEM_UNAVAILABLE),
                     )
-                    .suggestion(crate::tr!(
-                        "Check whether the kernel has Cgroup support enabled",
-                        "检查内核是否启用 Cgroup 支持"
-                    ))
+                    .suggestion(crate::tr!(crate::keys::KERNEL_CHECK_CGROUP_SUPPORT_ENABLED))
             }
         }
     }
@@ -418,7 +351,7 @@ fn cgroup_cpu() -> CheckResult {
 fn cgroup_bpf() -> CheckResult {
     config_check(
         "kernel.cgroup_bpf",
-        crate::tr!("Cgroup BPF support", "Cgroup BPF 支持"),
+        crate::tr!(crate::keys::KERNEL_CGROUP_BPF_SUPPORT),
         "CONFIG_CGROUP_BPF",
     )
 }
@@ -426,44 +359,37 @@ fn cgroup_bpf() -> CheckResult {
 fn bpf_events() -> CheckResult {
     config_check(
         "kernel.bpf_events",
-        crate::tr!("BPF events support", "BPF events 支持"),
+        crate::tr!(crate::keys::KERNEL_BPF_EVENTS_SUPPORT),
         "CONFIG_BPF_EVENTS",
     )
 }
 
-fn config_check(id: &'static str, title: &'static str, name: &str) -> CheckResult {
+fn config_check(id: &'static str, title: impl Into<String>, name: &str) -> CheckResult {
     let result = CheckResult::new(id, title);
     match config_value(name) {
         Some('y') => result.set(
             Status::Pass,
-            crate::tr!("enabled", "已启用"),
-            crate::trf!(("{name}=y (built-in)"), ("{name}=y（内置）")),
+            crate::tr!(crate::keys::KERNEL_ENABLED),
+            crate::tr!(crate::keys::KERNEL_CONFIG_NAME_BUILTIN, name = name),
         ),
         Some('m') => result.set(
             Status::Unknown,
-            crate::tr!("module", "模块形式"),
-            crate::trf!(
-                ("{name}=m; unable to confirm whether it is loaded"),
-                ("{name}=m，无法确认是否已实际加载")
-            ),
+            crate::tr!(crate::keys::KERNEL_MODULE),
+            crate::tr!(crate::keys::KERNEL_CONFIG_NAME_MODULE, name = name),
         ),
         Some('n') => result
             .set(
                 Status::Error,
-                crate::tr!("disabled", "未启用"),
+                crate::tr!(crate::keys::KERNEL_DISABLED),
                 format!("{name}=n"),
             )
             .suggestion(crate::tr!(
-                "Use a kernel with this configuration option enabled",
-                "需使用启用该配置项的内核"
+                crate::keys::KERNEL_USE_KERNEL_WITH_CONFIG_OPTION
             )),
         _ => result.set(
             Status::Unknown,
-            crate::tr!("unknown", "无法确认"),
-            crate::tr!(
-                "Unable to read the kernel configuration, so this capability cannot be confirmed",
-                "无法读取内核配置，不能判定该能力已启用"
-            ),
+            crate::tr!(crate::keys::KERNEL_UNKNOWN),
+            crate::tr!(crate::keys::KERNEL_UNABLE_READ_KERNEL_CONFIG_CAPABILITY),
         ),
     }
 }

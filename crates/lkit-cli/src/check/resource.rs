@@ -7,12 +7,15 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 fn memory() -> CheckResult {
-    let result = CheckResult::new("resource.memory", crate::tr!("Host memory", "主机内存"));
+    let result = CheckResult::new(
+        "resource.memory",
+        crate::tr!(crate::keys::RESOURCE_HOST_MEMORY),
+    );
     let Some(meminfo) = std::fs::read_to_string("/proc/meminfo").ok() else {
         return result.set(
             Status::Unknown,
-            crate::tr!("unavailable", "无法读取"),
-            crate::tr!("Unable to read /proc/meminfo", "无法读取 /proc/meminfo"),
+            crate::tr!(crate::keys::RESOURCE_UNAVAILABLE),
+            crate::tr!(crate::keys::RESOURCE_UNABLE_READ_MEMINFO),
         );
     };
     let total_kib = meminfo_value(&meminfo, "MemTotal");
@@ -20,39 +23,34 @@ fn memory() -> CheckResult {
     let total_mib = total_kib.map(|kib| kib / 1024);
     let available_mib = available_kib.map(|kib| kib / 1024);
     let value = match (total_mib, available_mib) {
-        (Some(total), Some(available)) => crate::trf!(
-            ("total {total} MiB, available {available} MiB"),
-            ("总内存 {total} MiB，可用 {available} MiB")
+        (Some(total), Some(available)) => crate::tr!(
+            crate::keys::RESOURCE_TOTAL_AVAILABLE_MEMORY,
+            total = total,
+            available = available
         ),
-        (Some(total), None) => crate::trf!(
-            ("total {total} MiB (available memory unknown)"),
-            ("总内存 {total} MiB（可用内存未知）")
+        (Some(total), None) => crate::tr!(
+            crate::keys::RESOURCE_TOTAL_MEMORY_AVAILABLE_UNKNOWN,
+            total = total
         ),
-        _ => crate::tr!("memory information unavailable", "内存信息不可用").to_string(),
+        _ => crate::tr!(crate::keys::RESOURCE_MEMORY_INFORMATION_UNAVAILABLE),
     };
     match total_kib {
         Some(total) if total >= MIN_TOTAL_MEMORY_KIB => result.set(
             Status::Pass,
             value,
-            crate::tr!("Memory meets the 2 GiB minimum", "内存满足 2 GiB 最低要求"),
+            crate::tr!(crate::keys::RESOURCE_MEMORY_MEETS_2GIB_MINIMUM),
         ),
         Some(total) => result
             .set(
                 Status::Error,
                 value,
-                crate::trf!(
-                    ("Total memory is below the 2 GiB minimum (current: {total} KiB)"),
-                    ("总内存低于 2 GiB 最低要求（当前 {total} KiB）")
-                ),
+                crate::tr!(crate::keys::RESOURCE_TOTAL_MEMORY_BELOW_2GIB, total = total),
             )
-            .suggestion(crate::tr!(
-                "Increase host memory to at least 2 GiB",
-                "增加主机内存到至少 2 GiB"
-            )),
+            .suggestion(crate::tr!(crate::keys::RESOURCE_INCREASE_MEMORY_TO_2GIB)),
         None => result.set(
             Status::Unknown,
             value,
-            crate::tr!("Unable to read MemTotal", "无法读取 MemTotal"),
+            crate::tr!(crate::keys::RESOURCE_UNABLE_READ_MEMTOTAL),
         ),
     }
 }

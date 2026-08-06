@@ -1,0 +1,1 @@
+repair.rollback_failed = "automatic rollback failed: %{rollback_error}"

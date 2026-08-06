@@ -73,7 +73,7 @@ pub(crate) fn run_preflight(
 fn result_message(result: &crate::check::model::CheckResult) -> String {
     let mut message = format!("{}: {}", result.id, result.reason);
     if !result.suggestion.is_empty() {
-        message.push_str(crate::tr!("; suggestion: ", "；建议："));
+        message.push_str(&crate::tr!(crate::keys::PREFLIGHT_SUGGESTION_PREFIX));
         message.push_str(&result.suggestion);
     }
     message

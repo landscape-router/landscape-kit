@@ -1,0 +1,3 @@
+install.cleanup_failed_network = "network takeover cleanup failed: %{cleanup_error}"
+install.cleanup_failed_first_install = "first install cleanup failed: %{cleanup_error}"
+install.only_x86_64_and_aarch64_supported = "only x86_64 and aarch64 are supported"

@@ -5,6 +5,7 @@ mod console;
 mod deployment;
 mod i18n;
 mod interaction;
+mod keys;
 mod network;
 mod release;
 mod report;
@@ -18,6 +19,8 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 
 use commands::Commands;
 use i18n::Language;
+
+rust_i18n::i18n!("locales", fallback = "en");
 
 #[derive(Debug, Parser)]
 #[command(name = "lkit", version)]
@@ -71,10 +74,7 @@ async fn main() -> ExitCode {
         if cli.non_interactive || cli.internal_systemd_worker {
             eprintln!(
                 "lkit: {}",
-                crate::tr!(
-                    "a subcommand is required in non-interactive mode",
-                    "非交互模式必须指定子命令"
-                )
+                crate::tr!(keys::MAIN_SUBCOMMAND_REQUIRED_NON_INTERACTIVE)
             );
             return ExitCode::from(2);
         }
@@ -83,10 +83,7 @@ async fn main() -> ExitCode {
             Err(error) => {
                 eprintln!(
                     "lkit: {}",
-                    crate::trf!(
-                        ("unable to install Ctrl+C handler: {error}"),
-                        ("无法安装 Ctrl+C 处理器：{error}")
-                    )
+                    crate::tr!(keys::MAIN_UNABLE_INSTALL_CTRL_C_HANDLER, error = error)
                 );
                 return ExitCode::FAILURE;
             }
@@ -101,10 +98,7 @@ async fn main() -> ExitCode {
             Err(error) => {
                 eprintln!(
                     "lkit: {}",
-                    crate::trf!(
-                        ("unable to start interactive console: {error}"),
-                        ("无法启动交互控制台：{error}")
-                    )
+                    crate::tr!(keys::MAIN_UNABLE_START_INTERACTIVE_CONSOLE, error = error)
                 );
                 ExitCode::FAILURE
             }
@@ -116,16 +110,10 @@ async fn main() -> ExitCode {
 fn localized_command() -> clap::Command {
     let command = Cli::command()
         .mut_arg("non_interactive", |arg| {
-            arg.help(crate::tr!(
-                "Do not open a terminal or prompt for input",
-                "不打开终端，也不提示输入"
-            ))
+            arg.help(crate::tr_static!(keys::MAIN_NON_INTERACTIVE_HELP))
         })
         .mut_arg("lang", |arg| {
-            arg.help(crate::tr!(
-                "Output language override: en or zh; unsupported values use English",
-                "输出语言覆盖：en 或 zh；不支持的值使用英文"
-            ))
+            arg.help(crate::tr_static!(keys::MAIN_LANG_HELP))
         });
     let command = localize_subcommands(command);
     if crate::i18n::current() == Language::Zh {
@@ -173,185 +161,113 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
     command
         .mut_subcommand("check", |command| {
             command
-                .about(crate::tr!("Check host readiness", "检查主机部署条件"))
+                .about(crate::tr_static!(keys::MAIN_CHECK_ABOUT))
                 .mut_arg("verbose", |arg| {
-                    arg.help(crate::tr!(
-                        "Show details for every check",
-                        "输出每个检查项的详细信息"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_VERBOSE_HELP))
                 })
                 .mut_arg("color", |arg| {
-                    arg.help(crate::tr!(
-                        "Color output: auto (default), always, or never",
-                        "颜色输出：auto（默认）、always 或 never"
-                    ))
-                    .hide_default_value(crate::i18n::current() == Language::Zh)
-                    .hide_possible_values(crate::i18n::current() == Language::Zh)
+                    arg.help(crate::tr_static!(keys::MAIN_COLOR_HELP))
+                        .hide_default_value(crate::i18n::current() == Language::Zh)
+                        .hide_possible_values(crate::i18n::current() == Language::Zh)
                 })
         })
         .mut_subcommand("install", |command| {
             command
-                .about(crate::tr!("Install Landscape", "安装 Landscape"))
+                .about(crate::tr_static!(keys::MAIN_INSTALL_ABOUT))
                 .mut_arg("version", |arg| {
-                    arg.help(crate::tr!(
-                        "Target version: a stable version or latest",
-                        "目标版本：稳定版本号或 latest"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_VERSION_HELP))
                 })
                 .mut_arg("repository", |arg| {
-                    arg.help(crate::tr!(
-                        "Release repository; omit the value to use the default HTTP mirror",
-                        "发布仓库；省略值时使用默认 HTTP 镜像"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_HELP))
                 })
                 .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr!("Full install root directory", "完整安装根目录"))
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_arg("admin_user", |arg| {
-                    arg.help(crate::tr!(
-                        "Initial administrator username (default: admin)",
-                        "初始管理员用户名（默认：admin）"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_ADMIN_USER_HELP))
                 })
                 .mut_arg("password_file", |arg| {
-                    arg.help(crate::tr!(
-                        "Read the initial password from a restricted file",
-                        "从权限受限的文件读取初始密码"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_PASSWORD_FILE_HELP))
                 })
                 .mut_arg("service_manager", |arg| {
-                    arg.help(crate::tr!(
-                        "Service manager: systemd or none",
-                        "服务管理器：systemd 或 none"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_HELP))
                 })
                 .mut_arg("force", |arg| {
-                    arg.help(crate::tr!(
-                        "Prompt for manual cleanup of an existing directory",
-                        "提示手动清理现有目录"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_FORCE_HELP))
                 })
                 .mut_arg("takeover_network", |arg| {
-                    arg.help(crate::tr!(
-                        "Interactively hand host network ownership to Landscape",
-                        "交互式将主机网络交给 Landscape 管理"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_TAKEOVER_NETWORK_HELP))
                 })
         })
         .mut_subcommand("network", |command| {
             command
-                .about(crate::tr!(
-                    "Manage host network takeover",
-                    "管理主机网络接管"
-                ))
+                .about(crate::tr_static!(keys::MAIN_NETWORK_ABOUT))
                 .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr!("Full install root directory", "完整安装根目录"))
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_subcommand("status", |command| {
-                    command.about(crate::tr!(
-                        "Show the network takeover transaction",
-                        "显示网络接管事务"
-                    ))
+                    command.about(crate::tr_static!(keys::MAIN_NETWORK_STATUS_ABOUT))
                 })
                 .mut_subcommand("confirm", |command| {
-                    command.about(crate::tr!(
-                        "Confirm the new network after reconnecting",
-                        "重新连接后确认新网络"
-                    ))
+                    command.about(crate::tr_static!(keys::MAIN_NETWORK_CONFIRM_ABOUT))
                 })
                 .mut_subcommand("rollback", |command| {
-                    command.about(crate::tr!(
-                        "Restore the host network state saved before takeover",
-                        "恢复接管前保存的主机网络状态"
-                    ))
+                    command.about(crate::tr_static!(keys::MAIN_NETWORK_ROLLBACK_ABOUT))
                 })
         })
         .mut_subcommand("switch", |command| {
             command
-                .about(crate::tr!(
-                    "Switch Landscape versions",
-                    "切换 Landscape 版本"
-                ))
+                .about(crate::tr_static!(keys::MAIN_SWITCH_ABOUT))
                 .mut_arg("version", |arg| {
-                    arg.help(crate::tr!(
-                        "Target stable version or latest",
-                        "目标稳定版本或 latest"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_SWITCH_VERSION_HELP))
                 })
                 .mut_arg("repository", |arg| {
-                    arg.help(crate::tr!(
-                        "Optional release repository override",
-                        "可选的发布仓库覆盖"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
                 })
                 .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr!("Full install root directory", "完整安装根目录"))
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_arg("accept_service_change", |arg| {
-                    arg.help(crate::tr!(
-                        "Accept a modified managed systemd unit",
-                        "接受已修改的受管 systemd unit"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
                 })
                 .mut_arg("allow_no_backup", |arg| {
-                    arg.help(crate::tr!(
-                        "Allow switching a stopped service without a configuration backup",
-                        "允许在服务停止时不创建配置备份进行切换"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_ALLOW_NO_BACKUP_HELP))
                 })
         })
         .mut_subcommand("repair", |command| {
             command
-                .about(crate::tr!("Repair an installation", "修复现有安装"))
+                .about(crate::tr_static!(keys::MAIN_REPAIR_ABOUT))
                 .mut_arg("target", |arg| {
-                    arg.help(crate::tr!(
-                        "Asset to repair: static or binary",
-                        "修复目标：static 或 binary"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_REPAIR_TARGET_HELP))
                 })
                 .mut_arg("repository", |arg| {
-                    arg.help(crate::tr!(
-                        "Optional release repository override",
-                        "可选的发布仓库覆盖"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
                 })
                 .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr!("Full install root directory", "完整安装根目录"))
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
         })
         .mut_subcommand("reconcile", |command| {
             command
-                .about(crate::tr!(
-                    "Reconcile managed installation state",
-                    "协调受管安装状态"
-                ))
+                .about(crate::tr_static!(keys::MAIN_RECONCILE_ABOUT))
                 .mut_arg("repository", |arg| {
-                    arg.help(crate::tr!(
-                        "Optional release repository override",
-                        "可选的发布仓库覆盖"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
                 })
                 .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr!("Full install root directory", "完整安装根目录"))
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_arg("accept_service_change", |arg| {
-                    arg.help(crate::tr!(
-                        "Accept a modified managed systemd unit",
-                        "接受已修改的受管 systemd unit"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
                 })
         })
         .mut_subcommand("service-manager", |command| {
             command
-                .about(crate::tr!("Change the service manager", "变更服务管理器"))
+                .about(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_ABOUT))
                 .mut_arg("target", |arg| {
-                    arg.help(crate::tr!(
-                        "Target service manager: systemd or none",
-                        "目标服务管理器：systemd 或 none"
-                    ))
+                    arg.help(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_TARGET_HELP))
                 })
                 .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr!("Full install root directory", "完整安装根目录"))
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
         })
 }
@@ -368,10 +284,7 @@ async fn run_command(
         Err(error) => {
             eprintln!(
                 "lkit: {}",
-                crate::trf!(
-                    ("unable to install Ctrl+C handler: {error}"),
-                    ("无法安装 Ctrl+C 处理器：{error}")
-                )
+                crate::tr!(keys::MAIN_UNABLE_INSTALL_CTRL_C_HANDLER, error = error)
             );
             return ExitCode::FAILURE;
         }
@@ -407,10 +320,7 @@ async fn run_command(
             Err(error) => {
                 eprintln!(
                     "install: {}",
-                    crate::trf!(
-                        ("unable to delegate operation to systemd: {error}"),
-                        ("无法将操作委托给 systemd：{error}")
-                    )
+                    crate::tr!(keys::MAIN_UNABLE_DELEGATE_SYSTEMD, error = error)
                 );
                 ExitCode::FAILURE
             }

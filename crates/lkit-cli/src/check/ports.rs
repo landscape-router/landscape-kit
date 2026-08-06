@@ -12,23 +12,33 @@ struct Listener {
 
 pub fn run() -> Vec<CheckResult> {
     vec![
-        port_check("port.dns", crate::tr!("DNS port", "DNS 端口"), 53, true),
+        port_check(
+            "port.dns",
+            crate::tr!(crate::keys::PORTS_DNS_PORT),
+            53,
+            true,
+        ),
         port_check(
             "port.http",
-            crate::tr!("HTTP management port", "HTTP 管理端口"),
+            crate::tr!(crate::keys::PORTS_HTTP_MANAGEMENT_PORT),
             6300,
             false,
         ),
         port_check(
             "port.https",
-            crate::tr!("HTTPS management port", "HTTPS 管理端口"),
+            crate::tr!(crate::keys::PORTS_HTTPS_MANAGEMENT_PORT),
             6443,
             false,
         ),
     ]
 }
 
-fn port_check(id: &'static str, title: &'static str, port: u16, include_udp: bool) -> CheckResult {
+fn port_check(
+    id: &'static str,
+    title: impl Into<String>,
+    port: u16,
+    include_udp: bool,
+) -> CheckResult {
     let mut listeners = Vec::new();
     let mut read_errors = Vec::new();
     let mut files: Vec<(&str, &'static str, bool)> = vec![
@@ -58,19 +68,19 @@ fn port_check(id: &'static str, title: &'static str, port: u16, include_udp: boo
     }
     let mut result = build_port_result(id, title, port, listeners.clone());
     for error in &read_errors {
-        result = result.detail(crate::trf!(
-            ("Unable to read listener information: {error}"),
-            ("无法读取监听信息：{error}")
+        result = result.detail(crate::tr!(
+            crate::keys::PORTS_UNABLE_READ_LISTENER_INFORMATION,
+            error = error
         ));
     }
     if listeners.is_empty() && !read_errors.is_empty() {
         result = result
             .set(
                 Status::Unknown,
-                crate::trf!(("{port} unknown"), ("{port} 无法确认")),
-                crate::tr!("Unable to read all required kernel listener tables; the port cannot be confirmed as free", "无法读取全部所需的内核监听表，不能确认端口空闲"),
+                crate::tr!(crate::keys::PORTS_PORT_UNKNOWN, port = port),
+                crate::tr!(crate::keys::PORTS_UNABLE_READ_ALL_LISTENER_TABLES),
             )
-            .suggestion(crate::tr!("Run as root and confirm that the relevant /proc/net files are readable", "以 root 身份运行并确认 /proc/net 相关文件可读取"));
+            .suggestion(crate::tr!(crate::keys::PORTS_RUN_AS_ROOT_FOR_PROC_NET));
     }
     result
 }
@@ -101,7 +111,7 @@ fn parse_proc_net(raw: &str, port: u16, is_tcp: bool) -> Vec<(String, u64)> {
 
 fn build_port_result(
     id: &'static str,
-    title: &'static str,
+    title: impl Into<String>,
     port: u16,
     listeners: Vec<Listener>,
 ) -> CheckResult {
@@ -109,59 +119,34 @@ fn build_port_result(
     if listeners.is_empty() {
         return result.set(
             Status::Pass,
-            crate::trf!(("{port} not listening"), ("{port} 无监听")),
-            crate::tr!("Port is free", "端口空闲"),
+            crate::tr!(crate::keys::PORTS_PORT_NOT_LISTENING, port = port),
+            crate::tr!(crate::keys::PORTS_PORT_FREE),
         );
     }
     result = result.set(
         Status::Error,
-        crate::trf!(("{port} occupied"), ("{port} 已被占用")),
-        crate::tr!(
-            "Another service is listening on this port, so Landscape cannot start the service",
-            "端口被其他服务监听，Landscape 无法启动该服务"
-        ),
+        crate::tr!(crate::keys::PORTS_PORT_OCCUPIED, port = port),
+        crate::tr!(crate::keys::PORTS_ANOTHER_SERVICE_LISTENING),
     );
-    result.suggestion = crate::tr!(
-        "Stop the service using this port or move it to another port",
-        "停止占用该端口的服务，或为其更换端口"
-    )
-    .to_string();
+    result.suggestion = crate::tr!(crate::keys::PORTS_STOP_SERVICE_OR_MOVE_PORT).to_string();
     for listener in &listeners {
         match &listener.process {
             Some((comm, pid)) => {
-                result = result.detail(crate::trf!(
-                    (
-                        "{} {}:{} is used by {} (pid={})",
-                        listener.protocol,
-                        listener.address,
-                        listener.port,
-                        comm,
-                        pid
-                    ),
-                    (
-                        "{} {}:{} 被 {}（pid={}）占用",
-                        listener.protocol,
-                        listener.address,
-                        listener.port,
-                        comm,
-                        pid
-                    )
+                result = result.detail(crate::tr!(
+                    crate::keys::PORTS_LISTENER_USED_BY,
+                    protocol = listener.protocol,
+                    address = listener.address,
+                    port = listener.port,
+                    comm = comm,
+                    pid = pid
                 ))
             }
             None => {
-                result = result.detail(crate::trf!(
-                    (
-                        "{} {}:{} is listening, but owner information is unreadable",
-                        listener.protocol,
-                        listener.address,
-                        listener.port
-                    ),
-                    (
-                        "{} {}:{} 被监听，但监听者信息不可读取",
-                        listener.protocol,
-                        listener.address,
-                        listener.port
-                    )
+                result = result.detail(crate::tr!(
+                    crate::keys::PORTS_LISTENER_OWNER_UNREADABLE,
+                    protocol = listener.protocol,
+                    address = listener.address,
+                    port = listener.port
                 ))
             }
         }

@@ -299,9 +299,9 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
                 Err(rollback_error) => {
                     eprintln!(
                         "install: {}",
-                        crate::trf!(
-                            ("automatic rollback failed: {rollback_error}"),
-                            ("自动回滚失败：{rollback_error}")
+                        crate::tr!(
+                            crate::keys::REPAIR_ROLLBACK_FAILED,
+                            rollback_error = rollback_error
                         )
                     );
                     Ok(RepairOutcome::RollbackFailed {

@@ -1,0 +1,6 @@
+switch.downgrade_not_supported = "不支持从 %{from_version} 降级到 %{version}"
+switch.target_version_already_active = "目标版本已处于活动状态"
+switch.warning_service_stopped_no_backup = "警告：受管服务已停止；将在没有配置快照的情况下切换；不会创建 .lkb 备份，自动回滚无法恢复目标版本修改的数据"
+switch.warning_allow_no_backup_ignored = "警告：受管服务正在运行；已忽略 --allow-no-backup，并将创建 .lkb 备份"
+switch.confirm_stop_with_own_manager = "请使用自己的进程管理器停止 Landscape 实例，然后输入 `yes`："
+switch.rollback_failed = "自动回滚失败：%{rollback_error}"

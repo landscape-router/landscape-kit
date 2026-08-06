@@ -1,0 +1,3 @@
+interactive.select_one_interface = "请选择一个网卡："
+interactive.select_lan_interfaces = "请选择 LAN 网卡（用逗号分隔，留空表示仅 WAN）："
+interactive.password_again = "（再次输入）："

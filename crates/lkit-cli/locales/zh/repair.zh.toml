@@ -1,0 +1,1 @@
+repair.rollback_failed = "自动回滚失败：%{rollback_error}"

@@ -1,0 +1,6 @@
+discovery.select_wan_interface = "Select the WAN interface:"
+discovery.single_arm_confirm = "Landscape does not support single-arm WAN/LAN routing. Continue with WAN-only management mode? Type `yes`: "
+discovery.select_lan_interfaces = "Select the LAN interfaces:"
+discovery.management_ipv4_address = "Management IPv4 address"
+discovery.lan_dhcp_range_start = "LAN DHCP range start"
+discovery.lan_dhcp_range_end = "LAN DHCP range end"

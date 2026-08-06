@@ -1,0 +1,3 @@
+service_manager.migrated_to_none = "service manager migrated to none; Landscape is stopped"
+service_manager.start_manually_with = "start it manually with: %{command}"
+service_manager.migrated_to_systemd = "service manager migrated to systemd; landscape-router.service is registered, enabled, and running"

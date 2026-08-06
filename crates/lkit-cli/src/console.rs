@@ -41,11 +41,7 @@ pub(crate) enum ConsoleAction {
 
 pub(crate) fn run() -> Result<ConsoleAction, String> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return Err(crate::tr!(
-            "a terminal is required; use an lkit subcommand for command mode",
-            "需要终端；命令模式请使用 lkit 子命令"
-        )
-        .into());
+        return Err(crate::tr!(crate::keys::CONSOLE_TERMINAL_REQUIRED).into());
     }
     let mut terminal = ConsoleTerminal::start()?;
     let mut app = ConsoleApp::new();
@@ -127,15 +123,15 @@ impl Menu {
         Self::Diagnostics,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Overview => crate::tr!("Overview", "概览"),
-            Self::Install => crate::tr!("Install", "安装"),
-            Self::Versions => crate::tr!("Versions", "版本"),
-            Self::Configuration => crate::tr!("Configuration", "配置"),
-            Self::Services => crate::tr!("Services", "服务"),
-            Self::Network => crate::tr!("Network", "网络"),
-            Self::Diagnostics => crate::tr!("Diagnostics", "诊断"),
+            Self::Overview => crate::tr!(crate::keys::CONSOLE_OVERVIEW),
+            Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
+            Self::Versions => crate::tr!(crate::keys::CONSOLE_VERSIONS),
+            Self::Configuration => crate::tr!(crate::keys::CONSOLE_CONFIGURATION),
+            Self::Services => crate::tr!(crate::keys::CONSOLE_SERVICES),
+            Self::Network => crate::tr!(crate::keys::CONSOLE_NETWORK),
+            Self::Diagnostics => crate::tr!(crate::keys::CONSOLE_DIAGNOSTICS),
         }
     }
 }
@@ -204,7 +200,7 @@ impl Preflight {
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.state = PreflightState::Failed(
-                    crate::tr!("check worker stopped unexpectedly", "检查 worker 意外停止").into(),
+                    crate::tr!(crate::keys::CONSOLE_CHECK_WORKER_STOPPED).into(),
                 );
             }
         }
@@ -430,8 +426,7 @@ impl ConsoleApp {
                                             Ok(wizard) => {
                                                 self.network_wizard = Some(wizard);
                                                 self.notice = crate::tr!(
-                                                    "Configure network takeover",
-                                                    "配置网络接管"
+                                                    crate::keys::CONSOLE_CONFIGURE_NETWORK_TAKEOVER
                                                 )
                                                 .into();
                                             }
@@ -449,8 +444,7 @@ impl ConsoleApp {
                             }
                             GateState::Waiting => {
                                 self.notice = crate::tr!(
-                                    "environment checks have not completed yet",
-                                    "环境检查尚未完成"
+                                    crate::keys::CONSOLE_ENVIRONMENT_CHECKS_NOT_COMPLETED
                                 )
                                 .into();
                             }
@@ -535,57 +529,28 @@ impl ConsoleApp {
         }
     }
 
-    fn hints(&self) -> &'static str {
+    fn hints(&self) -> String {
         if self.exit_state == ExitState::Confirming {
-            crate::tr!(
-                "Ctrl+C Exit  Enter Confirm  Esc Cancel",
-                "Ctrl+C 退出  Enter 确认  Esc 取消"
-            )
+            crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ENTER_CONFIRM_ESC_CANCEL)
         } else if self.exit_state == ExitState::Armed {
-            crate::tr!(
-                "Ctrl+C Exit  Press Esc again for exit confirmation  Any other key cancels",
-                "Ctrl+C 退出  再次按 Esc 打开退出确认  其他按键取消"
-            )
+            crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ESC_AGAIN)
         } else if self.preflight.expanded && self.menu() == Menu::Install {
-            crate::tr!(
-                "Ctrl+C Exit  Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close",
-                "Ctrl+C 退出  上/下 滚动  PgUp/PgDn 翻页  R 重跑  Esc 关闭"
-            )
+            crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_SCROLL)
         } else if self.preflight_dialog {
-            crate::tr!(
-                "Enter Details  Esc Close  R Re-run",
-                "Enter 详情  Esc 关闭  R 重跑"
-            )
+            crate::tr!(crate::keys::CONSOLE_HINT_ENTER_DETAILS_ESC_CLOSE_R)
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
-            crate::tr!(
-                "Ctrl+C Exit  Type Edit  Backspace Delete  Enter/Esc Finish",
-                "Ctrl+C 退出  输入 编辑  Backspace 删除  Enter/Esc 完成"
-            )
+            crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
         } else {
             match (self.focus, self.menu()) {
-                (Focus::Navigation, _) => {
-                    crate::tr!(
-                        "Ctrl+C Exit  Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Exit prompt",
-                        "Ctrl+C 退出  上/下 菜单  右/Enter 打开  Tab 切换  Esc Esc 退出确认"
-                    )
-                }
+                (Focus::Navigation, _) => crate::tr!(crate::keys::CONSOLE_HINT_NAVIGATION),
                 (Focus::Panel, Menu::Install) if self.install.checks_selected => {
-                    crate::tr!(
-                        "Ctrl+C Exit  Enter Details  R Re-run  Down Settings  Left Menu  Esc Esc Exit prompt",
-                        "Ctrl+C 退出  Enter 详情  R 重跑  下 设置  左 菜单  Esc Esc 退出确认"
-                    )
+                    crate::tr!(crate::keys::CONSOLE_HINT_CHECKS_SELECTED)
                 }
                 (Focus::Panel, Menu::Install) => {
-                    crate::tr!(
-                        "Ctrl+C Exit  Up/Down Field  Left Menu  Right Change  Enter Select  Tab Menu  Esc Esc Exit prompt",
-                        "Ctrl+C 退出  上/下 字段  左 菜单  右 更改  Enter 选择  Tab 菜单  Esc Esc 退出确认"
-                    )
+                    crate::tr!(crate::keys::CONSOLE_HINT_INSTALL_PANEL)
                 }
-                (Focus::Panel, _) => crate::tr!(
-                    "Ctrl+C Exit  Left Menu  Tab Switch  Esc Esc Exit prompt",
-                    "Ctrl+C 退出  左 菜单  Tab 切换  Esc Esc 退出确认"
-                ),
+                (Focus::Panel, _) => crate::tr!(crate::keys::CONSOLE_HINT_PANEL),
             }
         }
     }
@@ -736,11 +701,11 @@ enum RepositoryMode {
 }
 
 impl RepositoryMode {
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Github => "GitHub",
-            Self::Mirror => crate::tr!("HTTP mirror", "HTTP 镜像"),
-            Self::Custom => crate::tr!("Custom HTTP", "自定义 HTTP"),
+            Self::Github => "GitHub".into(),
+            Self::Mirror => crate::tr!(crate::keys::CONSOLE_REPOSITORY_MIRROR),
+            Self::Custom => crate::tr!(crate::keys::CONSOLE_REPOSITORY_CUSTOM),
         }
     }
 
@@ -763,11 +728,11 @@ enum ManagerMode {
 }
 
 impl ManagerMode {
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Auto => crate::tr!("Auto", "自动"),
-            Self::Systemd => "systemd",
-            Self::None => "none",
+            Self::Auto => crate::tr!(crate::keys::CONSOLE_MANAGER_AUTO),
+            Self::Systemd => "systemd".into(),
+            Self::None => "none".into(),
         }
     }
 
@@ -852,84 +817,51 @@ impl InstallForm {
         }
     }
 
-    fn selected_help(&self) -> (&'static str, &'static str) {
+    fn selected_help(&self) -> (String, String) {
         match self.selected {
             0 => (
-                crate::tr!("Version", "版本"),
-                crate::tr!(
-                    "Release to install. Use latest for the newest stable release or enter an exact stable version such as 1.2.3.",
-                    "要安装的发布版本。使用 latest 获取最新稳定版，或输入 1.2.3 这样的精确稳定版本。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
+                crate::tr!(crate::keys::CONSOLE_VERSION_HELP),
             ),
             1 => (
-                crate::tr!("Repository", "仓库"),
-                crate::tr!(
-                    "Release source. Choose GitHub, the default HTTP mirror, or a custom protocol v1 HTTP repository.",
-                    "发布源。可选择 GitHub、默认 HTTP 镜像或自定义 protocol v1 HTTP 仓库。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
+                crate::tr!(crate::keys::CONSOLE_REPOSITORY_HELP),
             ),
             2 => (
-                crate::tr!("Repository URL", "仓库 URL"),
-                crate::tr!(
-                    "Base URL of the custom protocol v1 repository. Remote repositories require HTTPS; loopback HTTP is allowed.",
-                    "自定义 protocol v1 仓库的基础 URL。远程仓库必须使用 HTTPS；回环地址允许 HTTP。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
+                crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_HELP),
             ),
             3 => (
-                crate::tr!("Install root", "安装根目录"),
-                crate::tr!(
-                    "Absolute directory that stores releases, configuration, state, transactions, and backups.",
-                    "保存发布版本、配置、状态、事务和备份的绝对目录。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_LABEL),
+                crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_HELP),
             ),
             4 => (
-                crate::tr!("Admin user", "管理员用户"),
-                crate::tr!(
-                    "Username for the initial Landscape administrator account.",
-                    "初始 Landscape 管理员账户的用户名。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
+                crate::tr!(crate::keys::CONSOLE_ADMIN_USER_HELP),
             ),
             5 => (
-                crate::tr!("Password", "密码"),
-                crate::tr!(
-                    "Password for the initial administrator. It remains masked and is validated before installation starts.",
-                    "初始管理员密码。密码始终隐藏，并在安装开始前进行验证。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
+                crate::tr!(crate::keys::CONSOLE_PASSWORD_HELP),
             ),
             6 => (
-                crate::tr!("Confirm password", "确认密码"),
-                crate::tr!(
-                    "Enter the administrator password again to prevent typing mistakes.",
-                    "再次输入管理员密码，避免输入错误。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_HELP),
             ),
             7 => (
-                crate::tr!("Service manager", "服务管理器"),
-                crate::tr!(
-                    "Choose automatic detection, explicit systemd supervision, or no service manager.",
-                    "选择自动检测、明确使用 systemd，或不使用服务管理器。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_LABEL),
+                crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_HELP),
             ),
             8 => (
-                crate::tr!("Network takeover", "网络接管"),
-                crate::tr!(
-                    "Allow Landscape to reconfigure host interfaces and network services during installation.",
-                    "允许 Landscape 在安装期间重新配置主机网卡和网络服务。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
+                crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_HELP),
             ),
             9 => (
-                crate::tr!("Start installation", "开始安装"),
-                crate::tr!(
-                    "Validate the form, leave the console, and start the installation using these settings.",
-                    "验证表单、退出控制台，并使用这些设置开始安装。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_LABEL),
+                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_HELP),
             ),
             _ => (
-                crate::tr!("Install", "安装"),
-                crate::tr!(
-                    "Configure the Landscape installation.",
-                    "配置 Landscape 安装。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
+                crate::tr!(crate::keys::CONSOLE_INSTALL_HELP_FALLBACK_DESC),
             ),
         }
     }
@@ -984,11 +916,7 @@ impl InstallForm {
                 .map_err(|error| error.to_string())?;
         }
         if self.password != self.password_confirmation {
-            return Err(crate::tr!(
-                "password confirmation does not match",
-                "两次输入的密码不一致"
-            )
-            .into());
+            return Err(crate::tr!(crate::keys::CONSOLE_PASSWORD_CONFIRMATION_MISMATCH).into());
         }
         credentials::validate_password(&self.password).map_err(|error| error.to_string())?;
         Ok(())
@@ -1227,7 +1155,7 @@ impl NetworkWizard {
                 self.gateway
                     .trim()
                     .parse::<std::net::Ipv4Addr>()
-                    .map_err(|_| crate::tr!("invalid WAN gateway", "WAN 网关无效"))?;
+                    .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_WAN_GATEWAY))?;
                 self.address
                     .trim()
                     .parse::<Ipv4Cidr>()
@@ -1253,12 +1181,7 @@ impl NetworkWizard {
                 self.dhcp_start
                     .trim()
                     .parse::<std::net::Ipv4Addr>()
-                    .map_err(|_| {
-                        crate::tr!(
-                            "invalid LAN DHCP range start",
-                            "LAN DHCP 地址池起始地址无效"
-                        )
-                    })?;
+                    .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_START))?;
                 self.step = WizardStep::DhcpEnd;
                 self.editing = true;
             }
@@ -1266,9 +1189,7 @@ impl NetworkWizard {
                 self.dhcp_end
                     .trim()
                     .parse::<std::net::Ipv4Addr>()
-                    .map_err(|_| {
-                        crate::tr!("invalid LAN DHCP range end", "LAN DHCP 地址池结束地址无效")
-                    })?;
+                    .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_END))?;
                 self.step = WizardStep::Confirm;
                 self.editing = false;
             }
@@ -1301,59 +1222,57 @@ impl NetworkWizard {
             .filter(|(_, selected)| **selected)
             .map(|(iface, _)| iface.name.clone())
             .collect::<Vec<_>>();
-        let mode = if lan.is_empty() {
-            match self.wan_mode {
-                WanMode::Dhcp => NetworkMode::WanDhcp {
-                    wan: wan.name.clone(),
-                },
-                WanMode::Static => NetworkMode::WanOnly {
-                    wan: wan.name.clone(),
-                    address: self.address.trim().parse().map_err(
-                        |error: crate::deployment::plan::InstallError| error.to_string(),
-                    )?,
-                    gateway: self
-                        .gateway
-                        .trim()
-                        .parse()
-                        .map_err(|_| crate::tr!("invalid WAN gateway", "WAN 网关无效"))?,
-                },
-            }
-        } else {
-            let management = self
-                .management
-                .trim()
-                .parse()
-                .map_err(|error: crate::deployment::plan::InstallError| error.to_string())?;
-            let dhcp_start = self.dhcp_start.trim().parse().map_err(|_| {
-                crate::tr!(
-                    "invalid LAN DHCP range start",
-                    "LAN DHCP 地址池起始地址无效"
-                )
-            })?;
-            let dhcp_end = self.dhcp_end.trim().parse().map_err(|_| {
-                crate::tr!("invalid LAN DHCP range end", "LAN DHCP 地址池结束地址无效")
-            })?;
-            NetworkMode::RoutedLan {
-                wan: wan.name.clone(),
-                wan_ipv4: Some(match self.wan_mode {
-                    WanMode::Static => WanIpv4Config::Static {
-                        address: self.address.trim().parse().map_err(
-                            |error: crate::deployment::plan::InstallError| error.to_string(),
-                        )?,
-                        gateway: self
-                            .gateway
-                            .trim()
-                            .parse()
-                            .map_err(|_| crate::tr!("invalid WAN gateway", "WAN 网关无效"))?,
+        let mode =
+            if lan.is_empty() {
+                match self.wan_mode {
+                    WanMode::Dhcp => NetworkMode::WanDhcp {
+                        wan: wan.name.clone(),
                     },
-                    WanMode::Dhcp => WanIpv4Config::Dhcp,
-                }),
-                lan,
-                management,
-                dhcp_start,
-                dhcp_end,
-            }
-        };
+                    WanMode::Static => {
+                        NetworkMode::WanOnly {
+                            wan: wan.name.clone(),
+                            address: self.address.trim().parse().map_err(
+                                |error: crate::deployment::plan::InstallError| error.to_string(),
+                            )?,
+                            gateway: self.gateway.trim().parse().map_err(|_| {
+                                crate::tr!(crate::keys::CONSOLE_INVALID_WAN_GATEWAY)
+                            })?,
+                        }
+                    }
+                }
+            } else {
+                let management =
+                    self.management.trim().parse().map_err(
+                        |error: crate::deployment::plan::InstallError| error.to_string(),
+                    )?;
+                let dhcp_start =
+                    self.dhcp_start.trim().parse().map_err(|_| {
+                        crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_START)
+                    })?;
+                let dhcp_end = self
+                    .dhcp_end
+                    .trim()
+                    .parse()
+                    .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_END))?;
+                NetworkMode::RoutedLan {
+                    wan: wan.name.clone(),
+                    wan_ipv4: Some(match self.wan_mode {
+                        WanMode::Static => WanIpv4Config::Static {
+                            address: self.address.trim().parse().map_err(
+                                |error: crate::deployment::plan::InstallError| error.to_string(),
+                            )?,
+                            gateway: self.gateway.trim().parse().map_err(|_| {
+                                crate::tr!(crate::keys::CONSOLE_INVALID_WAN_GATEWAY)
+                            })?,
+                        },
+                        WanMode::Dhcp => WanIpv4Config::Dhcp,
+                    }),
+                    lan,
+                    management,
+                    dhcp_start,
+                    dhcp_end,
+                }
+            };
         let plan = NetworkPlan {
             mode,
             selected_macs,
@@ -1395,12 +1314,24 @@ impl Snapshot {
         }
     }
 
-    fn badge(&self) -> (&'static str, Color) {
+    fn badge(&self) -> (String, Color) {
         match self {
-            Self::RootRequired => (crate::tr!("Root required", "需要 root"), Color::Yellow),
-            Self::NotInstalled => (crate::tr!("Not installed", "未安装"), Color::Yellow),
-            Self::Installed { .. } => (crate::tr!("Installed", "已安装"), Color::Green),
-            Self::Unavailable(_) => (crate::tr!("Attention required", "需要处理"), Color::Red),
+            Self::RootRequired => (
+                crate::tr!(crate::keys::CONSOLE_ROOT_REQUIRED_BADGE),
+                Color::Yellow,
+            ),
+            Self::NotInstalled => (
+                crate::tr!(crate::keys::CONSOLE_NOT_INSTALLED_BADGE),
+                Color::Yellow,
+            ),
+            Self::Installed { .. } => (
+                crate::tr!(crate::keys::CONSOLE_INSTALLED_BADGE),
+                Color::Green,
+            ),
+            Self::Unavailable(_) => (
+                crate::tr!(crate::keys::CONSOLE_ATTENTION_REQUIRED_BADGE),
+                Color::Red,
+            ),
         }
     }
 }
@@ -1412,7 +1343,7 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     }
     if frame.area().width < 72 || frame.area().height < 18 {
         frame.render_widget(
-            Paragraph::new(crate::tr!("Terminal too small", "终端尺寸过小"))
+            Paragraph::new(crate::tr!(crate::keys::CONSOLE_TERMINAL_TOO_SMALL))
                 .alignment(Alignment::Center)
                 .block(Block::bordered().title("Landscape Kit")),
             frame.area(),
@@ -1446,7 +1377,7 @@ fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let lines: Vec<Line<'_>> = match &app.preflight.state {
         PreflightState::Failed(error) => vec![
             Line::styled(
-                crate::tr!("Environment checks could not complete", "环境检查无法完成"),
+                crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS_COULD_NOT_COMPLETE),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
@@ -1455,7 +1386,7 @@ fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
         PreflightState::Complete(report) => {
             let mut lines = vec![
                 Line::styled(
-                    crate::tr!("Environment checks block installation", "环境检查阻止安装"),
+                    crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS_BLOCK_INSTALLATION),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Line::raw(""),
@@ -1463,8 +1394,7 @@ fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
             let items = blocking_items(report);
             if items.is_empty() {
                 lines.push(Line::raw(crate::tr!(
-                    "Checks did not pass.",
-                    "检查未通过。"
+                    crate::keys::CONSOLE_CHECKS_DID_NOT_PASS
                 )));
             } else {
                 for item in items {
@@ -1473,10 +1403,7 @@ fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
             }
             lines.push(Line::raw(""));
             lines.push(Line::styled(
-                crate::tr!(
-                    "Enter view details  Esc close  R re-run",
-                    "Enter 查看详情  Esc 关闭  R 重跑"
-                ),
+                crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R),
                 Style::default().fg(Color::DarkGray),
             ));
             lines
@@ -1496,7 +1423,7 @@ fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(Alignment::Center)
-            .block(Block::bordered().title(crate::tr!("Install blocked", "安装被阻止"))),
+            .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_INSTALL_BLOCKED))),
         area,
     );
 }
@@ -1527,19 +1454,16 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
     ])
     .areas(area);
     frame.render_widget(
-        Paragraph::new(crate::tr!(
-            "Landscape network takeover",
-            "Landscape 网络接管"
-        ))
-        .style(Style::default().add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::BOTTOM)),
+        Paragraph::new(crate::tr!(crate::keys::CONSOLE_LANDSCAPE_NETWORK_TAKEOVER))
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::BOTTOM)),
         title,
     );
     let mut lines = Vec::new();
     match wizard.step {
         WizardStep::Wan => {
             lines.push(Line::styled(
-                crate::tr!("Select the WAN interface", "选择 WAN 网卡"),
+                crate::tr!(crate::keys::CONSOLE_SELECT_WAN_INTERFACE),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
@@ -1549,13 +1473,13 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                     .addresses
                     .first()
                     .map(ToString::to_string)
-                    .unwrap_or_else(|| crate::tr!("no IPv4", "无 IPv4").into());
+                    .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_NO_IPV4).into());
                 let gateway = wizard
                     .routes
                     .iter()
                     .find(|route| route.iface == iface.name)
                     .map(|route| route.gateway.to_string())
-                    .unwrap_or_else(|| crate::tr!("not found", "未发现").into());
+                    .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_GATEWAY_NOT_FOUND).into());
                 lines.push(Line::styled(
                     format!(
                         "{}{}  {}  {}  {}  gw {}",
@@ -1576,7 +1500,7 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
         }
         WizardStep::WanMode => {
             lines.push(Line::styled(
-                crate::tr!("WAN IPv4 mode", "WAN IPv4 模式"),
+                crate::tr!(crate::keys::CONSOLE_WAN_IPV4_MODE),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
@@ -1596,16 +1520,19 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
         }
         WizardStep::WanStatic => {
             lines.push(Line::styled(
-                crate::tr!("WAN static IPv4 configuration", "WAN 静态 IPv4 配置"),
+                crate::tr!(crate::keys::CONSOLE_WAN_STATIC_IPV4_CONFIGURATION),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
             let fields = [
                 (
-                    crate::tr!("IPv4 address/CIDR", "IPv4 地址/CIDR"),
+                    crate::tr!(crate::keys::CONSOLE_IPV4_ADDRESS_CIDR),
                     &wizard.address,
                 ),
-                (crate::tr!("Default gateway", "默认网关"), &wizard.gateway),
+                (
+                    crate::tr!(crate::keys::CONSOLE_DEFAULT_GATEWAY),
+                    &wizard.gateway,
+                ),
             ];
             for (index, (label, value)) in fields.iter().enumerate() {
                 let focused = index == wizard.wan_static_field;
@@ -1627,15 +1554,14 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
         }
         WizardStep::Lan => {
             lines.push(Line::styled(
-                crate::tr!(
-                    "Select LAN interfaces (Space toggles; empty means WAN-only)",
-                    "选择 LAN 网卡（空格切换；留空表示仅 WAN）"
-                ),
+                crate::tr!(crate::keys::CONSOLE_SELECT_LAN_INTERFACES),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
             if wizard.lan_candidates.is_empty() {
-                lines.push(Line::raw(crate::tr!("No other interfaces", "没有其他网卡")));
+                lines.push(Line::raw(crate::tr!(
+                    crate::keys::CONSOLE_NO_OTHER_INTERFACES
+                )));
             }
             for (index, iface) in wizard.lan_candidates.iter().enumerate() {
                 let cursor = index == wizard.lan_cursor;
@@ -1647,9 +1573,9 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                         iface.name,
                         iface.mac,
                         if iface.operstate == "up" {
-                            crate::tr!("link up", "链路已启用")
+                            crate::tr!(crate::keys::CONSOLE_LINK_UP)
                         } else {
-                            crate::tr!("link down", "链路未启用")
+                            crate::tr!(crate::keys::CONSOLE_LINK_DOWN)
                         }
                     ),
                     if cursor {
@@ -1663,15 +1589,15 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
         WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => {
             let (label, value) = match wizard.step {
                 WizardStep::Management => (
-                    crate::tr!("LAN management IPv4 address", "LAN 管理 IPv4 地址"),
+                    crate::tr!(crate::keys::CONSOLE_LAN_MANAGEMENT_IPV4_ADDRESS),
                     &wizard.management,
                 ),
                 WizardStep::DhcpStart => (
-                    crate::tr!("LAN DHCP range start", "LAN DHCP 地址池起始地址"),
+                    crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_START),
                     &wizard.dhcp_start,
                 ),
                 WizardStep::DhcpEnd => (
-                    crate::tr!("LAN DHCP range end", "LAN DHCP 地址池结束地址"),
+                    crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_END),
                     &wizard.dhcp_end,
                 ),
                 _ => unreachable!(),
@@ -1683,35 +1609,31 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
             lines.push(Line::raw(""));
             lines.push(Line::raw(format!(
                 "{}{}_",
-                crate::tr!("Value: ", "值："),
+                crate::tr!(crate::keys::CONSOLE_VALUE_PREFIX),
                 value
             )));
         }
         WizardStep::Confirm => {
             let wan = wizard.selected_wan();
             lines.push(Line::styled(
-                crate::tr!("Confirm network takeover plan", "确认网络接管计划"),
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_NETWORK_TAKEOVER_PLAN),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
-            lines.push(Line::raw(crate::trf!(
-                ("WAN interface  {}  MAC {}", wan.name, wan.mac),
-                ("WAN 网卡  {}  MAC {}", wan.name, wan.mac)
+            lines.push(Line::raw(crate::tr!(
+                crate::keys::CONSOLE_CONFIRM_WAN_INTERFACE,
+                name = wan.name,
+                mac = wan.mac
             )));
             lines.push(Line::raw(match wizard.wan_mode {
-                WanMode::Static => crate::trf!(
-                    (
-                        "WAN mode       Static  {}  gw {}",
-                        wizard.address,
-                        wizard.gateway
-                    ),
-                    (
-                        "WAN 模式       Static  {}  网关 {}",
-                        wizard.address,
-                        wizard.gateway
-                    )
+                WanMode::Static => crate::tr!(
+                    crate::keys::CONSOLE_CONFIRM_WAN_MODE_STATIC,
+                    address = wizard.address,
+                    gateway = wizard.gateway
                 ),
-                WanMode::Dhcp => crate::tr!("WAN mode       DHCP", "WAN 模式       DHCP").into(),
+                WanMode::Dhcp => {
+                    crate::tr!(crate::keys::CONSOLE_CONFIRM_WAN_MODE_DHCP)
+                }
             }));
             let lan: Vec<&str> = wizard
                 .lan_candidates
@@ -1722,49 +1644,38 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                 .collect();
             if lan.is_empty() {
                 lines.push(Line::raw(crate::tr!(
-                    "LAN mode       WAN-only (no bridge, no LAN DHCP)",
-                    "LAN 模式       仅 WAN（不创建网桥，不启用 LAN DHCP）"
+                    crate::keys::CONSOLE_CONFIRM_LAN_MODE_WAN_ONLY
                 )));
             } else {
                 let names = lan.join(", ");
-                lines.push(Line::raw(crate::trf!(
-                    ("LAN interfaces {}", names),
-                    ("LAN 网卡       {}", names)
+                lines.push(Line::raw(crate::tr!(
+                    crate::keys::CONSOLE_CONFIRM_LAN_INTERFACES,
+                    names = names
                 )));
-                lines.push(Line::raw(crate::trf!(
-                    ("Management      {}", wizard.management),
-                    ("管理地址       {}", wizard.management)
+                lines.push(Line::raw(crate::tr!(
+                    crate::keys::CONSOLE_CONFIRM_MANAGEMENT,
+                    management = wizard.management
                 )));
-                lines.push(Line::raw(crate::trf!(
-                    (
-                        "DHCP range      {} - {}",
-                        wizard.dhcp_start,
-                        wizard.dhcp_end
-                    ),
-                    (
-                        "DHCP 范围       {} - {}",
-                        wizard.dhcp_start,
-                        wizard.dhcp_end
-                    )
+                lines.push(Line::raw(crate::tr!(
+                    crate::keys::CONSOLE_CONFIRM_DHCP_RANGE,
+                    start = wizard.dhcp_start,
+                    end = wizard.dhcp_end
                 )));
             }
             lines.push(Line::raw(""));
             lines.push(Line::styled(
-                crate::tr!(
-                    "Selected LAN interfaces will have their IPv4/IPv6 addresses flushed; unselected interfaces remain unchanged.",
-                    "所选 LAN 网卡将清理 IPv4/IPv6 地址；未选择的网卡保持不变。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_LAN_FLUSH_NOTE),
                 Style::default().fg(Color::Yellow),
             ));
             lines.push(Line::styled(
-                crate::tr!("Press Enter to start installation.", "按 Enter 开始安装。"),
+                crate::tr!(crate::keys::CONSOLE_PRESS_ENTER_TO_START_INSTALLATION),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
         }
     }
     frame.render_widget(
         Paragraph::new(lines)
-            .block(Block::bordered().title(crate::tr!("Network", "网络")))
+            .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_NETWORK_PANEL_TITLE)))
             .wrap(Wrap { trim: true }),
         body,
     );
@@ -1777,35 +1688,19 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
     }
 }
 
-fn wizard_hints(wizard: &NetworkWizard) -> &'static str {
+fn wizard_hints(wizard: &NetworkWizard) -> String {
     if wizard.cancel_confirming {
-        return crate::tr!("Enter cancel wizard  Esc close", "Enter 取消向导  Esc 关闭");
+        return crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_CANCEL);
     }
     match wizard.step {
-        WizardStep::Wan => crate::tr!(
-            "Up/Down select WAN  Enter confirm  Esc cancel wizard",
-            "上/下 选择 WAN  Enter 确认  Esc 取消向导"
-        ),
-        WizardStep::WanMode => crate::tr!(
-            "Left/Right choose mode  Enter confirm  Esc back",
-            "左/右 选择模式  Enter 确认  Esc 返回"
-        ),
-        WizardStep::WanStatic => crate::tr!(
-            "Up/Down field  Type edit  Backspace delete  Enter confirm  Esc back",
-            "上/下 切换字段  输入编辑  Backspace 删除  Enter 确认  Esc 返回"
-        ),
-        WizardStep::Lan => crate::tr!(
-            "Up/Down move  Space select  Enter continue  Esc back",
-            "上/下 移动  空格选择  Enter 继续  Esc 返回"
-        ),
-        WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => crate::tr!(
-            "Type edit  Backspace delete  Enter confirm  Esc back",
-            "输入编辑  Backspace 删除  Enter 确认  Esc 返回"
-        ),
-        WizardStep::Confirm => crate::tr!(
-            "Enter start installation  Esc back",
-            "Enter 开始安装  Esc 返回上一步"
-        ),
+        WizardStep::Wan => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_WAN),
+        WizardStep::WanMode => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_MODE),
+        WizardStep::WanStatic => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_STATIC),
+        WizardStep::Lan => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_LAN),
+        WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => {
+            crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_EDIT)
+        }
+        WizardStep::Confirm => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_CONFIRM),
     }
 }
 
@@ -1823,24 +1718,20 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
-                crate::tr!("Cancel network wizard?", "取消网络向导？"),
+                crate::tr!(crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_QUESTION),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
             Line::raw(crate::tr!(
-                "Press Enter to cancel the wizard and return to the Install form.",
-                "按 Enter 取消向导并返回 Install 表单。"
+                crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ENTER
             )),
             Line::styled(
-                crate::tr!(
-                    "Press Esc to close and continue.",
-                    "按 Esc 关闭并继续向导。"
-                ),
+                crate::tr!(crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ESC),
                 Style::default().fg(Color::DarkGray),
             ),
         ])
         .alignment(Alignment::Center)
-        .block(Block::bordered().title(crate::tr!("Cancel wizard", "取消向导"))),
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CANCEL_WIZARD))),
         area,
     );
 }
@@ -1868,9 +1759,9 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(if app.notice == "Ready" {
-            crate::tr!("Ready", "就绪")
+            crate::tr!(crate::keys::CONSOLE_READY)
         } else {
-            app.notice.as_str()
+            app.notice.clone()
         })
         .style(Style::default().fg(notice_color)),
         notice,
@@ -1911,18 +1802,18 @@ fn render_exit_confirmation(frame: &mut Frame<'_>) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
-                crate::tr!("Exit Landscape Kit?", "退出 Landscape Kit？"),
+                crate::tr!(crate::keys::CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
-            Line::raw(crate::tr!("Press Enter to exit.", "按 Enter 退出。")),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_PRESS_ENTER_TO_EXIT)),
             Line::styled(
-                crate::tr!("Press Esc to cancel.", "按 Esc 取消。"),
+                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
                 Style::default().fg(Color::DarkGray),
             ),
         ])
         .alignment(Alignment::Center)
-        .block(Block::bordered().title(crate::tr!("Confirm exit", "确认退出"))),
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CONFIRM_EXIT))),
         area,
     );
 }
@@ -1959,7 +1850,7 @@ fn render_navigation(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     };
     frame.render_stateful_widget(
         List::new(items)
-            .block(Block::bordered().title(crate::tr!("Navigation", "导航")))
+            .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_NAVIGATION)))
             .highlight_style(highlight)
             .highlight_symbol("> "),
         area,
@@ -1978,11 +1869,11 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                     Line::styled(menu.label(), Style::default().add_modifier(Modifier::BOLD)),
                     Line::raw(""),
                     Line::styled(
-                        crate::tr!("Not available in this release", "当前版本暂不可用"),
+                        crate::tr!(crate::keys::CONSOLE_NOT_AVAILABLE_IN_THIS_RELEASE),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ])
-                .block(panel_block(menu.label(), focused))
+                .block(panel_block(menu.label().as_str(), focused))
                 .wrap(Wrap { trim: true }),
                 area,
             );
@@ -1994,24 +1885,24 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let lines = match &app.snapshot {
         Snapshot::RootRequired => vec![
             Line::styled(
-                crate::tr!("Root privileges are required", "需要 root 权限"),
+                crate::tr!(crate::keys::CONSOLE_ROOT_PRIVILEGES_REQUIRED),
                 Style::default().fg(Color::Yellow),
             ),
             Line::raw(""),
-            Line::raw(crate::trf!(
-                ("Install root  {}", app.install.install_dir),
-                ("安装根目录  {}", app.install.install_dir)
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_OVERVIEW_INSTALL_ROOT,
+                root = app.install.install_dir
             )),
         ],
         Snapshot::NotInstalled => vec![
             Line::styled(
-                crate::tr!("Landscape is not installed", "Landscape 尚未安装"),
+                crate::tr!(crate::keys::CONSOLE_LANDSCAPE_NOT_INSTALLED),
                 Style::default().fg(Color::Yellow),
             ),
             Line::raw(""),
-            Line::raw(crate::trf!(
-                ("Install root  {}", app.install.install_dir),
-                ("安装根目录  {}", app.install.install_dir)
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_OVERVIEW_INSTALL_ROOT,
+                root = app.install.install_dir
             )),
         ],
         Snapshot::Installed {
@@ -2020,36 +1911,31 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             initialized,
         } => vec![
             Line::styled(
-                crate::tr!("Landscape is installed", "Landscape 已安装"),
+                crate::tr!(crate::keys::CONSOLE_LANDSCAPE_IS_INSTALLED),
                 Style::default().fg(Color::Green),
             ),
             Line::raw(""),
-            Line::raw(crate::trf!(
-                ("Version       {version}"),
-                ("版本         {version}")
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_OVERVIEW_VERSION,
+                version = version
             )),
-            Line::raw(crate::trf!(
-                ("Service       {manager}"),
-                ("服务         {manager}")
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_OVERVIEW_SERVICE,
+                manager = manager
             )),
-            Line::raw(crate::trf!(
-                (
-                    "Initialization {}",
-                    if *initialized { "complete" } else { "pending" }
-                ),
-                (
-                    "初始化       {}",
-                    if *initialized { "完成" } else { "等待中" }
-                )
-            )),
-            Line::raw(crate::trf!(
-                ("Install root  {}", app.install.install_dir),
-                ("安装根目录  {}", app.install.install_dir)
+            Line::raw(crate::tr!(if *initialized {
+                crate::keys::CONSOLE_OVERVIEW_INITIALIZATION_COMPLETE
+            } else {
+                crate::keys::CONSOLE_OVERVIEW_INITIALIZATION_PENDING
+            })),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_OVERVIEW_INSTALL_ROOT,
+                root = app.install.install_dir
             )),
         ],
         Snapshot::Unavailable(error) => vec![
             Line::styled(
-                crate::tr!("Installation state needs attention", "安装状态需要处理"),
+                crate::tr!(crate::keys::CONSOLE_INSTALLATION_STATE_NEEDS_ATTENTION),
                 Style::default().fg(Color::Red),
             ),
             Line::raw(""),
@@ -2059,7 +1945,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel_block(
-                crate::tr!("Overview", "概览"),
+                &crate::tr!(crate::keys::CONSOLE_OVERVIEW),
                 app.focus == Focus::Panel,
             ))
             .wrap(Wrap { trim: false }),
@@ -2099,21 +1985,25 @@ fn render_install(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let (status, detail, color) = match &app.preflight.state {
         PreflightState::NotRun => (
-            crate::tr!("NOT RUN", "未运行"),
-            crate::tr!("Waiting to check this host", "等待检查此主机").into(),
+            crate::tr!(crate::keys::CONSOLE_NOT_RUN),
+            crate::tr!(crate::keys::CONSOLE_WAITING_TO_CHECK_HOST).into(),
             Color::DarkGray,
         ),
         PreflightState::Running(_) => (
-            crate::tr!("RUNNING", "运行中"),
-            crate::tr!("Checking this host...", "正在检查此主机...").into(),
+            crate::tr!(crate::keys::CONSOLE_RUNNING),
+            crate::tr!(crate::keys::CONSOLE_CHECKING_THIS_HOST).into(),
             Color::Cyan,
         ),
         PreflightState::Complete(report) => (
-            report.summary.label(),
+            report.summary.label().to_string(),
             preflight_counts(report),
             check_status_color(report.summary),
         ),
-        PreflightState::Failed(error) => (crate::tr!("FAILED", "失败"), error.clone(), Color::Red),
+        PreflightState::Failed(error) => (
+            crate::tr!(crate::keys::CONSOLE_FAILED),
+            error.clone(),
+            Color::Red,
+        ),
     };
     let selected = app.focus == Focus::Panel && app.install.checks_selected;
     let style = if selected {
@@ -2137,7 +2027,7 @@ fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect)
         ]))
         .style(style)
         .block(panel_block(
-            crate::tr!("Environment checks", "环境检查"),
+            &crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS),
             selected,
         )),
         area,
@@ -2153,7 +2043,7 @@ fn render_preflight_details(
     frame.render_widget(
         Paragraph::new(preflight_detail_lines(preflight))
             .block(panel_block(
-                crate::tr!("Environment checks", "环境检查"),
+                &crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS),
                 focused,
             ))
             .wrap(Wrap { trim: true })
@@ -2166,10 +2056,10 @@ fn preflight_detail_lines(preflight: &Preflight) -> Vec<Line<'static>> {
     let PreflightState::Complete(report) = &preflight.state else {
         return vec![match &preflight.state {
             PreflightState::NotRun => {
-                Line::raw(crate::tr!("Checks have not run yet.", "检查尚未运行。"))
+                Line::raw(crate::tr!(crate::keys::CONSOLE_CHECKS_HAVE_NOT_RUN))
             }
             PreflightState::Running(_) => Line::styled(
-                crate::tr!("Checking this host...", "正在检查此主机..."),
+                crate::tr!(crate::keys::CONSOLE_CHECKING_THIS_HOST),
                 Style::default().fg(Color::Cyan),
             ),
             PreflightState::Failed(error) => {
@@ -2187,7 +2077,7 @@ fn preflight_detail_lines(preflight: &Preflight) -> Vec<Line<'static>> {
     ];
     for group in &report.groups {
         lines.push(Line::styled(
-            group.title,
+            group.title.clone(),
             Style::default().add_modifier(Modifier::BOLD),
         ));
         for result in &group.results {
@@ -2196,7 +2086,7 @@ fn preflight_detail_lines(preflight: &Preflight) -> Vec<Line<'static>> {
                     format!("{:<7}", result.status.label()),
                     Style::default().fg(check_status_color(result.status)),
                 ),
-                Span::styled(result.title, Style::default().fg(Color::White)),
+                Span::styled(result.title.clone(), Style::default().fg(Color::White)),
                 Span::raw(if result.value.is_empty() {
                     String::new()
                 } else {
@@ -2231,21 +2121,12 @@ fn check_status_color(status: Status) -> Color {
 }
 
 fn preflight_counts(report: &CheckReport) -> String {
-    crate::trf!(
-        (
-            "{} pass / {} warn / {} error / {} unknown",
-            report.counts.pass,
-            report.counts.warning,
-            report.counts.error,
-            report.counts.unknown
-        ),
-        (
-            "{} 通过 / {} 警告 / {} 错误 / {} 未知",
-            report.counts.pass,
-            report.counts.warning,
-            report.counts.error,
-            report.counts.unknown
-        )
+    crate::tr!(
+        crate::keys::CONSOLE_PREFLIGHT_COUNTS,
+        passed = report.counts.pass,
+        warnings = report.counts.warning,
+        errors = report.counts.error,
+        unknown = report.counts.unknown
     )
 }
 
@@ -2261,19 +2142,19 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         mask(&form.password_confirmation),
         form.manager.label().into(),
         if form.takeover_network { "[x]" } else { "[ ]" }.into(),
-        crate::tr!("[ Start installation ]", "[ 开始安装 ]").into(),
+        crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON).into(),
     ];
     let labels = [
-        crate::tr!("Version", "版本"),
-        crate::tr!("Repository", "仓库"),
-        crate::tr!("Repository URL", "仓库 URL"),
-        crate::tr!("Install root", "安装根目录"),
-        crate::tr!("Admin user", "管理员用户"),
-        crate::tr!("Password", "密码"),
-        crate::tr!("Confirm password", "确认密码"),
-        crate::tr!("Service manager", "服务管理器"),
-        crate::tr!("Network takeover", "网络接管"),
-        "",
+        crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
+        crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
+        crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
+        crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_LABEL),
+        crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
+        crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
+        crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
+        crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_LABEL),
+        crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
+        String::new(),
     ];
     let lines: Vec<Line<'_>> = labels
         .iter()
@@ -2327,7 +2208,7 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         .collect();
     frame.render_widget(
         Paragraph::new(lines).block(panel_block(
-            crate::tr!("Install", "安装"),
+            &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
             app.focus == Focus::Panel && !form.checks_selected,
         )),
         area,
@@ -2353,18 +2234,18 @@ fn panel_block(title: &str, focused: bool) -> Block<'static> {
 fn render_install_help(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let (title, description) = if app.install.checks_selected {
         (
-            crate::tr!("Environment checks", "环境检查"),
-            crate::tr!(
-                "Read-only deployment checks for platform, kernel, resources, dependencies, ports, services, and DNS.",
-                "针对平台、内核、资源、依赖、端口、服务和 DNS 的只读部署检查。"
-            ),
+            crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS),
+            crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS_HELP),
         )
     } else {
         app.install.selected_help()
     };
     frame.render_widget(
         Paragraph::new(description)
-            .block(Block::bordered().title(crate::trf!(("About: {title}"), ("说明：{title}"))))
+            .block(
+                Block::bordered()
+                    .title(crate::tr!(crate::keys::CONSOLE_ABOUT_PREFIX, title = title)),
+            )
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -2424,7 +2305,7 @@ mod tests {
     fn sample_preflight_report() -> CheckReport {
         CheckReport {
             groups: vec![CheckGroup {
-                title: "Host platform",
+                title: "Host platform".to_string(),
                 results: vec![
                     CheckResult::new("platform.linux", "Operating system").set(
                         Status::Pass,
@@ -2453,7 +2334,7 @@ mod tests {
     fn pass_preflight_report() -> CheckReport {
         CheckReport {
             groups: vec![CheckGroup {
-                title: "Host platform",
+                title: "Host platform".to_string(),
                 results: vec![CheckResult::new("platform.linux", "Operating system").set(
                     Status::Pass,
                     "linux",
@@ -2473,7 +2354,7 @@ mod tests {
     fn error_preflight_report() -> CheckReport {
         CheckReport {
             groups: vec![CheckGroup {
-                title: "Ports",
+                title: "Ports".to_string(),
                 results: vec![
                     CheckResult::new("ports.6443", "Port 6443")
                         .set(Status::Error, "6443", "already in use")

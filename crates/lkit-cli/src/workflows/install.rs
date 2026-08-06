@@ -116,11 +116,7 @@ async fn first_install_impl<P: DocsProbe>(
 ) -> Result<FirstInstallOutcome, InstallError> {
     let architecture = Architecture::host().ok_or_else(|| {
         InstallError::UnsupportedPlatform(
-            crate::tr!(
-                "only x86_64 and aarch64 are supported",
-                "仅支持 x86_64 和 aarch64"
-            )
-            .into(),
+            crate::tr!(crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED).into(),
         )
     })?;
     let release = match target {
@@ -299,9 +295,9 @@ async fn first_install_impl<P: DocsProbe>(
                 if let Err(cleanup_error) = cleanup {
                     eprintln!(
                         "install: {}",
-                        crate::trf!(
-                            ("network takeover cleanup failed: {cleanup_error}"),
-                            ("网络接管清理失败：{cleanup_error}")
+                        crate::tr!(
+                            crate::keys::INSTALL_CLEANUP_FAILED_NETWORK,
+                            cleanup_error = cleanup_error
                         )
                     );
                     return Err(error);
@@ -311,9 +307,9 @@ async fn first_install_impl<P: DocsProbe>(
             {
                 eprintln!(
                     "install: {}",
-                    crate::trf!(
-                        ("first install cleanup failed: {cleanup_error}"),
-                        ("首次安装清理失败：{cleanup_error}")
+                    crate::tr!(
+                        crate::keys::INSTALL_CLEANUP_FAILED_FIRST_INSTALL,
+                        cleanup_error = cleanup_error
                     )
                 );
             }
@@ -877,6 +873,22 @@ mod tests {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 != 1
+        }
+    }
+
+    /// 以 `current` 符号链接目标作为阶段信号:目标版本激活期间指向
+    /// `releases/1.3.0`,`/api/docs` 持续失败;回滚恢复为 1.2.3 后通过。
+    /// 事件驱动,不依赖墙钟,消除并行负载下的时序竞态。
+    struct CurrentSymlinkDocs {
+        root: std::path::PathBuf,
+        rollback_target: std::path::PathBuf,
+    }
+
+    impl DocsProbe for CurrentSymlinkDocs {
+        async fn docs_ok(&self) -> bool {
+            std::fs::read_link(self.root.join("current"))
+                .map(|target| target == self.rollback_target)
+                .unwrap_or(false)
         }
     }
 
@@ -2156,13 +2168,9 @@ esac
     async fn rolls_back_stopped_service_switch_without_backup_on_health_failure() {
         let (server, root, provider, systemd, dir, _options, _tcp, _udp, stop) =
             stopped_service_world("e2e-switch-stopped-rollback");
-        // 目标版本验证阶段 /api/docs 失败,恢复后无备份回滚的健康检查才能通过。
-        let docs_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let docs = ToggleDocs {
-            ok: docs_flag.clone(),
-        };
-        let options = HealthOptions {
-            docs,
+        // 首次安装阶段 /api/docs 保持可用。
+        let install_options = HealthOptions {
+            docs: FakeDocs,
             ports: _options.ports.clone(),
             startup_timeout: Duration::from_secs(3),
             stable_duration: Duration::from_millis(100),
@@ -2174,21 +2182,23 @@ esac
             &credentials(),
             ManagerChoice::Systemd,
             &systemd,
-            &options,
+            &install_options,
         )
         .await
         .unwrap();
         std::fs::write(dir.join("state"), b"inactive").unwrap();
         let state = super::super::state::load_state(&root).unwrap().unwrap();
-        // 目标版本启动验证期间 /api/docs 一直失败:启动轮询超时触发无备份回滚;
-        // 之后恢复 /api/docs,回滚的健康检查才能通过。
-        docs_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-        let docs_flag = docs_flag.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(4500));
-            docs_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        });
-
+        // 目标版本启动验证期间 current 指向 1.3.0,/api/docs 持续失败,
+        // 启动轮询超时触发无备份回滚;回滚恢复 current 为 1.2.3 后通过。
+        let switch_health = HealthOptions {
+            docs: CurrentSymlinkDocs {
+                root: root.canonical.clone(),
+                rollback_target: "releases/1.2.3".into(),
+            },
+            ports: _options.ports.clone(),
+            startup_timeout: Duration::from_secs(3),
+            stable_duration: Duration::from_millis(100),
+        };
         let target = provider
             .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
             .await
@@ -2202,7 +2212,7 @@ esac
                 allow_no_backup: true,
             },
             &systemd,
-            &switch_options(&server.base, &options, true),
+            &switch_options(&server.base, &switch_health, true),
         )
         .await
         .unwrap();

@@ -91,7 +91,7 @@ impl Tty {
         for (index, option) in options.iter().enumerate() {
             self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
         }
-        let raw = self.input(crate::tr!("Select one interface: ", "请选择一个网卡："))?;
+        let raw = self.input(&crate::tr!(crate::keys::INTERACTIVE_SELECT_ONE_INTERFACE))?;
         let selected = raw.trim().parse::<usize>().map_err(|_| {
             InstallError::ParameterUsage("interface selection must be a number".into())
         })?;
@@ -118,10 +118,7 @@ impl Tty {
         for (index, option) in options.iter().enumerate() {
             self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
         }
-        let raw = self.input(crate::tr!(
-            "Select LAN interfaces (comma separated, empty for WAN-only): ",
-            "请选择 LAN 网卡（用逗号分隔，留空表示仅 WAN）："
-        ))?;
+        let raw = self.input(&crate::tr!(crate::keys::INTERACTIVE_SELECT_LAN_INTERFACES))?;
         if raw.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -151,7 +148,7 @@ impl Tty {
         let first = self.read_password_once(&format!("{prompt}: "))?;
         let second = self.read_password_once(&format!(
             "{prompt}{}",
-            crate::tr!(" (again): ", "（再次输入）：")
+            crate::tr!(crate::keys::INTERACTIVE_PASSWORD_AGAIN)
         ))?;
         if first != second {
             return Err(InstallError::InvalidPassword(
@@ -303,6 +300,16 @@ mod tests {
 
     #[test]
     fn open_fails_without_controlling_terminal() {
+        // 测试进程拥有控制终端时 /dev/tty 可打开，断言不成立；该场景
+        // 在无控制终端的 CI/非交互环境中验证。
+        if std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(TTY_PATH)
+            .is_ok()
+        {
+            return;
+        }
         assert!(matches!(Tty::open(), Err(InstallError::NonInteractive(_))));
     }
 

@@ -89,11 +89,29 @@ pub(crate) fn with_language<T>(language: Language, operation: impl FnOnce() -> T
     operation()
 }
 
-pub(crate) fn select<'a>(english: &'a str, chinese: &'a str) -> &'a str {
-    match current() {
-        Language::En => english,
-        Language::Zh => chinese,
-    }
+#[macro_export]
+macro_rules! tr {
+    ($key:expr $(, $name:ident = $value:expr)* $(,)?) => {
+        rust_i18n::t!(
+            $key,
+            locale = $crate::i18n::current().code(),
+            $($name = $value),*
+        )
+        .into_owned()
+    };
+}
+
+/// clap 的 help/about 需要 `&'static str`。`localized_command()` 每次进程只构建
+/// 一次，这里把查询结果泄漏为静态字符串，进程生命周期内固定大小、可接受。
+#[macro_export]
+macro_rules! tr_static {
+    ($key:expr $(, $name:ident = $value:expr)* $(,)?) => {
+        $crate::i18n::static_str($crate::tr!($key $(, $name = $value)*))
+    };
+}
+
+pub(crate) fn static_str(value: String) -> &'static str {
+    Box::leak(value.into_boxed_str())
 }
 
 pub(crate) fn resolve(explicit: Option<&str>) -> Language {
@@ -246,23 +264,6 @@ fn print_clap_suggestion(error: &clap::Error, kind: ContextKind, label: &str) {
     if let Some(value) = clap_context(error, kind) {
         eprintln!("\n提示：可能想输入{label} '{value}'。");
     }
-}
-
-#[macro_export]
-macro_rules! tr {
-    ($english:expr, $chinese:expr $(,)?) => {
-        $crate::i18n::select($english, $chinese)
-    };
-}
-
-#[macro_export]
-macro_rules! trf {
-    (($($english:tt)*) , ($($chinese:tt)*)) => {
-        match $crate::i18n::current() {
-            $crate::i18n::Language::En => format!($($english)*),
-            $crate::i18n::Language::Zh => format!($($chinese)*),
-        }
-    };
 }
 
 #[cfg(test)]
