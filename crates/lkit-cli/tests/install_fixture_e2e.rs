@@ -315,12 +315,16 @@ esac
             "firewalld.service",
             "systemd-resolved.service",
         ] {
-            std::fs::write(self.host.join("units").join(unit), b"[Unit]\n").unwrap();
-            let state = self.host.join("systemd-state/units").join(unit);
-            std::fs::create_dir_all(&state).unwrap();
-            std::fs::write(state.join("active"), b"active\n").unwrap();
-            std::fs::write(state.join("enabled"), b"enabled\n").unwrap();
+            self.seed_host_service(unit);
         }
+    }
+
+    fn seed_host_service(&self, unit: &str) {
+        std::fs::write(self.host.join("units").join(unit), b"[Unit]\n").unwrap();
+        let state = self.host.join("systemd-state/units").join(unit);
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("active"), b"active\n").unwrap();
+        std::fs::write(state.join("enabled"), b"enabled\n").unwrap();
     }
 
     fn run_takeover(&self) -> Output {
@@ -725,7 +729,14 @@ fn network_takeover_waits_for_reconnected_ssh_confirmation() {
         init["dhcpv4_services"][0]["config"]["ip_range_end"].as_str(),
         Some("192.168.10.254")
     );
-    assert_host_services_masked(&harness);
+    assert_host_services_masked(
+        &harness,
+        &[
+            "NetworkManager.service",
+            "firewalld.service",
+            "systemd-resolved.service",
+        ],
+    );
 
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
     let timer_start = calls.find("\"start\",\"lkit-network-").unwrap();
@@ -796,17 +807,14 @@ fn automatic_network_rollback_restores_host_services() {
     assert!(!harness.install_root.join("current").exists());
     let transaction = read_only_transaction(&harness.install_root);
     assert_eq!(transaction["phase"], "rolled_back");
-    for unit in [
-        "NetworkManager.service",
-        "firewalld.service",
-        "systemd-resolved.service",
-    ] {
-        let state = harness.host.join("systemd-state/units").join(unit);
-        assert!(state.join("active").is_file(), "{unit} was not restarted");
-        assert!(state.join("enabled").is_file(), "{unit} was not re-enabled");
-        assert!(!state.join("masked").exists(), "{unit} remains masked");
-        assert!(harness.host.join("units").join(unit).is_file());
-    }
+    assert_host_services_restored(
+        &harness,
+        &[
+            "NetworkManager.service",
+            "firewalld.service",
+            "systemd-resolved.service",
+        ],
+    );
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
     for unit in recovery_units {
         assert!(
@@ -814,6 +822,70 @@ fn automatic_network_rollback_restores_host_services() {
             "automatic recovery attempted to stop its own recovery unit {unit}"
         );
     }
+}
+
+#[test]
+fn network_takeover_supports_ifupdown_without_network_manager() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("network-ifupdown", "healthy", 10_000);
+    harness.seed_host_service("networking.service");
+
+    let output = harness.run_takeover();
+    assert!(
+        output.status.success(),
+        "takeover with ifupdown failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let pending = read_only_transaction(&harness.install_root);
+    let host_services = pending["network_takeover"]["host_services"]
+        .as_array()
+        .unwrap();
+    let networking = host_services
+        .iter()
+        .find(|service| service["unit"] == "networking.service")
+        .unwrap();
+    assert_eq!(networking["installed"], true);
+    assert_eq!(networking["active"], true);
+    assert_eq!(networking["enable_state"], "enabled");
+    let network_manager = host_services
+        .iter()
+        .find(|service| service["unit"] == "NetworkManager.service")
+        .unwrap();
+    assert_eq!(network_manager["installed"], false);
+    assert_host_services_masked(&harness, &["networking.service"]);
+    assert!(
+        !harness.host.join("units/NetworkManager.service").exists(),
+        "NetworkManager was unexpectedly installed"
+    );
+
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    assert!(calls.contains("[\"stop\",\"networking.service\"]"));
+    assert!(
+        !calls.contains("[\"stop\",\"NetworkManager.service\"]"),
+        "the missing NetworkManager unit was stopped"
+    );
+
+    let rollback = harness.network_command(&["rollback", "--automatic"]);
+    assert_success(&rollback);
+    assert_host_services_restored(&harness, &["networking.service"]);
+}
+
+#[test]
+fn network_takeover_rejects_other_active_network_manager() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("network-unknown-manager", "healthy", 10_000);
+    harness.seed_host_service("systemd-networkd.service");
+
+    let output = harness.run_takeover();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains(
+        "preflight check failed: unknown network manager systemd-networkd.service is active"
+    ));
+    assert!(
+        !harness.install_root.join("transactions").exists(),
+        "preflight created a transaction before rejecting an unknown manager"
+    );
 }
 
 fn read_only_transaction(install_root: &Path) -> serde_json::Value {
@@ -828,16 +900,22 @@ fn read_only_transaction(install_root: &Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(&paths[0]).unwrap()).unwrap()
 }
 
-fn assert_host_services_masked(harness: &InstallHarness) {
-    for unit in [
-        "NetworkManager.service",
-        "firewalld.service",
-        "systemd-resolved.service",
-    ] {
+fn assert_host_services_masked(harness: &InstallHarness, units: &[&str]) {
+    for unit in units {
         let state = harness.host.join("systemd-state/units").join(unit);
         assert!(state.join("masked").is_file(), "{unit} was not masked");
         assert!(!state.join("active").exists(), "{unit} remains active");
         assert!(!state.join("enabled").exists(), "{unit} remains enabled");
+        assert!(harness.host.join("units").join(unit).is_file());
+    }
+}
+
+fn assert_host_services_restored(harness: &InstallHarness, units: &[&str]) {
+    for unit in units {
+        let state = harness.host.join("systemd-state/units").join(unit);
+        assert!(state.join("active").is_file(), "{unit} was not restarted");
+        assert!(state.join("enabled").is_file(), "{unit} was not re-enabled");
+        assert!(!state.join("masked").exists(), "{unit} remains masked");
         assert!(harness.host.join("units").join(unit).is_file());
     }
 }

@@ -114,8 +114,9 @@ false。读取旧 v1 文件时缺失该字段按 false 处理。
 `resolv_conf_backup` 是安装根目录相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 和无 systemd 事务不修改运行状态时，该字段为 null。
 
 `network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
-接口与 MAC、Landscape 网络计划、NetworkManager/firewalld/systemd-resolved 的原始
-installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制和待提交安装状态路径。
+接口与 MAC、Landscape 网络计划、NetworkManager/`networking.service`/firewalld/
+systemd-resolved 的原始 installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制
+和待提交安装状态路径。
 字段不得包含 PPPoE 凭据。接管事务在 `awaiting_network_confirmation` 或 `finalizing`
 期间不允许通用中断恢复猜测结果，只能执行 `lkit network confirm` 或
 `lkit network rollback`。
@@ -216,8 +217,9 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 - 前端收到显式 Ctrl+C 时先恢复原始终端属性和光标，再停止对应 operation unit 及其
   cgroup，清理运行时文件并返回 `130`；停止失败时输出 warning、保留现场并提示 operation
   可能仍在运行；
-- 手工 `lkit network rollback` 同样进入 operation unit，避免 NetworkManager 恢复后
-  当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚已经位于独立恢复 unit，不再次委派；
+- 手工 `lkit network rollback` 同样进入 operation unit，避免 NetworkManager 或
+  `networking.service` 恢复后当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚已经位于
+  独立恢复 unit，不再次委派；
 - 交互确认仍通过原终端完成，但 unit 不接管该终端；若终端在破坏性阶段前消失，确认
   读取失败并安全停止；
 - systemd worker 不配置自动重试，业务失败不会重复执行整条命令；

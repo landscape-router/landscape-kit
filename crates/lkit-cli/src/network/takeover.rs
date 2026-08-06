@@ -15,14 +15,14 @@ use crate::service::{health, systemd};
 
 use super::config::{NetworkMode, NetworkPlan};
 
-const HOST_SERVICES: [&str; 3] = [
+const HOST_SERVICES: [&str; 4] = [
     "NetworkManager.service",
+    "networking.service",
     "firewalld.service",
     "systemd-resolved.service",
 ];
-const UNKNOWN_NETWORK_MANAGERS: [&str; 4] = [
+const UNKNOWN_NETWORK_MANAGERS: [&str; 3] = [
     "systemd-networkd.service",
-    "networking.service",
     "wicked.service",
     "connman.service",
 ];

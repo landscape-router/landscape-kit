@@ -34,11 +34,12 @@
 
 ## NET-05
 
-**NetworkManager、firewalld、systemd-resolved 被停止、disable、mask，但软件包不卸载**
+**NetworkManager 或 Debian ifupdown 的 `networking.service`、firewalld、systemd-resolved 被停止、disable、mask，但软件包不卸载**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：覆盖 NetworkManager 缺失且 `networking.service` 处于 active/enabled 状态的接管与回滚。
 
 ## NET-06
 
@@ -51,7 +52,7 @@
 
 ## NET-07
 
-**未确认回滚清理安装并精确恢复三个宿主服务状态**
+**未确认回滚清理安装并精确恢复宿主网络服务状态**
 
 - 测试层：CLI fixture E2E、QEMU/KVM
 - 状态：`部分覆盖`
@@ -59,8 +60,9 @@
 
 ## NET-08
 
-**SELinux、已有 br_lan 或未知活动网络管理器在任何网络变更前阻断**
+**SELinux、已有 br_lan 或不受支持的活动网络管理器在任何网络变更前阻断**
 
-- 测试层：Rust 单元
+- 测试层：CLI fixture E2E、Rust 单元
 - 状态：`已覆盖`
-- 证据：[接管预检](../../../../crates/lkit-cli/src/network/takeover.rs)、[接口发现](../../../../crates/lkit-cli/src/network/discovery.rs)
+- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[接口发现](../../../../crates/lkit-cli/src/network/discovery.rs)
+- 说明：`networking.service` 是受支持的 Debian ifupdown 宿主服务，不属于本场景的未知管理器。

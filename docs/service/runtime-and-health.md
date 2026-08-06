@@ -32,9 +32,10 @@ v1 固定检查：
 - 调整防火墙、SELinux、sysctl、Cgroup 或内核配置；
 - 安装 `iproute2`、`pppd`、Docker 或 Podman。
 
-`lkit install --takeover-network` 是停止、disable 和 mask NetworkManager、firewalld 与
-systemd-resolved 的唯一显式例外。它不卸载软件包，不修改 SELinux；SELinux 已加载或配置为
-enabled/permissive 时在任何变更前拒绝。接管使用独立的持久回滚机制，见
+`lkit install --takeover-network` 是停止、disable 和 mask NetworkManager、Debian
+ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显式例外。它不卸载
+软件包，不修改 SELinux；SELinux 已加载或配置为 enabled/permissive 时在任何变更前拒绝。接管
+使用独立的持久回滚机制，见
 [网络接管](../network/takeover.md)。
 
 ## 进程与旧部署识别

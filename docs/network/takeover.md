@@ -4,12 +4,15 @@
 
 `lkit install --takeover-network` 是首次安装的显式破坏性模式，要求 root、真实可通信的
 systemd 和交互终端。网卡始终由用户选择，lkit 不按默认路由或接口名自动决定 WAN/LAN。
-无线、loopback 和虚拟接口不列入选择。已有 `br_lan`、其他活动网络管理器，或 SELinux
-已加载/配置为 enabled/permissive 时，在停止服务前失败。
+无线、loopback 和虚拟接口不列入选择。已有 `br_lan`、不受支持的活动网络管理器
+（`systemd-networkd`、wicked 或 connman），或 SELinux 已加载/配置为 enabled/permissive
+时，在停止服务前失败。
 
-接管不会卸载 NetworkManager、firewalld、systemd-resolved 或其他软件包，也不收集
-PPPoE 用户名、密码或 MTU。它保存三个服务的原始状态，然后依次 stop、disable、mask；
-回滚按原始 installed、enable 和 active 状态恢复。
+接管支持 NetworkManager 和 Debian ifupdown 的 `networking.service`；不存在的 unit 保持
+未安装状态且不会执行服务操作。接管不会卸载 NetworkManager、ifupdown、firewalld、
+systemd-resolved 或其他软件包，也不收集 PPPoE 用户名、密码或 MTU。它保存这些宿主服务
+的原始状态，然后依次 stop、disable、mask；回滚按原始 installed、enable 和 active 状态
+恢复。
 
 ## 单网口
 
@@ -39,9 +42,10 @@ LAN 物理接口加入 bridge。管理地址默认 `192.168.10.1/24`，可在交
 - timer 调用的幂等 rollback service；
 - 未确认重启时在 Landscape 和 network-online 之前执行的 boot rollback service。
 
-恢复机制 arm 成功后才停止 systemd-resolved、firewalld 和 NetworkManager，其中
-NetworkManager 最后停止。Landscape 启动并通过健康检查后，安装状态仍不提交。用户必须
-断开旧连接，重新执行 `ssh root@<管理地址>`，然后运行 `lkit network confirm`。确认会
+恢复机制 arm 成功后才停止 systemd-resolved、firewalld、`networking.service` 和
+NetworkManager，其中 NetworkManager 在两者都存在时最后停止。Landscape 启动并通过健康
+检查后，安装状态仍不提交。用户必须断开旧连接，重新执行 `ssh root@<管理地址>`，然后运行
+`lkit network confirm`。确认会
 检查 SSH 服务端地址、接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
 双网口模式还会在这些检查成功后清除 WAN 上继承的 IPv4；清除失败时不提交，恢复 timer
 继续有效。
