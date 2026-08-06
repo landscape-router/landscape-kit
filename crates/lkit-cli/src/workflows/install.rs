@@ -51,6 +51,7 @@ pub(crate) enum ServiceManager {
 pub(crate) struct FirstInstallOutcome {
     pub release: Release,
     pub manager: ServiceManager,
+    pub pending_network_confirmation: bool,
     pub pending_network_address: Option<std::net::Ipv4Addr>,
 }
 
@@ -148,7 +149,13 @@ async fn first_install_impl<P: DocsProbe>(
     }
     super::transaction::begin(root, &transaction)?;
     let result: Result<(Release, bool), InstallError> = async {
+        crate::interaction::presentation::operation_phase(
+            crate::interaction::presentation::OperationPhase::Downloading,
+        );
         let built = build_release(root, &release).await?;
+        crate::interaction::presentation::operation_phase(
+            crate::interaction::presentation::OperationPhase::Applying,
+        );
         let init_config = build_init_config(&release.version, credentials, network)?;
         write_init_config(root, &init_config)?;
         let activation = if manager == ServiceManager::Systemd {
@@ -184,6 +191,10 @@ async fn first_install_impl<P: DocsProbe>(
                 crate::network::takeover::arm_recovery(root, takeover, runtime)?;
                 super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
                 crate::network::takeover::stop_host_services(takeover, systemd)?;
+                crate::network::takeover::clear_selected_lan_addresses(
+                    &takeover.plan,
+                    &runtime.ip_command,
+                )?;
             }
             UnitActivation {
                 unit_sha: unit_sha.clone(),
@@ -265,12 +276,15 @@ async fn first_install_impl<P: DocsProbe>(
         Ok((release, pending_network)) => Ok(FirstInstallOutcome {
             release,
             manager,
-            pending_network_address: pending_network.then(|| {
-                network
-                    .expect("pending network has a plan")
-                    .management_address()
-                    .address
-            }),
+            pending_network_confirmation: pending_network,
+            pending_network_address: pending_network
+                .then(|| {
+                    network
+                        .expect("pending network has a plan")
+                        .management_address()
+                        .map(|address| address.address)
+                })
+                .flatten(),
         }),
         Err(error) => {
             if let Some(takeover) = transaction.network_takeover.as_ref() {

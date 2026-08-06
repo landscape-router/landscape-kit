@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read, Stdout, Write};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -7,11 +7,17 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crossterm::cursor::{Hide, Show};
+use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Gauge, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +80,15 @@ enum DownloadStatus {
 #[serde(tag = "event", rename_all = "snake_case")]
 enum PresentationEvent {
     Download { state: DownloadState },
+    Phase { phase: OperationPhase },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OperationPhase {
+    Preparing,
+    Downloading,
+    Applying,
 }
 
 enum ProgressOutput {
@@ -151,7 +166,12 @@ impl DownloadProgress {
         }
         self.state.elapsed_millis = now.duration_since(self.started).as_millis() as u64;
         match &mut self.output {
-            ProgressOutput::Events(file) => write_event(file, &self.state),
+            ProgressOutput::Events(file) => write_event(
+                file,
+                &PresentationEvent::Download {
+                    state: self.state.clone(),
+                },
+            ),
             ProgressOutput::Interactive(renderer) => {
                 let _ = renderer.render(&self.state);
             }
@@ -187,16 +207,20 @@ fn event_file() -> Option<File> {
     (metadata.is_file() && metadata.uid() == 0 && metadata.mode() & 0o077 == 0).then_some(file)
 }
 
-fn write_event(file: &mut File, state: &DownloadState) {
-    let event = PresentationEvent::Download {
-        state: state.clone(),
-    };
-    let mut line = match serde_json::to_vec(&event) {
+fn write_event(file: &mut File, event: &PresentationEvent) {
+    let mut line = match serde_json::to_vec(event) {
         Ok(line) => line,
         Err(_) => return,
     };
     line.push(b'\n');
     let _ = file.write_all(&line).and_then(|()| file.flush());
+}
+
+pub(crate) fn operation_phase(phase: OperationPhase) {
+    let Some(mut file) = event_file() else {
+        return;
+    };
+    write_event(&mut file, &PresentationEvent::Phase { phase });
 }
 
 struct InteractiveDownload {
@@ -280,6 +304,10 @@ impl InterruptGuard {
 
     pub(crate) fn requested(&self) -> bool {
         SIGINT_RECEIVED.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn clear_request(&self) {
+        SIGINT_RECEIVED.store(false, Ordering::SeqCst);
     }
 }
 
@@ -397,6 +425,173 @@ fn render_download(frame: &mut Frame<'_>, state: &DownloadState) {
     frame.render_widget(gauge, gauge_area);
 }
 
+fn render_operation(
+    frame: &mut Frame<'_>,
+    phase: OperationPhase,
+    current: Option<&DownloadState>,
+    logs: &[String],
+    notice: &str,
+    confirming_stop: bool,
+    result: Option<OperationResult>,
+) {
+    let [header, body, footer] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(8),
+        Constraint::Length(3),
+    ])
+    .areas(frame.area());
+    let title = match result {
+        Some(OperationResult::Success) => crate::tr!("Installation complete", "安装完成"),
+        Some(OperationResult::Failed) => crate::tr!("Installation failed", "安装失败"),
+        Some(OperationResult::Cancelled) => crate::tr!("Installation cancelled", "安装已取消"),
+        None => crate::tr!("Installing Landscape", "正在安装 Landscape"),
+    };
+    frame.render_widget(
+        Paragraph::new(title)
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::BOTTOM)),
+        header,
+    );
+    let [progress, log_area] =
+        Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(body);
+    if let Some(state) = current {
+        let percent = if state.total == 0 {
+            0.0
+        } else {
+            state.position as f64 / state.total as f64
+        };
+        let label = format!(
+            "{}  {:>3}%  {} / {}",
+            state.label,
+            (percent * 100.0).round() as u64,
+            human_bytes(state.position),
+            human_bytes(state.total),
+        );
+        frame.render_widget(
+            Gauge::default()
+                .ratio(percent.clamp(0.0, 1.0))
+                .label(label)
+                .gauge_style(Style::default().fg(Color::Cyan))
+                .use_unicode(false)
+                .block(Block::bordered().title(crate::tr!("Download", "下载"))),
+            progress,
+        );
+    } else {
+        let status = match result {
+            Some(OperationResult::Success) => crate::tr!(
+                "The installation finished successfully.",
+                "安装已成功完成。"
+            ),
+            Some(OperationResult::Failed) => {
+                crate::tr!("The installation reported a failure.", "安装报告失败。")
+            }
+            Some(OperationResult::Cancelled) => crate::tr!(
+                "The installation was stopped during download.",
+                "安装已在下载阶段停止。"
+            ),
+            None => match phase {
+                OperationPhase::Preparing => {
+                    crate::tr!("Preparing installation...", "正在准备安装……")
+                }
+                OperationPhase::Downloading => {
+                    crate::tr!("Waiting for download progress...", "等待下载进度……")
+                }
+                OperationPhase::Applying => crate::tr!(
+                    "Applying configuration and starting services...",
+                    "正在应用配置并启动服务……"
+                ),
+            },
+        };
+        frame.render_widget(
+            Paragraph::new(status)
+                .style(if matches!(result, Some(OperationResult::Success)) {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Green)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                })
+                .block(Block::bordered().title(crate::tr!("Status", "状态"))),
+            progress,
+        );
+    }
+    let visible_logs = logs.iter().rev().take(8).rev().collect::<Vec<_>>();
+    let log_lines: Vec<Line<'_>> = visible_logs
+        .iter()
+        .map(|line| {
+            if is_confirmation_line(line) {
+                Line::styled(
+                    line.as_str(),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Line::raw(line.as_str())
+            }
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(log_lines)
+            .block(Block::bordered().title(crate::tr!("Output", "输出")))
+            .wrap(Wrap { trim: true }),
+        log_area,
+    );
+    let hint = if result.is_some() {
+        crate::tr!("Ctrl+C Close", "Ctrl+C 关闭")
+    } else if confirming_stop {
+        crate::tr!("Enter Stop  Esc Cancel", "Enter 停止  Esc 取消")
+    } else if phase == OperationPhase::Downloading {
+        crate::tr!("Ctrl+C Stop  Esc Stop options", "Ctrl+C 停止  Esc 停止选项")
+    } else {
+        crate::tr!(
+            "Installation is in progress; stop requests are ignored",
+            "安装正在进行；停止请求将被忽略"
+        )
+    };
+    let footer_text = if notice.is_empty() {
+        hint.to_string()
+    } else {
+        format!("{notice}  {hint}")
+    };
+    frame.render_widget(
+        Paragraph::new(footer_text)
+            .alignment(Alignment::Left)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::TOP)),
+        footer,
+    );
+    if confirming_stop {
+        let width = 48.min(frame.area().width.saturating_sub(2));
+        let height = 5.min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(crate::tr!(
+                "Stop the download? Press Enter to confirm or Esc to continue.",
+                "停止下载？按 Enter 确认，按 Esc 继续。"
+            ))
+            .alignment(Alignment::Center)
+            .block(Block::bordered().title(crate::tr!("Confirm stop", "确认停止"))),
+            area,
+        );
+    }
+}
+
+/// 全屏结果页里把网络接管的确认与回滚后果提示行用醒目背景标出。
+/// 中英文输出都包含 `lkit network confirm` 命令；等待确认、重新连接和
+/// 未确认回滚的提示行分别包含 `confirm`/`确认`。
+fn is_confirmation_line(line: &str) -> bool {
+    line.contains("confirm") || line.contains("确认")
+}
+
 fn speed_bytes(state: &DownloadState) -> u64 {
     if state.elapsed_millis == 0 {
         return 0;
@@ -443,15 +638,42 @@ pub(crate) struct WorkerPresentation {
     pending: String,
     current: Option<DownloadState>,
     renderer: Option<InteractiveDownload>,
+    screen: Option<FullScreenOperation>,
+    phase: OperationPhase,
+    logs: Vec<String>,
+    notice: String,
+    confirming_stop: bool,
+    result: Option<OperationResult>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PresentationAction {
+    Stop,
+    Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationResult {
+    Success,
+    Failed,
+    Cancelled,
 }
 
 impl WorkerPresentation {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(full_screen: bool) -> Self {
         Self {
             events: None,
             pending: String::new(),
             current: None,
             renderer: None,
+            screen: full_screen
+                .then(FullScreenOperation::start)
+                .and_then(Result::ok),
+            phase: OperationPhase::Preparing,
+            logs: Vec::new(),
+            notice: String::new(),
+            confirming_stop: false,
+            result: None,
         }
     }
 
@@ -479,33 +701,218 @@ impl WorkerPresentation {
     }
 
     pub(crate) fn before_log(&mut self) {
+        if self.screen.is_some() {
+            return;
+        }
         if let Some(renderer) = self.renderer.take() {
             renderer.finish();
         }
     }
 
+    pub(crate) fn capture_log(&mut self, content: &str) -> bool {
+        if self.screen.is_none() {
+            return false;
+        }
+        self.logs.extend(
+            content
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_string),
+        );
+        if self.logs.len() > 200 {
+            self.logs.drain(..self.logs.len() - 200);
+        }
+        self.render_screen();
+        true
+    }
+
+    pub(crate) fn is_cancellable(&self) -> bool {
+        self.phase == OperationPhase::Downloading && self.result.is_none()
+    }
+
+    pub(crate) fn ignore_stop(&mut self) {
+        self.notice = crate::tr!(
+            "Installation is applying configuration; stopping is no longer available",
+            "正在应用安装配置；当前阶段不能停止"
+        )
+        .into();
+        self.confirming_stop = false;
+        self.render_screen();
+    }
+
+    pub(crate) fn poll_action(&mut self) -> Result<Option<PresentationAction>, String> {
+        if self.screen.is_none() {
+            return Ok(None);
+        }
+        while event::poll(Duration::ZERO)
+            .map_err(|error| format!("poll install screen: {error}"))?
+        {
+            let TerminalEvent::Key(key) =
+                event::read().map_err(|error| format!("read install screen: {error}"))?
+            else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            let ctrl_c =
+                key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+            if self.result.is_some() {
+                if ctrl_c {
+                    return Ok(Some(PresentationAction::Close));
+                }
+                continue;
+            }
+            if self.confirming_stop {
+                match key.code {
+                    KeyCode::Enter => return Ok(Some(PresentationAction::Stop)),
+                    KeyCode::Esc => {
+                        self.confirming_stop = false;
+                        self.notice.clear();
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            if ctrl_c {
+                if self.is_cancellable() {
+                    return Ok(Some(PresentationAction::Stop));
+                }
+                self.ignore_stop();
+                continue;
+            }
+            if key.code == KeyCode::Esc {
+                if self.is_cancellable() {
+                    self.confirming_stop = true;
+                    self.notice.clear();
+                } else {
+                    self.ignore_stop();
+                }
+            }
+        }
+        self.render_screen();
+        Ok(None)
+    }
+
+    pub(crate) fn show_result(&mut self, success: bool) {
+        self.result = Some(if success {
+            OperationResult::Success
+        } else {
+            OperationResult::Failed
+        });
+        self.current = None;
+        self.confirming_stop = false;
+        self.notice.clear();
+        self.render_screen();
+    }
+
+    pub(crate) fn wait_for_close(&mut self, interrupt: &InterruptGuard) -> Result<(), String> {
+        if self.screen.is_none() {
+            return Ok(());
+        }
+        loop {
+            if interrupt.requested() {
+                interrupt.clear_request();
+                break;
+            }
+            if matches!(self.poll_action()?, Some(PresentationAction::Close)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
+    }
+
     pub(crate) fn finish(&mut self) {
         self.before_log();
         self.current = None;
+        self.screen = None;
     }
 
     fn apply(&mut self, event: PresentationEvent) {
-        let PresentationEvent::Download { state } = event;
-        let finished = !matches!(state.status, DownloadStatus::Downloading);
-        self.current = Some(state);
-        if std::io::stderr().is_terminal() && !crate::interaction::interactive::is_non_interactive()
-        {
-            if self.renderer.is_none() {
-                self.renderer = InteractiveDownload::new().ok();
+        match event {
+            PresentationEvent::Download { state } => {
+                let finished = !matches!(state.status, DownloadStatus::Downloading);
+                self.current = Some(state);
+                if self.screen.is_none()
+                    && std::io::stderr().is_terminal()
+                    && !crate::interaction::interactive::is_non_interactive()
+                {
+                    if self.renderer.is_none() {
+                        self.renderer = InteractiveDownload::new().ok();
+                    }
+                    if let (Some(renderer), Some(state)) = (&mut self.renderer, &self.current) {
+                        let _ = renderer.render(state);
+                    }
+                }
+                if finished {
+                    self.before_log();
+                    self.current = None;
+                }
             }
-            if let (Some(renderer), Some(state)) = (&mut self.renderer, &self.current) {
-                let _ = renderer.render(state);
+            PresentationEvent::Phase { phase } => {
+                self.phase = phase;
+                self.confirming_stop = false;
+                self.notice.clear();
             }
         }
-        if finished {
-            self.before_log();
-            self.current = None;
+        self.render_screen();
+    }
+
+    fn render_screen(&mut self) {
+        let Some(screen) = self.screen.as_mut() else {
+            return;
+        };
+        let phase = self.phase;
+        let current = self.current.as_ref();
+        let logs = &self.logs;
+        let notice = &self.notice;
+        let confirming_stop = self.confirming_stop;
+        let result = self.result;
+        let _ = screen.terminal.draw(|frame| {
+            render_operation(frame, phase, current, logs, notice, confirming_stop, result)
+        });
+    }
+}
+
+pub(crate) fn show_cancelled_screen(interrupt: &InterruptGuard) -> Result<(), String> {
+    let mut presentation = WorkerPresentation::new(true);
+    presentation.result = Some(OperationResult::Cancelled);
+    presentation.render_screen();
+    presentation.wait_for_close(interrupt)?;
+    presentation.finish();
+    Ok(())
+}
+
+struct FullScreenOperation {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+impl FullScreenOperation {
+    fn start() -> Result<Self, String> {
+        enable_raw_mode().map_err(|error| format!("enable install screen raw mode: {error}"))?;
+        let mut stdout = std::io::stdout();
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, Hide) {
+            let _ = disable_raw_mode();
+            return Err(format!("enter install screen: {error}"));
         }
+        let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                let _ = disable_raw_mode();
+                let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
+                return Err(format!("initialize install screen: {error}"));
+            }
+        };
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for FullScreenOperation {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen, Show);
+        let _ = self.terminal.show_cursor();
     }
 }
 
@@ -543,6 +950,143 @@ mod tests {
         assert!(lines[1].contains("4.0 MiB / 8.0 MiB"));
         assert!(lines[1].contains("2.0 MiB/s"));
         assert!(lines[1].contains("ETA 2s"));
+    }
+
+    #[test]
+    fn renders_full_screen_operation_without_sidebar() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DownloadState {
+            id: 1,
+            label: "Landscape webserver".into(),
+            total: 8,
+            position: 4,
+            elapsed_millis: 1_000,
+            status: DownloadStatus::Downloading,
+        };
+        terminal
+            .draw(|frame| {
+                render_operation(
+                    frame,
+                    OperationPhase::Downloading,
+                    Some(&state),
+                    &[],
+                    "",
+                    false,
+                    None,
+                )
+            })
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("Installing Landscape"));
+        assert!(content.contains("Landscape webserver"));
+        assert!(content.contains("Ctrl+C Stop"));
+        assert!(!content.contains("Navigation"));
+    }
+
+    #[test]
+    fn renders_completed_operation_result() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_operation(
+                    frame,
+                    OperationPhase::Applying,
+                    None,
+                    &[],
+                    "",
+                    false,
+                    Some(OperationResult::Success),
+                )
+            })
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("Installation complete"));
+        assert!(content.contains("The installation finished successfully."));
+        assert!(content.contains("Ctrl+C Close"));
+        let buffer = terminal.backend().buffer();
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.bg == Color::Green && !cell.symbol().is_empty()),
+            "success status box should use a green background"
+        );
+    }
+
+    #[test]
+    fn highlights_network_confirmation_lines_in_the_output_panel() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let rollback_line = "install: confirm the network takeover within 10 minutes or the installation will be rolled back automatically";
+        terminal
+            .draw(|frame| {
+                render_operation(
+                    frame,
+                    OperationPhase::Applying,
+                    None,
+                    &[
+                        "install: systemd unit landscape-router.service is registered".into(),
+                        "install: network takeover is awaiting confirmation".into(),
+                        "install: reconnect to 10.1.1.105 and run `lkit network confirm`".into(),
+                        rollback_line.into(),
+                    ],
+                    "",
+                    false,
+                    Some(OperationResult::Success),
+                )
+            })
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("network takeover is awaiting confirmation"));
+        assert!(content.contains("run `lkit network confirm`"));
+        assert!(content.contains("rolled back automatically"));
+        let buffer = terminal.backend().buffer();
+        let highlighted = buffer
+            .content
+            .iter()
+            .filter(|cell| cell.bg == Color::Yellow && !cell.symbol().is_empty())
+            .count();
+        let confirmation_lines = "install: network takeover is awaiting confirmation".len()
+            + "install: reconnect to 10.1.1.105 and run `lkit network confirm`".len()
+            + rollback_line.len();
+        assert_eq!(
+            highlighted, confirmation_lines,
+            "only the confirmation and rollback lines should have a yellow background"
+        );
+    }
+
+    #[test]
+    fn only_download_phase_is_cancellable() {
+        let mut presentation = WorkerPresentation::new(false);
+        assert!(!presentation.is_cancellable());
+        presentation.apply(PresentationEvent::Phase {
+            phase: OperationPhase::Downloading,
+        });
+        assert!(presentation.is_cancellable());
+        presentation.apply(PresentationEvent::Phase {
+            phase: OperationPhase::Applying,
+        });
+        assert!(!presentation.is_cancellable());
     }
 
     #[test]

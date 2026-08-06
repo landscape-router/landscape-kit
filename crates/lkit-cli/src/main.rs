@@ -361,6 +361,7 @@ async fn run_command(
     delegated_args: Option<Vec<String>>,
     internal_worker: bool,
 ) -> ExitCode {
+    let from_console = delegated_args.is_some();
     let delegated = !internal_worker && systemd_worker::should_delegate(&command);
     let interrupt = match interaction::presentation::InterruptGuard::install(delegated) {
         Ok(interrupt) => interrupt,
@@ -391,7 +392,17 @@ async fn run_command(
             Commands::Install(install) => install.interactive_password.take(),
             _ => None,
         };
-        return match systemd_worker::delegate(&interrupt, args, interactive_password) {
+        let network_plan = match &mut command {
+            Commands::Install(install) => install.network_plan.take(),
+            _ => None,
+        };
+        return match systemd_worker::delegate(
+            &interrupt,
+            args,
+            interactive_password,
+            network_plan,
+            from_console,
+        ) {
             Ok(code) => code,
             Err(error) => {
                 eprintln!(

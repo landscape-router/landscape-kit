@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, plan, root, state, transaction};
 use crate::interaction::credentials::{self, Credentials};
+use crate::network::config::NetworkPlan;
 use crate::release::repository::provider_for;
 use crate::workflows::install as pipeline;
 
@@ -60,6 +61,9 @@ pub(crate) struct InstallRequest {
 
     /// Interactively configure Landscape as the host network owner.
     pub(crate) takeover_network: bool,
+
+    /// Network plan captured by the full-screen console.
+    pub(crate) network_plan: Option<NetworkPlan>,
 
     #[cfg(feature = "test-support")]
     pub(crate) test_runtime: Option<PathBuf>,
@@ -212,7 +216,9 @@ async fn run_first_install(
         Some(ServiceManagerArg::None) => pipeline::ManagerChoice::None,
         None => pipeline::ManagerChoice::Auto,
     };
-    let network_plan = if args.takeover_network {
+    let network_plan = if let Some(network_plan) = args.network_plan.clone() {
+        Some(network_plan)
+    } else if args.takeover_network {
         if let Err(error) =
             crate::network::discovery::ensure_management_bridge_absent(&runtime.sys_class_net)
         {
@@ -291,7 +297,7 @@ async fn run_first_install(
     };
     match result {
         Ok(outcome) => {
-            if outcome.pending_network_address.is_some() {
+            if outcome.pending_network_confirmation {
                 println!(
                     "install: {}",
                     crate::trf!(
@@ -335,6 +341,14 @@ async fn run_first_install(
                                 ("重新连接到 {address} 并运行 `lkit network confirm`")
                             )
                         );
+                    } else if outcome.pending_network_confirmation {
+                        println!(
+                            "install: {}",
+                            crate::tr!(
+                                "network takeover is awaiting confirmation; reconnect using the WAN DHCP lease and run `lkit network confirm`",
+                                "网络接管正在等待确认；请使用 WAN DHCP 租约重新连接，然后运行 `lkit network confirm`"
+                            )
+                        );
                     } else {
                         println!(
                             "install: {}",
@@ -355,6 +369,16 @@ async fn run_first_install(
                     );
                     println!("{}", pipeline::reference_command(&plan.root));
                 }
+            }
+            if outcome.pending_network_confirmation {
+                let minutes = runtime.network_confirm_timeout.as_secs().div_ceil(60);
+                println!(
+                    "install: {}",
+                    crate::trf!(
+                        ("confirm the network takeover within {minutes} minutes or the installation will be rolled back automatically"),
+                        ("请在 {minutes} 分钟内确认网络接管，否则安装将自动回滚")
+                    )
+                );
             }
             ExitCode::SUCCESS
         }
@@ -576,6 +600,7 @@ mod tests {
             accept_service_change: false,
             force: false,
             takeover_network: false,
+            network_plan: None,
             #[cfg(feature = "test-support")]
             test_runtime: None,
         }

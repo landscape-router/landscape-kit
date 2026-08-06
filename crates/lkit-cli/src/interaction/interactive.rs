@@ -119,9 +119,12 @@ impl Tty {
             self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
         }
         let raw = self.input(crate::tr!(
-            "Select one or more interfaces (comma separated): ",
-            "请选择一个或多个网卡（用逗号分隔）："
+            "Select LAN interfaces (comma separated, empty for WAN-only): ",
+            "请选择 LAN 网卡（用逗号分隔，留空表示仅 WAN）："
         ))?;
+        if raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
         let mut selected = Vec::new();
         for part in raw.split(',') {
             let value = part.trim().parse::<usize>().map_err(|_| {
@@ -139,11 +142,6 @@ impl Tty {
             if !selected.contains(&index) {
                 selected.push(index);
             }
-        }
-        if selected.is_empty() {
-            return Err(InstallError::ParameterUsage(
-                "at least one LAN interface must be selected".into(),
-            ));
         }
         Ok(selected)
     }

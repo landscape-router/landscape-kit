@@ -160,6 +160,8 @@ case "$*" in
   "-4 address flush dev ens3")
     printf '%s\n' post > '{}'
     ;;
+  "-4 address flush dev ens4"|"-6 address flush dev ens4")
+    ;;
   *)
     echo "unsupported fake ip arguments: $*" >&2
     exit 2
@@ -713,7 +715,19 @@ fn network_takeover_waits_for_reconnected_ssh_confirmation() {
         &std::fs::read_to_string(harness.install_root.join("data/landscape_init.toml")).unwrap(),
     )
     .unwrap();
-    assert!(init.get("ipconfigs").is_none());
+    assert_eq!(init["ipconfigs"][0]["iface_name"].as_str(), Some("ens3"));
+    assert_eq!(
+        init["ipconfigs"][0]["ip_model"]["t"].as_str(),
+        Some("static")
+    );
+    assert_eq!(
+        init["ipconfigs"][0]["ip_model"]["ipv4"].as_str(),
+        Some("198.51.100.20")
+    );
+    assert_eq!(
+        init["ipconfigs"][0]["ip_model"]["default_router_ip"].as_str(),
+        Some("198.51.100.1")
+    );
     assert!(init.get("static_nat_mappings_v4").is_none());
     assert_eq!(init["route_wans"][0]["iface_name"].as_str(), Some("ens3"));
     assert_eq!(init["route_lans"][0]["iface_name"].as_str(), Some("br_lan"));
@@ -749,8 +763,8 @@ fn network_takeover_waits_for_reconnected_ssh_confirmation() {
     assert_success(&confirm);
     assert_eq!(
         std::fs::read_to_string(&harness.ip_state).unwrap(),
-        "post\n",
-        "confirmation did not remove the inherited WAN IPv4 address"
+        "pre\n",
+        "confirmation removed the WAN address managed by the static plan"
     );
     let state: serde_json::Value = serde_json::from_slice(
         &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),

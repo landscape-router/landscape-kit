@@ -16,23 +16,38 @@ systemd-resolved 或其他软件包，也不收集 PPPoE 用户名、密码或 M
 
 ## 单网口
 
-用户选择唯一 WAN 后必须确认 Landscape 不支持单臂 WAN/LAN 路由。lkit 从当前 SSH
-服务端地址确定要保留的 IPv4/prefix，并要求该接口存在默认网关。初始化配置只创建：
+用户选择唯一 WAN 后必须确认 Landscape 不支持单臂 WAN/LAN 路由。CLI 优先使用该接口
+发现顺序中的第一个 IPv4/prefix 和第一个默认网关生成静态 WAN；任一静态信息缺失时生成
+DHCP WAN。初始化配置只创建：
 
-- WAN 物理接口、原 IPv4/prefix 和默认网关；
+- WAN 物理接口，以及静态 IPv4/prefix/网关或 DHCP client；
 - WAN route 与 Landscape firewall；
-- TCP 22 和 6443 到 `Local` 的静态映射。
+- 静态 WAN 下 TCP 22 和 6443 到 `Local` 的静态映射。
 
 不创建 LAN bridge、LAN DHCP、PPPoE 或额外 WAN 地址。
 
 ## 多网口
 
-用户先选择一个 WAN，再从剩余接口中选择一个或多个 LAN。lkit 创建 `br_lan` 并把所选
-LAN 物理接口加入 bridge。管理地址默认 `192.168.10.1/24`，可在交互中修改；默认 DHCP
-范围为子网内 `.100` 到最后一个可用地址。初始化配置只设置 WAN route、WAN firewall、
-`br_lan` 的 LAN route 和 DHCP，不为 WAN 设置静态 IP、DHCP、PPPoE、NAT 或默认网关。
-等待确认期间保留原网络管理器遗留的 WAN IPv4，作为尚未确认时的恢复入口；只有确认命令
-通过新管理地址、接口和 Landscape 健康校验后，才清除该 WAN IPv4 并提交事务。
+用户先选择一个 WAN，再从剩余接口中选择零个或多个 LAN。选择一个或多个 LAN 时，lkit
+创建 `br_lan` 并把所选 LAN 物理接口加入 bridge。管理地址默认 `192.168.10.1/24`，可在
+交互中修改；默认 DHCP 范围为子网内 `.100` 到最后一个可用地址。未选择 LAN 时按 WAN-only
+模式处理，不创建 `br_lan`，也不启用 LAN DHCP；其他未选物理接口不进入 Landscape 配置。
+
+WAN-only 模式初始化配置与单网口模式相同：静态模式设置 WAN IPv4、默认网关、WAN route、
+Landscape firewall 和管理端口的 Local 静态映射；DHCP 模式设置 WAN DHCP client、route
+与 firewall。RoutedLan 模式同样显式写入 WAN 的静态或 DHCP 配置，并设置 `br_lan` 的 LAN
+route 和 DHCP。CLI 使用所选 WAN 发现顺序中的首个 IPv4 和该接口首个默认网关；缺任一项时
+使用 DHCP。控制台向导展示相同的 IPv4 与网关，选中 WAN 后预填两项：完整对默认 Static，
+缺任一项默认 DHCP。Static 地址/CIDR 与网关在同一页确认或修改，向导结束前显示完整计划
+摘要并要求用户确认；摘要明确所选 LAN 会清理 IPv4/IPv6 地址，未选择接口不会接管或修改。
+网络计划中的接口列表只包含 WAN 和用户选中的 LAN，不自动接管其他物理接口。
+
+停止宿主网络服务后，lkit 只对用户选中的 LAN 物理接口执行 IPv4 和 IPv6 address flush，
+再启动 Landscape；未选择接口不执行地址清理，也不写入 Landscape 初始化配置。
+
+等待确认期间由 Landscape 按计划维护 WAN 静态地址或 DHCP lease。只有确认命令通过新管理
+地址、接口和 Landscape 健康校验后，才提交事务。安装结束输出会向用户说明确认命令，并明确
+提醒：未在确认期限内执行 `lkit network confirm`，安装将自动回滚。
 
 ## 确认与回滚
 
@@ -47,8 +62,7 @@ NetworkManager，其中 NetworkManager 在两者都存在时最后停止。Lands
 检查后，安装状态仍不提交。用户必须断开旧连接，重新执行 `ssh root@<管理地址>`，然后运行
 `lkit network confirm`。确认会
 检查 SSH 服务端地址、接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
-双网口模式还会在这些检查成功后清除 WAN 上继承的 IPv4；清除失败时不提交，恢复 timer
-继续有效。
+DHCP WAN 的确认会额外验证当前 SSH 服务端地址确实存在于所选 WAN 的租约地址中。
 
 期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit。恢复不
 依赖原安装进程或原 SSH 连接存活。

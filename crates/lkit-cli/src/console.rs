@@ -24,6 +24,10 @@ use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::{plan, root, state};
 use crate::i18n::Language;
 use crate::interaction::credentials;
+use crate::network::config::{
+    DEFAULT_MANAGEMENT_CIDR, Ipv4Cidr, NetworkMode, NetworkPlan, SelectedInterface, WanIpv4Config,
+};
+use crate::network::discovery::{self, DefaultRoute, Interface};
 
 const FORM_FIELDS: usize = 10;
 
@@ -222,6 +226,27 @@ impl Preflight {
     }
 }
 
+/// 环境检查门禁：Pass 和 warning 放行；NotRun/Running 静默等待；
+/// Error、unknown 和 worker 失败通过居中弹窗阻断。
+enum GateState {
+    None,
+    Waiting,
+    Dialog,
+}
+
+impl ConsoleApp {
+    fn preflight_gate(&self) -> GateState {
+        match &self.preflight.state {
+            PreflightState::NotRun | PreflightState::Running(_) => GateState::Waiting,
+            PreflightState::Failed(_) => GateState::Dialog,
+            PreflightState::Complete(report) => match report.summary {
+                Status::Pass | Status::Warning => GateState::None,
+                Status::Error | Status::Unknown => GateState::Dialog,
+            },
+        }
+    }
+}
+
 struct ConsoleApp {
     menu_index: usize,
     focus: Focus,
@@ -230,6 +255,8 @@ struct ConsoleApp {
     notice: String,
     exit_state: ExitState,
     preflight: Preflight,
+    preflight_dialog: bool,
+    network_wizard: Option<NetworkWizard>,
 }
 
 impl ConsoleApp {
@@ -244,6 +271,8 @@ impl ConsoleApp {
             notice: "Ready".into(),
             exit_state: ExitState::Idle,
             preflight: Preflight::default(),
+            preflight_dialog: false,
+            network_wizard: None,
         }
     }
 
@@ -261,6 +290,27 @@ impl ConsoleApp {
     fn handle_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(ConsoleAction::Quit);
+        }
+        if self.network_wizard.is_some() {
+            return self.handle_network_wizard_key(key);
+        }
+        if self.preflight_dialog {
+            match key.code {
+                KeyCode::Enter => {
+                    if matches!(&self.preflight.state, PreflightState::Complete(_)) {
+                        self.preflight.expanded = true;
+                        self.preflight.scroll = 0;
+                    }
+                    self.preflight_dialog = false;
+                }
+                KeyCode::Esc => self.preflight_dialog = false,
+                KeyCode::Char('r' | 'R') => {
+                    self.preflight_dialog = false;
+                    self.preflight.restart();
+                }
+                _ => {}
+            }
+            return None;
         }
         if self.exit_state == ExitState::Confirming {
             match key.code {
@@ -345,6 +395,13 @@ impl ConsoleApp {
                 Focus::Navigation => {
                     self.menu_index = (self.menu_index + 1).min(Menu::ALL.len() - 1);
                 }
+                Focus::Panel if self.menu() == Menu::Install && self.install.checks_selected => {
+                    match self.preflight_gate() {
+                        GateState::None => self.install.select_next(),
+                        GateState::Waiting => {}
+                        GateState::Dialog => self.preflight_dialog = true,
+                    }
+                }
                 Focus::Panel if self.menu() == Menu::Install => {
                     self.install.select_next();
                 }
@@ -364,6 +421,41 @@ impl ConsoleApp {
                 if self.menu() == Menu::Install {
                     if self.install.checks_selected {
                         self.preflight.expanded = true;
+                    } else if self.install.selected == 9 {
+                        match self.preflight_gate() {
+                            GateState::None => {
+                                if self.install.takeover_network {
+                                    match self.install.validate() {
+                                        Ok(()) => match NetworkWizard::discover() {
+                                            Ok(wizard) => {
+                                                self.network_wizard = Some(wizard);
+                                                self.notice = crate::tr!(
+                                                    "Configure network takeover",
+                                                    "配置网络接管"
+                                                )
+                                                .into();
+                                            }
+                                            Err(error) => self.notice = error,
+                                        },
+                                        Err(error) => self.notice = error,
+                                    }
+                                } else {
+                                    match self.install.activate() {
+                                        Ok(Some(action)) => return Some(action),
+                                        Ok(None) => self.notice = "Ready".into(),
+                                        Err(error) => self.notice = error,
+                                    }
+                                }
+                            }
+                            GateState::Waiting => {
+                                self.notice = crate::tr!(
+                                    "environment checks have not completed yet",
+                                    "环境检查尚未完成"
+                                )
+                                .into();
+                            }
+                            GateState::Dialog => self.preflight_dialog = true,
+                        }
                     } else {
                         match self.install.activate() {
                             Ok(Some(action)) => return Some(action),
@@ -411,6 +503,20 @@ impl ConsoleApp {
         if self.exit_state == ExitState::Confirming {
             return;
         }
+        if let Some(wizard) = self.network_wizard.as_mut() {
+            if wizard.editing {
+                if let Some(target) = wizard.value_mut() {
+                    let remaining = 128_usize.saturating_sub(target.chars().count());
+                    target.extend(
+                        value
+                            .chars()
+                            .filter(|character| !character.is_control())
+                            .take(remaining),
+                    );
+                }
+            }
+            return;
+        }
         if self.exit_state == ExitState::Armed {
             self.exit_state = ExitState::Idle;
             self.notice = "Ready".into();
@@ -444,6 +550,11 @@ impl ConsoleApp {
             crate::tr!(
                 "Ctrl+C Exit  Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close",
                 "Ctrl+C 退出  上/下 滚动  PgUp/PgDn 翻页  R 重跑  Esc 关闭"
+            )
+        } else if self.preflight_dialog {
+            crate::tr!(
+                "Enter Details  Esc Close  R Re-run",
+                "Enter 详情  Esc 关闭  R 重跑"
             )
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
@@ -481,6 +592,132 @@ impl ConsoleApp {
 
     fn language_switch_available(&self) -> bool {
         self.exit_state != ExitState::Confirming && !self.install.editing
+    }
+
+    fn handle_network_wizard_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
+        let Some(wizard) = self.network_wizard.as_mut() else {
+            return None;
+        };
+        if wizard.cancel_confirming {
+            match key.code {
+                KeyCode::Enter => {
+                    self.network_wizard = None;
+                    self.notice = "Ready".into();
+                }
+                KeyCode::Esc => wizard.cancel_confirming = false,
+                _ => {}
+            }
+            return None;
+        }
+        if key.code == KeyCode::Esc {
+            if wizard.step == WizardStep::Wan {
+                wizard.cancel_confirming = true;
+            } else {
+                wizard.back();
+            }
+            return None;
+        }
+        if matches!(
+            wizard.step,
+            WizardStep::WanStatic
+                | WizardStep::Management
+                | WizardStep::DhcpStart
+                | WizardStep::DhcpEnd
+        ) && wizard.editing
+        {
+            match key.code {
+                KeyCode::Up | KeyCode::Down if wizard.step == WizardStep::WanStatic => {
+                    wizard.wan_static_field = (wizard.wan_static_field + 1) % 2;
+                }
+                KeyCode::Backspace => {
+                    wizard.value_mut().map(String::pop);
+                }
+                KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(value) = wizard.value_mut()
+                        && value.chars().count() < 128
+                    {
+                        value.push(character);
+                    }
+                }
+                KeyCode::Enter => {
+                    wizard.editing = false;
+                    if let Err(error) = wizard.advance_after_edit() {
+                        self.notice = error;
+                        wizard.editing = true;
+                    }
+                }
+                _ => {}
+            }
+            return None;
+        }
+        match wizard.step {
+            WizardStep::Wan => match key.code {
+                KeyCode::Up => wizard.set_wan(wizard.wan.saturating_sub(1)),
+                KeyCode::Down => wizard.set_wan((wizard.wan + 1).min(wizard.interfaces.len() - 1)),
+                KeyCode::Enter => {
+                    wizard.apply_wan_selection();
+                    wizard.step = WizardStep::WanMode;
+                }
+                _ => {}
+            },
+            WizardStep::WanMode => match key.code {
+                KeyCode::Left | KeyCode::Right => wizard.wan_mode = wizard.wan_mode.toggle(),
+                KeyCode::Enter => {
+                    wizard.step = if wizard.wan_mode == WanMode::Static {
+                        WizardStep::WanStatic
+                    } else {
+                        WizardStep::Lan
+                    };
+                    wizard.editing = matches!(wizard.step, WizardStep::WanStatic);
+                    wizard.wan_static_field = 0;
+                }
+                _ => {}
+            },
+            WizardStep::Lan => match key.code {
+                KeyCode::Up => wizard.lan_cursor = wizard.lan_cursor.saturating_sub(1),
+                KeyCode::Down => {
+                    if !wizard.lan_candidates.is_empty() {
+                        wizard.lan_cursor =
+                            (wizard.lan_cursor + 1).min(wizard.lan_candidates.len() - 1);
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    if let Some(selected) = wizard.lan_selected.get_mut(wizard.lan_cursor) {
+                        *selected = !*selected;
+                    }
+                }
+                KeyCode::Enter => {
+                    wizard.step = if wizard.lan_selected.iter().any(|selected| *selected) {
+                        WizardStep::Management
+                    } else {
+                        WizardStep::Confirm
+                    };
+                    wizard.editing = matches!(wizard.step, WizardStep::Management);
+                }
+                _ => {}
+            },
+            WizardStep::Confirm => match key.code {
+                KeyCode::Enter => {
+                    let plan = match wizard.plan() {
+                        Ok(plan) => plan,
+                        Err(error) => {
+                            self.notice = error;
+                            return None;
+                        }
+                    };
+                    match self.install.command_with_network_plan(Some(plan)) {
+                        Ok(action) => {
+                            self.network_wizard = None;
+                            return Some(action);
+                        }
+                        Err(error) => self.notice = error,
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        None
     }
 }
 
@@ -737,24 +974,15 @@ impl InstallForm {
         }
     }
 
-    fn command(&mut self) -> Result<ConsoleAction, String> {
+    fn validate(&self) -> Result<(), String> {
         let version = self.version.trim();
         plan::TargetVersion::parse(version).map_err(|error| error.to_string())?;
         plan::validate_admin_user(&self.admin_user).map_err(|error| error.to_string())?;
-        let requested_install_dir = PathBuf::from(&self.install_dir);
-        let install_dir = plan::select_install_root(Some(&requested_install_dir), None)
-            .map_err(|error| error.to_string())?;
-        let repository = match self.repository {
-            RepositoryMode::Github => None,
-            RepositoryMode::Mirror => Some(None),
-            RepositoryMode::Custom => {
-                let url = self.repository_url.trim().to_string();
-                plan::RepositoryChoice::Http(url.clone())
-                    .resolve()
-                    .map_err(|error| error.to_string())?;
-                Some(Some(url))
-            }
-        };
+        if self.repository == RepositoryMode::Custom {
+            plan::RepositoryChoice::Http(self.repository_url.trim().to_string())
+                .resolve()
+                .map_err(|error| error.to_string())?;
+        }
         if self.password != self.password_confirmation {
             return Err(crate::tr!(
                 "password confirmation does not match",
@@ -763,6 +991,27 @@ impl InstallForm {
             .into());
         }
         credentials::validate_password(&self.password).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn command(&mut self) -> Result<ConsoleAction, String> {
+        self.command_with_network_plan(None)
+    }
+
+    fn command_with_network_plan(
+        &mut self,
+        network_plan: Option<NetworkPlan>,
+    ) -> Result<ConsoleAction, String> {
+        self.validate()?;
+        let version = self.version.trim();
+        let requested_install_dir = PathBuf::from(&self.install_dir);
+        let install_dir = plan::select_install_root(Some(&requested_install_dir), None)
+            .map_err(|error| error.to_string())?;
+        let repository = match self.repository {
+            RepositoryMode::Github => None,
+            RepositoryMode::Mirror => Some(None),
+            RepositoryMode::Custom => Some(Some(self.repository_url.trim().to_string())),
+        };
         let password = std::mem::take(&mut self.password);
         self.password_confirmation.clear();
         let install = Install {
@@ -775,6 +1024,8 @@ impl InstallForm {
             service_manager: self.manager.cli(),
             force: false,
             takeover_network: self.takeover_network,
+            network_plan,
+            network_plan_file: None,
             #[cfg(feature = "test-support")]
             test_runtime: None,
         };
@@ -806,6 +1057,309 @@ impl InstallForm {
             command: Commands::Install(install),
             args,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WizardStep {
+    Wan,
+    WanMode,
+    WanStatic,
+    Lan,
+    Management,
+    DhcpStart,
+    DhcpEnd,
+    Confirm,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WanMode {
+    Static,
+    Dhcp,
+}
+
+impl WanMode {
+    fn toggle(self) -> Self {
+        match self {
+            Self::Static => Self::Dhcp,
+            Self::Dhcp => Self::Static,
+        }
+    }
+}
+
+struct NetworkWizard {
+    interfaces: Vec<Interface>,
+    routes: Vec<DefaultRoute>,
+    wan: usize,
+    step: WizardStep,
+    wan_mode: WanMode,
+    address: String,
+    gateway: String,
+    wan_static_field: usize,
+    lan_candidates: Vec<Interface>,
+    lan_cursor: usize,
+    lan_selected: Vec<bool>,
+    management: String,
+    dhcp_start: String,
+    dhcp_end: String,
+    editing: bool,
+    cancel_confirming: bool,
+}
+
+impl NetworkWizard {
+    fn discover() -> Result<Self, String> {
+        discovery::ensure_management_bridge_absent(std::path::Path::new("/sys/class/net"))
+            .map_err(|error| error.to_string())?;
+        let (interfaces, routes) = discovery::discover(
+            std::path::Path::new("/sys/class/net"),
+            std::path::Path::new("/usr/sbin/ip"),
+        )
+        .map_err(|error| error.to_string())?;
+        let mut wizard = Self {
+            interfaces,
+            routes,
+            wan: 0,
+            step: WizardStep::Wan,
+            wan_mode: WanMode::Static,
+            address: String::new(),
+            gateway: String::new(),
+            wan_static_field: 0,
+            lan_candidates: Vec::new(),
+            lan_cursor: 0,
+            lan_selected: Vec::new(),
+            management: DEFAULT_MANAGEMENT_CIDR.into(),
+            dhcp_start: String::new(),
+            dhcp_end: String::new(),
+            editing: false,
+            cancel_confirming: false,
+        };
+        wizard.set_wan(0);
+        Ok(wizard)
+    }
+
+    fn selected_wan(&self) -> &Interface {
+        &self.interfaces[self.wan]
+    }
+
+    fn set_wan(&mut self, wan: usize) {
+        self.wan = wan;
+        self.lan_candidates = self
+            .interfaces
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.wan)
+            .map(|(_, iface)| iface.clone())
+            .collect();
+        self.lan_selected = vec![false; self.lan_candidates.len()];
+        self.lan_cursor = 0;
+        self.wan_static_field = 0;
+        self.cancel_confirming = false;
+    }
+
+    /// 进入 WAN 模式选择前按与 CLI 相同的发现规则计算默认模式与预填值。
+    fn apply_wan_selection(&mut self) {
+        self.cancel_confirming = false;
+        let wan = self.selected_wan();
+        match discovery::discovered_static(wan, &self.routes) {
+            Some((address, gateway)) => {
+                self.wan_mode = WanMode::Static;
+                self.address = address.to_string();
+                self.gateway = gateway.to_string();
+            }
+            None => {
+                self.wan_mode = WanMode::Dhcp;
+                self.address.clear();
+                self.gateway.clear();
+            }
+        }
+    }
+
+    /// 非首页步骤 Esc 返回上一步，保留已填写的值。
+    fn back(&mut self) {
+        self.editing = false;
+        self.cancel_confirming = false;
+        match self.step {
+            WizardStep::WanMode => self.step = WizardStep::Wan,
+            WizardStep::WanStatic => self.step = WizardStep::WanMode,
+            WizardStep::Lan => {
+                self.step = if self.wan_mode == WanMode::Static {
+                    WizardStep::WanStatic
+                } else {
+                    WizardStep::WanMode
+                };
+            }
+            WizardStep::Management => self.step = WizardStep::Lan,
+            WizardStep::DhcpStart => self.step = WizardStep::Management,
+            WizardStep::DhcpEnd => self.step = WizardStep::DhcpStart,
+            WizardStep::Confirm => {
+                self.step = if self.lan_selected.iter().any(|selected| *selected) {
+                    WizardStep::DhcpEnd
+                } else {
+                    WizardStep::Lan
+                };
+            }
+            WizardStep::Wan => {}
+        }
+    }
+
+    fn value_mut(&mut self) -> Option<&mut String> {
+        match self.step {
+            WizardStep::WanStatic if self.wan_static_field == 0 => Some(&mut self.address),
+            WizardStep::WanStatic => Some(&mut self.gateway),
+            WizardStep::Management => Some(&mut self.management),
+            WizardStep::DhcpStart => Some(&mut self.dhcp_start),
+            WizardStep::DhcpEnd => Some(&mut self.dhcp_end),
+            _ => None,
+        }
+    }
+
+    fn advance_after_edit(&mut self) -> Result<(), String> {
+        match self.step {
+            WizardStep::WanStatic if self.wan_static_field == 0 => {
+                self.address
+                    .trim()
+                    .parse::<Ipv4Cidr>()
+                    .map_err(|error| error.to_string())?;
+                self.wan_static_field = 1;
+                self.editing = true;
+            }
+            WizardStep::WanStatic => {
+                self.gateway
+                    .trim()
+                    .parse::<std::net::Ipv4Addr>()
+                    .map_err(|_| crate::tr!("invalid WAN gateway", "WAN 网关无效"))?;
+                self.address
+                    .trim()
+                    .parse::<Ipv4Cidr>()
+                    .map_err(|error| error.to_string())?;
+                self.editing = false;
+                self.step = WizardStep::Lan;
+            }
+            WizardStep::Management => {
+                self.management
+                    .trim()
+                    .parse::<Ipv4Cidr>()
+                    .map_err(|error| error.to_string())?;
+                let management: Ipv4Cidr = self.management.trim().parse().unwrap();
+                let (start, end) = management
+                    .default_pool()
+                    .map_err(|error| error.to_string())?;
+                self.dhcp_start = start.to_string();
+                self.dhcp_end = end.to_string();
+                self.step = WizardStep::DhcpStart;
+                self.editing = true;
+            }
+            WizardStep::DhcpStart => {
+                self.dhcp_start
+                    .trim()
+                    .parse::<std::net::Ipv4Addr>()
+                    .map_err(|_| {
+                        crate::tr!(
+                            "invalid LAN DHCP range start",
+                            "LAN DHCP 地址池起始地址无效"
+                        )
+                    })?;
+                self.step = WizardStep::DhcpEnd;
+                self.editing = true;
+            }
+            WizardStep::DhcpEnd => {
+                self.dhcp_end
+                    .trim()
+                    .parse::<std::net::Ipv4Addr>()
+                    .map_err(|_| {
+                        crate::tr!("invalid LAN DHCP range end", "LAN DHCP 地址池结束地址无效")
+                    })?;
+                self.step = WizardStep::Confirm;
+                self.editing = false;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn plan(&self) -> Result<NetworkPlan, String> {
+        let wan = self.selected_wan();
+        let selected_macs = std::iter::once(SelectedInterface {
+            name: wan.name.clone(),
+            mac: wan.mac.clone(),
+        })
+        .chain(
+            self.lan_candidates
+                .iter()
+                .zip(&self.lan_selected)
+                .filter(|(_, selected)| **selected)
+                .map(|(iface, _)| SelectedInterface {
+                    name: iface.name.clone(),
+                    mac: iface.mac.clone(),
+                }),
+        )
+        .collect();
+        let lan = self
+            .lan_candidates
+            .iter()
+            .zip(&self.lan_selected)
+            .filter(|(_, selected)| **selected)
+            .map(|(iface, _)| iface.name.clone())
+            .collect::<Vec<_>>();
+        let mode = if lan.is_empty() {
+            match self.wan_mode {
+                WanMode::Dhcp => NetworkMode::WanDhcp {
+                    wan: wan.name.clone(),
+                },
+                WanMode::Static => NetworkMode::WanOnly {
+                    wan: wan.name.clone(),
+                    address: self.address.trim().parse().map_err(
+                        |error: crate::deployment::plan::InstallError| error.to_string(),
+                    )?,
+                    gateway: self
+                        .gateway
+                        .trim()
+                        .parse()
+                        .map_err(|_| crate::tr!("invalid WAN gateway", "WAN 网关无效"))?,
+                },
+            }
+        } else {
+            let management = self
+                .management
+                .trim()
+                .parse()
+                .map_err(|error: crate::deployment::plan::InstallError| error.to_string())?;
+            let dhcp_start = self.dhcp_start.trim().parse().map_err(|_| {
+                crate::tr!(
+                    "invalid LAN DHCP range start",
+                    "LAN DHCP 地址池起始地址无效"
+                )
+            })?;
+            let dhcp_end = self.dhcp_end.trim().parse().map_err(|_| {
+                crate::tr!("invalid LAN DHCP range end", "LAN DHCP 地址池结束地址无效")
+            })?;
+            NetworkMode::RoutedLan {
+                wan: wan.name.clone(),
+                wan_ipv4: Some(match self.wan_mode {
+                    WanMode::Static => WanIpv4Config::Static {
+                        address: self.address.trim().parse().map_err(
+                            |error: crate::deployment::plan::InstallError| error.to_string(),
+                        )?,
+                        gateway: self
+                            .gateway
+                            .trim()
+                            .parse()
+                            .map_err(|_| crate::tr!("invalid WAN gateway", "WAN 网关无效"))?,
+                    },
+                    WanMode::Dhcp => WanIpv4Config::Dhcp,
+                }),
+                lan,
+                management,
+                dhcp_start,
+                dhcp_end,
+            }
+        };
+        let plan = NetworkPlan {
+            mode,
+            selected_macs,
+        };
+        plan.validate().map_err(|error| error.to_string())?;
+        Ok(plan)
     }
 }
 
@@ -852,6 +1406,10 @@ impl Snapshot {
 }
 
 fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    if let Some(wizard) = &app.network_wizard {
+        render_network_wizard(frame, wizard);
+        return;
+    }
     if frame.area().width < 72 || frame.area().height < 18 {
         frame.render_widget(
             Paragraph::new(crate::tr!("Terminal too small", "终端尺寸过小"))
@@ -879,6 +1437,412 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     if app.exit_state == ExitState::Confirming {
         render_exit_confirmation(frame);
     }
+    if app.preflight_dialog {
+        render_preflight_dialog(frame, app);
+    }
+}
+
+fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let lines: Vec<Line<'_>> = match &app.preflight.state {
+        PreflightState::Failed(error) => vec![
+            Line::styled(
+                crate::tr!("Environment checks could not complete", "环境检查无法完成"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::raw(error.clone()),
+        ],
+        PreflightState::Complete(report) => {
+            let mut lines = vec![
+                Line::styled(
+                    crate::tr!("Environment checks block installation", "环境检查阻止安装"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Line::raw(""),
+            ];
+            let items = blocking_items(report);
+            if items.is_empty() {
+                lines.push(Line::raw(crate::tr!(
+                    "Checks did not pass.",
+                    "检查未通过。"
+                )));
+            } else {
+                for item in items {
+                    lines.push(Line::raw(format!("- {item}")));
+                }
+            }
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                crate::tr!(
+                    "Enter view details  Esc close  R re-run",
+                    "Enter 查看详情  Esc 关闭  R 重跑"
+                ),
+                Style::default().fg(Color::DarkGray),
+            ));
+            lines
+        }
+        _ => return,
+    };
+    let screen = frame.area();
+    let width = 64.min(screen.width.saturating_sub(2));
+    let height = (lines.len() as u16 + 2).min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(Block::bordered().title(crate::tr!("Install blocked", "安装被阻止"))),
+        area,
+    );
+}
+
+fn blocking_items(report: &CheckReport) -> Vec<String> {
+    report
+        .groups
+        .iter()
+        .flat_map(|group| group.results.iter())
+        .filter(|result| matches!(result.status, Status::Error | Status::Unknown))
+        .take(4)
+        .map(|result| {
+            if result.suggestion.is_empty() {
+                result.title.to_string()
+            } else {
+                format!("{} - {}", result.title, result.suggestion)
+            }
+        })
+        .collect()
+}
+
+fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
+    let area = frame.area();
+    let [title, body, footer] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(8),
+        Constraint::Length(2),
+    ])
+    .areas(area);
+    frame.render_widget(
+        Paragraph::new(crate::tr!(
+            "Landscape network takeover",
+            "Landscape 网络接管"
+        ))
+        .style(Style::default().add_modifier(Modifier::BOLD))
+        .block(Block::default().borders(Borders::BOTTOM)),
+        title,
+    );
+    let mut lines = Vec::new();
+    match wizard.step {
+        WizardStep::Wan => {
+            lines.push(Line::styled(
+                crate::tr!("Select the WAN interface", "选择 WAN 网卡"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(""));
+            for (index, iface) in wizard.interfaces.iter().enumerate() {
+                let selected = index == wizard.wan;
+                let address = iface
+                    .addresses
+                    .first()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| crate::tr!("no IPv4", "无 IPv4").into());
+                let gateway = wizard
+                    .routes
+                    .iter()
+                    .find(|route| route.iface == iface.name)
+                    .map(|route| route.gateway.to_string())
+                    .unwrap_or_else(|| crate::tr!("not found", "未发现").into());
+                lines.push(Line::styled(
+                    format!(
+                        "{}{}  {}  {}  {}  gw {}",
+                        if selected { "> " } else { "  " },
+                        index + 1,
+                        iface.name,
+                        iface.mac,
+                        address,
+                        gateway
+                    ),
+                    if selected {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    },
+                ));
+            }
+        }
+        WizardStep::WanMode => {
+            lines.push(Line::styled(
+                crate::tr!("WAN IPv4 mode", "WAN IPv4 模式"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(""));
+            lines.push(Line::raw(format!(
+                "{} Static   {} DHCP",
+                if wizard.wan_mode == WanMode::Static {
+                    "(*)"
+                } else {
+                    "( )"
+                },
+                if wizard.wan_mode == WanMode::Dhcp {
+                    "(*)"
+                } else {
+                    "( )"
+                },
+            )));
+        }
+        WizardStep::WanStatic => {
+            lines.push(Line::styled(
+                crate::tr!("WAN static IPv4 configuration", "WAN 静态 IPv4 配置"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(""));
+            let fields = [
+                (
+                    crate::tr!("IPv4 address/CIDR", "IPv4 地址/CIDR"),
+                    &wizard.address,
+                ),
+                (crate::tr!("Default gateway", "默认网关"), &wizard.gateway),
+            ];
+            for (index, (label, value)) in fields.iter().enumerate() {
+                let focused = index == wizard.wan_static_field;
+                let style = if focused {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let marker = if focused && wizard.editing { "_" } else { "" };
+                lines.push(Line::from(vec![
+                    Span::styled(if focused { "> " } else { "  " }, style),
+                    Span::styled(display_pad(label, 20), style),
+                    Span::styled(format!("{value}{marker}"), style),
+                ]));
+            }
+        }
+        WizardStep::Lan => {
+            lines.push(Line::styled(
+                crate::tr!(
+                    "Select LAN interfaces (Space toggles; empty means WAN-only)",
+                    "选择 LAN 网卡（空格切换；留空表示仅 WAN）"
+                ),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(""));
+            if wizard.lan_candidates.is_empty() {
+                lines.push(Line::raw(crate::tr!("No other interfaces", "没有其他网卡")));
+            }
+            for (index, iface) in wizard.lan_candidates.iter().enumerate() {
+                let cursor = index == wizard.lan_cursor;
+                lines.push(Line::styled(
+                    format!(
+                        "{}[{}] {}  {}  {}",
+                        if cursor { "> " } else { "  " },
+                        if wizard.lan_selected[index] { "x" } else { " " },
+                        iface.name,
+                        iface.mac,
+                        if iface.operstate == "up" {
+                            crate::tr!("link up", "链路已启用")
+                        } else {
+                            crate::tr!("link down", "链路未启用")
+                        }
+                    ),
+                    if cursor {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    },
+                ));
+            }
+        }
+        WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => {
+            let (label, value) = match wizard.step {
+                WizardStep::Management => (
+                    crate::tr!("LAN management IPv4 address", "LAN 管理 IPv4 地址"),
+                    &wizard.management,
+                ),
+                WizardStep::DhcpStart => (
+                    crate::tr!("LAN DHCP range start", "LAN DHCP 地址池起始地址"),
+                    &wizard.dhcp_start,
+                ),
+                WizardStep::DhcpEnd => (
+                    crate::tr!("LAN DHCP range end", "LAN DHCP 地址池结束地址"),
+                    &wizard.dhcp_end,
+                ),
+                _ => unreachable!(),
+            };
+            lines.push(Line::styled(
+                label,
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(""));
+            lines.push(Line::raw(format!(
+                "{}{}_",
+                crate::tr!("Value: ", "值："),
+                value
+            )));
+        }
+        WizardStep::Confirm => {
+            let wan = wizard.selected_wan();
+            lines.push(Line::styled(
+                crate::tr!("Confirm network takeover plan", "确认网络接管计划"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(""));
+            lines.push(Line::raw(crate::trf!(
+                ("WAN interface  {}  MAC {}", wan.name, wan.mac),
+                ("WAN 网卡  {}  MAC {}", wan.name, wan.mac)
+            )));
+            lines.push(Line::raw(match wizard.wan_mode {
+                WanMode::Static => crate::trf!(
+                    (
+                        "WAN mode       Static  {}  gw {}",
+                        wizard.address,
+                        wizard.gateway
+                    ),
+                    (
+                        "WAN 模式       Static  {}  网关 {}",
+                        wizard.address,
+                        wizard.gateway
+                    )
+                ),
+                WanMode::Dhcp => crate::tr!("WAN mode       DHCP", "WAN 模式       DHCP").into(),
+            }));
+            let lan: Vec<&str> = wizard
+                .lan_candidates
+                .iter()
+                .zip(&wizard.lan_selected)
+                .filter(|(_, selected)| **selected)
+                .map(|(iface, _)| iface.name.as_str())
+                .collect();
+            if lan.is_empty() {
+                lines.push(Line::raw(crate::tr!(
+                    "LAN mode       WAN-only (no bridge, no LAN DHCP)",
+                    "LAN 模式       仅 WAN（不创建网桥，不启用 LAN DHCP）"
+                )));
+            } else {
+                let names = lan.join(", ");
+                lines.push(Line::raw(crate::trf!(
+                    ("LAN interfaces {}", names),
+                    ("LAN 网卡       {}", names)
+                )));
+                lines.push(Line::raw(crate::trf!(
+                    ("Management      {}", wizard.management),
+                    ("管理地址       {}", wizard.management)
+                )));
+                lines.push(Line::raw(crate::trf!(
+                    (
+                        "DHCP range      {} - {}",
+                        wizard.dhcp_start,
+                        wizard.dhcp_end
+                    ),
+                    (
+                        "DHCP 范围       {} - {}",
+                        wizard.dhcp_start,
+                        wizard.dhcp_end
+                    )
+                )));
+            }
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                crate::tr!(
+                    "Selected LAN interfaces will have their IPv4/IPv6 addresses flushed; unselected interfaces remain unchanged.",
+                    "所选 LAN 网卡将清理 IPv4/IPv6 地址；未选择的网卡保持不变。"
+                ),
+                Style::default().fg(Color::Yellow),
+            ));
+            lines.push(Line::styled(
+                crate::tr!("Press Enter to start installation.", "按 Enter 开始安装。"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::bordered().title(crate::tr!("Network", "网络")))
+            .wrap(Wrap { trim: true }),
+        body,
+    );
+    frame.render_widget(
+        Paragraph::new(wizard_hints(wizard)).style(Style::default().fg(Color::DarkGray)),
+        footer,
+    );
+    if wizard.cancel_confirming {
+        render_wizard_cancel_confirmation(frame);
+    }
+}
+
+fn wizard_hints(wizard: &NetworkWizard) -> &'static str {
+    if wizard.cancel_confirming {
+        return crate::tr!("Enter cancel wizard  Esc close", "Enter 取消向导  Esc 关闭");
+    }
+    match wizard.step {
+        WizardStep::Wan => crate::tr!(
+            "Up/Down select WAN  Enter confirm  Esc cancel wizard",
+            "上/下 选择 WAN  Enter 确认  Esc 取消向导"
+        ),
+        WizardStep::WanMode => crate::tr!(
+            "Left/Right choose mode  Enter confirm  Esc back",
+            "左/右 选择模式  Enter 确认  Esc 返回"
+        ),
+        WizardStep::WanStatic => crate::tr!(
+            "Up/Down field  Type edit  Backspace delete  Enter confirm  Esc back",
+            "上/下 切换字段  输入编辑  Backspace 删除  Enter 确认  Esc 返回"
+        ),
+        WizardStep::Lan => crate::tr!(
+            "Up/Down move  Space select  Enter continue  Esc back",
+            "上/下 移动  空格选择  Enter 继续  Esc 返回"
+        ),
+        WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => crate::tr!(
+            "Type edit  Backspace delete  Enter confirm  Esc back",
+            "输入编辑  Backspace 删除  Enter 确认  Esc 返回"
+        ),
+        WizardStep::Confirm => crate::tr!(
+            "Enter start installation  Esc back",
+            "Enter 开始安装  Esc 返回上一步"
+        ),
+    }
+}
+
+fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
+    let screen = frame.area();
+    let width = 52.min(screen.width.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!("Cancel network wizard?", "取消网络向导？"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::raw(crate::tr!(
+                "Press Enter to cancel the wizard and return to the Install form.",
+                "按 Enter 取消向导并返回 Install 表单。"
+            )),
+            Line::styled(
+                crate::tr!(
+                    "Press Esc to close and continue.",
+                    "按 Esc 关闭并继续向导。"
+                ),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title(crate::tr!("Cancel wizard", "取消向导"))),
+        area,
+    );
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
@@ -1004,6 +1968,7 @@ fn render_navigation(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 }
 
 fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+    let focused = app.focus == Focus::Panel;
     match app.menu() {
         Menu::Overview => render_overview(frame, app, area),
         Menu::Install => render_install(frame, app, area),
@@ -1017,7 +1982,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                         Style::default().fg(Color::DarkGray),
                     ),
                 ])
-                .block(Block::bordered().title(menu.label()))
+                .block(panel_block(menu.label(), focused))
                 .wrap(Wrap { trim: true }),
                 area,
             );
@@ -1093,7 +2058,10 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(lines)
-            .block(Block::bordered().title(crate::tr!("Overview", "概览")))
+            .block(panel_block(
+                crate::tr!("Overview", "概览"),
+                app.focus == Focus::Panel,
+            ))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -1101,7 +2069,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 
 fn render_install(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     if app.preflight.expanded {
-        render_preflight_details(frame, &app.preflight, area);
+        render_preflight_details(frame, &app.preflight, app.focus == Focus::Panel, area);
         return;
     }
     let [checks_area, content_area] =
@@ -1149,25 +2117,45 @@ fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect)
     };
     let selected = app.focus == Focus::Panel && app.install.checks_selected;
     let style = if selected {
-        Style::default().bg(Color::Rgb(30, 68, 78))
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
+    let status_style = if selected {
+        style
+    } else {
+        Style::default().fg(color)
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(format!("{status:<9}"), Style::default().fg(color)),
+            Span::styled(if selected { "> " } else { "  " }, style),
+            Span::styled(format!("{status:<9}"), status_style),
             Span::raw(detail),
         ]))
         .style(style)
-        .block(Block::bordered().title(crate::tr!("Environment checks", "环境检查"))),
+        .block(panel_block(
+            crate::tr!("Environment checks", "环境检查"),
+            selected,
+        )),
         area,
     );
 }
 
-fn render_preflight_details(frame: &mut Frame<'_>, preflight: &Preflight, area: Rect) {
+fn render_preflight_details(
+    frame: &mut Frame<'_>,
+    preflight: &Preflight,
+    focused: bool,
+    area: Rect,
+) {
     frame.render_widget(
         Paragraph::new(preflight_detail_lines(preflight))
-            .block(Block::bordered().title(crate::tr!("Environment checks", "环境检查")))
+            .block(panel_block(
+                crate::tr!("Environment checks", "环境检查"),
+                focused,
+            ))
             .wrap(Wrap { trim: true })
             .scroll((preflight.scroll, 0)),
         area,
@@ -1297,7 +2285,17 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             }
             let selected =
                 app.focus == Focus::Panel && !form.checks_selected && form.selected == index;
-            let value_style = if index == 9 {
+            let selected_style = if selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let value_style = if selected {
+                selected_style
+            } else if index == 9 {
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD)
@@ -1305,21 +2303,51 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                 Style::default().fg(Color::White)
             };
             let line = Line::from(vec![
-                Span::styled(display_pad(label, 19), Style::default().fg(Color::DarkGray)),
+                Span::styled(if selected { "> " } else { "  " }, selected_style),
+                Span::styled(
+                    display_pad(label, 17),
+                    if selected {
+                        selected_style
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                ),
                 Span::styled(value, value_style),
-                Span::raw(if selected && form.editing { "_" } else { "" }),
+                Span::styled(
+                    if selected && form.editing { "_" } else { "" },
+                    selected_style,
+                ),
             ]);
             if selected {
-                Some(line.style(Style::default().bg(Color::Rgb(30, 68, 78))))
+                Some(line.style(Style::default().bg(Color::Cyan)))
             } else {
                 Some(line)
             }
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(crate::tr!("Install", "安装"))),
+        Paragraph::new(lines).block(panel_block(
+            crate::tr!("Install", "安装"),
+            app.focus == Focus::Panel && !form.checks_selected,
+        )),
         area,
     );
+}
+
+fn panel_block(title: &str, focused: bool) -> Block<'static> {
+    let title = if focused {
+        format!("> {title}")
+    } else {
+        title.to_string()
+    };
+    let border_style = if focused {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    Block::bordered().title(title).border_style(border_style)
 }
 
 fn render_install_help(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
@@ -1422,6 +2450,96 @@ mod tests {
         }
     }
 
+    fn pass_preflight_report() -> CheckReport {
+        CheckReport {
+            groups: vec![CheckGroup {
+                title: "Host platform",
+                results: vec![CheckResult::new("platform.linux", "Operating system").set(
+                    Status::Pass,
+                    "linux",
+                    "Linux detected",
+                )],
+            }],
+            summary: Status::Pass,
+            counts: StatusCounts {
+                pass: 1,
+                warning: 0,
+                error: 0,
+                unknown: 0,
+            },
+        }
+    }
+
+    fn error_preflight_report() -> CheckReport {
+        CheckReport {
+            groups: vec![CheckGroup {
+                title: "Ports",
+                results: vec![
+                    CheckResult::new("ports.6443", "Port 6443")
+                        .set(Status::Error, "6443", "already in use")
+                        .suggestion("stop the conflicting process"),
+                    CheckResult::new("ports.22", "Port 22").set(
+                        Status::Unknown,
+                        "",
+                        "cannot probe",
+                    ),
+                ],
+            }],
+            summary: Status::Error,
+            counts: StatusCounts {
+                pass: 0,
+                warning: 0,
+                error: 1,
+                unknown: 1,
+            },
+        }
+    }
+
+    fn sample_network_wizard() -> NetworkWizard {
+        let mut wizard = NetworkWizard {
+            interfaces: vec![
+                Interface {
+                    name: "ens32".into(),
+                    mac: "00:0c:29:a4:09:08".into(),
+                    operstate: "up".into(),
+                    addresses: vec!["10.1.1.105/24".parse().unwrap()],
+                },
+                Interface {
+                    name: "ens33".into(),
+                    mac: "00:0c:29:a4:09:12".into(),
+                    operstate: "down".into(),
+                    addresses: Vec::new(),
+                },
+            ],
+            routes: Vec::new(),
+            wan: 0,
+            step: WizardStep::Wan,
+            wan_mode: WanMode::Static,
+            address: String::new(),
+            gateway: String::new(),
+            wan_static_field: 0,
+            lan_candidates: Vec::new(),
+            lan_cursor: 0,
+            lan_selected: Vec::new(),
+            management: DEFAULT_MANAGEMENT_CIDR.into(),
+            dhcp_start: String::new(),
+            dhcp_end: String::new(),
+            editing: false,
+            cancel_confirming: false,
+        };
+        wizard.set_wan(0);
+        wizard
+    }
+
+    fn routes_armed_wizard() -> NetworkWizard {
+        let mut wizard = sample_network_wizard();
+        wizard.routes = vec![DefaultRoute {
+            iface: "ens32".into(),
+            gateway: "10.1.1.1".parse().unwrap(),
+        }];
+        wizard
+    }
+
     #[test]
     fn renders_sidebar_and_install_form() {
         let _language = LanguageGuard::set(Language::En);
@@ -1445,9 +2563,86 @@ mod tests {
         assert!(content.contains("Start installation"));
         assert!(!content.contains("Repository URL"));
         assert!(content.contains("Environment checks"));
+        assert!(content.contains("> Environment checks"));
         assert!(content.contains("NOT RUN"));
         assert!(content.contains("Enter Details"));
         assert!(content.contains("L  Language: English (en)"));
+    }
+
+    #[test]
+    fn network_wizard_is_full_screen_and_supports_keyboard_selection() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(sample_network_wizard());
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Select the WAN interface"));
+        assert!(content.contains("not found"));
+        assert!(!content.contains("Navigation"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().selected_wan().name,
+            "ens33"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::WanMode);
+        assert_eq!(wizard.wan_mode, WanMode::Dhcp);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().wan_mode,
+            WanMode::Static
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.network_wizard.as_ref().unwrap().wan_mode, WanMode::Dhcp);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.network_wizard.as_ref().unwrap().step, WizardStep::Lan);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(app.network_wizard.as_ref().unwrap().lan_selected[0]);
+    }
+
+    #[test]
+    fn renders_panel_focus_marker_on_overview() {
+        let _language = LanguageGuard::set(Language::En);
+        let backend = TestBackend::new(100, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = ConsoleApp::new();
+        app.focus = Focus::Panel;
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+
+        assert!(terminal_content(&terminal).contains("> Overview"));
+
+        app.menu_index = 2;
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        assert!(terminal_content(&terminal).contains("> Versions"));
+    }
+
+    #[test]
+    fn renders_portable_markers_for_install_focus() {
+        let _language = LanguageGuard::set(Language::En);
+        let backend = TestBackend::new(100, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.install.checks_selected = false;
+        app.install.selected = 0;
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert!(terminal_content(&terminal).contains("> Install"));
+        assert!(terminal_content(&terminal).contains("> Version"));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == ">" && cell.bg == Color::Cyan)
+        );
     }
 
     #[test]
@@ -1610,6 +2805,7 @@ mod tests {
         let mut app = ConsoleApp::new();
         app.menu_index = 1;
         app.focus = Focus::Panel;
+        app.preflight.state = PreflightState::Complete(pass_preflight_report());
 
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert!(!app.install.checks_selected);
@@ -1788,5 +2984,266 @@ mod tests {
             form.command().err().unwrap(),
             "password confirmation does not match"
         );
+    }
+
+    #[test]
+    fn network_wizard_builds_wan_only_dhcp_plan_without_lan() {
+        let mut wizard = NetworkWizard {
+            interfaces: vec![Interface {
+                name: "ens32".into(),
+                mac: "00:0c:29:a4:09:08".into(),
+                operstate: "up".into(),
+                addresses: Vec::new(),
+            }],
+            routes: Vec::new(),
+            wan: 0,
+            step: WizardStep::Lan,
+            wan_mode: WanMode::Dhcp,
+            address: String::new(),
+            gateway: String::new(),
+            wan_static_field: 0,
+            lan_candidates: Vec::new(),
+            lan_cursor: 0,
+            lan_selected: Vec::new(),
+            management: DEFAULT_MANAGEMENT_CIDR.into(),
+            dhcp_start: String::new(),
+            dhcp_end: String::new(),
+            editing: false,
+            cancel_confirming: false,
+        };
+        let plan = wizard.plan().unwrap();
+        assert!(matches!(plan.mode, NetworkMode::WanDhcp { .. }));
+        wizard.set_wan(0);
+        assert!(wizard.lan_candidates.is_empty());
+    }
+
+    #[test]
+    fn network_wizard_prefills_static_from_discovery() {
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(routes_armed_wizard());
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::WanMode);
+        assert_eq!(wizard.wan_mode, WanMode::Static);
+        assert_eq!(wizard.address, "10.1.1.105/24");
+        assert_eq!(wizard.gateway, "10.1.1.1");
+    }
+
+    #[test]
+    fn network_wizard_defaults_to_dhcp_without_complete_static_pair() {
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(sample_network_wizard());
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.wan_mode, WanMode::Dhcp);
+        assert!(wizard.address.is_empty());
+        assert!(wizard.gateway.is_empty());
+    }
+
+    #[test]
+    fn network_wizard_static_page_edits_both_fields_and_validates() {
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(routes_armed_wizard());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::WanStatic);
+        assert!(wizard.editing);
+        assert_eq!(wizard.wan_static_field, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.network_wizard.as_ref().unwrap().wan_static_field, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.network_wizard.as_ref().unwrap().wan_static_field, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.wan_static_field, 1);
+        assert!(wizard.editing);
+
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::WanStatic);
+        assert!(wizard.editing);
+        assert!(!app.notice.is_empty());
+
+        app.network_wizard.as_mut().unwrap().gateway = "10.1.1.1".into();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::Lan);
+        assert!(!wizard.editing);
+    }
+
+    #[test]
+    fn network_wizard_confirm_requires_enter_to_start() {
+        let mut app = ConsoleApp::new();
+        app.install.password = "Secret123".into();
+        app.install.password_confirmation = "Secret123".into();
+        app.network_wizard = Some(sample_network_wizard());
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().step,
+            WizardStep::Confirm
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.network_wizard.as_ref().unwrap().step, WizardStep::Lan);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().step,
+            WizardStep::Confirm
+        );
+        assert!(matches!(
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ConsoleAction::Command { .. })
+        ));
+        assert!(app.network_wizard.is_none());
+    }
+
+    #[test]
+    fn network_wizard_first_page_esc_opens_cancel_confirmation() {
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(sample_network_wizard());
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.network_wizard.as_ref().unwrap().cancel_confirming);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.network_wizard.as_ref().unwrap().cancel_confirming);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.network_wizard.is_none());
+
+        app.network_wizard = Some(sample_network_wizard());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::Wan);
+        assert!(!wizard.cancel_confirming);
+    }
+
+    #[test]
+    fn error_checks_block_form_entry_with_dialog() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.preflight.state = PreflightState::Complete(error_preflight_report());
+        assert!(app.install.checks_selected);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert!(app.install.checks_selected);
+        assert!(app.preflight_dialog);
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Install blocked"));
+        assert!(content.contains("Port 6443"));
+        assert!(content.contains("stop the conflicting process"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.preflight_dialog);
+        assert!(app.preflight.expanded);
+        assert!(app.install.checks_selected);
+
+        app.preflight_dialog = true;
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.preflight_dialog);
+
+        app.preflight_dialog = true;
+        app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT));
+        assert!(!app.preflight_dialog);
+        assert!(matches!(app.preflight.state, PreflightState::Running(_)));
+    }
+
+    #[test]
+    fn running_checks_keep_focus_on_summary_without_dialog() {
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        let (_, receiver) = std::sync::mpsc::channel();
+        app.preflight.state = PreflightState::Running(receiver);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert!(app.install.checks_selected);
+        assert!(!app.preflight_dialog);
+    }
+
+    #[test]
+    fn warning_checks_allow_form_entry() {
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.preflight.state = PreflightState::Complete(sample_preflight_report());
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert!(!app.install.checks_selected);
+        assert_eq!(app.install.selected, 0);
+        assert!(!app.preflight_dialog);
+    }
+
+    #[test]
+    fn start_installation_is_blocked_when_checks_fail() {
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.preflight.state = PreflightState::Complete(error_preflight_report());
+        app.install.checks_selected = false;
+        app.install.selected = 9;
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.preflight_dialog);
+        assert!(app.network_wizard.is_none());
+
+        app.preflight.state = PreflightState::Complete(pass_preflight_report());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.preflight_dialog);
+    }
+
+    #[test]
+    fn wizard_render_shows_gateway_and_confirm_summary() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.install.password = "Secret123".into();
+        app.install.password_confirmation = "Secret123".into();
+        app.network_wizard = Some(routes_armed_wizard());
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("10.1.1.105/24"));
+        assert!(content.contains("gw 10.1.1.1"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().step,
+            WizardStep::Confirm
+        );
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Confirm network takeover plan"));
+        assert!(content.contains("ens32"));
+        assert!(content.contains("00:0c:29:a4:09:08"));
+        assert!(content.contains("10.1.1.105/24"));
+        assert!(content.contains("WAN-only"));
+        assert!(content.contains("will have their IPv4/IPv6 addresses flushed"));
     }
 }

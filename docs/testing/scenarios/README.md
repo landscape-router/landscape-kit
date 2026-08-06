@@ -20,7 +20,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | --- | --- | --- |
 | lkit 自发布与引导安装 | `LKR-01` 至 `LKR-04` | [lkit-release.md](functional/lkit-release.md) |
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
-| Ratatui 管理控制台 | `UI-01` 至 `UI-06` | [console.md](functional/console.md) |
+| Ratatui 管理控制台 | `UI-01` 至 `UI-10` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-06` | [i18n.md](functional/i18n.md) |
 | 首次安装 | `INS-01` 至 `INS-15` | [install.md](functional/install.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
@@ -29,7 +29,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
-| 网络接管 | `NET-01` 至 `NET-08` | [network-takeover.md](functional/network-takeover.md) |
+| 网络接管 | `NET-01` 至 `NET-10` | [network-takeover.md](functional/network-takeover.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

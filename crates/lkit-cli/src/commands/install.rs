@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use crate::network::config::NetworkPlan;
 use clap::Args;
 
 use super::manage::{InstallRequest, RequestMode, ServiceManagerArg};
@@ -34,6 +35,12 @@ pub struct Install {
     /// Interactively hand wired interfaces and host network services to Landscape
     #[arg(long)]
     pub takeover_network: bool,
+    /// Network plan captured by the full-screen console. Never populated by CLI parsing.
+    #[arg(skip)]
+    pub(crate) network_plan: Option<NetworkPlan>,
+    /// Root-only network plan file created for an internal systemd worker.
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub(crate) network_plan_file: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -60,6 +67,21 @@ impl std::fmt::Debug for Install {
 }
 
 pub async fn run(args: &Install) -> ExitCode {
+    let network_plan = match (&args.network_plan, &args.network_plan_file) {
+        (Some(plan), None) => Some(plan.clone()),
+        (None, Some(path)) => match crate::systemd_worker::read_network_plan(path) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                eprintln!("install: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        (None, None) => None,
+        (Some(_), Some(_)) => {
+            eprintln!("install: internal network plans cannot be combined");
+            return ExitCode::from(2);
+        }
+    };
     super::manage::run_request(&InstallRequest {
         mode: RequestMode::Install,
         version: args.version.clone(),
@@ -75,6 +97,7 @@ pub async fn run(args: &Install) -> ExitCode {
         accept_service_change: false,
         force: args.force,
         takeover_network: args.takeover_network,
+        network_plan,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     })

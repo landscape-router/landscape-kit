@@ -61,3 +61,48 @@
 - 状态：`已覆盖`
 - 证据：[控制台输入规格](../../../interaction/console.md)、[本地化规格](../../../interaction/i18n.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
 - 说明：断言英文底栏、`L` 切换后的中文导航与中文底栏，并验证文本编辑状态下 `l` 仍写入字段而不切换语言。
+
+## UI-07
+
+**右侧面板焦点在基础终端颜色下保持可见**
+
+- 测试层：Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台输入规格](../../../interaction/console.md)、[控制台渲染测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：Overview 和 Install 面板标题显示 `> ` 焦点标记；Install 当前字段使用 `> ` 和基础
+  Cyan 背景，不依赖 truecolor 支持。
+
+## UI-08
+
+**网络接管从 Install 表单进入无侧栏全屏向导**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：覆盖从 Install 表单进入无侧栏网络向导、LAN 空集合的 WAN-only 计划，以及 LAN
+  列表的 Up/Down、Space、Enter 语义。systemd worker 的安装页在下载阶段可停止，配置阶段
+  忽略停止请求，结果页等待 Ctrl+C。
+
+## UI-09
+
+**环境检查门禁阻止不安全的 Install 操作**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：NotRun/Running 时焦点停留在检查汇总并提示等待；Pass 和 warning 可进入表单；
+  Error、unknown 和 worker 失败通过处理弹窗阻断所有进入表单、开始安装和网络向导的路径。
+  弹窗支持 Enter 查看详情、Esc 关闭、R 重跑，无强制跳过入口；进入表单后重跑变为阻断状态时，
+  “开始安装”与网络向导入口激活前同样复查。
+
+## UI-10
+
+**网络向导预填与计划摘要确认**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：WAN 列表显示首个发现 IPv4 和该接口首个默认网关；选中后以完整对预填并默认
+  Static，缺任一项默认 DHCP。Static/DHCP 使用 Left/Right 和 Enter，静态地址/CIDR 与网关
+  同页编辑。计划摘要展示 WAN、LAN、LAN 配置和接管影响；Enter 开始安装，Esc 逐步回退，
+  在 WAN 首页打开取消确认层。

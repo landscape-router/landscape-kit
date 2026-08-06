@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use super::config::{
     DEFAULT_MANAGEMENT_CIDR, Ipv4Cidr, MANAGEMENT_BRIDGE, NetworkMode, NetworkPlan,
-    SelectedInterface,
+    SelectedInterface, WanIpv4Config,
 };
 use crate::deployment::plan::InstallError;
 use crate::interaction::interactive::Tty;
@@ -92,7 +92,7 @@ pub(crate) fn ensure_management_bridge_absent(sys_class_net: &Path) -> Result<()
 pub(crate) fn prompt_plan(
     interfaces: &[Interface],
     routes: &[DefaultRoute],
-    ssh_connection: Option<&str>,
+    _ssh_connection: Option<&str>,
     tty: &mut Tty,
 ) -> Result<NetworkPlan, InstallError> {
     let options: Vec<String> = interfaces.iter().map(format_interface).collect();
@@ -109,26 +109,7 @@ pub(crate) fn prompt_plan(
                 "single-interface WAN-only network takeover was not authorized".into(),
             ));
         }
-        let endpoint = ssh_server_address(ssh_connection)?;
-        let address = select_wan_address(wan, endpoint)?;
-        let gateway = routes
-            .iter()
-            .find(|route| route.iface == wan.name)
-            .map(|route| route.gateway)
-            .ok_or_else(|| {
-                network_error(format!(
-                    "{} has no unambiguous IPv4 default gateway",
-                    wan.name
-                ))
-            })?;
-        NetworkPlan {
-            mode: NetworkMode::WanOnly {
-                wan: wan.name.clone(),
-                address,
-                gateway,
-            },
-            selected_macs: vec![selected(wan)],
-        }
+        wan_only_plan(wan, routes)
     } else {
         let lan_candidates: Vec<&Interface> = interfaces
             .iter()
@@ -143,50 +124,93 @@ pub(crate) fn prompt_plan(
             crate::tr!("Select the LAN interfaces:", "选择 LAN 网卡："),
             &lan_options,
         )?;
-        let management: Ipv4Cidr = tty
-            .input_default(
-                crate::tr!("Management IPv4 address", "管理 IPv4 地址"),
-                DEFAULT_MANAGEMENT_CIDR,
-            )?
-            .parse()?;
-        let (default_start, default_end) = management.default_pool()?;
-        let dhcp_start = tty
-            .input_default(
-                crate::tr!("LAN DHCP range start", "LAN DHCP 地址池起始地址"),
-                &default_start.to_string(),
-            )?
-            .parse::<Ipv4Addr>()
-            .map_err(|_| network_error("invalid LAN DHCP range start"))?;
-        let dhcp_end = tty
-            .input_default(
-                crate::tr!("LAN DHCP range end", "LAN DHCP 地址池结束地址"),
-                &default_end.to_string(),
-            )?
-            .parse::<Ipv4Addr>()
-            .map_err(|_| network_error("invalid LAN DHCP range end"))?;
-        let lan: Vec<String> = selected_lan
-            .iter()
-            .map(|index| lan_candidates[*index].name.clone())
-            .collect();
-        let mut selected_macs = vec![selected(wan)];
-        selected_macs.extend(
-            selected_lan
+        if selected_lan.is_empty() {
+            wan_only_plan(wan, routes)
+        } else {
+            let management: Ipv4Cidr = tty
+                .input_default(
+                    crate::tr!("Management IPv4 address", "管理 IPv4 地址"),
+                    DEFAULT_MANAGEMENT_CIDR,
+                )?
+                .parse()?;
+            let (default_start, default_end) = management.default_pool()?;
+            let dhcp_start = tty
+                .input_default(
+                    crate::tr!("LAN DHCP range start", "LAN DHCP 地址池起始地址"),
+                    &default_start.to_string(),
+                )?
+                .parse::<Ipv4Addr>()
+                .map_err(|_| network_error("invalid LAN DHCP range start"))?;
+            let dhcp_end = tty
+                .input_default(
+                    crate::tr!("LAN DHCP range end", "LAN DHCP 地址池结束地址"),
+                    &default_end.to_string(),
+                )?
+                .parse::<Ipv4Addr>()
+                .map_err(|_| network_error("invalid LAN DHCP range end"))?;
+            let lan: Vec<String> = selected_lan
                 .iter()
-                .map(|index| selected(lan_candidates[*index])),
-        );
-        NetworkPlan {
-            mode: NetworkMode::RoutedLan {
-                wan: wan.name.clone(),
-                lan,
-                management,
-                dhcp_start,
-                dhcp_end,
-            },
-            selected_macs,
+                .map(|index| lan_candidates[*index].name.clone())
+                .collect();
+            let mut selected_macs = vec![selected(wan)];
+            selected_macs.extend(
+                selected_lan
+                    .iter()
+                    .map(|index| selected(lan_candidates[*index])),
+            );
+            NetworkPlan {
+                mode: NetworkMode::RoutedLan {
+                    wan: wan.name.clone(),
+                    wan_ipv4: Some(discovered_wan_ipv4(wan, routes)),
+                    lan,
+                    management,
+                    dhcp_start,
+                    dhcp_end,
+                },
+                selected_macs,
+            }
         }
     };
     plan.validate()?;
     Ok(plan)
+}
+
+fn wan_only_plan(wan: &Interface, routes: &[DefaultRoute]) -> NetworkPlan {
+    let mode = match discovered_static(wan, routes) {
+        Some((address, gateway)) => NetworkMode::WanOnly {
+            wan: wan.name.clone(),
+            address,
+            gateway,
+        },
+        None => NetworkMode::WanDhcp {
+            wan: wan.name.clone(),
+        },
+    };
+    NetworkPlan {
+        mode,
+        selected_macs: vec![selected(wan)],
+    }
+}
+
+fn discovered_wan_ipv4(wan: &Interface, routes: &[DefaultRoute]) -> WanIpv4Config {
+    match discovered_static(wan, routes) {
+        Some((address, gateway)) => WanIpv4Config::Static { address, gateway },
+        None => WanIpv4Config::Dhcp,
+    }
+}
+
+/// 按发现顺序取该接口的第一个 IPv4 和该接口的第一个默认网关；
+/// 两项都存在时才返回完整静态对，供 CLI 与控制台向导共用。
+pub(crate) fn discovered_static(
+    wan: &Interface,
+    routes: &[DefaultRoute],
+) -> Option<(Ipv4Cidr, Ipv4Addr)> {
+    let address = wan.addresses.first().copied()?;
+    let gateway = routes
+        .iter()
+        .find(|route| route.iface == wan.name)
+        .map(|route| route.gateway)?;
+    Some((address, gateway))
 }
 
 fn read_addresses(ip_command: &Path) -> Result<HashMap<String, Vec<Ipv4Cidr>>, InstallError> {
@@ -293,8 +317,9 @@ pub(crate) fn ssh_server_address(value: Option<&str>) -> Result<Option<Ipv4Addr>
 
 pub(crate) fn verify_live(plan: &NetworkPlan, ip_command: &Path) -> Result<(), InstallError> {
     let (iface, expected) = match &plan.mode {
-        NetworkMode::WanOnly { wan, address, .. } => (wan.as_str(), *address),
-        NetworkMode::RoutedLan { management, .. } => (MANAGEMENT_BRIDGE, *management),
+        NetworkMode::WanOnly { wan, address, .. } => (wan.as_str(), Some(*address)),
+        NetworkMode::WanDhcp { wan } => (wan.as_str(), None),
+        NetworkMode::RoutedLan { management, .. } => (MANAGEMENT_BRIDGE, Some(*management)),
     };
     let output = run_ip(ip_command, &["-j", "-4", "addr", "show", "dev", iface])?;
     let records: Vec<IpAddressRecord> = serde_json::from_slice(&output).map_err(|error| {
@@ -306,10 +331,15 @@ pub(crate) fn verify_live(plan: &NetworkPlan, ip_command: &Path) -> Result<(), I
         .iter()
         .flat_map(|record| &record.addr_info)
         .any(|info| {
-            info.local.parse::<Ipv4Addr>().ok() == Some(expected.address)
-                && info.prefixlen == expected.prefix
+            expected.is_none_or(|expected| {
+                info.local.parse::<Ipv4Addr>().ok() == Some(expected.address)
+                    && info.prefixlen == expected.prefix
+            })
         });
     if !present {
+        let expected = expected
+            .map(|expected| expected.to_string())
+            .unwrap_or_else(|| "an IPv4 DHCP lease".into());
         return Err(network_error(format!(
             "{iface} does not have expected address {expected}"
         )));
@@ -336,33 +366,21 @@ pub(crate) fn verify_live(plan: &NetworkPlan, ip_command: &Path) -> Result<(), I
             }
         }
     }
+    if matches!(&plan.mode, NetworkMode::WanDhcp { .. }) {
+        if let Some(current) = ssh_server_address(std::env::var("SSH_CONNECTION").ok().as_deref())?
+        {
+            let current_present = records
+                .iter()
+                .flat_map(|record| &record.addr_info)
+                .any(|info| info.local.parse::<Ipv4Addr>().ok() == Some(current));
+            if !current_present {
+                return Err(network_error(
+                    "the current SSH session is not using the selected WAN DHCP lease",
+                ));
+            }
+        }
+    }
     Ok(())
-}
-
-fn select_wan_address(
-    interface: &Interface,
-    ssh_server: Option<Ipv4Addr>,
-) -> Result<Ipv4Cidr, InstallError> {
-    if let Some(server) = ssh_server {
-        return interface
-            .addresses
-            .iter()
-            .copied()
-            .find(|cidr| cidr.address == server)
-            .ok_or_else(|| {
-                network_error(format!(
-                    "the SSH server address {server} does not belong to selected WAN {}",
-                    interface.name
-                ))
-            });
-    }
-    match interface.addresses.as_slice() {
-        [address] => Ok(*address),
-        _ => Err(network_error(format!(
-            "{} must have exactly one usable IPv4 address for local WAN-only takeover",
-            interface.name
-        ))),
-    }
 }
 
 fn format_interface(interface: &Interface) -> String {
@@ -398,26 +416,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selects_ssh_endpoint_only_from_selected_wan() {
-        let interface = Interface {
-            name: "ens3".into(),
-            mac: "02:00:00:00:00:03".into(),
-            operstate: "up".into(),
-            addresses: vec![
-                "198.51.100.10/24".parse().unwrap(),
-                "198.51.100.11/24".parse().unwrap(),
-            ],
-        };
-        assert_eq!(
-            select_wan_address(&interface, Some(Ipv4Addr::new(198, 51, 100, 11)))
-                .unwrap()
-                .address,
-            Ipv4Addr::new(198, 51, 100, 11)
-        );
-        assert!(select_wan_address(&interface, None).is_err());
-    }
-
-    #[test]
     fn parses_ipv4_ssh_connection() {
         assert_eq!(
             ssh_server_address(Some("203.0.113.5 51111 198.51.100.10 22")).unwrap(),
@@ -434,5 +432,83 @@ mod tests {
         std::fs::create_dir_all(root.join(MANAGEMENT_BRIDGE)).unwrap();
         assert!(ensure_management_bridge_absent(&root).is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn builds_wan_only_plan_for_a_multi_interface_host() {
+        let wan = Interface {
+            name: "ens3".into(),
+            mac: "02:00:00:00:00:03".into(),
+            operstate: "up".into(),
+            addresses: vec!["198.51.100.20/24".parse().unwrap()],
+        };
+        let plan = wan_only_plan(
+            &wan,
+            &[DefaultRoute {
+                iface: "ens3".into(),
+                gateway: "198.51.100.1".parse().unwrap(),
+            }],
+        );
+        assert!(matches!(plan.mode, NetworkMode::WanOnly { .. }));
+        assert_eq!(plan.selected_macs.len(), 1);
+        assert!(plan.validate().is_ok());
+    }
+
+    #[test]
+    fn wan_only_uses_first_existing_static_address_or_dhcp() {
+        let mut wan = Interface {
+            name: "ens3".into(),
+            mac: "02:00:00:00:00:03".into(),
+            operstate: "up".into(),
+            addresses: vec![
+                "198.51.100.20/24".parse().unwrap(),
+                "198.51.100.21/24".parse().unwrap(),
+            ],
+        };
+        let routes = [DefaultRoute {
+            iface: "ens3".into(),
+            gateway: "198.51.100.1".parse().unwrap(),
+        }];
+        let plan = wan_only_plan(&wan, &routes);
+        assert!(matches!(
+            plan.mode,
+            NetworkMode::WanOnly { address, .. }
+                if address.address == Ipv4Addr::new(198, 51, 100, 20)
+        ));
+
+        wan.addresses.clear();
+        assert!(matches!(
+            wan_only_plan(&wan, &routes).mode,
+            NetworkMode::WanDhcp { .. }
+        ));
+    }
+
+    #[test]
+    fn discovered_static_requires_address_and_gateway_of_the_same_interface() {
+        let wan = Interface {
+            name: "ens3".into(),
+            mac: "02:00:00:00:00:03".into(),
+            operstate: "up".into(),
+            addresses: vec!["198.51.100.20/24".parse().unwrap()],
+        };
+        let routes = [DefaultRoute {
+            iface: "ens3".into(),
+            gateway: "198.51.100.1".parse().unwrap(),
+        }];
+        assert_eq!(
+            discovered_static(&wan, &routes),
+            Some((
+                "198.51.100.20/24".parse().unwrap(),
+                Ipv4Addr::new(198, 51, 100, 1)
+            ))
+        );
+        let other_route = [DefaultRoute {
+            iface: "ens4".into(),
+            gateway: "198.51.100.1".parse().unwrap(),
+        }];
+        assert_eq!(discovered_static(&wan, &other_route), None);
+        let mut addressless = wan.clone();
+        addressless.addresses.clear();
+        assert_eq!(discovered_static(&addressless, &routes), None);
     }
 }

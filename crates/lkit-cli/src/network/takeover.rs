@@ -228,7 +228,11 @@ fn status(root: &InstallRoot) -> Result<(), InstallError> {
         println!(
             "network: {} {}",
             crate::tr!("management address", "管理地址"),
-            network.plan.management_address()
+            network
+                .plan
+                .management_address()
+                .map(|address| address.to_string())
+                .unwrap_or_else(|| crate::tr!("DHCP lease", "DHCP 租约").into())
         );
         println!(
             "network: {} {}",
@@ -324,7 +328,12 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
 }
 
 fn clear_inherited_wan_ipv4(plan: &NetworkPlan, ip_command: &Path) -> Result<(), InstallError> {
-    let NetworkMode::RoutedLan { wan, .. } = &plan.mode else {
+    let NetworkMode::RoutedLan {
+        wan,
+        wan_ipv4: None,
+        ..
+    } = &plan.mode
+    else {
         return Ok(());
     };
     let output = Command::new(ip_command)
@@ -336,6 +345,30 @@ fn clear_inherited_wan_ipv4(plan: &NetworkPlan, ip_command: &Path) -> Result<(),
             "cannot remove the inherited IPv4 addresses from WAN {wan}: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )));
+    }
+    Ok(())
+}
+
+pub(crate) fn clear_selected_lan_addresses(
+    plan: &NetworkPlan,
+    ip_command: &Path,
+) -> Result<(), InstallError> {
+    let NetworkMode::RoutedLan { lan, .. } = &plan.mode else {
+        return Ok(());
+    };
+    for iface in lan {
+        for family in ["-4", "-6"] {
+            let output = Command::new(ip_command)
+                .args([family, "address", "flush", "dev", iface])
+                .output()
+                .map_err(InstallError::Io)?;
+            if !output.status.success() {
+                return Err(InstallError::HealthCheck(format!(
+                    "cannot remove inherited {family} addresses from LAN {iface}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -378,11 +411,13 @@ fn verify_confirmation_session(plan: &NetworkPlan) -> Result<(), InstallError> {
                     "network confirmation must be run from the reconnected SSH session".into(),
                 )
             })?;
-    if current != plan.management_address().address {
-        return Err(InstallError::ParameterUsage(format!(
-            "current SSH session targets {current}, expected {}",
-            plan.management_address().address
-        )));
+    if let Some(expected) = plan.management_address() {
+        if current != expected.address {
+            return Err(InstallError::ParameterUsage(format!(
+                "current SSH session targets {current}, expected {}",
+                expected.address
+            )));
+        }
     }
     Ok(())
 }
@@ -542,6 +577,7 @@ mod tests {
         let mut plan = NetworkPlan {
             mode: NetworkMode::RoutedLan {
                 wan: "ens3".into(),
+                wan_ipv4: None,
                 lan: vec!["ens4".into()],
                 management: "192.168.10.1/24".parse().unwrap(),
                 dhcp_start: "192.168.10.100".parse().unwrap(),
@@ -560,5 +596,18 @@ mod tests {
             gateway: "198.51.100.1".parse().unwrap(),
         };
         assert!(clear_inherited_wan_ipv4(&plan, Path::new("/bin/false")).is_ok());
+    }
+
+    #[test]
+    fn selected_lan_cleanup_does_not_touch_wan_only_plans() {
+        let plan = NetworkPlan {
+            mode: NetworkMode::WanOnly {
+                wan: "ens3".into(),
+                address: "198.51.100.20/24".parse().unwrap(),
+                gateway: "198.51.100.1".parse().unwrap(),
+            },
+            selected_macs: Vec::new(),
+        };
+        assert!(clear_selected_lan_addresses(&plan, Path::new("/bin/false")).is_ok());
     }
 }

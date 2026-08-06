@@ -15,6 +15,7 @@ use crate::interaction::interactive::SYSTEMD_WORKER_TTY_ENV;
 use crate::interaction::presentation::{
     InterruptGuard, OPERATIONS_DIR, PRESENTATION_EVENTS_ENV, WorkerPresentation,
 };
+use crate::network::config::NetworkPlan;
 use crate::service::systemd::{Availability, Systemd};
 
 const WORKER_COMMAND: &str = "__systemd-worker";
@@ -32,6 +33,8 @@ struct WorkerRequest {
     presentation_path: PathBuf,
     #[serde(default)]
     credential_path: Option<PathBuf>,
+    #[serde(default)]
+    network_plan_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -126,6 +129,8 @@ pub(crate) fn delegate(
     interrupt: &InterruptGuard,
     mut args: Vec<String>,
     interactive_password: Option<String>,
+    network_plan: Option<NetworkPlan>,
+    full_screen: bool,
 ) -> Result<ExitCode, String> {
     let systemd = Systemd::host();
     if !matches!(systemd.probe(), Availability::Available { .. }) {
@@ -144,6 +149,7 @@ pub(crate) fn delegate(
     let stderr_path = directory.join(format!("{operation_id}.stderr.log"));
     let presentation_path = directory.join(format!("{operation_id}.presentation.jsonl"));
     let credential_path = directory.join(format!("{operation_id}.credential"));
+    let network_plan_path = directory.join(format!("{operation_id}.network.json"));
     let unit_name = format!("lkit-operation-{operation_id}.service");
     let unit_path = systemd.run_systemd_dir.join(&unit_name);
     let executable =
@@ -165,6 +171,17 @@ pub(crate) fn delegate(
             credential_path.display().to_string(),
         ]);
     }
+    let has_network_plan = network_plan.is_some();
+    if let Some(network_plan) = network_plan {
+        if let Err(error) = write_private_json(&network_plan_path, &network_plan) {
+            cleanup_files(&[&credential_path, &network_plan_path]);
+            return Err(error);
+        }
+        args.extend([
+            "--network-plan-file".into(),
+            network_plan_path.display().to_string(),
+        ]);
+    }
     let request = WorkerRequest {
         schema_version: 1,
         args,
@@ -176,18 +193,24 @@ pub(crate) fn delegate(
         terminal,
         presentation_path: presentation_path.clone(),
         credential_path: has_credential.then(|| credential_path.clone()),
+        network_plan_path: has_network_plan.then(|| network_plan_path.clone()),
     };
     if let Err(error) = write_private_json(&request_path, &request) {
-        cleanup_files(&[&credential_path]);
+        cleanup_files(&[&credential_path, &network_plan_path]);
         return Err(error);
     }
     let unit = render_unit(&executable, &request_path, &stdout_path, &stderr_path);
     if let Err(error) = write_unit(&unit_path, &unit) {
-        cleanup_files(&[&request_path, &credential_path]);
+        cleanup_files(&[&request_path, &credential_path, &network_plan_path]);
         return Err(error);
     }
     if let Err(error) = create_private_file(&presentation_path) {
-        cleanup_files(&[&request_path, &unit_path, &credential_path]);
+        cleanup_files(&[
+            &request_path,
+            &unit_path,
+            &credential_path,
+            &network_plan_path,
+        ]);
         return Err(error);
     }
 
@@ -197,6 +220,7 @@ pub(crate) fn delegate(
             &unit_path,
             &presentation_path,
             &credential_path,
+            &network_plan_path,
         ]);
         return Err(error);
     }
@@ -209,6 +233,7 @@ pub(crate) fn delegate(
             &unit_path,
             &presentation_path,
             &credential_path,
+            &network_plan_path,
         ]);
         let _ = systemctl(&systemd.systemctl, &["daemon-reload"]);
         return Err(error);
@@ -225,6 +250,9 @@ pub(crate) fn delegate(
             &stderr_path,
             &presentation_path,
             &credential_path,
+            &network_plan_path,
+            interrupt,
+            full_screen,
         );
     }
 
@@ -236,6 +264,7 @@ pub(crate) fn delegate(
         &stderr_path,
         &presentation_path,
         interrupt,
+        full_screen,
     );
     if matches!(result, Ok(WaitOutcome::Interrupted)) {
         return interrupt_worker(
@@ -248,6 +277,9 @@ pub(crate) fn delegate(
             &stderr_path,
             &presentation_path,
             &credential_path,
+            &network_plan_path,
+            interrupt,
+            full_screen,
         );
     }
     cleanup_files(&[
@@ -256,6 +288,7 @@ pub(crate) fn delegate(
         &unit_path,
         &presentation_path,
         &credential_path,
+        &network_plan_path,
     ]);
     if result.is_ok() {
         cleanup_files(&[&stdout_path, &stderr_path]);
@@ -278,6 +311,9 @@ fn interrupt_worker(
     stderr_path: &Path,
     presentation_path: &Path,
     credential_path: &Path,
+    network_plan_path: &Path,
+    interrupt: &InterruptGuard,
+    full_screen: bool,
 ) -> Result<ExitCode, String> {
     if let Err(error) = systemctl(systemctl_path, &["stop", unit_name]) {
         eprintln!(
@@ -297,8 +333,12 @@ fn interrupt_worker(
         stderr_path,
         presentation_path,
         credential_path,
+        network_plan_path,
     ]);
     let _ = systemctl(systemctl_path, &["daemon-reload"]);
+    if full_screen {
+        crate::interaction::presentation::show_cancelled_screen(interrupt)?;
+    }
     Ok(ExitCode::from(130))
 }
 
@@ -331,6 +371,13 @@ fn run_worker_inner(request_path: &Path) -> Result<i32, String> {
     let _credential = match request.credential_path.as_deref() {
         Some(path) => {
             validate_credential_path(path)?;
+            Some(RemoveFile::new(path))
+        }
+        None => None,
+    };
+    let _network_plan = match request.network_plan_path.as_deref() {
+        Some(path) => {
+            validate_network_plan_path(path)?;
             Some(RemoveFile::new(path))
         }
         None => None,
@@ -516,6 +563,34 @@ fn validate_credential_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_network_plan_path(path: &Path) -> Result<(), String> {
+    if path.parent() != Some(Path::new(OPERATIONS_DIR))
+        || !path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(".network.json"))
+    {
+        return Err(format!(
+            "internal network plan path must be under {OPERATIONS_DIR}"
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect internal network plan file: {error}"))?;
+    if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
+        return Err("internal network plan must be a root-only regular file".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn read_network_plan(path: &Path) -> Result<NetworkPlan, String> {
+    validate_network_plan_path(path)?;
+    let content =
+        std::fs::read(path).map_err(|error| format!("read internal network plan: {error}"))?;
+    let plan: NetworkPlan = serde_json::from_slice(&content)
+        .map_err(|error| format!("parse internal network plan: {error}"))?;
+    plan.validate().map_err(|error| error.to_string())?;
+    Ok(plan)
+}
+
 struct RemoveFile {
     path: PathBuf,
 }
@@ -570,17 +645,31 @@ fn wait_for_result(
     stderr_path: &Path,
     presentation_path: &Path,
     interrupt: &InterruptGuard,
+    full_screen: bool,
 ) -> Result<WaitOutcome, String> {
     let mut stdout = None;
     let mut stderr = None;
-    let mut presentation = WorkerPresentation::new();
+    let mut presentation = WorkerPresentation::new(full_screen);
     let mut inactive_polls = 0_u8;
     loop {
-        if interrupt.requested() {
-            presentation.finish();
-            return Ok(WaitOutcome::Interrupted);
-        }
         presentation.drain(presentation_path)?;
+        if interrupt.requested() {
+            if presentation.is_cancellable() {
+                presentation.finish();
+                return Ok(WaitOutcome::Interrupted);
+            }
+            interrupt.clear_request();
+            presentation.ignore_stop();
+        }
+        if let Some(action) = presentation.poll_action()? {
+            match action {
+                crate::interaction::presentation::PresentationAction::Stop => {
+                    presentation.finish();
+                    return Ok(WaitOutcome::Interrupted);
+                }
+                crate::interaction::presentation::PresentationAction::Close => unreachable!(),
+            }
+        }
         drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
         drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
         if result_path.is_file() {
@@ -597,10 +686,15 @@ fn wait_for_result(
             presentation.drain(presentation_path)?;
             drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
             drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
+            let raw_code = result.exit_code.clamp(0, 255) as u8;
+            let code = ExitCode::from(raw_code);
+            presentation.show_result(code == ExitCode::SUCCESS);
+            if full_screen {
+                presentation.wait_for_close(interrupt)?;
+            }
+            announce_completion(raw_code);
             presentation.finish();
-            return Ok(WaitOutcome::Completed(ExitCode::from(
-                result.exit_code.clamp(0, 255) as u8,
-            )));
+            return Ok(WaitOutcome::Completed(code));
         }
 
         if worker_unit_has_stopped(systemctl_path, unit_name)? {
@@ -654,6 +748,9 @@ fn drain_log(
     if content.is_empty() {
         return Ok(());
     }
+    if presentation.capture_log(&content) {
+        return Ok(());
+    }
     presentation.before_log();
     if to_stderr {
         eprint!("{content}");
@@ -669,6 +766,27 @@ fn drain_log(
 fn cleanup_files(paths: &[&Path]) {
     for path in paths {
         let _ = std::fs::remove_file(path);
+    }
+}
+
+/// 操作结束后在普通终端输出明确的结果提示。全屏安装页关闭、或命令模式
+/// 委托安装的流式输出结束（可能被忽略）后，用户都能看到安装是否完成。
+fn announce_completion(exit_code: u8) {
+    if exit_code == 0 {
+        println!("install: {}", completion_message(exit_code));
+    } else {
+        eprintln!("install: {}", completion_message(exit_code));
+    }
+}
+
+fn completion_message(exit_code: u8) -> String {
+    if exit_code == 0 {
+        crate::tr!("installation complete", "安装完成").into()
+    } else {
+        crate::trf!(
+            ("installation failed with exit code {exit_code}"),
+            ("安装失败，退出码 {exit_code}")
+        )
     }
 }
 
@@ -691,5 +809,13 @@ mod tests {
             let _credential = RemoveFile::new(&path);
         }
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn completion_message_announces_success_and_failure() {
+        assert_eq!(completion_message(0), "installation complete");
+        let failure = completion_message(3);
+        assert!(failure.contains("installation failed with exit code 3"));
+        assert!(completion_message(0).contains("installation complete"));
     }
 }

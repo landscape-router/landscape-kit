@@ -98,13 +98,28 @@ pub(crate) enum NetworkMode {
         address: Ipv4Cidr,
         gateway: Ipv4Addr,
     },
+    WanDhcp {
+        wan: String,
+    },
     RoutedLan {
         wan: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wan_ipv4: Option<WanIpv4Config>,
         lan: Vec<String>,
         management: Ipv4Cidr,
         dhcp_start: Ipv4Addr,
         dhcp_end: Ipv4Addr,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "mode")]
+pub(crate) enum WanIpv4Config {
+    Static {
+        address: Ipv4Cidr,
+        gateway: Ipv4Addr,
+    },
+    Dhcp,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -122,14 +137,17 @@ pub(crate) struct SelectedInterface {
 impl NetworkPlan {
     pub(crate) fn wan(&self) -> &str {
         match &self.mode {
-            NetworkMode::WanOnly { wan, .. } | NetworkMode::RoutedLan { wan, .. } => wan,
+            NetworkMode::WanOnly { wan, .. }
+            | NetworkMode::WanDhcp { wan }
+            | NetworkMode::RoutedLan { wan, .. } => wan,
         }
     }
 
-    pub(crate) fn management_address(&self) -> Ipv4Cidr {
+    pub(crate) fn management_address(&self) -> Option<Ipv4Cidr> {
         match self.mode {
-            NetworkMode::WanOnly { address, .. } => address,
-            NetworkMode::RoutedLan { management, .. } => management,
+            NetworkMode::WanOnly { address, .. } => Some(address),
+            NetworkMode::WanDhcp { .. } => None,
+            NetworkMode::RoutedLan { management, .. } => Some(management),
         }
     }
 
@@ -140,24 +158,20 @@ impl NetworkPlan {
             NetworkMode::WanOnly {
                 address, gateway, ..
             } => {
-                if !address.contains_usable(*gateway) {
-                    return Err(network_error(
-                        "single-interface default gateway must be in the WAN subnet",
-                    ));
-                }
-                if address.address == *gateway {
-                    return Err(network_error(
-                        "single-interface WAN address and gateway must differ",
-                    ));
-                }
+                validate_static_wan(*address, *gateway)?;
             }
+            NetworkMode::WanDhcp { .. } => {}
             NetworkMode::RoutedLan {
                 wan,
+                wan_ipv4,
                 lan,
                 management,
                 dhcp_start,
                 dhcp_end,
             } => {
+                if let Some(WanIpv4Config::Static { address, gateway }) = wan_ipv4 {
+                    validate_static_wan(*address, *gateway)?;
+                }
                 if lan.is_empty() {
                     return Err(network_error("at least one LAN interface is required"));
                 }
@@ -278,6 +292,12 @@ enum StaticIpModel {
         ipv4_mask: u8,
         ipv6: Option<String>,
     },
+    #[serde(rename = "dhcpclient")]
+    DhcpClient {
+        default_router: bool,
+        hostname: Option<String>,
+        custome_opts: Vec<serde_json::Value>,
+    },
 }
 
 #[derive(Serialize)]
@@ -389,14 +409,26 @@ impl<'a> LandscapeInit<'a> {
                     update_at: 0.0,
                 });
             }
+            NetworkMode::WanDhcp { wan } => {
+                ifaces.push(physical_iface(wan, None, "wan"));
+                ipconfigs.push(dhcp_client(wan));
+            }
             NetworkMode::RoutedLan {
                 wan,
+                wan_ipv4,
                 lan,
                 management,
                 dhcp_start,
                 dhcp_end,
             } => {
                 ifaces.push(physical_iface(wan, None, "wan"));
+                match wan_ipv4 {
+                    Some(WanIpv4Config::Static { address, gateway }) => {
+                        ipconfigs.push(static_ip(wan, *address, *gateway));
+                    }
+                    Some(WanIpv4Config::Dhcp) => ipconfigs.push(dhcp_client(wan)),
+                    None => {}
+                }
                 ifaces.push(IfaceConfig {
                     name: MANAGEMENT_BRIDGE,
                     create_dev_type: "bridge",
@@ -458,6 +490,34 @@ impl<'a> LandscapeInit<'a> {
     }
 }
 
+fn static_ip(iface_name: &str, address: Ipv4Cidr, gateway: Ipv4Addr) -> IpService<'_> {
+    IpService {
+        iface_name,
+        enable: true,
+        ip_model: StaticIpModel::Static {
+            default_router_ip: gateway,
+            default_router: true,
+            ipv4: address.address,
+            ipv4_mask: address.prefix,
+            ipv6: None,
+        },
+        update_at: 0.0,
+    }
+}
+
+fn dhcp_client(iface_name: &str) -> IpService<'_> {
+    IpService {
+        iface_name,
+        enable: true,
+        ip_model: StaticIpModel::DhcpClient {
+            default_router: true,
+            hostname: None,
+            custome_opts: Vec::new(),
+        },
+        update_at: 0.0,
+    }
+}
+
 fn physical_iface<'a>(
     name: &'a str,
     controller_name: Option<&'a str>,
@@ -496,6 +556,16 @@ fn validate_mac(value: &str) -> Result<(), InstallError> {
         return Err(network_error(format!(
             "invalid interface MAC address {value:?}"
         )));
+    }
+    Ok(())
+}
+
+fn validate_static_wan(address: Ipv4Cidr, gateway: Ipv4Addr) -> Result<(), InstallError> {
+    if !address.contains_usable(gateway) {
+        return Err(network_error("default gateway must be in the WAN subnet"));
+    }
+    if address.address == gateway {
+        return Err(network_error("WAN address and gateway must differ"));
     }
     Ok(())
 }
@@ -601,6 +671,7 @@ mod tests {
         let plan = NetworkPlan {
             mode: NetworkMode::RoutedLan {
                 wan: "ens3".into(),
+                wan_ipv4: None,
                 lan: vec!["ens4".into(), "ens5".into()],
                 management: DEFAULT_MANAGEMENT_CIDR.parse().unwrap(),
                 dhcp_start: Ipv4Addr::new(192, 168, 10, 100),
@@ -635,10 +706,31 @@ mod tests {
     }
 
     #[test]
+    fn renders_dhcp_wan_with_upstream_model_tag() {
+        let plan = NetworkPlan {
+            mode: NetworkMode::WanDhcp { wan: "ens3".into() },
+            selected_macs: vec![SelectedInterface {
+                name: "ens3".into(),
+                mac: "02:00:00:00:00:03".into(),
+            }],
+        };
+        let config =
+            LandscapeInit::new(&semver::Version::new(1, 2, 3), "admin", "Secret123", &plan)
+                .unwrap();
+        let value = toml::Value::try_from(config).unwrap();
+        assert_eq!(
+            value["ipconfigs"][0]["ip_model"]["t"].as_str(),
+            Some("dhcpclient")
+        );
+        assert!(value.get("dhcpv4_services").is_none());
+    }
+
+    #[test]
     fn rejects_duplicate_lan_interfaces() {
         let plan = NetworkPlan {
             mode: NetworkMode::RoutedLan {
                 wan: "ens3".into(),
+                wan_ipv4: None,
                 lan: vec!["ens4".into(), "ens4".into()],
                 management: DEFAULT_MANAGEMENT_CIDR.parse().unwrap(),
                 dhcp_start: Ipv4Addr::new(192, 168, 10, 100),
