@@ -103,5 +103,7 @@ Install）返回侧栏；Install 使用 Up/Down 在检查汇总和表单字段�
 避免保留旧语言的检查说明。切换后从控制台启动的命令和 systemd worker 继承新语言。
 
 控制台的 RAII terminal guard 在正常退出和错误返回时关闭 raw mode、离开 alternate
-screen 并显示光标。进程级 Ctrl+C guard 另外保存原始 termios；收到信号时恢复终端，覆盖
+screen 并显示光标。进入 alternate screen 时先显式清屏并回到左上角，离开时先清屏再
+退出，避免 VMware 控制台等不会在切换 alternate screen 时清空缓冲区的终端残留上一
+帧符号。进程级 Ctrl+C guard 另外保存原始 termios；收到信号时恢复终端，覆盖
 密码输入已经关闭 ECHO 或动态进度已经隐藏光标的场景。

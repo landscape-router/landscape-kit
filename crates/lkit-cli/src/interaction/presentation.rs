@@ -7,11 +7,12 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crossterm::cursor::{Hide, Show};
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear as ClearScreen, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+    enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -30,7 +31,7 @@ const SIGINT_MODE_DIRECT: u8 = 1;
 const SIGINT_MODE_DELEGATED: u8 = 2;
 const SIGINT_MODE_CONSOLE: u8 = 3;
 const TERMINAL_RESTORE: &[u8] = b"\x1b[0m\x1b[?25h\r\n";
-const CONSOLE_RESTORE: &[u8] = b"\x1b[0m\x1b[?25h\x1b[?1049l\r\n";
+const CONSOLE_RESTORE: &[u8] = b"\x1b[0m\x1b[?25h\x1b[2J\x1b[H\x1b[?1049l\r\n";
 static NEXT_PROGRESS_ID: AtomicU64 = AtomicU64::new(1);
 static SIGINT_MODE: AtomicU8 = AtomicU8::new(SIGINT_MODE_NONE);
 static SIGINT_RECEIVED: AtomicBool = AtomicBool::new(false);
@@ -889,7 +890,13 @@ impl FullScreenOperation {
     fn start() -> Result<Self, String> {
         enable_raw_mode().map_err(|error| format!("enable install screen raw mode: {error}"))?;
         let mut stdout = std::io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen, Hide) {
+        if let Err(error) = execute!(
+            stdout,
+            EnterAlternateScreen,
+            Hide,
+            ClearScreen(ClearType::All),
+            MoveTo(0, 0)
+        ) {
             let _ = disable_raw_mode();
             return Err(format!("enter install screen: {error}"));
         }
@@ -908,7 +915,13 @@ impl FullScreenOperation {
 impl Drop for FullScreenOperation {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen, Show);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            Show,
+            ClearScreen(ClearType::All),
+            MoveTo(0, 0),
+            LeaveAlternateScreen
+        );
         let _ = self.terminal.show_cursor();
     }
 }

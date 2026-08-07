@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use crossterm::cursor::{Hide, Show};
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear as ClearScreen, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+    enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -77,7 +78,13 @@ impl ConsoleTerminal {
     fn start() -> Result<Self, String> {
         enable_raw_mode().map_err(|error| format!("enable raw mode: {error}"))?;
         let mut stdout = std::io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen, Hide) {
+        if let Err(error) = execute!(
+            stdout,
+            EnterAlternateScreen,
+            Hide,
+            ClearScreen(ClearType::All),
+            MoveTo(0, 0)
+        ) {
             let _ = disable_raw_mode();
             return Err(format!("enter alternate screen: {error}"));
         }
@@ -96,7 +103,13 @@ impl ConsoleTerminal {
 impl Drop for ConsoleTerminal {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen, Show);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            Show,
+            ClearScreen(ClearType::All),
+            MoveTo(0, 0),
+            LeaveAlternateScreen
+        );
         let _ = self.terminal.show_cursor();
     }
 }
