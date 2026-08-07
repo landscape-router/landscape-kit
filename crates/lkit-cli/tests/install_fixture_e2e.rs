@@ -810,6 +810,13 @@ fn automatic_network_rollback_restores_host_services() {
             .unwrap()
             .to_string(),
     ];
+    let retry_before_rollback = harness.run();
+    assert_eq!(retry_before_rollback.status.code(), Some(1));
+    let retry_error = String::from_utf8_lossy(&retry_before_rollback.stderr);
+    assert!(retry_error.contains("lkit network status"));
+    assert!(retry_error.contains("lkit network confirm"));
+    assert!(retry_error.contains("lkit network rollback"));
+    assert!(harness.install_root.join("data").exists());
     let rollback = harness.network_command(&["rollback", "--automatic"]);
     assert_success(&rollback);
     assert!(
@@ -819,6 +826,7 @@ fn automatic_network_rollback_restores_host_services() {
             .exists()
     );
     assert!(!harness.install_root.join("current").exists());
+    assert!(!harness.install_root.join("data").exists());
     let transaction = read_only_transaction(&harness.install_root);
     assert_eq!(transaction["phase"], "rolled_back");
     assert_host_services_restored(
@@ -836,6 +844,38 @@ fn automatic_network_rollback_restores_host_services() {
             "automatic recovery attempted to stop its own recovery unit {unit}"
         );
     }
+    std::fs::write(&harness.password, b"DifferentSecret456\n").unwrap();
+    let reinstall = harness.run();
+    assert_success(&reinstall);
+}
+
+#[test]
+fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("network-rollback-failure", "healthy", 10_000);
+    harness.seed_host_services();
+    let output = harness.run_takeover();
+    assert_success(&output);
+
+    let current = harness.install_root.join("current");
+    std::fs::remove_file(&current).unwrap();
+    std::os::unix::fs::symlink("releases/not-the-takeover-target", &current).unwrap();
+
+    let rollback = harness.network_command(&["rollback", "--automatic"]);
+    assert_eq!(rollback.status.code(), Some(6));
+    let transaction = read_only_transaction(&harness.install_root);
+    assert_eq!(transaction["phase"], "failed");
+    assert_eq!(
+        std::fs::read_link(&current).unwrap(),
+        PathBuf::from("releases/not-the-takeover-target")
+    );
+    assert!(harness.install_root.join("data").exists());
+    assert!(
+        harness
+            .install_root
+            .join(format!("releases/{VERSION}"))
+            .exists()
+    );
 }
 
 #[test]

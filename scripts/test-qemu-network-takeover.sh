@@ -380,6 +380,7 @@ done
   exit 1
 }
 wan_ssh 'test ! -e /var/lib/landscape/state/install-state.json'
+wan_ssh 'test ! -e /var/lib/landscape/data'
 cleanup_vm
 
 boot_vm confirm

@@ -121,3 +121,8 @@ stderr 转发通道，保证 warning 不会因两条输出通道竞争而插入�
 如果存在数据库或 `landscape.toml`，或者安装状态记录 `initialization.status: complete`，但 `landscape_init.lock` 缺失，则属于高危异常。Landscape 可能重新读取初始化文件并清空配置；任何普通确认或 `--accept-*` 均不能绕过，安装必须停止。
 
 无 systemd 首次安装提交的 `initialization.status: pending`、无数据库、无 `landscape.toml` 且无初始化锁是预期状态，不得误判为损坏。之后观察到数据库或 `landscape.toml` 已出现但初始化锁仍缺失时，立即按高危异常处理。
+
+网络接管首次安装在确认前仍未提交。超时、确认前重启或手工 rollback 成功后，其整个
+`data/` 会被删除；因此下一次 `lkit install` 可以重新提供 `--admin-user` 和
+`--password-file`。如果回滚失败，必须先人工处理 `failed` 事务和残留数据，不能通过重复
+提供初始化凭据绕过已有数据保护。

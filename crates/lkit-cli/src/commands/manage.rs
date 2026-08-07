@@ -423,10 +423,14 @@ async fn execute(
     let lock = lock::acquire_install_lock(&normalized)?;
     if let Some(transaction) = transaction::find_unfinished(&normalized)? {
         let health = runtime.health_options()?;
-        if matches!(
-            transaction.phase,
-            transaction::Phase::AwaitingNetworkConfirmation | transaction::Phase::Finalizing
-        ) {
+        if transaction.network_takeover.is_some()
+            && matches!(
+                transaction.phase,
+                transaction::Phase::AwaitingNetworkConfirmation
+                    | transaction::Phase::Finalizing
+                    | transaction::Phase::RollingBack
+            )
+        {
             return Err(plan::InstallError::BlockedByTransaction(format!(
                 "network takeover {} is {}; use `lkit network status`, `lkit network confirm`, or `lkit network rollback`",
                 transaction.transaction_id,

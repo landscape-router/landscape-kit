@@ -14,6 +14,14 @@ lkit network rollback [--install-dir <PATH>]
 - `rollback` 清理未提交的首次安装并按事务快照恢复 NetworkManager、`networking.service`、
   firewalld 和 systemd-resolved 的 enabled/active/masked 状态。手工 rollback 由 systemd
   operation worker 执行，恢复网络服务导致当前 SSH 断开也不会中止后续恢复。
+- 确认前主机重启、10 分钟确认 timer 到期和手工 `rollback` 都使用同一幂等回滚入口；重启
+  不会继续保留确认窗口，而是按未确认处理。
+- 只有确认成功才会提交 `state/install-state.json`。回滚成功后删除未提交首次安装的
+  `current`、目标 release、pending state 和整个 `data/`，安装根目录恢复为可重新首次安装
+  的状态；事务 JSON 和日志保留用于审计。
+- 回滚只接受 `install` 的 `awaiting_network_confirmation`、`finalizing` 或
+  `rolling_back` 事务。任何恢复或清理失败都会进入 `failed` 并要求人工处理，不报告
+  `rolled_back`。
 
 确认不是“安装进程仍能访问新 IP”或 ICMP ping。只有新 SSH 会话中的
 `SSH_CONNECTION` 服务端地址与计划管理地址一致才可确认。

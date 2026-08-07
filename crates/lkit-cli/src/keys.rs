@@ -90,7 +90,9 @@ pub(crate) const KERNEL_USE_KERNEL_WITH_CONFIG_BPF_JIT: &str =
 pub(crate) const KERNEL_UNKNOWN: &str = "kernel.unknown";
 pub(crate) const KERNEL_UNABLE_READ_BPF_JIT_ENABLE_OR_CONFIG: &str =
     "kernel.unable_read_bpf_jit_enable_or_config";
+#[cfg(not(target_os = "linux"))]
 pub(crate) const KERNEL_NOT_LINUX: &str = "kernel.not_linux";
+#[cfg(not(target_os = "linux"))]
 pub(crate) const KERNEL_CURRENT_PLATFORM_CANNOT_PROBE_BPF: &str =
     "kernel.current_platform_cannot_probe_bpf";
 pub(crate) const KERNEL_KERNEL_BTF_INFORMATION: &str = "kernel.kernel_btf_information";

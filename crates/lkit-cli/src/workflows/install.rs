@@ -132,6 +132,9 @@ async fn first_install_impl<P: DocsProbe>(
             "network takeover requires the systemd service manager".into(),
         ));
     }
+    if network.is_some() {
+        ensure_network_takeover_data_empty(root)?;
+    }
     let mut transaction = super::transaction::TransactionFile::new_install(root, &release.version)?;
     if let Some(network) = network {
         let runtime = runtime.ok_or_else(|| {
@@ -317,6 +320,31 @@ async fn first_install_impl<P: DocsProbe>(
             Err(error)
         }
     }
+}
+
+fn ensure_network_takeover_data_empty(root: &InstallRoot) -> Result<(), InstallError> {
+    let data = root.canonical.join("data");
+    let metadata = match std::fs::symlink_metadata(&data) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(InstallError::DangerousDirectory(format!(
+            "network takeover requires {} to be a real empty directory",
+            data.display()
+        )));
+    }
+    if std::fs::read_dir(&data)
+        .map_err(InstallError::Io)?
+        .next()
+        .is_some()
+    {
+        return Err(InstallError::ParameterUsage(
+            "network takeover requires an empty data directory".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn select_manager(
@@ -2393,6 +2421,25 @@ esac
             reference_command(&root),
             "'/root/.lkit/landscape/current/landscape-webserver' --config-dir '/root/.lkit/landscape/data' --web '/root/.lkit/landscape/current/static'"
         );
+    }
+
+    #[test]
+    fn network_takeover_requires_an_empty_data_directory() {
+        let dir = temp_root("network-data-empty");
+        let root = InstallRoot {
+            install_root: dir.clone(),
+            canonical: dir.clone(),
+        };
+        assert!(ensure_network_takeover_data_empty(&root).is_ok());
+
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        assert!(ensure_network_takeover_data_empty(&root).is_ok());
+        std::fs::write(dir.join("data/existing"), b"keep").unwrap();
+        assert!(matches!(
+            ensure_network_takeover_data_empty(&root),
+            Err(InstallError::ParameterUsage(_))
+        ));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

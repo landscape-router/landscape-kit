@@ -14,10 +14,12 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
 ) -> Result<(), InstallError> {
     match transaction.operation {
         Operation::Install => {
-            if matches!(
-                transaction.phase,
-                Phase::AwaitingNetworkConfirmation | Phase::Finalizing
-            ) {
+            if transaction.network_takeover.is_some()
+                && matches!(
+                    transaction.phase,
+                    Phase::AwaitingNetworkConfirmation | Phase::Finalizing | Phase::RollingBack
+                )
+            {
                 return Err(InstallError::BlockedByTransaction(format!(
                     "network takeover {} is {}; use `lkit network confirm` or `lkit network rollback`",
                     transaction.transaction_id,

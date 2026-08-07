@@ -180,6 +180,24 @@ Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
 
 恢复再次失败时标记 `failed`，保留可用的 `.lkb`、静态备份、版本目录和失败现场，不无限循环重试。
 
+### 未提交网络接管安装的回滚清理
+
+网络接管首次安装只有在同时满足以下条件时才允许清理整个 `data/`：事务 `operation` 为
+`install`，存在 `network_takeover`，阶段为 `awaiting_network_confirmation`、`finalizing`
+或 `rolling_back`，不存在旧版本、`previous_current`、`.lkb` 或已提交的
+`state/install-state.json`，且事务记录的 canonical 安装根目录与当前根目录一致。
+
+通过校验后，手工 rollback、10 分钟 timer rollback 和确认前重启触发的 boot rollback 都必须：
+
+1. 恢复 Landscape systemd 注册、enabled/active 状态和 `/etc/resolv.conf`；
+2. 恢复事务快照中的宿主网络服务；
+3. 删除 `current`、目标 release、临时 current 链接、pending install state 和整个
+   `<install-root>/data/`；
+4. 移除 recovery binary、timer 和 service，并将事务标记为 `rolled_back`。
+
+任一恢复或清理步骤失败时不得标记 `rolled_back`，事务必须进入 `failed`，保留现场和日志供
+人工恢复。switch、repair、service-manager 以及已经提交的安装不得使用整棵 `data/` 清理。
+
 ## systemd 托管操作
 
 生产运行时中，任何可能注册、停止、启动或注销 Landscape system unit 的命令，在进入

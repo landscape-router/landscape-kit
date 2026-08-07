@@ -177,6 +177,7 @@ pub(crate) async fn run_command(args: &Network) -> ExitCode {
             eprintln!("network: {error}");
             match error {
                 InstallError::ParameterUsage(_) => ExitCode::from(2),
+                _ if matches!(&args.action, NetworkAction::Rollback { .. }) => ExitCode::from(6),
                 _ => ExitCode::FAILURE,
             }
         }
@@ -371,17 +372,39 @@ fn rollback(
     let pending = transaction::find_unfinished(root)?.ok_or_else(|| {
         InstallError::ParameterUsage("no network takeover is available to roll back".into())
     })?;
-    let network = pending.network_takeover.as_ref().ok_or_else(|| {
+    let network = pending.network_takeover.clone().ok_or_else(|| {
         InstallError::CorruptedTransaction(
             "unfinished install has no network takeover state".into(),
         )
     })?;
-    transaction::mark_phase(root, &pending, transaction::Phase::RollingBack)?;
-    transaction::cleanup_failed_first_install(root, &pending, &runtime.systemd)?;
-    for before in &network.host_services {
-        systemd::restore_host_service(&runtime.systemd, before)?;
+    if pending.operation != transaction::Operation::Install
+        || !matches!(
+            pending.phase,
+            transaction::Phase::AwaitingNetworkConfirmation
+                | transaction::Phase::Finalizing
+                | transaction::Phase::RollingBack
+        )
+    {
+        return Err(InstallError::BlockedByTransaction(format!(
+            "transaction {} is {}; network rollback only handles an uncommitted confirmation phase",
+            pending.transaction_id,
+            pending.phase.key()
+        )));
     }
-    remove_recovery_units(root, network, &runtime.systemd, automatic)?;
+    transaction::mark_phase(root, &pending, transaction::Phase::RollingBack)?;
+    let result = (|| {
+        transaction::restore_uncommitted_network_systemd(root, &pending, &runtime.systemd)?;
+        for before in &network.host_services {
+            systemd::restore_host_service(&runtime.systemd, before)?;
+        }
+        remove_recovery_units(root, &network, &runtime.systemd, automatic)?;
+        transaction::cleanup_uncommitted_network_install(root, &pending)?;
+        Ok::<(), InstallError>(())
+    })();
+    if let Err(error) = result {
+        let _ = transaction::mark_phase(root, &pending, transaction::Phase::Failed);
+        return Err(error);
+    }
     transaction::mark_phase(root, &pending, transaction::Phase::RolledBack)?;
     println!(
         "network: {}",
