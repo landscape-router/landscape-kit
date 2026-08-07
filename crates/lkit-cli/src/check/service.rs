@@ -94,7 +94,7 @@ fn firewalld() -> CheckResult {
         ),
         Some(info) if info.active => result
             .set(
-                Status::Warning,
+                Status::Error,
                 crate::tr!(crate::keys::SERVICE_RUNNING),
                 crate::tr!(crate::keys::SERVICE_FIREWALLD_MAY_BLOCK_RULES),
             )
@@ -102,7 +102,7 @@ fn firewalld() -> CheckResult {
                 crate::keys::SERVICE_CONFIRM_LANDSCAPE_PORTS_ALLOWED
             )),
         Some(info) if info.enabled => result.set(
-            Status::Warning,
+            Status::Error,
             crate::tr!(crate::keys::SERVICE_ENABLED_NOT_RUNNING),
             crate::tr!(crate::keys::SERVICE_FIREWALLD_ENABLED_MAY_BLOCK_AFTER_RESTART),
         ),

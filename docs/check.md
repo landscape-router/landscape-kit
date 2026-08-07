@@ -164,7 +164,7 @@ DNS `53` 端口是硬性冲突，Landscape DNS 服务无法在端口被占用时
 | --- | --- | --- |
 | `service.network_manager` | `NetworkManager` 是否安装、运行或开机启用 | 运行中为 `error`；仅安装/启用为 `warning` |
 | `service.systemd_resolved` | `systemd-resolved` 是否运行或开机启用 | 运行中且占用 DNS 端口时由 `port.dns` 报 `error`；其他情况为 `warning` |
-| `service.firewalld` | `firewalld` 是否运行或开机启用 | 运行中为 `warning`，提示其可能阻断 Landscape 网络规则 |
+| `service.firewalld` | `firewalld` 是否运行或开机启用 | 运行中或开机启用为 `error`，提示其可能阻断 Landscape 网络规则 |
 | `security.selinux` | SELinux 是否启用及是否为 enforcing | enforcing 为 `warning`，提示需要额外放行 Landscape 权限 |
 
 服务检查需要区分“未安装、已安装未运行、正在运行、已启用”，避免把所有状态都混为一个结果。
