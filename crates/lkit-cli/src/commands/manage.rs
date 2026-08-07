@@ -198,7 +198,17 @@ async fn run_first_install(
             return exit_code(&error);
         }
     };
-    let provider = match provider_for(plan.provider.kind, &plan.provider.location) {
+    let spec = match plan.provider.as_ref() {
+        Some(spec) => spec,
+        None => {
+            let error = plan::InstallError::CorruptedState(
+                "first install plan is missing a repository source".into(),
+            );
+            eprintln!("install: {error}");
+            return exit_code(&error);
+        }
+    };
+    let provider = match provider_for(spec.kind, &spec.location) {
         Ok(provider) => provider,
         Err(error) => {
             let error = plan::InstallError::from(error);
@@ -487,18 +497,11 @@ async fn execute(
         args.takeover_network,
     )?;
     let repository = match (&args.repository, presence) {
-        (Some(choice), _) => choice.clone(),
-        (None, plan::StatePresence::FirstInstall) => {
-            match crate::deployment::config::load_repository(&normalized)? {
-                Some(source) => source.to_choice(),
-                None => plan::RepositoryChoice::Github(
-                    crate::release::repository::github::DEFAULT_REPOSITORY.into(),
-                ),
-            }
-        }
-        (None, plan::StatePresence::Installed) => plan::RepositoryChoice::Github(
-            crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+        (Some(choice), _) => Some(choice.clone()),
+        (None, plan::StatePresence::FirstInstall) if args.mode == RequestMode::Install => Some(
+            crate::deployment::config::resolve_default_choice(&normalized)?,
         ),
+        (None, plan::StatePresence::FirstInstall) | (None, plan::StatePresence::Installed) => None,
     };
     let plan = plan::build_plan(normalized, target, repository, presence)?;
     Ok((plan, lock))

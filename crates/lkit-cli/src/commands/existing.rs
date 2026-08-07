@@ -1,6 +1,5 @@
 use std::process::ExitCode;
 
-use crate::deployment::config::RepositorySourceKind;
 use crate::deployment::plan;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::state;
@@ -315,24 +314,10 @@ fn resolve_provider(
         .transpose()?;
     let provider = match &provider_override {
         Some(spec) => provider_for(spec.kind, spec.location.as_str())?,
-        None => match crate::deployment::config::load_repository(root)? {
-            Some(source) => {
-                let kind = match source.kind {
-                    RepositorySourceKind::Github => {
-                        crate::release::repository::ProviderKind::Github
-                    }
-                    RepositorySourceKind::Http => crate::release::repository::ProviderKind::Http,
-                };
-                provider_for(kind, &source.location)?
-            }
-            None => {
-                let default = plan::RepositoryChoice::Github(
-                    crate::release::repository::github::DEFAULT_REPOSITORY.into(),
-                )
-                .resolve()?;
-                provider_for(default.kind, default.location.as_str())?
-            }
-        },
+        None => {
+            let spec = crate::deployment::config::resolve_default_choice(root)?.resolve()?;
+            provider_for(spec.kind, spec.location.as_str())?
+        }
     };
     Ok((provider, provider_override))
 }

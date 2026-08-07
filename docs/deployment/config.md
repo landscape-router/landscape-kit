@@ -55,20 +55,23 @@ location = "https://repo.example.com/landscape/"
 1. **显式 CLI**：`--repository`（裸参数 = 默认 HTTP 镜像；`github` = 官方 GitHub 仓库；
    URL = 自定义 protocol v1 HTTP 仓库）。显式参数**完全绕过** `config.toml`，包括配置
    损坏的情况；
-2. **配置**：`config.toml` 存在且有效时使用其中记录的最新来源；
+2. **配置**：`config.toml` 存在且有效时使用其中记录的来源；
 3. **默认**：文件缺失时使用官方 GitHub provider（`ThisSeanZhang/landscape`）。
 
 配置只在命令**实际需要仓库**时才读取：
 
 - 需要读取：首次安装（配置驱动来源）、`install`/`switch`/`update`（解析版本）、
   `repair`（解析来源）；
-- 不读取：普通 `reconcile` 同版本检查、`restore`、`backup`、`service-manager` 迁移、
-  `network` 子命令。这些命令不受损坏配置影响。
+- 不读取：普通 `reconcile` 同版本检查、`check`、`restore`、`backup`、
+  `service-manager` 迁移、`network` 子命令、`install --force`，以及不通过安装适用性
+  检查就报错的命令（例如空目录上运行 `switch`/`reconcile` 或已有安装上再次
+  `install`）。这些命令不受损坏配置影响。
 
-文件**存在但损坏**（TOML 解析失败、`schema_version` 不支持、`kind` 非法、HTTP URL
-不安全或 GitHub 名称非法）时，读取它的命令报配置错误并阻断，提示修复或删除
-`config.toml` 以回落官方 GitHub 默认；损坏很可能来自用户编辑错误，静默回落会让用户
-误以为配置仍然生效。
+文件**存在但损坏**（TOML 解析失败、`repository` section 或 `schema_version` 字段
+缺失、字段类型错误、`schema_version` 不支持、`kind` 非法、HTTP URL 不安全或 GitHub
+名称非法）或**不可读**（例如权限不足）时，读取它的命令报配置错误并阻断，提示修复
+或删除 `config.toml` 以回落官方 GitHub 默认；损坏很可能来自用户编辑错误，静默回落
+会让用户误以为配置仍然生效。
 
 ## 来源变化与资产身份
 

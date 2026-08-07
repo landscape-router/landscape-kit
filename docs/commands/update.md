@@ -14,7 +14,7 @@ lkit update [--version <VERSION>] [--repository [<BASE_URL>]]
 ## 交互流程
 
 1. **渠道**：未显式指定 `--repository` 时，用交互选择询问读取渠道。`config.toml`
-   存在且有效时首个选项是其中记录的最新来源，直接回车即可接受；文件不存在时选项从
+   存在且有效时首个选项是其中记录的来源，直接回车即可接受；文件不存在时选项从
    官方 GitHub 开始（默认选中），不显示"当前来源"项；文件存在但损坏时报错阻断，提示
    修复或删除该文件。同时提供官方 GitHub、默认 HTTP 镜像和自定义 HTTP 仓库
    （protocol v1）。显式 `--repository` 跳过该提问，语义与 `lkit switch` 相同。

@@ -90,6 +90,18 @@ pub(crate) fn load_repository(
     }))
 }
 
+/// 缺省来源解析策略:配置存在且有效时使用记录的来源,文件缺失时回落官方 GitHub。
+/// 显式 CLI 来源由调用方直接传入,不经由此处;本函数是"配置 > 官方 GitHub"回退的
+/// 唯一实现,首次安装与已安装命令共用。
+pub(crate) fn resolve_default_choice(root: &InstallRoot) -> Result<RepositoryChoice, InstallError> {
+    match load_repository(root)? {
+        Some(source) => Ok(source.to_choice()),
+        None => Ok(RepositoryChoice::Github(
+            crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +296,50 @@ key = "value"
         )
         .unwrap();
         assert_eq!(load_repository(&root).unwrap().unwrap(), github_source());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn default_choice_falls_back_to_official_github_without_config() {
+        let temp = temp_root("default-missing");
+        let root = new_root(&temp);
+        assert_eq!(
+            resolve_default_choice(&root).unwrap(),
+            RepositoryChoice::Github("ThisSeanZhang/landscape".into())
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn default_choice_uses_recorded_source_when_config_present() {
+        let temp = temp_root("default-recorded");
+        let root = new_root(&temp);
+        std::fs::write(
+            temp.join(CONFIG_FILE),
+            br#"schema_version = 1
+
+[repository]
+kind = "http"
+location = "https://repo.example.com/landscape"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_default_choice(&root).unwrap(),
+            RepositoryChoice::Http("https://repo.example.com/landscape/".into())
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn default_choice_blocks_on_corrupted_config() {
+        let temp = temp_root("default-corrupt");
+        let root = new_root(&temp);
+        std::fs::write(temp.join(CONFIG_FILE), b"not toml [[[").unwrap();
+        assert!(matches!(
+            resolve_default_choice(&root),
+            Err(InstallError::CorruptedState(_))
+        ));
         let _ = std::fs::remove_dir_all(&temp);
     }
 

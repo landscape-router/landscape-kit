@@ -183,7 +183,9 @@ pub(crate) fn validate_admin_user(value: &str) -> Result<(), InstallError> {
 #[derive(Debug)]
 pub(crate) struct Plan {
     pub target: TargetVersion,
-    pub provider: ProviderSpec,
+    /// 首次安装实际使用的 provider；已安装命令不在 plan 层解析来源，
+    /// 由命令层按需重新解析（显式 CLI > config.toml > 官方 GitHub），恒为 None。
+    pub provider: Option<ProviderSpec>,
     pub root: InstallRoot,
     pub state: StatePresence,
 }
@@ -191,12 +193,16 @@ pub(crate) struct Plan {
 pub(crate) fn build_plan(
     root: InstallRoot,
     target: TargetVersion,
-    repository: RepositoryChoice,
+    repository: Option<RepositoryChoice>,
     state: StatePresence,
 ) -> Result<Plan, InstallError> {
+    let provider = match repository {
+        Some(choice) => Some(choice.resolve()?),
+        None => None,
+    };
     Ok(Plan {
         target,
-        provider: repository.resolve()?,
+        provider,
         root,
         state,
     })
