@@ -13,8 +13,10 @@ lkit backup verify (--backup <ID> | --file <PATH>) [--install-dir <PATH>]
 
 `--non-interactive` 和 `--lang` 仍是全局参数，可放在子命令前后。
 
-本版只定义命令行入口；Ratatui 控制台暂不增加备份列表或恢复面板，裸 `lkit` 仍通过明确
-的 CLI 子命令执行这些操作。
+控制台（裸 `lkit`）在 Backup 面板提供同样的能力：后台执行与 `backup list` 相同的解析与
+完整校验列出备份，Enter 查看 metadata 详情，R 进入恢复确认，V 执行完整 verify；面板顶部
+的“创建备份”动作允许输入备注后创建，恢复通过确认层后由控制台把结构化 `Restore` 请求交给
+共享命令分发（systemd 模式仍委托 worker 执行）。面板在未安装或非 root 时明确提示不可用。
 
 ## `backup create`
 

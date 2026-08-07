@@ -262,89 +262,13 @@ fn run_list(args: &BackupList) -> ExitCode {
         }
     };
     let backups_dir = root.canonical.join("backups");
-    let entries = match std::fs::read_dir(&backups_dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "backup: {}",
-                crate::tr!(crate::keys::BACKUP_NONE_FOUND, dir = backups_dir.display())
-            );
-            return ExitCode::FAILURE;
-        }
+    let rows = match list_backups(&root) {
+        Ok(rows) => rows,
         Err(error) => {
-            let error = plan::InstallError::Io(error);
             eprintln!("backup: {error}");
             return exit_code(&error);
         }
     };
-    let mut rows: Vec<(Option<BackupMetadata>, PathBuf)> = Vec::new();
-    let mut invalid = 0usize;
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                let error = plan::InstallError::Io(error);
-                eprintln!("backup: {error}");
-                return exit_code(&error);
-            }
-        };
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("lkb") {
-            continue;
-        }
-        let metadata = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
-        if !metadata.file_type().is_file() || validate_backup_file(&path).is_err() {
-            invalid += 1;
-            rows.push((None, path));
-            continue;
-        }
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            // 本机 I/O 故障(磁盘、权限)不是备份损坏,直接终止并输出真实原因。
-            Err(error) => {
-                let error = plan::InstallError::Io(error);
-                eprintln!("backup: {error}");
-                return exit_code(&error);
-            }
-        };
-        let parsed = match verify_lkb(&bytes) {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                invalid += 1;
-                rows.push((None, path));
-                continue;
-            }
-        };
-        // 内容完整性校验与 verify 相同:归档必须包含全部必需条目。
-        let verify_dir =
-            std::env::temp_dir().join(format!("lkit-backup-list-{}", uuid::Uuid::now_v7()));
-        let content = crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
-            .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir));
-        match content {
-            Ok(_) => rows.push((Some(parsed), path)),
-            Err(plan::InstallError::InvalidBackup(_)) => {
-                invalid += 1;
-                rows.push((None, path));
-            }
-            // 临时目录或解包写入失败属于环境错误,直接终止并输出真实原因,
-            // 不得把全部备份误报为 invalid。
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&verify_dir);
-                eprintln!("backup: {error}");
-                return exit_code(&error);
-            }
-        }
-        let _ = std::fs::remove_dir_all(&verify_dir);
-    }
-    rows.sort_by(|a, b| match (&a.0, &b.0) {
-        (Some(a), Some(b)) => b.created_at.cmp(&a.created_at),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
     for (parsed, path) in &rows {
         match parsed {
             Some(metadata) => {
@@ -370,6 +294,10 @@ fn run_list(args: &BackupList) -> ExitCode {
             }
         }
     }
+    let invalid = rows
+        .iter()
+        .filter(|(metadata, _)| metadata.is_none())
+        .count();
     if invalid > 0 {
         eprintln!(
             "backup: {}",
@@ -385,6 +313,67 @@ fn run_list(args: &BackupList) -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// 读取安装根目录 `backups/` 下的 `.lkb` 文件并完整校验,按创建时间降序排列。
+/// 目录缺失时返回空列表;校验失败的条目 metadata 为 `None`(视为损坏)。
+/// 临时目录或解包写入失败等环境错误直接返回,不得把全部备份误报为损坏。
+pub(crate) fn list_backups(
+    root: &InstallRoot,
+) -> Result<Vec<(Option<BackupMetadata>, PathBuf)>, plan::InstallError> {
+    let backups_dir = root.canonical.join("backups");
+    let entries = match std::fs::read_dir(&backups_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(plan::InstallError::Io(error)),
+    };
+    let mut rows: Vec<(Option<BackupMetadata>, PathBuf)> = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("lkb") {
+            continue;
+        }
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if !metadata.file_type().is_file() || validate_backup_file(&path).is_err() {
+            rows.push((None, path));
+            continue;
+        }
+        let bytes = std::fs::read(&path)?;
+        let parsed = match verify_lkb(&bytes) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                rows.push((None, path));
+                continue;
+            }
+        };
+        // 内容完整性校验与 verify 相同:归档必须包含全部必需条目。
+        let verify_dir =
+            std::env::temp_dir().join(format!("lkit-backup-list-{}", uuid::Uuid::now_v7()));
+        let content = crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
+            .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir));
+        match content {
+            Ok(_) => rows.push((Some(parsed), path)),
+            Err(plan::InstallError::InvalidBackup(_)) => {
+                rows.push((None, path));
+            }
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&verify_dir);
+                return Err(error);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&verify_dir);
+    }
+    rows.sort_by(|a, b| match (&a.0, &b.0) {
+        (Some(a), Some(b)) => b.created_at.cmp(&a.created_at),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    Ok(rows)
 }
 
 fn run_show(args: &BackupShow) -> ExitCode {
@@ -581,14 +570,16 @@ fn metadata_bytes_len(bytes: &[u8]) -> Option<usize> {
     Some(u32::from_le_bytes(bytes[6..10].try_into().ok()?) as usize)
 }
 
-fn architecture_key(architecture: crate::backup::lkb::BackupArchitecture) -> &'static str {
+pub(crate) fn architecture_key(
+    architecture: crate::backup::lkb::BackupArchitecture,
+) -> &'static str {
     match architecture {
         crate::backup::lkb::BackupArchitecture::X86_64 => "x86_64",
         crate::backup::lkb::BackupArchitecture::Aarch64 => "aarch64",
     }
 }
 
-fn scope_key(scope: crate::backup::lkb::BackupScope) -> &'static str {
+pub(crate) fn scope_key(scope: crate::backup::lkb::BackupScope) -> &'static str {
     match scope {
         crate::backup::lkb::BackupScope::Minimal => "minimal",
     }

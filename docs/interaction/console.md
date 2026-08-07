@@ -18,14 +18,15 @@ lkit --non-interactive install ... # 严格非交互命令模式
 
 - Overview：读取默认或 `LKIT_INSTALL_DIR` 指定根目录的安装状态；
 - Install：首次安装表单；
+- Backup：备份列表、创建与恢复；
 - Versions；
 - Configuration；
 - Services；
 - Network；
 - Diagnostics。
 
-除 Overview 和 Install 外的面板在对应管理能力实现前明确显示不可用，不执行隐式操作。
-后续功能继续加入相同侧栏外壳，不改变 CLI 子命令契约。
+除 Overview、Install 和 Backup 外的面板在对应管理能力实现前明确显示不可用，不执行隐式
+操作。后续功能继续加入相同侧栏外壳，不改变 CLI 子命令契约。
 
 Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认、service
 manager 和网络接管选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。
@@ -51,6 +52,17 @@ IPv4/网关或 DHCP、LAN/WAN-only 模式、管理地址和 DHCP 范围（适用
 
 Esc 在非首页步骤返回上一步并保留已填写值；从 WAN 首页按 Esc 才打开“取消网络向导”确认层。
 确认层使用 Enter 取消向导并返回 Install 表单，Esc 关闭确认层并继续向导，尚未开始安装。
+
+Backup 面板在未安装、非 root 或安装状态不可读时只显示原因提示，不执行隐式操作。可用时
+进入面板后在后台执行与 `lkit backup list` 相同的解析和完整校验（含归档解包），列表顶部
+固定为“创建备份”动作，下方按创建时间从新到旧排列备份；损坏或权限不安全的条目标记为
+invalid 且不能打开或恢复。Up/Down 选择，Enter 打开创建备注输入或备份 metadata 详情
+（与 `backup show` 相同的字段，Up/Down 滚动），详情页 V 在后台执行与 `backup verify`
+相同的完整校验并把结果显示在底栏，R 打开恢复确认层，Esc 返回列表。恢复确认层展示备份
+ID 与版本并提示当前版本将被替换，Enter 确认后控制台把结构化 `Restore` 请求交给共享
+命令分发并退出 alternate screen（systemd 模式仍委托 worker，不解析 CLI 文本输出）；
+Esc 取消。创建备份的备注编辑复用 Install 的编辑约定：普通字符、退格、paste，最多 256
+个字符，Enter 提交（走与 CLI 相同的备注校验）、Esc 取消。
 
 首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
 pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个

@@ -106,3 +106,17 @@
   Static，缺任一项默认 DHCP。Static/DHCP 使用 Left/Right 和 Enter，静态地址/CIDR 与网关
   同页编辑。计划摘要展示 WAN、LAN、LAN 配置和接管影响；Enter 开始安装，Esc 逐步回退，
   在 WAN 首页打开取消确认层。
+
+## UI-11
+
+**Backup 面板列出备份并支持创建、详情与恢复**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[备份命令](../../../commands/backup.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：未安装或非 root 时面板只显示原因提示。已安装时列出备份（与 `backup list`
+  同源的后台完整校验），Enter 打开 metadata 详情（V 后台完整 verify，R 恢复），顶部
+  创建动作支持备注编辑并在 Enter 后生成与 CLI 等价的结构化 `Backup`/`Restore` 请求；
+  恢复确认层 Enter 提交、Esc 取消，`--yes` 由控制台确认层覆盖。
+- 缺口：真实备份文件的列表加载与损坏条目标记依赖安装现场，测试通过注入 metadata 覆盖
+  渲染与按键路径；后台 verify 与恢复委托 worker 的端到端执行未自动化。

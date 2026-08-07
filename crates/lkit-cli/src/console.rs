@@ -18,8 +18,10 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 use unicode_width::UnicodeWidthStr;
 
+use crate::backup::lkb::BackupMetadata;
 use crate::check;
 use crate::check::model::{CheckReport, Status};
+use crate::commands::backup::{architecture_key, scope_key};
 use crate::commands::install::Install;
 use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::{plan, root, state};
@@ -47,7 +49,7 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
     let mut terminal = ConsoleTerminal::start()?;
     let mut app = ConsoleApp::new();
     loop {
-        app.update_preflight();
+        app.update();
         terminal
             .terminal
             .draw(|frame| render(frame, &app))
@@ -118,6 +120,7 @@ impl Drop for ConsoleTerminal {
 enum Menu {
     Overview,
     Install,
+    Backup,
     Versions,
     Configuration,
     Services,
@@ -126,9 +129,10 @@ enum Menu {
 }
 
 impl Menu {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Overview,
         Self::Install,
+        Self::Backup,
         Self::Versions,
         Self::Configuration,
         Self::Services,
@@ -140,6 +144,7 @@ impl Menu {
         match self {
             Self::Overview => crate::tr!(crate::keys::CONSOLE_OVERVIEW),
             Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
+            Self::Backup => crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
             Self::Versions => crate::tr!(crate::keys::CONSOLE_VERSIONS),
             Self::Configuration => crate::tr!(crate::keys::CONSOLE_CONFIGURATION),
             Self::Services => crate::tr!(crate::keys::CONSOLE_SERVICES),
@@ -235,6 +240,148 @@ impl Preflight {
     }
 }
 
+/// 备份菜单数据：条目与 CLI `backup list` 同源，metadata 为 `None` 表示损坏。
+struct BackupEntry {
+    metadata: Option<BackupMetadata>,
+    path: PathBuf,
+}
+
+enum BackupListState {
+    NotRun,
+    Running(Receiver<Result<Vec<BackupEntry>, String>>),
+    Complete(Vec<BackupEntry>),
+    Failed(String),
+}
+
+enum BackupVerifyState {
+    Idle,
+    Running(Receiver<Result<String, String>>),
+}
+
+/// 备份面板：列表 + 详情 + 创建备注 + 恢复确认。
+struct BackupPanel {
+    state: BackupListState,
+    selected: usize,
+    editing: bool,
+    remark: String,
+    details: Option<usize>,
+    details_scroll: u16,
+    verify: BackupVerifyState,
+    restore_confirming: bool,
+}
+
+impl Default for BackupPanel {
+    fn default() -> Self {
+        Self {
+            state: BackupListState::NotRun,
+            selected: 0,
+            editing: false,
+            remark: String::new(),
+            details: None,
+            details_scroll: 0,
+            verify: BackupVerifyState::Idle,
+            restore_confirming: false,
+        }
+    }
+}
+
+impl BackupPanel {
+    fn start(&mut self, install_dir: &str) {
+        if matches!(self.state, BackupListState::Running(_)) {
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        let install_dir = install_dir.to_string();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || load_backups(&install_dir));
+            let _ = sender.send(result);
+        });
+        self.state = BackupListState::Running(receiver);
+        self.selected = 0;
+        self.editing = false;
+        self.remark.clear();
+        self.details = None;
+        self.details_scroll = 0;
+        self.verify = BackupVerifyState::Idle;
+        self.restore_confirming = false;
+    }
+
+    fn poll(&mut self, notice: &mut String) {
+        match &self.state {
+            BackupListState::Running(receiver) => match receiver.try_recv() {
+                Ok(Ok(entries)) => {
+                    self.state = BackupListState::Complete(entries);
+                    self.details = None;
+                    self.details_scroll = 0;
+                }
+                Ok(Err(error)) => self.state = BackupListState::Failed(error),
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.state = BackupListState::Failed(
+                        crate::tr!(crate::keys::CONSOLE_CHECK_WORKER_STOPPED).into(),
+                    );
+                }
+            },
+            _ => {}
+        }
+        if let BackupVerifyState::Running(receiver) = &self.verify {
+            match receiver.try_recv() {
+                Ok(Ok(message)) => {
+                    self.verify = BackupVerifyState::Idle;
+                    *notice = message;
+                }
+                Ok(Err(error)) => {
+                    self.verify = BackupVerifyState::Idle;
+                    *notice = error;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.verify = BackupVerifyState::Idle;
+                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_WORKER_STOPPED).into();
+                }
+            }
+        }
+    }
+
+    fn rows(&self) -> &[BackupEntry] {
+        match &self.state {
+            BackupListState::Complete(rows) => rows,
+            _ => &[],
+        }
+    }
+
+    /// 当前选中的备份行；第 0 行是“创建备份”动作。
+    fn selected_entry(&self) -> Option<&BackupEntry> {
+        if self.selected == 0 {
+            None
+        } else {
+            self.rows().get(self.selected - 1)
+        }
+    }
+
+    fn details_entry(&self) -> Option<&BackupEntry> {
+        self.details.and_then(|index| self.rows().get(index))
+    }
+}
+
+/// 与 CLI `backup list` 相同的解析与完整校验。
+fn load_backups(install_dir: &str) -> Result<Vec<BackupEntry>, String> {
+    let requested = PathBuf::from(install_dir);
+    let selected = plan::select_install_root(
+        Some(&requested),
+        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    let normalized = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+    let rows =
+        crate::commands::backup::list_backups(&normalized).map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(metadata, path)| BackupEntry { metadata, path })
+        .collect())
+}
+
 /// 环境检查门禁：Pass 和 warning 放行；NotRun/Running 静默等待；
 /// Error、unknown 和 worker 失败通过居中弹窗阻断。
 enum GateState {
@@ -266,6 +413,8 @@ struct ConsoleApp {
     preflight: Preflight,
     preflight_dialog: bool,
     network_wizard: Option<NetworkWizard>,
+    backup: BackupPanel,
+    backup_menu_active: bool,
 }
 
 impl ConsoleApp {
@@ -282,6 +431,8 @@ impl ConsoleApp {
             preflight: Preflight::default(),
             preflight_dialog: false,
             network_wizard: None,
+            backup: BackupPanel::default(),
+            backup_menu_active: false,
         }
     }
 
@@ -289,11 +440,25 @@ impl ConsoleApp {
         Menu::ALL[self.menu_index]
     }
 
-    fn update_preflight(&mut self) {
+    fn update(&mut self) {
         if self.menu() == Menu::Install && matches!(&self.preflight.state, PreflightState::NotRun) {
             self.preflight.start();
         }
         self.preflight.poll();
+        if self.menu() == Menu::Backup {
+            if !self.backup_menu_active {
+                self.backup_menu_active = true;
+                if !matches!(self.backup.state, BackupListState::NotRun) {
+                    self.backup.state = BackupListState::NotRun;
+                }
+            }
+            if matches!(&self.backup.state, BackupListState::NotRun) {
+                self.backup.start(&self.install.install_dir);
+            }
+        } else {
+            self.backup_menu_active = false;
+        }
+        self.backup.poll(&mut self.notice);
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
@@ -320,6 +485,12 @@ impl ConsoleApp {
                 _ => {}
             }
             return None;
+        }
+        if self.menu() == Menu::Backup && self.focus == Focus::Panel {
+            match self.handle_backup_key(key) {
+                Some(action) => return action,
+                None => {}
+            }
         }
         if self.exit_state == ExitState::Confirming {
             match key.code {
@@ -554,6 +725,16 @@ impl ConsoleApp {
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
+        } else if self.menu() == Menu::Backup && self.focus == Focus::Panel {
+            if self.backup.restore_confirming {
+                crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_RESTORE_CONFIRM)
+            } else if self.backup.editing {
+                crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
+            } else if self.backup.details.is_some() {
+                crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_DETAILS)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_LIST)
+            }
         } else {
             match (self.focus, self.menu()) {
                 (Focus::Navigation, _) => crate::tr!(crate::keys::CONSOLE_HINT_NAVIGATION),
@@ -696,6 +877,216 @@ impl ConsoleApp {
             _ => {}
         }
         None
+    }
+
+    /// 返回 `None` 表示按键未消费（回落到主处理流程）；`Some(None)` 表示已消费；
+    /// `Some(Some(action))` 表示触发备份创建或恢复。
+    fn handle_backup_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
+        if self.backup.restore_confirming {
+            match key.code {
+                KeyCode::Enter => {
+                    let entry = match self.backup.selected_entry() {
+                        Some(entry) => entry,
+                        None => {
+                            self.backup.restore_confirming = false;
+                            return Some(None);
+                        }
+                    };
+                    let metadata = match &entry.metadata {
+                        Some(metadata) => metadata,
+                        None => {
+                            self.backup.restore_confirming = false;
+                            return Some(None);
+                        }
+                    };
+                    let backup_id = metadata.backup_id.clone();
+                    self.backup.restore_confirming = false;
+                    return Some(Some(self.backup_restore_action(&backup_id)));
+                }
+                KeyCode::Esc => self.backup.restore_confirming = false,
+                _ => {}
+            }
+            return Some(None);
+        }
+        if self.backup.editing {
+            match key.code {
+                KeyCode::Enter => {
+                    let remark = self.backup.remark.clone();
+                    match crate::backup::lkb::validate_remark(&remark) {
+                        Ok(()) => {
+                            self.backup.editing = false;
+                            return Some(Some(self.backup_create_action(&remark)));
+                        }
+                        Err(error) => self.notice = error.to_string(),
+                    }
+                }
+                KeyCode::Esc => {
+                    self.backup.editing = false;
+                    self.backup.remark.clear();
+                }
+                KeyCode::Backspace => {
+                    self.backup.remark.pop();
+                }
+                KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if self.backup.remark.chars().count() < 256 {
+                        self.backup.remark.push(character);
+                    }
+                }
+                _ => {}
+            }
+            return Some(None);
+        }
+        if self.backup.details.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.backup.details = None;
+                    self.backup.details_scroll = 0;
+                    self.backup.verify = BackupVerifyState::Idle;
+                }
+                KeyCode::Up => {
+                    self.backup.details_scroll = self.backup.details_scroll.saturating_sub(1)
+                }
+                KeyCode::Down => {
+                    self.backup.details_scroll = self.backup.details_scroll.saturating_add(1)
+                }
+                KeyCode::Char('v' | 'V') => self.start_backup_verify(),
+                KeyCode::Char('r' | 'R') => {
+                    if let Some(entry) = self.backup.details_entry()
+                        && entry.metadata.is_some()
+                    {
+                        self.backup.restore_confirming = true;
+                    }
+                }
+                _ => {}
+            }
+            return Some(None);
+        }
+        match key.code {
+            KeyCode::Up => {
+                self.backup.selected = self.backup.selected.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                let rows = self.backup.rows().len();
+                self.backup.selected = (self.backup.selected + 1).min(rows);
+            }
+            KeyCode::Enter => {
+                if self.backup.selected == 0 {
+                    self.backup.editing = true;
+                    self.backup.remark.clear();
+                } else if let Some(entry) = self.backup.selected_entry() {
+                    if entry.metadata.is_some() {
+                        self.backup.details = Some(self.backup.selected - 1);
+                        self.backup.details_scroll = 0;
+                        self.backup.verify = BackupVerifyState::Idle;
+                    } else {
+                        self.notice = crate::tr!(
+                            crate::keys::CONSOLE_BACKUP_INVALID,
+                            id = entry
+                                .path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .trim_end_matches(".lkb")
+                        )
+                        .into();
+                    }
+                }
+            }
+            KeyCode::Char('r' | 'R') => {
+                if let Some(entry) = self.backup.selected_entry()
+                    && entry.metadata.is_some()
+                {
+                    self.backup.restore_confirming = true;
+                } else {
+                    self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE).into();
+                }
+            }
+            _ => return None,
+        }
+        Some(None)
+    }
+
+    fn start_backup_verify(&mut self) {
+        let Some(entry) = self.backup.details_entry() else {
+            return;
+        };
+        if matches!(self.backup.verify, BackupVerifyState::Running(_)) {
+            return;
+        }
+        let path = entry.path.clone();
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                let metadata =
+                    crate::backup::lkb::verify_lkb(&bytes).map_err(|error| error.to_string())?;
+                let verify_dir = std::env::temp_dir()
+                    .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
+                crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
+                    .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
+                    .map(|_| {
+                        crate::tr!(
+                            crate::keys::CONSOLE_BACKUP_VERIFIED,
+                            backup_id = metadata.backup_id
+                        )
+                    })
+                    .map_err(|error| {
+                        let _ = std::fs::remove_dir_all(&verify_dir);
+                        error.to_string()
+                    })
+                    .map(|message| {
+                        let _ = std::fs::remove_dir_all(&verify_dir);
+                        message
+                    })
+            });
+            let _ = sender.send(result);
+        });
+        self.backup.verify = BackupVerifyState::Running(receiver);
+        self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING).into();
+    }
+
+    fn backup_create_action(&self, remark: &str) -> ConsoleAction {
+        let install_dir = PathBuf::from(&self.install.install_dir);
+        let command = Commands::Backup(crate::commands::backup::Backup {
+            action: crate::commands::backup::BackupAction::Create(
+                crate::commands::backup::BackupCreate {
+                    remark: Some(remark.to_string()),
+                    output: None,
+                    install_dir: Some(install_dir.clone()),
+                    #[cfg(feature = "test-support")]
+                    test_runtime: None,
+                },
+            ),
+        });
+        let mut args = vec!["backup".into(), "create".into()];
+        if !remark.is_empty() {
+            args.extend(["--remark".into(), remark.to_string()]);
+        }
+        args.extend(["--install-dir".into(), install_dir.display().to_string()]);
+        ConsoleAction::Command { command, args }
+    }
+
+    fn backup_restore_action(&self, backup_id: &str) -> ConsoleAction {
+        let install_dir = PathBuf::from(&self.install.install_dir);
+        let command = Commands::Restore(crate::commands::restore::Restore {
+            backup: Some(backup_id.to_string()),
+            file: None,
+            allow_no_backup: false,
+            yes: true,
+            install_dir: Some(install_dir.clone()),
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        });
+        let args = vec![
+            "restore".into(),
+            "--backup".into(),
+            backup_id.to_string(),
+            "--yes".into(),
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+        ];
+        ConsoleAction::Command { command, args }
     }
 }
 
@@ -1384,6 +1775,9 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     if app.preflight_dialog {
         render_preflight_dialog(frame, app);
     }
+    if app.menu() == Menu::Backup && app.backup.restore_confirming {
+        render_backup_restore_confirmation(frame, app);
+    }
 }
 
 fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
@@ -1876,6 +2270,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     match app.menu() {
         Menu::Overview => render_overview(frame, app, area),
         Menu::Install => render_install(frame, app, area),
+        Menu::Backup => render_backup(frame, app, area),
         menu => {
             frame.render_widget(
                 Paragraph::new(vec![
@@ -1962,6 +2357,295 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                 app.focus == Focus::Panel,
             ))
             .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_backup(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+    let focused = app.focus == Focus::Panel;
+    if app.backup.details.is_some() {
+        render_backup_details(frame, app, focused, area);
+        return;
+    }
+    if matches!(app.snapshot, Snapshot::RootRequired) {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_ROOT_PRIVILEGES_REQUIRED),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Line::raw(""),
+                Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_BACKUP_REQUIRES_INSTALL),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
+                focused,
+            ))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    if !matches!(app.snapshot, Snapshot::Installed { .. }) {
+        let message = match &app.snapshot {
+            Snapshot::NotInstalled => {
+                crate::tr!(crate::keys::CONSOLE_LANDSCAPE_NOT_INSTALLED)
+            }
+            Snapshot::Unavailable(error) => error.clone(),
+            _ => unreachable!(),
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(message, Style::default().fg(Color::Yellow)),
+                Line::raw(""),
+                Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_BACKUP_REQUIRES_INSTALL),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
+                focused,
+            ))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    render_backup_list(frame, app, focused, area);
+}
+
+fn render_backup_list(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, area: Rect) {
+    let create_selected = app.focus == Focus::Panel && app.backup.selected == 0;
+    let highlight = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let mut lines = vec![Line::styled(
+        format!(
+            "{}{}",
+            if create_selected { "> " } else { "  " },
+            crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE)
+        ),
+        if create_selected {
+            highlight
+        } else {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        },
+    )];
+    match &app.backup.state {
+        BackupListState::NotRun | BackupListState::Running(_) => {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                crate::tr!(crate::keys::CONSOLE_BACKUP_LOADING),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        BackupListState::Failed(error) => {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(error.clone(), Style::default().fg(Color::Red)));
+        }
+        BackupListState::Complete(rows) => {
+            if rows.is_empty() {
+                lines.push(Line::raw(""));
+                lines.push(Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_BACKUP_NONE_FOUND),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            for (index, entry) in rows.iter().enumerate() {
+                let cursor = app.focus == Focus::Panel && app.backup.selected == index + 1;
+                match &entry.metadata {
+                    Some(metadata) => {
+                        let text = format!(
+                            "{}  {}  {}{}",
+                            metadata.backup_id,
+                            metadata.created_at,
+                            metadata.landscape_version,
+                            if metadata.remark.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  {}", metadata.remark)
+                            }
+                        );
+                        lines.push(Line::styled(
+                            format!("{}{}", if cursor { "> " } else { "  " }, text),
+                            if cursor { highlight } else { Style::default() },
+                        ));
+                    }
+                    None => {
+                        let name = entry
+                            .path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .trim_end_matches(".lkb")
+                            .to_string();
+                        lines.push(Line::styled(
+                            format!(
+                                "{}{}  {}",
+                                if cursor { "> " } else { "  " },
+                                name,
+                                crate::tr!(crate::keys::CONSOLE_BACKUP_INVALID_BADGE)
+                            ),
+                            if cursor {
+                                highlight
+                            } else {
+                                Style::default().fg(Color::Red)
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
+                focused,
+            ))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, area: Rect) {
+    let Some(entry) = app.backup.details_entry() else {
+        return;
+    };
+    let Some(metadata) = &entry.metadata else {
+        return;
+    };
+    let contents = format!(
+        "binary={} static={} static_archive={} init_config={} geo_cache={}",
+        metadata.contents.binary,
+        metadata.contents.static_,
+        metadata.contents.static_archive,
+        metadata.contents.init_config,
+        metadata.contents.geo_cache,
+    );
+    let lines = vec![
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_BACKUP_DETAILS_TITLE),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(""),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_ID_LABEL),
+            metadata.backup_id
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_CREATED_LABEL),
+            metadata.created_at
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_VERSION_LABEL),
+            metadata.landscape_version
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_LKIT_LABEL),
+            metadata.lkit_version
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_ARCH_LABEL),
+            architecture_key(metadata.architecture)
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_HOSTNAME_LABEL),
+            metadata.hostname
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_REMARK_LABEL),
+            metadata.remark
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_AUTO_LABEL),
+            metadata.auto
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_SCOPE_LABEL),
+            scope_key(metadata.scope)
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_CONTENTS_LABEL),
+            contents
+        )),
+        Line::raw(""),
+        Line::styled(
+            crate::tr!(
+                crate::keys::CONSOLE_BACKUP_DETAILS_RESTORE_HINT,
+                id = metadata.backup_id
+            ),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_BACKUP_DETAILS_TITLE),
+                focused,
+            ))
+            .wrap(Wrap { trim: true })
+            .scroll((app.backup.details_scroll, 0)),
+        area,
+    );
+}
+
+fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let Some(metadata) = app
+        .backup
+        .selected_entry()
+        .and_then(|entry| entry.metadata.as_ref())
+    else {
+        return;
+    };
+    let screen = frame.area();
+    let width = 64.min(screen.width.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_QUESTION),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_BACKUP_RESTORE_PLAN,
+                id = metadata.backup_id,
+                version = metadata.landscape_version
+            )),
+            Line::raw(""),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_PRESS_ENTER)),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_TITLE))),
         area,
     );
 }
@@ -2510,7 +3194,7 @@ mod tests {
 
         assert!(terminal_content(&terminal).contains("> Overview"));
 
-        app.menu_index = 2;
+        app.menu_index = 3;
         terminal.draw(|frame| render(frame, &app)).unwrap();
         assert!(terminal_content(&terminal).contains("> Versions"));
     }
@@ -2675,7 +3359,7 @@ mod tests {
         let mut app = ConsoleApp::new();
         app.menu_index = 1;
 
-        app.update_preflight();
+        app.update();
 
         assert!(!matches!(app.preflight.state, PreflightState::NotRun));
     }
@@ -3139,5 +3823,186 @@ mod tests {
         assert!(content.contains("10.1.1.105/24"));
         assert!(content.contains("WAN-only"));
         assert!(content.contains("will have their IPv4/IPv6 addresses flushed"));
+    }
+
+    fn installed_snapshot() -> Snapshot {
+        Snapshot::Installed {
+            version: "1.2.3".into(),
+            manager: "systemd",
+            initialized: true,
+        }
+    }
+
+    fn sample_backup_metadata() -> BackupMetadata {
+        BackupMetadata {
+            schema_version: 1,
+            backup_id: "20260807-131500-ab12cd34".into(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-08-07T13:15:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            landscape_version: "1.2.3".into(),
+            lkit_version: "0.1.3".into(),
+            architecture: crate::backup::lkb::BackupArchitecture::X86_64,
+            hostname: "edge".into(),
+            remark: "before upgrade".into(),
+            auto: false,
+            scope: crate::backup::lkb::BackupScope::Minimal,
+            contents: crate::backup::lkb::BackupContents {
+                binary: true,
+                static_: true,
+                static_archive: false,
+                init_config: true,
+                geo_cache: false,
+            },
+            checksum: "sha256:00".into(),
+        }
+    }
+
+    fn sample_backup_entry() -> BackupEntry {
+        BackupEntry {
+            metadata: Some(sample_backup_metadata()),
+            path: PathBuf::from("/opt/landscape/backups/20260807-131500-ab12cd34.lkb"),
+        }
+    }
+
+    fn backup_ready_app() -> ConsoleApp {
+        let mut app = ConsoleApp::new();
+        app.menu_index = 2;
+        app.focus = Focus::Panel;
+        app.snapshot = installed_snapshot();
+        app.backup.state = BackupListState::Complete(vec![sample_backup_entry()]);
+        app
+    }
+
+    #[test]
+    fn backup_menu_lists_backups_and_opens_details() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let app = backup_ready_app();
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Backup"));
+        assert!(content.contains("Create backup"));
+        assert!(content.contains("20260807-131500-ab12cd34"));
+        assert!(content.contains("before upgrade"));
+
+        let mut app = backup_ready_app();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.backup.details, Some(0));
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let details = terminal_content(&terminal);
+        assert!(details.contains("Backup details"));
+        assert!(details.contains("x86_64"));
+        assert!(details.contains("edge"));
+        assert!(details.contains("Press R to restore"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.backup.details, None);
+    }
+
+    #[test]
+    fn backup_menu_without_installation_shows_requirements() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 2;
+        app.focus = Focus::Panel;
+        app.snapshot = Snapshot::NotInstalled;
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Landscape is not installed"));
+        assert!(content.contains("Backup and restore require an existing installation"));
+    }
+
+    #[test]
+    fn backup_create_action_builds_cli_and_domain_request() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = backup_ready_app();
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.backup.editing);
+
+        for character in "my-backup".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert_eq!(app.backup.remark, "my-backup");
+
+        let action = app
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        let ConsoleAction::Command { command, args } = action else {
+            panic!("expected backup create command");
+        };
+        let Commands::Backup(backup) = command else {
+            panic!("expected backup request");
+        };
+        let crate::commands::backup::BackupAction::Create(create) = backup.action else {
+            panic!("expected create action");
+        };
+        assert_eq!(create.remark.as_deref(), Some("my-backup"));
+        assert_eq!(args[0], "backup");
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--remark", "my-backup"])
+        );
+        assert!(args.iter().any(|argument| argument == "create"));
+    }
+
+    #[test]
+    fn backup_restore_flow_builds_restore_command() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = backup_ready_app();
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.backup.selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert!(app.backup.restore_confirming);
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Restore this backup?"));
+        assert!(content.contains("version 1.2.3"));
+        assert!(content.contains("Press Enter to restore."));
+
+        let action = app
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        let ConsoleAction::Command { command, args } = action else {
+            panic!("expected restore command");
+        };
+        let Commands::Restore(restore) = command else {
+            panic!("expected restore request");
+        };
+        assert_eq!(restore.backup.as_deref(), Some("20260807-131500-ab12cd34"));
+        assert!(restore.yes);
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--backup", "20260807-131500-ab12cd34"])
+        );
+        assert!(args.iter().any(|argument| argument == "--yes"));
+    }
+
+    #[test]
+    fn backup_esc_cancels_restore_confirmation_and_details() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = backup_ready_app();
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert!(app.backup.restore_confirming);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.backup.restore_confirming);
+        assert_eq!(app.exit_state, ExitState::Idle);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.backup.details, Some(0));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.backup.details, None);
+        assert_eq!(app.exit_state, ExitState::Idle);
     }
 }
