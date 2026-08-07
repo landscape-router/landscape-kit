@@ -25,6 +25,8 @@ pub(crate) const MAIN_NETWORK_CONFIRM_ABOUT: &str = "main.network_confirm_about"
 pub(crate) const MAIN_NETWORK_ROLLBACK_ABOUT: &str = "main.network_rollback_about";
 pub(crate) const MAIN_SWITCH_ABOUT: &str = "main.switch_about";
 pub(crate) const MAIN_SWITCH_VERSION_HELP: &str = "main.switch_version_help";
+pub(crate) const MAIN_UPDATE_ABOUT: &str = "main.update_about";
+pub(crate) const MAIN_UPDATE_VERSION_HELP: &str = "main.update_version_help";
 pub(crate) const MAIN_REPOSITORY_OVERRIDE_HELP: &str = "main.repository_override_help";
 pub(crate) const MAIN_ACCEPT_SERVICE_CHANGE_HELP: &str = "main.accept_service_change_help";
 pub(crate) const MAIN_ALLOW_NO_BACKUP_HELP: &str = "main.allow_no_backup_help";
@@ -291,7 +293,12 @@ pub(crate) const PRESENTATION_STOP_DOWNLOAD_CONFIRM: &str = "presentation.stop_d
 pub(crate) const PRESENTATION_CONFIRM_STOP: &str = "presentation.confirm_stop";
 pub(crate) const PRESENTATION_INSTALLATION_IS_APPLYING: &str =
     "presentation.installation_is_applying";
-pub(crate) const INTERACTIVE_SELECT_ONE_INTERFACE: &str = "interactive.select_one_interface";
+pub(crate) const INTERACTIVE_SELECT_ONE_OPTION: &str = "interactive.select_one_option";
+pub(crate) const INTERACTIVE_SELECT_ONE_OPTION_DEFAULT: &str =
+    "interactive.select_one_option_default";
+pub(crate) const INTERACTIVE_SELECTION_MUST_BE_NUMBER: &str =
+    "interactive.selection_must_be_number";
+pub(crate) const INTERACTIVE_SELECTION_OUT_OF_RANGE: &str = "interactive.selection_out_of_range";
 pub(crate) const INTERACTIVE_SELECT_LAN_INTERFACES: &str = "interactive.select_lan_interfaces";
 pub(crate) const INTERACTIVE_PASSWORD_AGAIN: &str = "interactive.password_again";
 pub(crate) const REPORT_STATUS_HEADER: &str = "report.status_header";
@@ -387,6 +394,17 @@ pub(crate) const SWITCH_WARNING_ALLOW_NO_BACKUP_IGNORED: &str =
 pub(crate) const SWITCH_CONFIRM_STOP_WITH_OWN_MANAGER: &str =
     "switch.confirm_stop_with_own_manager";
 pub(crate) const SWITCH_ROLLBACK_FAILED: &str = "switch.rollback_failed";
+pub(crate) const UPDATE_REQUIRES_INTERACTIVE_TERMINAL: &str =
+    "update.requires_interactive_terminal";
+pub(crate) const UPDATE_SELECT_REPOSITORY: &str = "update.select_repository";
+pub(crate) const UPDATE_REPOSITORY_CURRENT: &str = "update.repository_current";
+pub(crate) const UPDATE_REPOSITORY_GITHUB: &str = "update.repository_github";
+pub(crate) const UPDATE_REPOSITORY_MIRROR: &str = "update.repository_mirror";
+pub(crate) const UPDATE_REPOSITORY_CUSTOM: &str = "update.repository_custom";
+pub(crate) const UPDATE_REPOSITORY_URL: &str = "update.repository_url";
+pub(crate) const UPDATE_ALREADY_UP_TO_DATE: &str = "update.already_up_to_date";
+pub(crate) const UPDATE_CONFIRM_UPDATE: &str = "update.confirm_update";
+pub(crate) const UPDATE_CANCELLED: &str = "update.cancelled";
 pub(crate) const INSTALL_CLEANUP_FAILED_NETWORK: &str = "install.cleanup_failed_network";
 pub(crate) const INSTALL_CLEANUP_FAILED_FIRST_INSTALL: &str =
     "install.cleanup_failed_first_install";

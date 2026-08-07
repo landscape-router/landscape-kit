@@ -23,6 +23,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Ratatui 管理控制台 | `UI-01` 至 `UI-10` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-06` | [i18n.md](functional/i18n.md) |
 | 首次安装 | `INS-01` 至 `INS-15` | [install.md](functional/install.md) |
+| 版本更新 | `UP-01` 至 `UP-07` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
 | 备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |

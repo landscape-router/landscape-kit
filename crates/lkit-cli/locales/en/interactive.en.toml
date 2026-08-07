@@ -1,3 +1,6 @@
-interactive.select_one_interface = "Select one interface: "
+interactive.select_one_option = "Select an option: "
+interactive.select_one_option_default = "Select an option [%{default}]: "
+interactive.selection_must_be_number = "selection must be a number"
+interactive.selection_out_of_range = "selection must be between 1 and %{maximum}"
 interactive.select_lan_interfaces = "Select LAN interfaces (comma separated, empty for WAN-only): "
 interactive.password_again = " (again): "

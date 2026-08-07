@@ -99,6 +99,7 @@ pub(crate) fn prompt_plan(
     let wan_index = tty.select_one(
         &crate::tr!(crate::keys::DISCOVERY_SELECT_WAN_INTERFACE),
         &options,
+        None,
     )?;
     let wan = &interfaces[wan_index];
     let plan = if interfaces.len() == 1 {

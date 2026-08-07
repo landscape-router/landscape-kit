@@ -1,4 +1,4 @@
-manage.installation_already_exists = "安装已存在；请使用 switch、repair、reconcile 或 service-manager"
+manage.installation_already_exists = "安装已存在；请使用 update、switch、repair、reconcile 或 service-manager"
 manage.command_requires_existing_installation = "此命令需要已有安装"
 manage.force_cannot_be_combined = "--force 不能与 --repair-static、--repair-binary 或任何 --accept-* 参数组合使用"
 manage.install_root_is = "安装根目录为"

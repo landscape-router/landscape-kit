@@ -34,7 +34,7 @@ pub async fn run(args: &Repair) -> ExitCode {
             RequestMode::RepairStatic
         },
         version: None,
-        repository: args.repository.clone(),
+        repository: super::manage::repository_override(&args.repository),
         install_dir: args.install_dir.clone(),
         admin_user: None,
         password_file: None,

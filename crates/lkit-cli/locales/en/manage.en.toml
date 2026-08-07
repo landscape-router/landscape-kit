@@ -1,4 +1,4 @@
-manage.installation_already_exists = "an installation already exists; use switch, repair, reconcile, or service-manager"
+manage.installation_already_exists = "an installation already exists; use update, switch, repair, reconcile, or service-manager"
 manage.command_requires_existing_installation = "this command requires an existing installation"
 manage.force_cannot_be_combined = "--force cannot be combined with --repair-static, --repair-binary, or any --accept-* flag"
 manage.install_root_is = "install root is"

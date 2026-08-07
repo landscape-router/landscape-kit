@@ -46,3 +46,8 @@ with --allow-no-backup to switch without a configuration snapshot
   切换前服务在运行时才重新启动旧版本），但**无法恢复被目标版本重新初始化过的数据**；
 - 服务正在运行且没有停止时，`--allow-no-backup` 被忽略并输出警告，
   仍然创建 `.lkb`。
+
+## 交互式升级
+
+希望交互选择读取渠道、解析最新或指定 stable 版本并在执行前确认时，使用
+[`lkit update`](update.md)。update 是 switch 的薄封装，确认后复用本命令的完整流水线。

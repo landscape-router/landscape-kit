@@ -25,8 +25,8 @@ pub(crate) struct InstallRequest {
     /// Target version: `<version>` or `latest`
     pub(crate) version: Option<String>,
 
-    /// Repository source: bare flag uses the default HTTP mirror, a value uses the given protocol v1 HTTP repository
-    pub(crate) repository: Option<Option<String>>,
+    /// Explicit repository source. None keeps the command's default source.
+    pub(crate) repository: Option<plan::RepositoryChoice>,
 
     /// Full install root directory
     pub(crate) install_dir: Option<PathBuf>,
@@ -73,6 +73,16 @@ pub(crate) struct InstallRequest {
 pub enum ServiceManagerArg {
     Systemd,
     None,
+}
+
+pub(crate) fn repository_override(
+    value: &Option<Option<String>>,
+) -> Option<plan::RepositoryChoice> {
+    match value {
+        None => None,
+        Some(None) => Some(plan::RepositoryChoice::Mirror),
+        Some(Some(url)) => Some(plan::RepositoryChoice::Http(url.clone())),
+    }
 }
 
 pub(crate) async fn run_request(args: &InstallRequest) -> ExitCode {
@@ -473,11 +483,10 @@ async fn execute(
         runtime,
         args.takeover_network,
     )?;
-    let repository = match &args.repository {
-        None => plan::RepositoryChoice::Github,
-        Some(None) => plan::RepositoryChoice::Mirror,
-        Some(Some(url)) => plan::RepositoryChoice::Http(url.clone()),
-    };
+    let repository = args
+        .repository
+        .clone()
+        .unwrap_or(plan::RepositoryChoice::Github);
     let plan = plan::build_plan(normalized, target, repository, presence)?;
     Ok((plan, lock))
 }
@@ -585,5 +594,20 @@ mod tests {
             resolve_credentials(&request, unsafe { libc::geteuid() }),
             Err(plan::InstallError::InvalidPassword(_))
         ));
+    }
+
+    #[test]
+    fn maps_cli_repository_overrides_to_domain_choices() {
+        assert_eq!(repository_override(&None), None);
+        assert_eq!(
+            repository_override(&Some(None)),
+            Some(plan::RepositoryChoice::Mirror)
+        );
+        assert_eq!(
+            repository_override(&Some(Some("https://example.com/releases/".into()))),
+            Some(plan::RepositoryChoice::Http(
+                "https://example.com/releases/".into()
+            ))
+        );
     }
 }

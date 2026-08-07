@@ -305,11 +305,11 @@ fn resolve_provider(
     ),
     plan::InstallError,
 > {
-    let provider_override = match &args.repository {
-        None => None,
-        Some(None) => Some(plan::RepositoryChoice::Mirror.resolve()?),
-        Some(Some(url)) => Some(plan::RepositoryChoice::Http(url.clone()).resolve()?),
-    };
+    let provider_override = args
+        .repository
+        .clone()
+        .map(plan::RepositoryChoice::resolve)
+        .transpose()?;
     let state_kind = match state.repository.kind {
         StateRepositoryKind::Github => crate::release::repository::ProviderKind::Github,
         StateRepositoryKind::Http => crate::release::repository::ProviderKind::Http,

@@ -81,25 +81,51 @@ impl Tty {
         &mut self,
         prompt: &str,
         options: &[String],
+        default: Option<usize>,
     ) -> Result<usize, InstallError> {
         if options.is_empty() {
             return Err(InstallError::ParameterUsage(
                 "selection requires at least one option".into(),
             ));
         }
+        if default.is_some_and(|index| index >= options.len()) {
+            return Err(InstallError::ParameterUsage(
+                "default selection is outside the option range".into(),
+            ));
+        }
         self.write_prompt(&format!("{prompt}\n"))?;
         for (index, option) in options.iter().enumerate() {
             self.write_prompt(&format!("  {}. {option}\n", index + 1))?;
         }
-        let raw = self.input(&crate::tr!(crate::keys::INTERACTIVE_SELECT_ONE_INTERFACE))?;
-        let selected = raw.trim().parse::<usize>().map_err(|_| {
-            InstallError::ParameterUsage("interface selection must be a number".into())
-        })?;
+        let selection_prompt = match default {
+            Some(index) => crate::tr!(
+                crate::keys::INTERACTIVE_SELECT_ONE_OPTION_DEFAULT,
+                default = index + 1
+            ),
+            None => crate::tr!(crate::keys::INTERACTIVE_SELECT_ONE_OPTION),
+        };
+        let raw = self.input(&selection_prompt)?;
+        let selected = if raw.trim().is_empty() {
+            default.map(|index| index + 1).ok_or_else(|| {
+                InstallError::ParameterUsage(
+                    crate::tr!(crate::keys::INTERACTIVE_SELECTION_MUST_BE_NUMBER).into(),
+                )
+            })?
+        } else {
+            raw.trim().parse::<usize>().map_err(|_| {
+                InstallError::ParameterUsage(
+                    crate::tr!(crate::keys::INTERACTIVE_SELECTION_MUST_BE_NUMBER).into(),
+                )
+            })?
+        };
         if !(1..=options.len()).contains(&selected) {
-            return Err(InstallError::ParameterUsage(format!(
-                "interface selection must be between 1 and {}",
-                options.len()
-            )));
+            return Err(InstallError::ParameterUsage(
+                crate::tr!(
+                    crate::keys::INTERACTIVE_SELECTION_OUT_OF_RANGE,
+                    maximum = options.len()
+                )
+                .into(),
+            ));
         }
         Ok(selected - 1)
     }
@@ -341,6 +367,28 @@ mod tests {
         drop(master);
         let mut tty = Tty { file: pty.slave };
         assert!(!tty.confirm("proceed?").unwrap());
+    }
+
+    #[test]
+    fn select_one_accepts_the_default_on_empty_input() {
+        let mut pty = Pty::open();
+        pty.write(b"\n");
+        let master = pty.master;
+        let mut tty = Tty { file: pty.slave };
+        let options = vec!["current".into(), "other".into()];
+        assert_eq!(tty.select_one("repository", &options, Some(0)).unwrap(), 0);
+        drop(master);
+    }
+
+    #[test]
+    fn select_one_honors_an_explicit_selection_over_the_default() {
+        let mut pty = Pty::open();
+        pty.write(b"2\n");
+        let master = pty.master;
+        let mut tty = Tty { file: pty.slave };
+        let options = vec!["current".into(), "other".into()];
+        assert_eq!(tty.select_one("repository", &options, Some(0)).unwrap(), 1);
+        drop(master);
     }
 
     #[test]

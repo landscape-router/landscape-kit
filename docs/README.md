@@ -1,8 +1,8 @@
 # lkit-cli Landscape 管理规格
 
-`lkit` 裸命令提供 Ratatui 管理控制台，同时将首次安装、版本切换、修复、状态协调和服务
-管理器迁移暴露为独立子命令。控制台和命令层只负责输入与输出，具体行为由共享领域模块和
-workflow 实现。
+`lkit` 裸命令提供 Ratatui 管理控制台，同时将首次安装、版本更新与切换、修复、状态协调和
+服务管理器迁移暴露为独立子命令。控制台和命令层只负责输入与输出，具体行为由共享领域模块
+和 workflow 实现。
 
 ## 交互控制台
 
@@ -12,6 +12,7 @@ workflow 实现。
 ## 命令
 
 - [`install`](commands/install.md)：首次安装。
+- [`update`](commands/update.md)：交互式更新到最新或指定 stable 版本。
 - [`switch`](commands/switch.md)：切换到指定 stable 版本。
 - [`repair`](commands/repair.md)：修复静态页面或后端二进制。
 - [`reconcile`](commands/reconcile.md)：协调初始化完成状态、service unit 或仓库来源变化。

@@ -65,11 +65,14 @@ impl Drop for TestWorld {
 
 struct RepositoryServer {
     base_url: String,
+    requests: Arc<Mutex<Vec<String>>>,
 }
 
 impl RepositoryServer {
     fn start(files: HashMap<String, Vec<u8>>) -> Self {
         let files = Arc::new(files);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let request_log = requests.clone();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         std::thread::spawn(move || {
@@ -81,6 +84,7 @@ impl RepositoryServer {
                 };
                 let request = String::from_utf8_lossy(&request[..size]);
                 let path = request.split_whitespace().nth(1).unwrap_or("/");
+                request_log.lock().unwrap().push(path.to_string());
                 let (status, reason, body) = match files.get(path) {
                     Some(body) => (200, "OK", body.as_slice()),
                     None => (404, "Not Found", &[][..]),
@@ -97,7 +101,12 @@ impl RepositoryServer {
         });
         Self {
             base_url: format!("http://{address}/"),
+            requests,
         }
+    }
+
+    fn request_paths(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
     }
 }
 
@@ -304,6 +313,21 @@ esac
             ])
             .arg(&self.runtime_config);
         attach_pty(&mut command, pty);
+        command
+    }
+
+    fn update_command(&self) -> Command {
+        let mut command = Command::new(LKIT);
+        command
+            .env(
+                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+                &self.world.systemctl_config,
+            )
+            .arg("update")
+            .arg("--install-dir")
+            .arg(&self.install_root)
+            .arg("--test-runtime")
+            .arg(&self.runtime_config);
         command
     }
 
@@ -545,6 +569,95 @@ fn installs_and_verifies_fixture_through_full_cli() {
             .join(format!("releases/{VERSION}/landscape-webserver"))
             .canonicalize()
             .unwrap()
+    );
+}
+
+#[test]
+fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("update-interaction", "healthy", 10_000);
+    assert_success(&harness.run());
+
+    let state_path = harness.install_root.join("state/install-state.json");
+    let original_state = std::fs::read(&state_path).unwrap();
+    let original_current = std::fs::read_link(harness.install_root.join("current")).unwrap();
+    let original_transaction_count = transaction_count(&harness.install_root);
+
+    let mut default_tty = Pty::open();
+    default_tty.master.write_all(b"\n").unwrap();
+    let default_output = harness
+        .update_command()
+        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &default_tty.slave_path)
+        .output()
+        .unwrap();
+    assert_success(&default_output);
+    let default_stderr = String::from_utf8_lossy(&default_output.stderr);
+    assert!(default_stderr.contains("Select the repository source for the update"));
+    assert!(default_stderr.contains("Official GitHub repository"));
+    assert!(default_stderr.contains("Default HTTP mirror"));
+    assert!(default_stderr.contains("Custom HTTP repository"));
+    assert!(default_stderr.contains("Select an option [1]:"));
+    assert!(!default_stderr.contains("interface"));
+    assert!(String::from_utf8_lossy(&default_output.stdout).contains("already up to date"));
+
+    let explicit_tty = Pty::open();
+    let explicit_output = harness
+        .update_command()
+        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &explicit_tty.slave_path)
+        .arg("--repository")
+        .arg(&harness.repository.base_url)
+        .output()
+        .unwrap();
+    assert_success(&explicit_output);
+    assert!(
+        !String::from_utf8_lossy(&explicit_output.stderr)
+            .contains("Select the repository source for the update")
+    );
+
+    let newer_repository = RepositoryServer::start(repository_files_for("1.2.4"));
+    let mut cancel_tty = Pty::open();
+    cancel_tty.master.write_all(b"no\n").unwrap();
+    let cancel_output = harness
+        .update_command()
+        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &cancel_tty.slave_path)
+        .arg("--repository")
+        .arg(&newer_repository.base_url)
+        .output()
+        .unwrap();
+    assert_eq!(cancel_output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&cancel_output.stderr).contains("1.2.3 -> 1.2.4"));
+    assert!(String::from_utf8_lossy(&cancel_output.stdout).contains("update cancelled"));
+    assert_eq!(std::fs::read(&state_path).unwrap(), original_state);
+    assert_eq!(
+        std::fs::read_link(harness.install_root.join("current")).unwrap(),
+        original_current
+    );
+    assert_eq!(
+        transaction_count(&harness.install_root),
+        original_transaction_count
+    );
+    let requests = newer_repository.request_paths();
+    assert!(
+        requests
+            .iter()
+            .any(|path| path == "/releases/1.2.4/manifest.json")
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|path| { path.ends_with(".zst") || path.ends_with("static.zip") }),
+        "update downloaded assets before confirmation: {requests:?}"
+    );
+
+    let non_interactive_output = harness
+        .update_command()
+        .arg("--non-interactive")
+        .output()
+        .unwrap();
+    assert_eq!(non_interactive_output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&non_interactive_output.stderr)
+            .contains("use `lkit switch --version <VERSION>")
     );
 }
 
@@ -1000,6 +1113,10 @@ fn write_json(path: &Path, value: &serde_json::Value) {
 }
 
 fn repository_files() -> HashMap<String, Vec<u8>> {
+    repository_files_for(VERSION)
+}
+
+fn repository_files_for(version: &str) -> HashMap<String, Vec<u8>> {
     let executable = std::fs::read(LANDSCAPE_FIXTURE).unwrap();
     let compressed = zstd::encode_all(executable.as_slice(), 3).unwrap();
     let static_zip = static_zip();
@@ -1013,7 +1130,7 @@ fn repository_files() -> HashMap<String, Vec<u8>> {
     let asset_name = format!("landscape-webserver-{architecture}.zst");
     let manifest = serde_json::json!({
         "protocol_version": 1,
-        "version": VERSION,
+        "version": version,
         "assets": {
             "webserver": {
                 architecture: {
@@ -1036,15 +1153,22 @@ fn repository_files() -> HashMap<String, Vec<u8>> {
         ),
         (
             "/channels/stable.json".into(),
-            format!(r#"{{"protocol_version":1,"version":"{VERSION}"}}"#).into_bytes(),
+            format!(r#"{{"protocol_version":1,"version":"{version}"}}"#).into_bytes(),
         ),
         (
-            format!("/releases/{VERSION}/manifest.json"),
+            format!("/releases/{version}/manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),
         ),
-        (format!("/releases/{VERSION}/{asset_name}"), compressed),
-        (format!("/releases/{VERSION}/static.zip"), static_zip),
+        (format!("/releases/{version}/{asset_name}"), compressed),
+        (format!("/releases/{version}/static.zip"), static_zip),
     ])
+}
+
+fn transaction_count(install_root: &Path) -> usize {
+    std::fs::read_dir(install_root.join("transactions"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .count()
 }
 
 fn static_zip() -> Vec<u8> {

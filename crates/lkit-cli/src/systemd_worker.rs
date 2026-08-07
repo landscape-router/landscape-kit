@@ -73,6 +73,9 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         Commands::Switch(args) => {
             load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
         }
+        Commands::Update(args) => {
+            load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
+        }
         Commands::Repair(args) => {
             args.target == crate::commands::repair::RepairTarget::Binary
                 && load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
@@ -94,6 +97,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Check(_) => return false,
         Commands::Install(args) => args.test_runtime.as_deref(),
         Commands::Switch(args) => args.test_runtime.as_deref(),
+        Commands::Update(args) => args.test_runtime.as_deref(),
         Commands::Repair(args) => args.test_runtime.as_deref(),
         Commands::Reconcile(args) => args.test_runtime.as_deref(),
         Commands::ServiceManager(args) => args.test_runtime.as_deref(),

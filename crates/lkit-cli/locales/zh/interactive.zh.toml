@@ -1,3 +1,6 @@
-interactive.select_one_interface = "请选择一个网卡："
+interactive.select_one_option = "请选择一个选项："
+interactive.select_one_option_default = "请选择一个选项［默认 %{default}］："
+interactive.selection_must_be_number = "选项必须是数字"
+interactive.selection_out_of_range = "选项必须介于 1 和 %{maximum} 之间"
 interactive.select_lan_interfaces = "请选择 LAN 网卡（用逗号分隔，留空表示仅 WAN）："
 interactive.password_again = "（再次输入）："

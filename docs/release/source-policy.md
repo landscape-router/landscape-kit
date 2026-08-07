@@ -4,6 +4,11 @@
 
 已安装环境传入新的 `--repository` 但未指定新版本时，仍保持当前版本。
 
+`lkit update` 是交互式版本更新入口的例外：所选渠道只用于本次 `latest` 或显式版本解析。
+如果解析结果与当前版本相同，update 直接返回成功，不验证也不持久化该渠道；需要在同版本
+上变更来源时使用 `lkit switch --version <CURRENT> --repository <BASE_URL>` 或
+`lkit reconcile --repository <BASE_URL>`。
+
 新仓库必须：
 
 - 包含相同规范化版本；

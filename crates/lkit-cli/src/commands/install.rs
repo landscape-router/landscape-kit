@@ -85,7 +85,7 @@ pub async fn run(args: &Install) -> ExitCode {
     super::manage::run_request(&InstallRequest {
         mode: RequestMode::Install,
         version: args.version.clone(),
-        repository: args.repository.clone(),
+        repository: super::manage::repository_override(&args.repository),
         install_dir: args.install_dir.clone(),
         admin_user: args.admin_user.clone(),
         password_file: args.password_file.clone(),

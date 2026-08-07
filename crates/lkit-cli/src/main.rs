@@ -234,6 +234,25 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_ALLOW_NO_BACKUP_HELP))
                 })
         })
+        .mut_subcommand("update", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_UPDATE_ABOUT))
+                .mut_arg("version", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_UPDATE_VERSION_HELP))
+                })
+                .mut_arg("repository", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
+                })
+                .mut_arg("install_dir", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                })
+                .mut_arg("accept_service_change", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
+                })
+                .mut_arg("allow_no_backup", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_ALLOW_NO_BACKUP_HELP))
+                })
+        })
         .mut_subcommand("repair", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_REPAIR_ABOUT))
@@ -332,6 +351,7 @@ async fn run_command(
         Commands::Install(args) => commands::install::run(&args).await,
         Commands::Network(args) => commands::network::run(&args).await,
         Commands::Switch(args) => commands::switch::run(&args).await,
+        Commands::Update(args) => commands::update::run(&args).await,
         Commands::Repair(args) => commands::repair::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,

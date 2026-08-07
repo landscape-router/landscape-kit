@@ -1,6 +1,6 @@
 # `lkit install`
 
-仅用于首次安装 Landscape Router。目标目录中已经存在有效安装状态时返回参数使用错误，并提示使用 `switch`、`repair`、`reconcile` 或 `service-manager`。
+仅用于首次安装 Landscape Router。目标目录中已经存在有效安装状态时返回参数使用错误，并提示使用 `update`、`switch`、`repair`、`reconcile` 或 `service-manager`。
 
 ```text
 lkit [--non-interactive] install [--version <VERSION>]
@@ -20,7 +20,7 @@ lkit [--non-interactive] install [--version <VERSION>]
   接口，并在 Landscape 健康后进入待确认状态；完整行为见[网络接管](../network/takeover.md)。
 - `--takeover-network` 只允许目标 `data/` 目录不存在或为空；已有数据必须先由对应的
   `lkit network rollback` 清理。确认前重启会触发 boot rollback，不会让本次安装继续等待。
-- 已安装环境的版本切换、修复和状态变更不再通过本命令的互斥 flags 表达。
+- 已安装环境的版本更新、切换、修复和状态变更不再通过本命令的互斥 flags 表达。
 
 如果安装根目录存在未完成的网络接管事务，`install` 不自行确认、回滚或删除数据，只提示
 使用 `lkit network status`、`lkit network confirm` 或 `lkit network rollback`。`--admin-user`

@@ -7,6 +7,7 @@ pub mod reconcile;
 pub mod repair;
 pub mod service_manager;
 pub mod switch;
+pub mod update;
 
 use clap::Subcommand;
 
@@ -18,6 +19,7 @@ pub use reconcile::Reconcile;
 pub use repair::Repair;
 pub use service_manager::ServiceManager;
 pub use switch::Switch;
+pub use update::Update;
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
@@ -25,6 +27,7 @@ pub enum Commands {
     Install(Install),
     Network(Network),
     Switch(Switch),
+    Update(Update),
     Repair(Repair),
     Reconcile(Reconcile),
     ServiceManager(ServiceManager),

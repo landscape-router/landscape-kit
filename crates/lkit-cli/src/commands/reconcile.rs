@@ -22,7 +22,7 @@ pub async fn run(args: &Reconcile) -> ExitCode {
     super::manage::run_request(&InstallRequest {
         mode: RequestMode::Reconcile,
         version: None,
-        repository: args.repository.clone(),
+        repository: super::manage::repository_override(&args.repository),
         install_dir: args.install_dir.clone(),
         admin_user: None,
         password_file: None,
