@@ -20,5 +20,7 @@
 
 同时显式指定不同目标版本时，按正常版本切换处理，目标资产以新仓库为准。
 
-切换、repair 或 reconcile 成功后更新状态中的仓库来源；失败时保留原记录。后续命令
-未指定 `--repository` 时继续使用 state 中最后一次成功记录的来源。
+`config.toml` 是用户维护的只读偏好，`lkit` 从不写入或修改它；后续命令未显式指定
+`--repository` 时按 显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源，文件不存在
+时使用官方 GitHub，存在但损坏时报错阻断（只影响需要仓库的命令）。来源记录独立于
+`install-state.json`，见[配置文件](../deployment/config.md)。

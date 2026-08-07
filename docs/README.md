@@ -26,6 +26,7 @@
 
 - [lkit 自发布与安装入口](release/lkit.md)
 - [安装布局与状态](deployment/layout-and-state.md)
+- [配置文件（`config.toml`）](deployment/config.md)
 - [事务与中断恢复](deployment/transactions-and-recovery.md)
 - [初始化与凭据](interaction/initialization-and-credentials.md)
 - [服务、进程与健康检查](service/runtime-and-health.md)

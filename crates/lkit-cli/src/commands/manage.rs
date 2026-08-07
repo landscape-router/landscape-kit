@@ -81,6 +81,9 @@ pub(crate) fn repository_override(
     match value {
         None => None,
         Some(None) => Some(plan::RepositoryChoice::Mirror),
+        Some(Some(value)) if value == "github" => Some(plan::RepositoryChoice::Github(
+            crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+        )),
         Some(Some(url)) => Some(plan::RepositoryChoice::Http(url.clone())),
     }
 }
@@ -483,10 +486,20 @@ async fn execute(
         runtime,
         args.takeover_network,
     )?;
-    let repository = args
-        .repository
-        .clone()
-        .unwrap_or(plan::RepositoryChoice::Github);
+    let repository = match (&args.repository, presence) {
+        (Some(choice), _) => choice.clone(),
+        (None, plan::StatePresence::FirstInstall) => {
+            match crate::deployment::config::load_repository(&normalized)? {
+                Some(source) => source.to_choice(),
+                None => plan::RepositoryChoice::Github(
+                    crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+                ),
+            }
+        }
+        (None, plan::StatePresence::Installed) => plan::RepositoryChoice::Github(
+            crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+        ),
+    };
     let plan = plan::build_plan(normalized, target, repository, presence)?;
     Ok((plan, lock))
 }
@@ -602,6 +615,12 @@ mod tests {
         assert_eq!(
             repository_override(&Some(None)),
             Some(plan::RepositoryChoice::Mirror)
+        );
+        assert_eq!(
+            repository_override(&Some(Some("github".into()))),
+            Some(plan::RepositoryChoice::Github(
+                crate::release::repository::github::DEFAULT_REPOSITORY.into()
+            ))
         );
         assert_eq!(
             repository_override(&Some(Some("https://example.com/releases/".into()))),

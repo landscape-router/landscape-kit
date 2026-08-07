@@ -149,8 +149,8 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
 4. 在 `prepared` 后进入 `stopping`，将旧 `data/` 原子移动到事务目录；
 5. 在 `activating` 从目标备份重建版本目录、空 data、初始化配置和 Geo 缓存；
 6. systemd 模式进入 `verifying`，通过启动和稳定健康检查后写入目标 state；none 模式直接
-   提交 pending/未验证状态并输出参考启动命令；state 的 `repository` 沿用当前安装，
-   `static_archive` 身份从备份内压缩包现场计算；
+   提交 pending/未验证状态并输出参考启动命令；state 的 `static_archive` 身份从备份内
+   压缩包现场计算，仓库来源记录（`config.toml`）保持不变；
 7. 成功提交后保留旧 data 事务现场和备份，事务进入 `committed`。
 
 目标激活或健康检查失败时进入 `rolling_back`，优先用事务目录中的旧 data 和 state 恢复，

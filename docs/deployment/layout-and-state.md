@@ -56,6 +56,7 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 │   └── 其他 Landscape 运行文件
 ├── state/
 │   └── install-state.json
+├── config.toml                    （可选，用户维护）
 ├── transactions/
 │   ├── <transaction-id>.json
 │   └── <restore-transaction-id>/
@@ -84,6 +85,8 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 - 网络接管首次安装在确认前使用的 `data` 属于未提交临时现场；该事务回滚成功时整棵删除，
   不得与已提交安装共享或混淆；
 - `state/install-state.json` 只记录最近一次成功提交的安装状态；
+- `config.toml` 是用户维护的可选顶层文件，保存仓库来源偏好；`lkit` 不创建、更新或删除它，
+  见[配置文件](config.md)；
 - `transactions` 记录进行中和历史事务阶段；restore 事务还可保留旧 `data/` 和已验证的
   目标备份现场用于中断恢复和人工诊断；
 - `backups` 保存 `.lkb` 配置级备份；
@@ -136,7 +139,8 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 
 ### 职责
 
-`state/install-state.json` 只保存最近一次成功提交的安装状态，不记录正在进行的操作。进行中状态存放在独立事务文件中。
+`state/install-state.json` 只保存最近一次成功提交的安装状态，不记录正在进行的操作。进行中状态存放在独立事务文件中。它不包含仓库来源信息；分发渠道记录在独立的用户可编辑
+[`config.toml`](config.md) 中。
 
 写入必须使用临时文件、`fsync` 和原子替换。只有目标版本通过完整验证后才更新。
 
@@ -149,10 +153,6 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
   "install_root": "/root/.lkit/landscape",
   "canonical_install_root": "/root/.lkit/landscape",
   "active_version": "0.19.2",
-  "repository": {
-    "kind": "github",
-    "location": "ThisSeanZhang/landscape"
-  },
   "assets": {
     "webserver": {
       "architecture": "x86_64",
@@ -182,23 +182,11 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 }
 ```
 
-HTTP 仓库来源示例：
-
-```json
-{
-  "kind": "http",
-  "location": "https://repo.example.com/landscape/"
-}
-```
-
-`location` 不保存预签名 URL，不得包含凭据或敏感 query。
-
 ### 字段规则
 
 - `schema_version` 固定为整数 `1`；
 - `layout_version` 固定为整数 `1`；
 - `active_version` 是规范化 SemVer；
-- `repository.kind` 只允许 `github` 或 `http`；
 - `assets.webserver` 记录实际落盘后端的架构、大小和可信摘要；
 - `assets.static_archive` 只记录安装来源，不用于验证当前静态目录；
 - `initialization.status` 只允许 `pending` 或 `complete`；无 systemd 的首次安装尚未由用户启动时为 `pending`；
@@ -213,7 +201,9 @@ HTTP 仓库来源示例：
 - 未知字段允许并忽略。
 
 早期 schema v1 state 可能包含 `initialization.config_sha256`。读取时把它作为未知兼容字段
-忽略，后续写入不再保留；这不会改变 `schema_version`。
+忽略，后续写入不再保留；这不会改变 `schema_version`。同样，早期 state 可能包含
+`repository` 字段，读取时忽略且不迁移；仓库来源只存在独立的
+[`config.toml`](config.md) 中。
 
 ### 损坏判定
 
@@ -221,7 +211,7 @@ HTTP 仓库来源示例：
 
 - 必填字段缺失或类型错误；
 - Schema 或布局版本不支持；
-- `repository.kind`、`initialization.status` 或 `service.manager` 使用未定义枚举值；
+- `initialization.status` 或 `service.manager` 使用未定义枚举值；
 - SemVer、时间戳、架构或摘要格式非法；
 - `canonical_install_root` 与当前真实目录不一致；
 - `current` 指向安装根目录之外，或其目标不是 `releases/<active_version>`；

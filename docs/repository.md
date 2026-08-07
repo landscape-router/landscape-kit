@@ -53,10 +53,13 @@ v1 支持两种数据源：
 - v1 不提供全量版本索引和版本枚举接口。
 
 首次安装未指定 `--repository` 时使用默认 GitHub provider
-`ThisSeanZhang/landscape`。已有安装的管理命令未指定该参数时沿用 state 记录的仓库。
+`ThisSeanZhang/landscape`（`config.toml` 预置时生效）。已有安装的管理命令未指定该参数
+时按 显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源；文件不存在时使用官方
+GitHub，存在但损坏时报错阻断（配置文件的规则见[配置文件](deployment/config.md)）。
 仅指定 `--repository` 而不传值时使用默认 HTTP 镜像
-`https://l1s3.whileaway.dev/landscape/`；传入值时使用指定的 HTTP base URL。显式参数
-就是本次操作使用该来源的授权，不要求额外确认。
+`https://l1s3.whileaway.dev/landscape/`；`--repository github` 使用官方 GitHub 仓库；
+传入值时使用指定的 HTTP base URL。显式参数就是本次操作使用该来源的授权，不要求额外确认，
+也完全绕过 `config.toml`。
 
 `--repository [base-url]` 禁止 query、fragment 和 URL 用户信息。HTTPS 可用于任意主机；HTTP 只允许 `localhost`、`127.0.0.1` 和 `[::1]`。规范化时保留路径前缀并补齐目录语义的结尾 `/`。非法 base URL 在网络请求前失败。
 

@@ -1,9 +1,10 @@
 use std::process::ExitCode;
 
+use crate::deployment::config::RepositorySourceKind;
 use crate::deployment::plan;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::state;
-use crate::deployment::state::{InitStatus, StateRepositoryKind, StateServiceManager};
+use crate::deployment::state::{InitStatus, StateServiceManager};
 use crate::deployment::transaction::TransactionServiceManager;
 use crate::release::repository::provider_for;
 use crate::workflows::install as pipeline;
@@ -88,7 +89,7 @@ async fn run_installed_inner(
                 "--repair-static and --repair-binary cannot be combined".into(),
             ));
         }
-        let (provider, _override) = resolve_provider(args, &state)?;
+        let (provider, _override) = resolve_provider(args, &plan.root)?;
         let health = runtime.health_options()?;
         if args.repair_static {
             crate::workflows::repair::repair_static(&plan.root, &provider, &state).await?;
@@ -155,107 +156,104 @@ async fn run_installed_inner(
             crate::release::repository::Architecture::Aarch64
         }
     };
-    let (provider, provider_override) = resolve_provider(args, &state)?;
-    let resolved = match &args.version {
-        Some(value) => {
-            let target = plan::TargetVersion::parse(value)?;
-            Some(match target {
-                plan::TargetVersion::Latest => provider.latest(architecture).await?,
-                plan::TargetVersion::Version(version) => {
-                    Some(provider.release(&version, architecture).await?)
-                }
-            })
-        }
-        None => None,
+    // 只有需要解析版本时才读取配置来源;显式 `--repository` 完全绕过配置。
+    let version_request = args
+        .version
+        .as_deref()
+        .map(plan::TargetVersion::parse)
+        .transpose()?;
+    let release = if let Some(target) = version_request {
+        let (provider, _override) = resolve_provider(args, &plan.root)?;
+        Some(match target {
+            plan::TargetVersion::Latest => provider
+                .latest(architecture)
+                .await?
+                .ok_or(plan::InstallError::NoStableVersion)?,
+            plan::TargetVersion::Version(version) => {
+                provider.release(&version, architecture).await?
+            }
+        })
+    } else {
+        None
     };
-    let resolved = match resolved {
-        Some(Some(release)) => Some(release),
-        Some(None) => {
-            return Err(plan::InstallError::NoStableVersion);
-        }
-        None => None,
-    };
-    let switching = resolved
-        .as_ref()
-        .is_some_and(|release| release.version.to_string() != state.active_version);
-    if switching {
-        let release = resolved.expect("switching requires a resolved release");
-        let health_options = runtime.health_options()?;
-        let data_dir = plan.root.canonical.join("data");
-        let switch_options = pipeline::SwitchOptions {
-            export_base_url: runtime.export_base_url.clone(),
-            token: &(|| {
-                crate::backup::export::read_api_token(
-                    &data_dir.join("landscape_api_token"),
-                    runtime.managed_uid,
-                )
-            }),
-            confirm: &|prompt| crate::interaction::interactive::confirm(prompt),
-            health: &health_options,
-        };
-        return match pipeline::switch_version(
-            &plan.root,
-            &provider,
-            &state,
-            release,
-            &pipeline::SwitchArgs {
-                allow_no_backup: args.allow_no_backup,
-            },
-            &runtime.systemd,
-            &switch_options,
-        )
-        .await
-        {
-            Ok(pipeline::SwitchOutcome::Committed { version, backup_id }) => {
-                println!(
-                    "install: {}",
-                    crate::tr!(crate::keys::EXISTING_SWITCHED_TO_VERSION, version = version)
-                );
-                match backup_id {
-                    Some(backup_id) => {
-                        println!(
-                            "install: {}",
-                            crate::tr!(
-                                crate::keys::EXISTING_BACKUP_PRESERVED,
-                                backup_id = backup_id
-                            )
-                        );
+    if let Some(release) = release {
+        if release.version.to_string() != state.active_version {
+            let health_options = runtime.health_options()?;
+            let data_dir = plan.root.canonical.join("data");
+            let switch_options = pipeline::SwitchOptions {
+                export_base_url: runtime.export_base_url.clone(),
+                token: &(|| {
+                    crate::backup::export::read_api_token(
+                        &data_dir.join("landscape_api_token"),
+                        runtime.managed_uid,
+                    )
+                }),
+                confirm: &|prompt| crate::interaction::interactive::confirm(prompt),
+                health: &health_options,
+            };
+            return match pipeline::switch_version(
+                &plan.root,
+                &state,
+                release,
+                &pipeline::SwitchArgs {
+                    allow_no_backup: args.allow_no_backup,
+                },
+                &runtime.systemd,
+                &switch_options,
+            )
+            .await
+            {
+                Ok(pipeline::SwitchOutcome::Committed { version, backup_id }) => {
+                    println!(
+                        "install: {}",
+                        crate::tr!(crate::keys::EXISTING_SWITCHED_TO_VERSION, version = version)
+                    );
+                    match backup_id {
+                        Some(backup_id) => {
+                            println!(
+                                "install: {}",
+                                crate::tr!(
+                                    crate::keys::EXISTING_BACKUP_PRESERVED,
+                                    backup_id = backup_id
+                                )
+                            );
+                        }
+                        None => {
+                            println!(
+                                "install: {}",
+                                crate::tr!(crate::keys::EXISTING_NO_BACKUP_CREATED)
+                            );
+                        }
                     }
-                    None => {
-                        println!(
-                            "install: {}",
-                            crate::tr!(crate::keys::EXISTING_NO_BACKUP_CREATED)
-                        );
-                    }
+                    Ok(ExitCode::SUCCESS)
                 }
-                Ok(ExitCode::SUCCESS)
-            }
-            Ok(pipeline::SwitchOutcome::RolledBack { version, backup_id }) => {
-                let backup = backup_id.map_or_else(String::new, |id| {
-                    crate::tr!(crate::keys::EXISTING_ROLLED_BACK_USING_BACKUP, id = id)
-                });
-                eprintln!(
-                    "install: {}",
-                    crate::tr!(
-                        crate::keys::EXISTING_SWITCH_FAILED_ROLLED_BACK,
-                        version = version,
-                        backup = backup
-                    )
-                );
-                Ok(ExitCode::from(5))
-            }
-            Ok(pipeline::SwitchOutcome::RollbackFailed { version, .. }) => {
-                eprintln!(
-                    "install: {}",
-                    crate::tr!(
-                        crate::keys::EXISTING_SWITCH_FAILED_ROLLBACK_FAILED,
-                        version = version
-                    )
-                );
-                Ok(ExitCode::from(6))
-            }
-            Err(error) => Err(error),
-        };
+                Ok(pipeline::SwitchOutcome::RolledBack { version, backup_id }) => {
+                    let backup = backup_id.map_or_else(String::new, |id| {
+                        crate::tr!(crate::keys::EXISTING_ROLLED_BACK_USING_BACKUP, id = id)
+                    });
+                    eprintln!(
+                        "install: {}",
+                        crate::tr!(
+                            crate::keys::EXISTING_SWITCH_FAILED_ROLLED_BACK,
+                            version = version,
+                            backup = backup
+                        )
+                    );
+                    Ok(ExitCode::from(5))
+                }
+                Ok(pipeline::SwitchOutcome::RollbackFailed { version, .. }) => {
+                    eprintln!(
+                        "install: {}",
+                        crate::tr!(
+                            crate::keys::EXISTING_SWITCH_FAILED_ROLLBACK_FAILED,
+                            version = version
+                        )
+                    );
+                    Ok(ExitCode::from(6))
+                }
+                Err(error) => Err(error),
+            };
+        }
     }
 
     let data = plan.root.canonical.join("data");
@@ -270,6 +268,11 @@ async fn run_installed_inner(
         );
         return Ok(ExitCode::SUCCESS);
     }
+    let provider_override = args
+        .repository
+        .clone()
+        .map(plan::RepositoryChoice::resolve)
+        .transpose()?;
     same_version_install(
         args,
         &plan.root,
@@ -297,7 +300,7 @@ fn current_manager(state: &state::InstallState) -> TransactionServiceManager {
 
 fn resolve_provider(
     args: &InstallRequest,
-    state: &state::InstallState,
+    root: &crate::deployment::root::InstallRoot,
 ) -> Result<
     (
         crate::release::repository::ReleaseProvider,
@@ -310,13 +313,26 @@ fn resolve_provider(
         .clone()
         .map(plan::RepositoryChoice::resolve)
         .transpose()?;
-    let state_kind = match state.repository.kind {
-        StateRepositoryKind::Github => crate::release::repository::ProviderKind::Github,
-        StateRepositoryKind::Http => crate::release::repository::ProviderKind::Http,
-    };
     let provider = match &provider_override {
         Some(spec) => provider_for(spec.kind, spec.location.as_str())?,
-        None => provider_for(state_kind, &state.repository.location)?,
+        None => match crate::deployment::config::load_repository(root)? {
+            Some(source) => {
+                let kind = match source.kind {
+                    RepositorySourceKind::Github => {
+                        crate::release::repository::ProviderKind::Github
+                    }
+                    RepositorySourceKind::Http => crate::release::repository::ProviderKind::Http,
+                };
+                provider_for(kind, &source.location)?
+            }
+            None => {
+                let default = plan::RepositoryChoice::Github(
+                    crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+                )
+                .resolve()?;
+                provider_for(default.kind, default.location.as_str())?
+            }
+        },
     };
     Ok((provider, provider_override))
 }
@@ -368,59 +384,43 @@ async fn same_version_install(
     }
 
     if let Some(spec) = provider_override {
-        let spec_kind = match spec.kind {
-            crate::release::repository::ProviderKind::Github => {
-                crate::deployment::state::StateRepositoryKind::Github
+        let provider = provider_for(spec.kind, &spec.location)?;
+        let architecture = match state.assets.webserver.architecture {
+            crate::deployment::state::StateArchitecture::X86_64 => {
+                crate::release::repository::Architecture::X86_64
             }
-            crate::release::repository::ProviderKind::Http => {
-                crate::deployment::state::StateRepositoryKind::Http
+            crate::deployment::state::StateArchitecture::Aarch64 => {
+                crate::release::repository::Architecture::Aarch64
             }
         };
-        let changed =
-            state.repository.kind != spec_kind || state.repository.location != spec.location;
-        if changed {
-            let provider = provider_for(spec.kind, &spec.location)?;
-            let architecture = match state.assets.webserver.architecture {
-                crate::deployment::state::StateArchitecture::X86_64 => {
-                    crate::release::repository::Architecture::X86_64
-                }
-                crate::deployment::state::StateArchitecture::Aarch64 => {
-                    crate::release::repository::Architecture::Aarch64
-                }
-            };
-            let active = plan::TargetVersion::parse(&state.active_version)?;
-            let plan::TargetVersion::Version(version) = active else {
-                return Err(plan::InstallError::CorruptedState(
-                    "active version is not stable".into(),
-                ));
-            };
-            let release = provider.release(&version, architecture).await?;
-            if release.assets.static_archive.sha256 != state.assets.static_archive.sha256
-                || release.assets.static_archive.size != state.assets.static_archive.size
-            {
-                return Err(plan::InstallError::UserRefused(
-                    "the new repository provides different assets for the same version; refusing to switch source"
-                        .into(),
-                ));
-            }
-            // 后端摘要必须与落盘二进制一致:清单摘要针对压缩产物,须下载解压后比对。
-            let check_dir = root.canonical.join("run/.source-check.tmp");
-            let _ = std::fs::remove_dir_all(&check_dir);
-            std::fs::create_dir_all(&check_dir).map_err(plan::InstallError::Io)?;
-            let built = pipeline::fetch_webserver_asset(&release, &check_dir).await?;
-            let _ = std::fs::remove_dir_all(&check_dir);
-            if built.webserver_sha256 != state.assets.webserver.sha256
-                || built.webserver_size != state.assets.webserver.size
-            {
-                return Err(plan::InstallError::UserRefused(
-                    "the new repository provides a different backend binary than the recorded installation; refusing to switch source"
-                        .into(),
-                ));
-            }
-            updated.repository = crate::deployment::state::RepositorySource {
-                kind: spec_kind,
-                location: spec.location,
-            };
+        let active = plan::TargetVersion::parse(&state.active_version)?;
+        let plan::TargetVersion::Version(version) = active else {
+            return Err(plan::InstallError::CorruptedState(
+                "active version is not stable".into(),
+            ));
+        };
+        let release = provider.release(&version, architecture).await?;
+        if release.assets.static_archive.sha256 != state.assets.static_archive.sha256
+            || release.assets.static_archive.size != state.assets.static_archive.size
+        {
+            return Err(plan::InstallError::UserRefused(
+                "the new repository provides different assets for the same version; refusing to switch source"
+                    .into(),
+            ));
+        }
+        // 后端摘要必须与落盘二进制一致:清单摘要针对压缩产物,须下载解压后比对。
+        let check_dir = root.canonical.join("run/.source-check.tmp");
+        let _ = std::fs::remove_dir_all(&check_dir);
+        std::fs::create_dir_all(&check_dir).map_err(plan::InstallError::Io)?;
+        let built = pipeline::fetch_webserver_asset(&release, &check_dir).await?;
+        let _ = std::fs::remove_dir_all(&check_dir);
+        if built.webserver_sha256 != state.assets.webserver.sha256
+            || built.webserver_size != state.assets.webserver.size
+        {
+            return Err(plan::InstallError::UserRefused(
+                "the new repository provides a different backend binary than the recorded installation; refusing to switch source"
+                    .into(),
+            ));
         }
     }
     crate::deployment::state::write_state(root, &updated)?;

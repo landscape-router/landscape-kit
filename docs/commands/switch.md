@@ -25,8 +25,10 @@ lkit switch --version <VERSION> [--repository [<BASE_URL>]]
 因 Landscape 重启而断开时，worker 仍会继续健康检查并提交，或在失败时自动回滚。
 事务在 stop 前先写入 `stopping`；主机重启不自动继续，而由下次调用恢复。
 
-未指定 `--repository` 时沿用 state 记录的仓库。显式指定其他仓库即表示本次切换使用
-该来源，不再进行第二次确认；只有切换成功后才把新来源写入 state。
+未指定 `--repository` 时按 显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源
+（文件缺失时官方 GitHub，损坏时报错阻断，见[配置文件](../deployment/config.md)）。
+显式指定其他仓库即表示本次切换使用该来源，不再进行第二次确认。切换成功、失败或回滚
+都不会写入或修改 `config.toml`。
 
 初始化完成后，switch 不读取、比较或改写现场保留的
 `data/landscape_init.toml`。该文件内容变化或删除不需要接受参数；初始化锁缺失仍属于

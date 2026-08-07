@@ -23,8 +23,8 @@
 
 每个 v1 备份固定携带该版本官方静态压缩包 `static.zip`，与归档内 `static/` 解压树同源。
 restore 从备份内压缩包现场计算 `static_archive` 身份，state 因此始终如实描述恢复内容，
-metadata 不需要记录仓库来源：`repository` 是安装机器的持续分发通道，由 install 建立，
-restore 沿用当前安装 state，不属于备份内容。
+metadata 不需要记录仓库来源：仓库来源是安装机器的持续分发通道，独立记录在
+`config.toml` 中，restore 不读取也不修改它，不属于备份内容。
 
 ### 配置导出
 
@@ -265,8 +265,8 @@ release。systemd 模式必须启动并通过完整健康检查后提交；none 
 release 内容与回滚前一致。恢复阶段沿用现有 systemd operation worker 和 phase 恢复
 规则，不能猜测缺失的 state、`current` 或 service manager。恢复提交的 state 中：
 `active_version` 取备份 metadata，`webserver` 身份从解包二进制现场计算，
-`static_archive` 身份从备份内 `static.zip` 现场计算，`repository` 沿用当前安装 state，
-不修改、不猜测。
+`static_archive` 身份从备份内 `static.zip` 现场计算；`config.toml` 中的仓库
+来源记录不修改、不猜测。
 
 ## 无备份切换的失败恢复
 

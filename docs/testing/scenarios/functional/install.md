@@ -131,3 +131,30 @@
 - 证据：[输出与退出码](../../../commands/output-and-exit-codes.md)、[事务托管](../../../deployment/transactions-and-recovery.md#systemd-托管操作)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
 - 缺口：真实 systemd smoke 尚未直接验证 Ctrl+C 会停止临时 operation unit。
 - 说明：PTY 场景在密码回显关闭后发送 SIGINT，断言退出状态为 `130` 且 `ECHO` 已恢复。
+
+## INS-16
+
+**`config.toml` 是只读用户配置：安装与后续命令都不写入，来源按优先级解析**
+
+- 测试层：CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：首次安装完成后断言 `install-state.json` 不包含 `repository` 字段且安装根目录顶层
+  不存在 `config.toml`；预置有效配置（HTTP 来源）后不带 `--repository` 执行首次安装，
+  安装使用该来源且配置字节保持不变；网络接管 confirm 前后均不创建配置文件。
+- 缺口：缺省官方 GitHub 的首次安装只在配置缺失路径被隐含覆盖，未单独断言请求打到官方
+  仓库（E2E 避免真实网络）。
+
+## INS-17
+
+**来源解析优先级与损坏配置的按需阻断**
+
+- 测试层：CLI fixture E2E、单元测试
+- 状态：`已覆盖`
+- 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：解析优先级为 显式 CLI > `config.toml` > 官方 GitHub。`--repository` 支持精确小写值
+  `github`；显式来源完全绕过配置（损坏配置下 reconcile/repair 仍成功，且原文件字节不变，
+  预设的配置来源服务器收不到请求）。损坏配置只阻断需要仓库的命令（switch/repair/update
+  无显式来源时报错并提示修复或删除），普通 reconcile、restore、backup、service-manager
+  和 network 子命令不受影响；删除文件后命令恢复。同版本显式来源诊断成功或失败都不修改
+  配置。

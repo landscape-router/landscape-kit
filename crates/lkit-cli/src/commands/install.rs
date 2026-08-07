@@ -11,7 +11,9 @@ pub struct Install {
     /// Target version: `<version>` or `latest`
     #[arg(long, value_name = "VERSION")]
     pub version: Option<String>,
-    /// Repository source: bare flag uses the default HTTP mirror, a value uses the given protocol v1 HTTP repository
+    /// Repository source: bare flag uses the default HTTP mirror, `github` uses the
+    /// official GitHub repository, a value uses the given protocol v1 HTTP repository;
+    /// omitted entirely, the config file or the official GitHub default applies
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
     /// Full install root directory

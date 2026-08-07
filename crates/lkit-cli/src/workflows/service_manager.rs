@@ -276,8 +276,8 @@ mod tests {
     use super::super::health::{DocsProbe, PortCheck};
     use super::super::root::InstallRoot;
     use super::super::state::{
-        ArchiveAsset, Assets, InitializationState, RepositorySource, ServiceState,
-        StateArchitecture, StateRepositoryKind, StateServiceManager, WebserverAsset,
+        ArchiveAsset, Assets, InitializationState, ServiceState, StateArchitecture,
+        StateServiceManager, WebserverAsset,
     };
     use super::*;
 
@@ -366,10 +366,6 @@ esac
             install_root: root.install_root.display().to_string(),
             canonical_install_root: root.canonical.display().to_string(),
             active_version: "1.2.3".into(),
-            repository: RepositorySource {
-                kind: StateRepositoryKind::Github,
-                location: "ThisSeanZhang/landscape".into(),
-            },
             assets: Assets {
                 webserver: WebserverAsset {
                     architecture: StateArchitecture::X86_64,

@@ -13,7 +13,12 @@ lkit [--non-interactive] install [--version <VERSION>]
 - 未指定版本时安装最新 stable 版本；`--version latest` 与其等价。
 - `--non-interactive` 是全局参数，可放在子命令前或后；它显式禁止打开终端、输入提示和
   动态终端进度。缺少必须的密码文件或确认参数时直接失败。
-- `--repository` 使用默认 HTTP 镜像；带值时使用指定 protocol v1 HTTP 仓库；缺省使用官方 GitHub provider。
+- `--repository` 使用默认 HTTP 镜像；`--repository github` 使用官方 GitHub 仓库；带值时
+  使用指定 protocol v1 HTTP 仓库；缺省时按 显式 CLI > `config.toml` > 官方 GitHub 的
+  优先级解析来源（预置配置生效，缺失时官方 GitHub）。
+- 仓库来源不写入 `state/install-state.json`，`lkit` 也**从不创建或更新** `config.toml`；
+  该文件完全由用户维护，只影响后续命令未显式指定 `--repository` 时的缺省来源，
+  见[配置文件](../deployment/config.md)。
 - `--service-manager` 只表示首次安装的运行管理模式；缺省时自动选择。
 - `--force` 不删除文件，只显示规范化安装根目录并要求用户自行清理。
 - `--takeover-network` 仅用于首次安装，要求 systemd 和交互终端。它让用户选择 WAN/LAN

@@ -544,7 +544,6 @@ fn build_restore_state(
         install_root: root.install_root.display().to_string(),
         canonical_install_root: root.canonical.display().to_string(),
         active_version: metadata.landscape_version.clone(),
-        repository: previous.repository.clone(),
         assets: Assets {
             webserver: WebserverAsset {
                 architecture,
@@ -744,8 +743,8 @@ mod tests {
     use super::super::health::HealthOptions;
     use super::super::repository::test_server::{TestResponse, TestServer};
     use super::super::state::{
-        ArchiveAsset, Assets, InitializationState, RepositorySource, ServiceState,
-        StateArchitecture, StateRepositoryKind, StateServiceManager, WebserverAsset,
+        ArchiveAsset, Assets, InitializationState, ServiceState, StateArchitecture,
+        StateServiceManager, WebserverAsset,
     };
     use super::*;
 
@@ -806,10 +805,6 @@ mod tests {
             install_root: root.install_root.display().to_string(),
             canonical_install_root: root.canonical.display().to_string(),
             active_version: version.into(),
-            repository: RepositorySource {
-                kind: StateRepositoryKind::Http,
-                location: "https://repo.example.test/".into(),
-            },
             assets: Assets {
                 webserver: WebserverAsset {
                     architecture: StateArchitecture::X86_64,
@@ -965,7 +960,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(updated.active_version, "1.2.3");
-        assert_eq!(updated.repository.location, "https://repo.example.test/");
+        assert!(
+            super::super::config::load_repository(&install_root)
+                .unwrap()
+                .is_none(),
+            "restore must not write the repository record"
+        );
         let (webserver_sha, webserver_size) = sha256_bytes(PAYLOAD_1_2_3);
         assert_eq!(updated.assets.webserver.sha256, webserver_sha);
         assert_eq!(updated.assets.webserver.size, webserver_size);

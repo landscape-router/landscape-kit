@@ -311,8 +311,8 @@ mod tests {
     use std::net::{TcpListener, UdpSocket};
 
     use super::super::state::{
-        ArchiveAsset, Assets, InitStatus, InitializationState, RepositorySource, ServiceState,
-        StateArchitecture, StateRepositoryKind, StateServiceManager, WebserverAsset,
+        ArchiveAsset, Assets, InitStatus, InitializationState, ServiceState, StateArchitecture,
+        StateServiceManager, WebserverAsset,
     };
     use super::*;
 
@@ -343,10 +343,6 @@ mod tests {
             install_root: canonical.display().to_string(),
             canonical_install_root: canonical.display().to_string(),
             active_version: "0.19.2".into(),
-            repository: RepositorySource {
-                kind: StateRepositoryKind::Github,
-                location: "ThisSeanZhang/landscape".into(),
-            },
             assets: Assets {
                 webserver: WebserverAsset {
                     architecture: StateArchitecture::X86_64,

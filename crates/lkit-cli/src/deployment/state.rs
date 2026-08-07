@@ -21,25 +21,11 @@ pub(crate) struct InstallState {
     pub install_root: String,
     pub canonical_install_root: String,
     pub active_version: String,
-    pub repository: RepositorySource,
     pub assets: Assets,
     pub initialization: InitializationState,
     pub service: ServiceState,
     pub last_transaction_id: Option<String>,
     pub committed_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct RepositorySource {
-    pub kind: StateRepositoryKind,
-    pub location: String,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum StateRepositoryKind {
-    Github,
-    Http,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -316,10 +302,6 @@ mod tests {
             install_root: root.install_root.display().to_string(),
             canonical_install_root: root.canonical.display().to_string(),
             active_version: "0.19.2".into(),
-            repository: RepositorySource {
-                kind: StateRepositoryKind::Github,
-                location: "ThisSeanZhang/landscape".into(),
-            },
             assets: Assets {
                 webserver: WebserverAsset {
                     architecture: StateArchitecture::X86_64,
@@ -369,6 +351,14 @@ mod tests {
     }
 
     #[test]
+    fn missing_state_returns_none() {
+        let temp = temp_root("missing");
+        let root = new_root(&temp);
+        assert!(load_state(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn reads_legacy_state_with_initialization_checksum_but_does_not_write_it() {
         let root = InstallRoot {
             install_root: "/x".into(),
@@ -385,11 +375,22 @@ mod tests {
     }
 
     #[test]
-    fn missing_state_returns_none() {
-        let temp = temp_root("missing");
-        let root = new_root(&temp);
-        assert!(load_state(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+    fn reads_legacy_state_with_repository_field_but_ignores_it() {
+        let root = InstallRoot {
+            install_root: "/x".into(),
+            canonical: "/x".into(),
+        };
+        let mut value = serde_json::to_value(valid_state(&root)).unwrap();
+        value["repository"] = serde_json::json!({
+            "kind": "http",
+            "location": "https://repo.example.com/landscape/",
+        });
+
+        let state: InstallState = serde_json::from_value(value).unwrap();
+        validate_state(&state).unwrap();
+        let serialized = serde_json::to_value(state).unwrap();
+
+        assert!(serialized.get("repository").is_none());
     }
 
     #[test]

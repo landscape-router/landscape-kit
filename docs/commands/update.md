@@ -13,9 +13,11 @@ lkit update [--version <VERSION>] [--repository [<BASE_URL>]]
 
 ## 交互流程
 
-1. **渠道**：未显式指定 `--repository` 时，用交互选择询问读取渠道。首个选项是 state
-   记录的仓库来源，直接回车即可接受；同时提供官方 GitHub、默认 HTTP 镜像和自定义 HTTP
-   仓库（protocol v1）。显式 `--repository` 跳过该提问，语义与 `lkit switch` 相同。
+1. **渠道**：未显式指定 `--repository` 时，用交互选择询问读取渠道。`config.toml`
+   存在且有效时首个选项是其中记录的最新来源，直接回车即可接受；文件不存在时选项从
+   官方 GitHub 开始（默认选中），不显示"当前来源"项；文件存在但损坏时报错阻断，提示
+   修复或删除该文件。同时提供官方 GitHub、默认 HTTP 镜像和自定义 HTTP 仓库
+   （protocol v1）。显式 `--repository` 跳过该提问，语义与 `lkit switch` 相同。
 2. **解析目标**：默认解析所选渠道的 `latest`；`--version <VERSION>` 时解析指定 stable
    版本。解析发生在任何事务或备份之前。
 3. **比较与确认**：目标版本与当前 `active_version` 比较：
@@ -37,8 +39,9 @@ lkit update [--version <VERSION>] [--repository [<BASE_URL>]]
 lkit switch --version latest
 ```
 
-需要指定 HTTP 仓库时，再追加 `--repository <BASE_URL>`；不带该参数时 switch 沿用 state
-中最后一次成功记录的来源。
+需要指定 HTTP 仓库时，再追加 `--repository <BASE_URL>`；不带该参数时 switch 按
+显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源（文件缺失时使用官方 GitHub，
+见[配置文件](../deployment/config.md)）。
 
 ## 与 `lkit switch` 的关系
 

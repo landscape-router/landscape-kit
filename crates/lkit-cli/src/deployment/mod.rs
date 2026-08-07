@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+pub(crate) mod config;
 pub(crate) mod lock;
 pub(crate) mod plan;
 pub(crate) mod root;

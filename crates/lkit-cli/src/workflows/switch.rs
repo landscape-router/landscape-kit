@@ -5,7 +5,7 @@ use super::pipeline::{
     check_initialization, parse_stable_version, verify_current_backend, write_unit_origin,
 };
 use super::plan::InstallError;
-use super::repository::{Release, ReleaseProvider};
+use super::repository::Release;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateServiceManager};
 use super::systemd::{self, Systemd};
@@ -49,7 +49,6 @@ pub(crate) struct SwitchOptions<'a, P: DocsProbe> {
 /// 无 systemd 环境要求用户在 `/dev/tty` 确认已自行停止实例。
 pub(crate) async fn switch_version<P: DocsProbe>(
     root: &InstallRoot,
-    provider: &ReleaseProvider,
     state: &InstallState,
     release: Release,
     args: &SwitchArgs,
@@ -215,7 +214,6 @@ pub(crate) async fn switch_version<P: DocsProbe>(
         }
         let new_state = build_switched_state(
             root,
-            provider,
             &release,
             &built,
             state,

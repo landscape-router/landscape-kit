@@ -5,7 +5,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use super::plan::InstallError;
 use super::root::InstallRoot;
 
-const KNOWN_TOP_LEVEL: [&str; 9] = [
+const KNOWN_TOP_LEVEL: [&str; 10] = [
     "releases",
     "data",
     "state",
@@ -15,6 +15,7 @@ const KNOWN_TOP_LEVEL: [&str; 9] = [
     "service",
     "logs",
     "current",
+    "config.toml",
 ];
 
 pub(crate) struct InstallLock {
@@ -122,6 +123,8 @@ mod tests {
         let root = new_root(&temp);
         assert!(acquire_install_lock(&root).is_ok());
         std::fs::create_dir_all(temp.join("data")).unwrap();
+        assert!(acquire_install_lock(&root).is_ok());
+        std::fs::write(temp.join("config.toml"), b"schema_version = 1\n").unwrap();
         assert!(acquire_install_lock(&root).is_ok());
         let _ = std::fs::remove_dir_all(&temp);
     }

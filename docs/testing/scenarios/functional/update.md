@@ -12,8 +12,10 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 - 测试层：CLI/伪终端
 - 状态：`已覆盖`
 - 证据：[`lkit update`](../../../commands/update.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
-- 说明：未显式 `--repository` 时通过 `/dev/tty` 选择渠道；首个 state 来源选项支持直接回车，
-  列表同时显示 GitHub、Mirror 和自定义 HTTP。解析 `latest` 后展示 `当前 <X> → 目标 <Y>`。
+- 说明：未显式 `--repository` 时通过 `/dev/tty` 选择渠道；预置 `config.toml` 时
+  首个"当前来源"选项支持直接回车（update 不修改该文件），文件不存在时选项从官方
+  GitHub 开始（默认选中）；列表同时显示 GitHub、Mirror 和自定义 HTTP。解析
+  `latest` 后展示 `当前 <X> → 目标 <Y>`。
 
 ## UP-02
 

@@ -20,9 +20,8 @@ use super::repository::{Architecture, ProviderKind, Release, ReleaseProvider};
 use super::resolv;
 use super::root::InstallRoot;
 use super::state::{
-    ArchiveAsset, Assets, InitStatus, InitializationState, InstallState, RepositorySource,
-    STATE_LAYOUT_VERSION, STATE_SCHEMA_VERSION, ServiceState, StateArchitecture,
-    StateRepositoryKind, StateServiceManager, WebserverAsset,
+    ArchiveAsset, Assets, InitStatus, InitializationState, InstallState, STATE_LAYOUT_VERSION,
+    STATE_SCHEMA_VERSION, ServiceState, StateArchitecture, StateServiceManager, WebserverAsset,
 };
 pub(crate) use super::switch::{SwitchArgs, SwitchOptions, SwitchOutcome, switch_version};
 use super::systemd::{self, Availability, Systemd};
@@ -259,7 +258,7 @@ async fn first_install_impl<P: DocsProbe>(
             health::wait_for_startup(&options).await?;
             health::observe_stable(&options).await?;
         }
-        let state = build_state(root, provider, &release, architecture, &built, &activation);
+        let state = build_state(root, &release, architecture, &built, &activation);
         if let Some(takeover) = transaction.network_takeover.as_ref() {
             crate::network::takeover::write_pending_state(root, takeover, &state)?;
             super::transaction::mark_phase(root, &transaction, Phase::AwaitingNetworkConfirmation)?;
@@ -509,7 +508,6 @@ pub(crate) fn verify_unit_ownership(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_switched_state(
     root: &InstallRoot,
-    provider: &ReleaseProvider,
     release: &Release,
     built: &BuiltRelease,
     previous: &InstallState,
@@ -517,10 +515,6 @@ pub(crate) fn build_switched_state(
     unit_sha: Option<String>,
 ) -> InstallState {
     let architecture = architecture_from_state(previous);
-    let repository_kind = match provider.kind() {
-        ProviderKind::Github => StateRepositoryKind::Github,
-        ProviderKind::Http => StateRepositoryKind::Http,
-    };
     let lock_present = root.canonical.join("data/landscape_init.lock").is_file();
     let service = match previous.service.manager {
         StateServiceManager::Systemd => ServiceState {
@@ -546,10 +540,6 @@ pub(crate) fn build_switched_state(
         install_root: root.install_root.display().to_string(),
         canonical_install_root: root.canonical.display().to_string(),
         active_version: release.version.to_string(),
-        repository: RepositorySource {
-            kind: repository_kind,
-            location: provider.location().to_string(),
-        },
         assets: Assets {
             webserver: WebserverAsset {
                 architecture: match architecture {
@@ -673,7 +663,6 @@ fn write_init_config(root: &InstallRoot, content: &str) -> Result<(), InstallErr
 
 fn build_state(
     root: &InstallRoot,
-    provider: &ReleaseProvider,
     release: &Release,
     architecture: Architecture,
     built: &BuiltRelease,
@@ -683,20 +672,12 @@ fn build_state(
         Architecture::X86_64 => StateArchitecture::X86_64,
         Architecture::Aarch64 => StateArchitecture::Aarch64,
     };
-    let repository_kind = match provider.kind() {
-        ProviderKind::Github => StateRepositoryKind::Github,
-        ProviderKind::Http => StateRepositoryKind::Http,
-    };
     InstallState {
         schema_version: STATE_SCHEMA_VERSION,
         layout_version: STATE_LAYOUT_VERSION,
         install_root: root.install_root.display().to_string(),
         canonical_install_root: root.canonical.display().to_string(),
         active_version: release.version.to_string(),
-        repository: RepositorySource {
-            kind: repository_kind,
-            location: provider.location().to_string(),
-        },
         assets: Assets {
             webserver: WebserverAsset {
                 architecture,
@@ -1561,7 +1542,6 @@ esac
         let health = test_options();
         let outcome = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -1641,7 +1621,6 @@ esac
 
         let result = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -1711,7 +1690,6 @@ esac
         assert!(matches!(
             switch_version(
                 &root,
-                &provider,
                 &state,
                 target,
                 &SwitchArgs {
@@ -1752,7 +1730,12 @@ esac
         let state = super::super::state::load_state(&first_root)
             .unwrap()
             .unwrap();
-        assert_eq!(state.repository.location, first_provider.location());
+        assert!(
+            super::super::config::load_repository(&first_root)
+                .unwrap()
+                .is_none(),
+            "first install must not create config.toml"
+        );
 
         let (second_server, second_root, second_provider) = start_switch_repository(
             "e2e-switch-repo-b",
@@ -1779,7 +1762,6 @@ esac
         };
         let outcome = switch_version(
             &first_root,
-            &second_provider,
             &state,
             target,
             &SwitchArgs {
@@ -1808,7 +1790,12 @@ esac
             .unwrap()
             .unwrap();
         assert_eq!(state.active_version, "1.3.0");
-        assert_eq!(state.repository.location, second_provider.location());
+        assert!(
+            super::super::config::load_repository(&first_root)
+                .unwrap()
+                .is_none(),
+            "switch must not write config.toml"
+        );
         let _ = std::fs::remove_dir_all(&first_root.install_root);
         let _ = std::fs::remove_dir_all(&second_root.install_root);
     }
@@ -1940,7 +1927,6 @@ esac
             .unwrap();
         let outcome = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -2082,7 +2068,6 @@ esac
             .unwrap();
         let result = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -2140,7 +2125,6 @@ esac
             .unwrap();
         let outcome = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -2233,7 +2217,6 @@ esac
             .unwrap();
         let outcome = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -2352,7 +2335,6 @@ esac
             .unwrap();
         let outcome = switch_version(
             &root,
-            &provider,
             &state,
             target,
             &SwitchArgs {
@@ -2466,10 +2448,6 @@ esac
             install_root: "/tmp/lkit-init-check".into(),
             canonical_install_root: "/tmp/lkit-init-check".into(),
             active_version: "1.2.3".into(),
-            repository: RepositorySource {
-                kind: StateRepositoryKind::Http,
-                location: "https://repo.example.test/".into(),
-            },
             assets: Assets {
                 webserver: WebserverAsset {
                     architecture: StateArchitecture::X86_64,

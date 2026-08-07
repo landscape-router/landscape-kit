@@ -1099,6 +1099,7 @@ fn language_toggle_key(key: &KeyEvent) -> bool {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RepositoryMode {
+    Default,
     Github,
     Mirror,
     Custom,
@@ -1107,6 +1108,7 @@ enum RepositoryMode {
 impl RepositoryMode {
     fn label(self) -> String {
         match self {
+            Self::Default => crate::tr!(crate::keys::CONSOLE_REPOSITORY_DEFAULT),
             Self::Github => "GitHub".into(),
             Self::Mirror => crate::tr!(crate::keys::CONSOLE_REPOSITORY_MIRROR),
             Self::Custom => crate::tr!(crate::keys::CONSOLE_REPOSITORY_CUSTOM),
@@ -1115,11 +1117,14 @@ impl RepositoryMode {
 
     fn change(&mut self, forward: bool) {
         *self = match (*self, forward) {
-            (Self::Github, true) | (Self::Custom, false) => Self::Mirror,
+            (Self::Default, true) => Self::Github,
+            (Self::Github, true) => Self::Mirror,
             (Self::Mirror, true) => Self::Custom,
+            (Self::Custom, true) => Self::Default,
+            (Self::Default, false) => Self::Custom,
+            (Self::Custom, false) => Self::Mirror,
             (Self::Mirror, false) => Self::Github,
-            (Self::Custom, true) => Self::Github,
-            (Self::Github, false) => Self::Custom,
+            (Self::Github, false) => Self::Default,
         };
     }
 }
@@ -1159,6 +1164,7 @@ impl ManagerMode {
     }
 }
 
+#[derive(Clone)]
 struct InstallForm {
     version: String,
     repository: RepositoryMode,
@@ -1178,7 +1184,7 @@ impl Default for InstallForm {
     fn default() -> Self {
         Self {
             version: "latest".into(),
-            repository: RepositoryMode::Github,
+            repository: RepositoryMode::Default,
             repository_url: plan::DEFAULT_HTTP_MIRROR.into(),
             install_dir: std::env::var("LKIT_INSTALL_DIR")
                 .unwrap_or_else(|_| plan::DEFAULT_INSTALL_ROOT.into()),
@@ -1340,7 +1346,8 @@ impl InstallForm {
         let install_dir = plan::select_install_root(Some(&requested_install_dir), None)
             .map_err(|error| error.to_string())?;
         let repository = match self.repository {
-            RepositoryMode::Github => None,
+            RepositoryMode::Default => None,
+            RepositoryMode::Github => Some(Some("github".into())),
             RepositoryMode::Mirror => Some(None),
             RepositoryMode::Custom => Some(Some(self.repository_url.trim().to_string())),
         };
@@ -1364,6 +1371,9 @@ impl InstallForm {
         let mut args = vec!["install".into(), "--version".into(), version.into()];
         match &repository {
             None => {}
+            Some(Some(value)) if value == "github" => {
+                args.extend(["--repository".into(), "github".into()])
+            }
             Some(None) => args.push("--repository".into()),
             Some(Some(url)) => args.extend(["--repository".into(), url.clone()]),
         }
@@ -3438,7 +3448,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
 
         assert_eq!(app.focus, Focus::Panel);
-        assert_eq!(app.install.repository, RepositoryMode::Mirror);
+        assert_eq!(app.install.repository, RepositoryMode::Github);
     }
 
     #[test]
@@ -3539,6 +3549,54 @@ mod tests {
         assert_eq!(args[0], "install");
         assert!(args.windows(2).any(|pair| pair == ["--version", "1.2.3"]));
         assert!(args.iter().all(|argument| !argument.contains("Secret123")));
+    }
+
+    #[test]
+    fn install_form_maps_repository_modes_to_cli_flags() {
+        let base = InstallForm {
+            password: "Secret123".into(),
+            password_confirmation: "Secret123".into(),
+            ..InstallForm::default()
+        };
+        for (mode, repository, expected) in [
+            (RepositoryMode::Default, None, Vec::<&str>::new()),
+            (
+                RepositoryMode::Github,
+                Some(Some("github".into())),
+                vec!["--repository", "github"],
+            ),
+            (RepositoryMode::Mirror, Some(None), vec!["--repository"]),
+        ] {
+            let mut form = base.clone();
+            form.repository = mode;
+            let ConsoleAction::Command { command, args } = form.command().unwrap() else {
+                panic!("expected install command");
+            };
+            let Commands::Install(install) = command else {
+                panic!("expected install request");
+            };
+            assert_eq!(install.repository, repository);
+            for pair in expected.chunks(2) {
+                if pair.len() == 1 {
+                    assert!(
+                        args.iter().any(|argument| argument == pair[0]),
+                        "{mode:?} must forward {:?}, got {args:?}",
+                        pair[0]
+                    );
+                } else {
+                    assert!(
+                        args.windows(2).any(|window| window == pair),
+                        "{mode:?} must forward {pair:?}, got {args:?}"
+                    );
+                }
+            }
+            if expected.is_empty() {
+                assert!(
+                    !args.iter().any(|argument| argument == "--repository"),
+                    "{mode:?} must not forward --repository, got {args:?}"
+                );
+            }
+        }
     }
 
     #[test]

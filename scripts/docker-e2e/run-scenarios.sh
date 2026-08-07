@@ -530,7 +530,12 @@ lkit backup verify --backup "$manual_id" --install-dir "$install_root" \
   || fail "backup verify failed for $manual_id"
 restore_lkb_before=$(lkb_count)
 state_before="$install_root/state/install-state.json"
-repository_before=$(json_value "$state_before" repository.location)
+config_before="$install_root/config.toml"
+if [[ -f "$config_before" ]]; then
+  config_bytes_before=$(sha256sum "$config_before" | awk '{print $1}')
+else
+  config_bytes_before=
+fi
 lkit restore --backup "$manual_id" --install-dir "$install_root" --non-interactive --yes \
   || fail "same-version restore returned nonzero"
 assert_state_version 2.0.0
@@ -538,8 +543,12 @@ assert_service_identity
 assert_latest_phase "$install_root" committed
 [[ $(lkb_count) -eq $((restore_lkb_before + 1)) ]] \
   || fail "restore must create a protection backup"
-[[ $(json_value "$state_before" repository.location) == "$repository_before" ]] \
-  || fail "restore must keep the current repository source"
+if [[ -n "$config_bytes_before" ]]; then
+  [[ $(sha256sum "$config_before" | awk '{print $1}') == "$config_bytes_before" ]] \
+    || fail "restore must not modify config.toml"
+else
+  [[ ! -e "$config_before" ]] || fail "restore must not create config.toml"
+fi
 transaction=$(latest_transaction)
 python3 - "$transaction" "$manual_id" <<'PY' || fail "restore transaction shape is wrong"
 import json
@@ -675,8 +684,17 @@ run_install "$install_root_latest" \
   --service-manager systemd
 [[ $install_status -eq 0 ]] || fail "latest-channel install returned $install_status"
 assert_state_version 5.0.0 "$install_root_latest"
-[[ $(json_value "$install_root_latest/state/install-state.json" repository.kind) == http ]] \
-  || fail "latest install repository kind is not http"
+python3 - "$install_root_latest/state/install-state.json" <<'PY' \
+  || fail "install-state.json must not record the repository source"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+assert "repository" not in state, state.get("repository")
+PY
+[[ ! -e "$install_root_latest/config.toml" ]] \
+  || fail "install must not create config.toml"
 assert_service_identity "$install_root_latest"
 
 # ---------------------------------------------------------------- S8 中断事务恢复

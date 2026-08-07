@@ -8,12 +8,10 @@ use super::export;
 use super::health::{DocsProbe, StartupOptions};
 use super::pipeline::{self, SwitchOptions};
 use super::plan::InstallError;
-use super::repository::{Architecture, ProviderKind, Release, ReleaseProvider};
+use super::repository::{Architecture, Release, ReleaseProvider};
 use super::rollback;
 use super::root::InstallRoot;
-use super::state::{
-    InitStatus, InstallState, StateArchitecture, StateRepositoryKind, StateServiceManager,
-};
+use super::state::{InitStatus, InstallState, StateArchitecture, StateServiceManager};
 use super::systemd::Systemd;
 use super::transaction::{Phase, StaticBackupRef, TransactionFile};
 
@@ -24,33 +22,19 @@ pub(crate) enum RepairOutcome {
     RollbackFailed { reason: String },
 }
 
-/// 校验目标仓库来源变化。静态压缩包按清单直接比对(清单摘要即下载产物摘要);
-/// 返回是否发生了来源变化。后端二进制摘要必须在下载解压后与
+/// 校验本次实际使用的发布资产与状态记录一致。静态压缩包按清单直接比对
+/// (清单摘要即下载产物摘要);后端二进制摘要必须在下载解压后与
 /// 状态中的落盘二进制比对,由调用方在 fetch 后执行。
-async fn verify_source_assets(
-    provider: &ReleaseProvider,
-    state: &InstallState,
-    release: &Release,
-) -> Result<bool, InstallError> {
-    let changed = match (provider.kind(), state.repository.kind) {
-        (ProviderKind::Github, StateRepositoryKind::Github) => false,
-        (ProviderKind::Http, StateRepositoryKind::Http) => {
-            provider.location() != state.repository.location
-        }
-        _ => true,
-    };
-    if !changed {
-        return Ok(false);
-    }
+fn verify_static_identity(release: &Release, state: &InstallState) -> Result<(), InstallError> {
     if release.assets.static_archive.sha256 != state.assets.static_archive.sha256
         || release.assets.static_archive.size != state.assets.static_archive.size
     {
         return Err(InstallError::UserRefused(
-            "the new repository provides different assets for the same version; refusing to switch source"
+            "the repository provides different assets for the same version; refusing to repair"
                 .into(),
         ));
     }
-    Ok(true)
+    Ok(())
 }
 
 /// 校验新来源的落盘后端与状态记录完全一致(解压后比对)。
@@ -80,7 +64,7 @@ pub(crate) async fn repair_static(
     let architecture = architecture_from_state(state);
     let active = parse_active_version(state)?;
     let release = provider.release(&active, architecture).await?;
-    let source_changed = verify_source_assets(provider, state, &release).await?;
+    verify_static_identity(&release, state)?;
 
     let mut transaction = TransactionFile::new_repair_static(root)?;
     super::transaction::begin(root, &transaction)?;
@@ -90,10 +74,6 @@ pub(crate) async fn repair_static(
     let result: Result<(), InstallError> = async {
         let tx_dir = tx_dir(root, &transaction);
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
-        if source_changed {
-            let built = pipeline::fetch_webserver_asset(&release, &tx_dir).await?;
-            verify_backend_identity(&built, state)?;
-        }
         let new_static = tx_dir.join("static");
         let backup_dir = tx_dir.join("static-backup");
         pipeline::fetch_static_asset(&release, &tx_dir).await?;
@@ -113,15 +93,6 @@ pub(crate) async fn repair_static(
             InstallError::Io(error)
         })?;
         let mut updated = state.clone();
-        if source_changed {
-            updated.repository = super::state::RepositorySource {
-                kind: match provider.kind() {
-                    ProviderKind::Github => StateRepositoryKind::Github,
-                    ProviderKind::Http => StateRepositoryKind::Http,
-                },
-                location: provider.location().to_string(),
-            };
-        }
         updated.last_transaction_id = Some(transaction.transaction_id.clone());
         updated.committed_at = Some(Utc::now());
         super::state::write_state(root, &updated)?;
@@ -167,7 +138,6 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
     let architecture = architecture_from_state(state);
     let active = parse_active_version(state)?;
     let release = provider.release(&active, architecture).await?;
-    verify_source_assets(provider, state, &release).await?;
     pipeline::check_initialization(root, state)?;
     let is_systemd = state.service.manager == StateServiceManager::Systemd;
 
@@ -284,7 +254,6 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
         }
         let new_state = pipeline::build_switched_state(
             root,
-            provider,
             &release,
             &built,
             state,
@@ -410,11 +379,12 @@ mod tests {
     use std::collections::HashMap;
 
     use super::super::health::HealthOptions;
+    use super::super::repository::ProviderKind;
     use super::super::repository::provider_for;
     use super::super::repository::test_server::{TestResponse, TestServer};
     use super::super::state::{
-        ArchiveAsset, Assets, InitializationState, RepositorySource, ServiceState,
-        StateArchitecture, StateRepositoryKind, StateServiceManager, WebserverAsset,
+        ArchiveAsset, Assets, InitializationState, ServiceState, StateArchitecture,
+        StateServiceManager, WebserverAsset,
     };
     use super::*;
 
@@ -527,10 +497,6 @@ mod tests {
             install_root: root.install_root.display().to_string(),
             canonical_install_root: root.canonical.display().to_string(),
             active_version: "1.2.3".into(),
-            repository: RepositorySource {
-                kind: StateRepositoryKind::Http,
-                location: "http://example.invalid/".into(),
-            },
             assets: Assets {
                 webserver: WebserverAsset {
                     architecture: StateArchitecture::X86_64,
@@ -635,6 +601,13 @@ mod tests {
         assert!(
             tx_dir.join("static-backup/index.html").is_file(),
             "static backup must preserve the previous pages"
+        );
+        assert!(
+            !root
+                .canonical
+                .join(super::super::config::CONFIG_FILE)
+                .exists(),
+            "repair must not create config.toml"
         );
         let _ = std::fs::remove_dir_all(&root.install_root);
     }
@@ -789,6 +762,13 @@ mod tests {
             super::super::transaction::find_unfinished(&install_root)
                 .unwrap()
                 .is_none()
+        );
+        assert!(
+            !install_root
+                .canonical
+                .join(super::super::config::CONFIG_FILE)
+                .exists(),
+            "repair must not create config.toml"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

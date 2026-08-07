@@ -498,6 +498,7 @@ pub(crate) const CONSOLE_HINT_NAVIGATION: &str = "console.hint_navigation";
 pub(crate) const CONSOLE_HINT_CHECKS_SELECTED: &str = "console.hint_checks_selected";
 pub(crate) const CONSOLE_HINT_INSTALL_PANEL: &str = "console.hint_install_panel";
 pub(crate) const CONSOLE_HINT_PANEL: &str = "console.hint_panel";
+pub(crate) const CONSOLE_REPOSITORY_DEFAULT: &str = "console.repository_default";
 pub(crate) const CONSOLE_REPOSITORY_MIRROR: &str = "console.repository_mirror";
 pub(crate) const CONSOLE_REPOSITORY_CUSTOM: &str = "console.repository_custom";
 pub(crate) const CONSOLE_MANAGER_AUTO: &str = "console.manager_auto";

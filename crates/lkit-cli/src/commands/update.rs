@@ -3,10 +3,11 @@ use std::process::ExitCode;
 
 use clap::Args;
 
-use super::manage::{InstallRequest, RequestMode};
+use super::manage::{InstallRequest, RequestMode, repository_override};
+use crate::deployment::config::RepositorySourceKind;
 use crate::deployment::plan::{self, RepositoryChoice, TargetVersion};
 use crate::deployment::root;
-use crate::deployment::state::{self, StateRepositoryKind};
+use crate::deployment::state;
 use crate::release::repository::provider_for;
 
 #[derive(Debug, Args)]
@@ -68,10 +69,9 @@ async fn run_update(
         )
     })?;
 
-    let repository = match &args.repository {
-        Some(None) => RepositoryChoice::Mirror,
-        Some(Some(url)) => RepositoryChoice::Http(url.clone()),
-        None => select_repository(tty, &state)?,
+    let repository = match repository_override(&args.repository) {
+        Some(choice) => choice,
+        None => select_repository(tty, &normalized)?,
     };
     let spec = repository.clone().resolve()?;
     let provider = provider_for(spec.kind, spec.location.as_str())?;
@@ -144,40 +144,50 @@ fn switch_request(args: &Update, version: String, repository: RepositoryChoice) 
     }
 }
 
-/// 交互选择更新渠道:默认选项是 state 记录的当前来源,其余为官方 GitHub、
-/// 默认 HTTP 镜像和自定义 HTTP 仓库。
+/// 交互选择更新渠道:配置存在且有效时默认选项是记录的最新来源,其余为官方 GitHub、
+/// 默认 HTTP 镜像和自定义 HTTP 仓库;文件不存在时选项从官方 GitHub 开始。
 fn select_repository(
     tty: &mut crate::interaction::interactive::Tty,
-    state: &state::InstallState,
+    root: &crate::deployment::root::InstallRoot,
 ) -> Result<RepositoryChoice, plan::InstallError> {
-    let kind = match state.repository.kind {
-        StateRepositoryKind::Github => "github",
-        StateRepositoryKind::Http => "http",
+    let recorded = crate::deployment::config::load_repository(root)?;
+    let options = match &recorded {
+        Some(source) => {
+            let kind = match source.kind {
+                RepositorySourceKind::Github => "github",
+                RepositorySourceKind::Http => "http",
+            };
+            vec![
+                crate::tr!(
+                    crate::keys::UPDATE_REPOSITORY_CURRENT,
+                    kind = kind,
+                    location = source.location
+                ),
+                crate::tr!(crate::keys::UPDATE_REPOSITORY_GITHUB),
+                crate::tr!(crate::keys::UPDATE_REPOSITORY_MIRROR),
+                crate::tr!(crate::keys::UPDATE_REPOSITORY_CUSTOM),
+            ]
+        }
+        None => vec![
+            crate::tr!(crate::keys::UPDATE_REPOSITORY_GITHUB),
+            crate::tr!(crate::keys::UPDATE_REPOSITORY_MIRROR),
+            crate::tr!(crate::keys::UPDATE_REPOSITORY_CUSTOM),
+        ],
     };
-    let options = vec![
-        crate::tr!(
-            crate::keys::UPDATE_REPOSITORY_CURRENT,
-            kind = kind,
-            location = state.repository.location
-        ),
-        crate::tr!(crate::keys::UPDATE_REPOSITORY_GITHUB),
-        crate::tr!(crate::keys::UPDATE_REPOSITORY_MIRROR),
-        crate::tr!(crate::keys::UPDATE_REPOSITORY_CUSTOM),
-    ];
     let selected = tty.select_one(
         &crate::tr!(crate::keys::UPDATE_SELECT_REPOSITORY),
         &options,
         Some(0),
     )?;
-    match selected {
-        0 => match state.repository.kind {
-            StateRepositoryKind::Github => Ok(RepositoryChoice::Github),
-            StateRepositoryKind::Http => {
-                Ok(RepositoryChoice::Http(state.repository.location.clone()))
-            }
+    match (recorded.as_ref(), selected) {
+        (Some(source), 0) => match source.kind {
+            RepositorySourceKind::Github => Ok(RepositoryChoice::Github(source.location.clone())),
+            RepositorySourceKind::Http => Ok(RepositoryChoice::Http(source.location.clone())),
         },
-        1 => Ok(RepositoryChoice::Github),
-        2 => Ok(RepositoryChoice::Mirror),
+        (None, 0) | (Some(_), 1) => Ok(RepositoryChoice::Github(
+            crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+        )),
+        (Some(_), 2) | (None, 1) => Ok(RepositoryChoice::Mirror),
         _ => {
             let url = tty.input(&crate::tr!(crate::keys::UPDATE_REPOSITORY_URL))?;
             Ok(RepositoryChoice::Http(url))
@@ -204,7 +214,7 @@ mod tests {
     #[test]
     fn forwards_every_selected_repository_to_the_switch_request() {
         for repository in [
-            RepositoryChoice::Github,
+            RepositoryChoice::Github("ThisSeanZhang/landscape".into()),
             RepositoryChoice::Mirror,
             RepositoryChoice::Http("https://example.com/releases/".into()),
         ] {

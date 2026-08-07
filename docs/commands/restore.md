@@ -75,8 +75,8 @@ systemd 模式自动回滚的顺序固定为：停止目标服务 → 恢复 uni
 仅在恢复前服务活跃时启动并做完整健康检查 → 重新提交恢复前 state。同版本 restore 回滚
 后，release 内容与回滚前完全一致（不是备份内二进制/静态资源的重建版本）。
 
-恢复不得伪造成功，也不得在没有必要事实时猜测 service manager、`current` 或仓库来源。
+恢复不得伪造成功，也不得在没有必要事实时猜测 service manager 或 `current`。
 恢复提交的 state 中：`active_version` 取备份 metadata；`webserver` 身份从解包二进制
-现场计算；`static_archive` 身份从备份内 `static.zip` 现场计算；`repository` 沿用当前
-安装 state，restore 不修改仓库来源。
+现场计算；`static_archive` 身份从备份内 `static.zip` 现场计算。restore 不下载仓库资产，
+不读取也不改写 `config.toml`。
 

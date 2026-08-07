@@ -333,7 +333,6 @@ fn build_restored_state(
         install_root: root.install_root.display().to_string(),
         canonical_install_root: root.canonical.display().to_string(),
         active_version: from_version.to_string(),
-        repository: snapshot.repository.clone(),
         assets: state::Assets {
             webserver: state::WebserverAsset {
                 architecture: match architecture {
@@ -524,10 +523,6 @@ mod tests {
             install_root: dir.display().to_string(),
             canonical_install_root: dir.display().to_string(),
             active_version: from_version.to_string(),
-            repository: state::RepositorySource {
-                kind: state::StateRepositoryKind::Http,
-                location: "https://repo.example.test/".into(),
-            },
             assets: state::Assets {
                 webserver: state::WebserverAsset {
                     architecture: state::StateArchitecture::X86_64,

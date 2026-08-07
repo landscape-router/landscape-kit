@@ -55,7 +55,9 @@ pub(crate) struct ProviderSpec {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RepositoryChoice {
-    Github,
+    /// GitHub 仓库 `owner/repo`。无显式来源时用 `DEFAULT_REPOSITORY`,
+    /// 配置文件解析出的来源保留其 location。
+    Github(String),
     Mirror,
     Http(String),
 }
@@ -63,10 +65,13 @@ pub(crate) enum RepositoryChoice {
 impl RepositoryChoice {
     pub(crate) fn resolve(self) -> Result<ProviderSpec, InstallError> {
         match self {
-            Self::Github => Ok(ProviderSpec {
-                kind: ProviderKind::Github,
-                location: DEFAULT_REPOSITORY.into(),
-            }),
+            Self::Github(repository) => {
+                let github = super::repository::github::GithubRepository::new(&repository)?;
+                Ok(ProviderSpec {
+                    kind: ProviderKind::Github,
+                    location: github.location().to_string(),
+                })
+            }
             Self::Mirror => Ok(ProviderSpec {
                 kind: ProviderKind::Http,
                 location: DEFAULT_HTTP_MIRROR.into(),
@@ -429,12 +434,27 @@ mod tests {
     #[test]
     fn resolves_providers() {
         assert_eq!(
-            RepositoryChoice::Github.resolve().unwrap(),
+            RepositoryChoice::Github(DEFAULT_REPOSITORY.into())
+                .resolve()
+                .unwrap(),
             ProviderSpec {
                 kind: ProviderKind::Github,
                 location: "ThisSeanZhang/landscape".into(),
             }
         );
+        assert_eq!(
+            RepositoryChoice::Github("Another/landscape".into())
+                .resolve()
+                .unwrap(),
+            ProviderSpec {
+                kind: ProviderKind::Github,
+                location: "Another/landscape".into(),
+            }
+        );
+        assert!(matches!(
+            RepositoryChoice::Github("not-owner-repo".into()).resolve(),
+            Err(InstallError::Repository(_))
+        ));
         assert_eq!(
             RepositoryChoice::Mirror.resolve().unwrap(),
             ProviderSpec {

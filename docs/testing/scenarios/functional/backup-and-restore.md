@@ -72,7 +72,7 @@
 - 测试层：Docker E2E
 - 状态：`已覆盖`
 - 证据：[restore 命令](../../../commands/restore.md)、[手工 restore](../../../backup/lkb-and-rollback.md#手工-restore)、[S10 手工备份与恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
-- 说明：恢复前自动创建保护备份；目标 release、空 data、初始化配置、服务身份和健康检查全部成功后提交；state 的 `static_archive` 身份与备份内压缩包一致、`repository` 不变。
+- 说明：恢复前自动创建保护备份；目标 release、空 data、初始化配置、服务身份和健康检查全部成功后提交；state 的 `static_archive` 身份与备份内压缩包一致，`config.toml` 中的来源记录不变。
 
 ## RST-02
 
@@ -81,7 +81,7 @@
 - 测试层：Rust workflow、Docker E2E
 - 状态：`部分覆盖`
 - 证据：[restore 命令](../../../commands/restore.md)
-- 说明：Rust 工作流测试覆盖无 systemd 跨版本恢复；版本来自备份 metadata，不下载仓库资产；state 的 `repository` 沿用当前安装，`static_archive` 身份从备份内 `static.zip` 现场计算。
+- 说明：Rust 工作流测试覆盖无 systemd 跨版本恢复；版本来自备份 metadata，不下载仓库资产；`static_archive` 身份从备份内 `static.zip` 现场计算，`config.toml` 中的来源记录不变。
 - 缺口：systemd 模式跨版本恢复的 Docker E2E 未覆盖。
 
 ## RST-03
