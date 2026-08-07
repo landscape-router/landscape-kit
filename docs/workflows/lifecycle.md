@@ -135,6 +135,28 @@ systemd 环境：
 unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后的处理仍依赖下次调用
 执行阶段恢复。
 
+### 8. 手工备份与恢复
+
+`lkit backup create` 是不改变运行态的只读管理操作：取得安装锁后读取当前 state、校验
+运行实例和路径，通过配置导出 API 取得 TOML，再按 `.lkb` v1 minimal 规则流式生成并自校验
+最终文件。它不创建业务事务，不停止服务，也不更新 `install-state.json`。
+
+`lkit restore` 使用独立的 `restore` 事务：
+
+1. 在 `preparing` 验证目标 `.lkb`、架构和归档内容；
+2. 默认创建当前实例的保护 `.lkb`，并记录目标备份和保护备份引用；
+3. 保存 `previous_current`、previous-state、systemd 事实和必要的 `/etc/resolv.conf`；
+4. 在 `prepared` 后进入 `stopping`，将旧 `data/` 原子移动到事务目录；
+5. 在 `activating` 从目标备份重建版本目录、空 data、初始化配置和 Geo 缓存；
+6. systemd 模式进入 `verifying`，通过启动和稳定健康检查后写入目标 state；none 模式直接
+   提交 pending/未验证状态并输出参考启动命令；state 的 `repository` 沿用当前安装，
+   `static_archive` 身份从备份内压缩包现场计算；
+7. 成功提交后保留旧 data 事务现场和备份，事务进入 `committed`。
+
+目标激活或健康检查失败时进入 `rolling_back`，优先用事务目录中的旧 data 和 state 恢复，
+必要时使用保护 `.lkb`；恢复成功进入 `rolled_back` 并返回 `5`，恢复失败进入 `failed`
+并返回 `6`。`--allow-no-backup` 只跳过保护 `.lkb`，不跳过目标校验、确认或中断恢复事实。
+
 ## 首次安装失败
 
 systemd 环境首次安装启动失败时：

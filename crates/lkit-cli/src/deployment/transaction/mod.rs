@@ -14,7 +14,7 @@ use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::systemd::Systemd;
 
-pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 3;
+pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 4;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +22,7 @@ pub(crate) enum Operation {
     Install,
     Repair,
     Switch,
+    Restore,
     ServiceMigration,
 }
 
@@ -31,6 +32,7 @@ impl Operation {
             Self::Install => "install",
             Self::Repair => "repair",
             Self::Switch => "switch",
+            Self::Restore => "restore",
             Self::ServiceMigration => "service_migration",
         }
     }
@@ -158,6 +160,9 @@ pub(crate) struct TransactionFile {
     pub previous_current: Option<String>,
     pub target_release: Option<String>,
     pub backup: Option<BackupRef>,
+    /// restore 事务记录的用户选择的目标 `.lkb`。其他 operation 必须为 null。
+    #[serde(default)]
+    pub restore_backup: Option<BackupRef>,
     /// 停止服务且用户显式 `--allow-no-backup` 时记录 true:
     /// 本事务没有 `.lkb` 配置快照,失败回滚不能恢复之前的数据。
     #[serde(default)]
@@ -193,6 +198,7 @@ impl TransactionFile {
             previous_current: None,
             target_release: Some(format!("releases/{version}")),
             backup: None,
+            restore_backup: None,
             no_backup: false,
             static_backup: None,
             systemd_before: None,
@@ -227,6 +233,44 @@ impl TransactionFile {
             previous_current: Some(format!("releases/{from_version}")),
             target_release: Some(format!("releases/{target_version}")),
             backup: None,
+            restore_backup: None,
+            no_backup: false,
+            static_backup: None,
+            systemd_before: None,
+            resolv_conf_backup: None,
+            network_takeover: None,
+            log_path: format!("logs/{transaction_id}.log"),
+            started_at: now,
+            updated_at: now,
+        };
+        validate_transaction(&transaction)?;
+        Ok(transaction)
+    }
+
+    /// 从 `.lkb` 恢复事务:目标版本由备份 metadata 决定,可以同版本、较低或较高,
+    /// 不经过仓库下载。`restore_backup` 在事务创建后由调用方记录用户选择的目标备份。
+    pub(crate) fn new_restore(
+        root: &InstallRoot,
+        from_version: &semver::Version,
+        target_version: &semver::Version,
+    ) -> Result<Self, InstallError> {
+        let transaction_id = Uuid::now_v7().to_string();
+        let now = Utc::now();
+        let transaction = Self {
+            schema_version: TRANSACTION_SCHEMA_VERSION,
+            transaction_id: transaction_id.clone(),
+            operation: Operation::Restore,
+            phase: Phase::Preparing,
+            install_root: root.install_root.display().to_string(),
+            canonical_install_root: root.canonical.display().to_string(),
+            from_version: Some(from_version.to_string()),
+            target_version: Some(target_version.to_string()),
+            from_service_manager: None,
+            target_service_manager: None,
+            previous_current: Some(format!("releases/{from_version}")),
+            target_release: Some(format!("releases/{target_version}")),
+            backup: None,
+            restore_backup: None,
             no_backup: false,
             static_backup: None,
             systemd_before: None,
@@ -275,6 +319,7 @@ impl TransactionFile {
             previous_current: None,
             target_release: None,
             backup: None,
+            restore_backup: None,
             no_backup: false,
             static_backup: None,
             systemd_before: None,
@@ -312,6 +357,7 @@ impl TransactionFile {
             previous_current: None,
             target_release: None,
             backup: None,
+            restore_backup: None,
             no_backup: false,
             static_backup: None,
             systemd_before: Some(systemd_before),
@@ -671,7 +717,7 @@ mod tests {
         let transaction = install_transaction(&root);
         assert_eq!(transaction.operation, Operation::Install);
         assert_eq!(transaction.phase, Phase::Preparing);
-        assert_eq!(transaction.schema_version, 3);
+        assert_eq!(transaction.schema_version, 4);
         assert_eq!(
             transaction.target_release.as_deref(),
             Some("releases/1.2.3")
@@ -752,7 +798,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 4;
+        transaction.schema_version = 5;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);
@@ -806,6 +852,44 @@ mod tests {
             active: false,
         });
         assert!(validate_transaction(&transaction).is_ok());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_restore_transaction_rules() {
+        let temp = temp_root("restore");
+        let root = new_root(&temp);
+        let from = semver::Version::new(1, 1, 0);
+        let target = semver::Version::new(1, 2, 3);
+        let mut transaction = TransactionFile::new_restore(&root, &from, &target).unwrap();
+        assert_eq!(transaction.operation, Operation::Restore);
+        assert_eq!(transaction.schema_version, 4);
+        assert!(validate_transaction(&transaction).is_ok());
+
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.restore_backup = Some(BackupRef {
+            backup_id: "rb".into(),
+            path: "transactions/tx/target-backup.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+
+        transaction.static_backup = Some(StaticBackupRef {
+            path: "backups/static".into(),
+            target: "current/static".into(),
+        });
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.static_backup = None;
+
+        transaction.no_backup = true;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.backup = Some(BackupRef {
+            backup_id: "p".into(),
+            path: "backups/p.lkb".into(),
+            sha256: "b".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_err());
         let _ = std::fs::remove_dir_all(&temp);
     }
 

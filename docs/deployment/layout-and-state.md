@@ -42,6 +42,7 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 ├── releases/
 │   └── 0.19.2/
 │       ├── landscape-webserver
+│       ├── static.zip
 │       └── static/
 ├── current -> releases/0.19.2
 ├── data/
@@ -56,7 +57,10 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 ├── state/
 │   └── install-state.json
 ├── transactions/
-│   └── <transaction-id>.json
+│   ├── <transaction-id>.json
+│   └── <restore-transaction-id>/
+│       ├── previous-data/
+│       └── target-backup.lkb
 ├── backups/
 │   ├── .tmp/
 │   ├── <backup-id>.lkb
@@ -73,13 +77,15 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 
 职责如下：
 
-- `releases/<version>` 保存该版本后端和该版本当前使用的静态页面；
+- `releases/<version>` 保存该版本后端、官方静态压缩包和该版本当前使用的静态页面；
+  压缩包随该版本保留，供 `.lkb` 备份携带以还原静态资产身份；
 - `current` 提供原子切换的稳定入口；
 - `data` 是 Landscape home path，跨正常版本切换共享；
 - 网络接管首次安装在确认前使用的 `data` 属于未提交临时现场；该事务回滚成功时整棵删除，
   不得与已提交安装共享或混淆；
 - `state/install-state.json` 只记录最近一次成功提交的安装状态；
-- `transactions` 记录进行中和历史事务阶段；
+- `transactions` 记录进行中和历史事务阶段；restore 事务还可保留旧 `data/` 和已验证的
+  目标备份现场用于中断恢复和人工诊断；
 - `backups` 保存 `.lkb` 配置级备份；
 - `logs` 保存 lkit 安装事务日志，与 `data/logs` 中的 Landscape 日志分离；
 - `service` 保存 `lkit` 生成或接受管理的服务定义原件。

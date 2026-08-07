@@ -16,6 +16,8 @@
 - `check` — 主机环境检查。
 - `install` — 首次安装。
 - `switch` — 切换到指定 stable 版本。
+- `backup` — 创建、查看和验证 `.lkb` minimal 备份。
+- `restore` — 在现有安装内从 `.lkb` 恢复版本和配置。
 - `repair` — 修复静态页面或后端二进制。
 - `reconcile` — 接受并记录初始化文件、service unit 或仓库来源变化。
 - `service-manager` — 在 systemd 与外部进程管理之间迁移。

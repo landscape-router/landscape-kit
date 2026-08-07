@@ -234,6 +234,71 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_ALLOW_NO_BACKUP_HELP))
                 })
         })
+        .mut_subcommand("backup", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_BACKUP_ABOUT))
+                .mut_subcommand("create", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_BACKUP_CREATE_ABOUT))
+                        .mut_arg("remark", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_REMARK_HELP))
+                        })
+                        .mut_arg("output", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_OUTPUT_HELP))
+                        })
+                        .mut_arg("install_dir", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                        })
+                })
+                .mut_subcommand("list", |command| {
+                    command.about(crate::tr_static!(keys::MAIN_BACKUP_LIST_ABOUT))
+                })
+                .mut_subcommand("show", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_BACKUP_SHOW_ABOUT))
+                        .mut_arg("backup", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_ID_HELP))
+                        })
+                        .mut_arg("file", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_FILE_HELP))
+                        })
+                        .mut_arg("install_dir", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                        })
+                })
+                .mut_subcommand("verify", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_BACKUP_VERIFY_ABOUT))
+                        .mut_arg("backup", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_ID_HELP))
+                        })
+                        .mut_arg("file", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_FILE_HELP))
+                        })
+                        .mut_arg("install_dir", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                        })
+                })
+        })
+        .mut_subcommand("restore", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_RESTORE_ABOUT))
+                .mut_arg("backup", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_BACKUP_ID_HELP))
+                })
+                .mut_arg("file", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_BACKUP_FILE_HELP))
+                })
+                .mut_arg("install_dir", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                })
+                .mut_arg("allow_no_backup", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_RESTORE_ALLOW_NO_BACKUP_HELP))
+                })
+                .mut_arg("yes", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_RESTORE_YES_HELP))
+                })
+        })
         .mut_subcommand("update", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_UPDATE_ABOUT))
@@ -353,6 +418,8 @@ async fn run_command(
         Commands::Switch(args) => commands::switch::run(&args).await,
         Commands::Update(args) => commands::update::run(&args).await,
         Commands::Repair(args) => commands::repair::run(&args).await,
+        Commands::Restore(args) => commands::restore::run(&args).await,
+        Commands::Backup(args) => commands::backup::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,
     }

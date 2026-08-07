@@ -14,6 +14,8 @@
 - [`install`](commands/install.md)：首次安装。
 - [`update`](commands/update.md)：交互式更新到最新或指定 stable 版本。
 - [`switch`](commands/switch.md)：切换到指定 stable 版本。
+- [`backup`](commands/backup.md)：创建、查看和验证 `.lkb` minimal 备份。
+- [`restore`](commands/restore.md)：在现有安装内从 `.lkb` 恢复版本和配置。
 - [`repair`](commands/repair.md)：修复静态页面或后端二进制。
 - [`reconcile`](commands/reconcile.md)：协调初始化完成状态、service unit 或仓库来源变化。
 - [`service-manager`](commands/service-manager.md)：在 systemd 与外部进程管理之间迁移。

@@ -484,6 +484,23 @@ pub(crate) fn restore_systemd_before(
     before: &SystemdBefore,
     unit_origin: &Path,
 ) -> Result<(), InstallError> {
+    restore_systemd_registration(systemd, before, unit_origin)?;
+    if before.active {
+        start(systemd)?;
+    } else if is_active(systemd).unwrap_or(false) {
+        stop(systemd)?;
+    }
+    Ok(())
+}
+
+/// 只恢复注册链接与 enabled 状态,不改变 active 状态,并执行 daemon-reload。
+/// 回滚流程要求先恢复注册、再恢复 current/data、最后才启动服务,
+/// 避免旧服务在失败版本或部分数据上启动。
+pub(crate) fn restore_systemd_registration(
+    systemd: &Systemd,
+    before: &SystemdBefore,
+    unit_origin: &Path,
+) -> Result<(), InstallError> {
     match &before.registration.kind {
         RegistrationKind::Missing => unregister(systemd, unit_origin)?,
         RegistrationKind::Symlink => {
@@ -505,11 +522,6 @@ pub(crate) fn restore_systemd_before(
         enable(systemd)?;
     } else if is_enabled(systemd).unwrap_or(false) {
         disable(systemd)?;
-    }
-    if before.active {
-        start(systemd)?;
-    } else if is_active(systemd).unwrap_or(false) {
-        stop(systemd)?;
     }
     daemon_reload(systemd)
 }

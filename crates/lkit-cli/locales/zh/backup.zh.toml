@@ -1,0 +1,6 @@
+backup.requires_existing_installation = "创建备份需要一个已安装的 Landscape 安装"
+backup.created = "已创建备份 %{backup_id}（版本 %{version}）→ %{path}"
+backup.none_found = "在 %{dir} 下没有找到 .lkb 备份"
+backup.list_invalid = "%{count} 个备份损坏或权限不安全"
+backup.verified = "备份 %{backup_id}（%{label}）校验通过"
+backup.remark_prompt = "备注（可选，最多 256 字符；直接回车表示不写备注）: "

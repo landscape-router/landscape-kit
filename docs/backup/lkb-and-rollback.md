@@ -16,6 +16,16 @@
 - 使用导出的 `landscape_init.toml` 重新初始化同版本 Landscape；
 - 保证核心配置一致，不保证恢复日志、指标、缓存状态或 API token。
 
+公开的 `lkit backup` 使用同一 v1 容器和 minimal scope。手工备份将 `auto` 设为 `false`，
+并可写入用户提供的单行 `remark`；switch、后端 repair 和 restore 创建的保护快照仍将
+`auto` 设为 `true`。`backup create` 不停止或重启服务，但必须在取得安装锁后从当前运行
+实例成功导出配置。
+
+每个 v1 备份固定携带该版本官方静态压缩包 `static.zip`，与归档内 `static/` 解压树同源。
+restore 从备份内压缩包现场计算 `static_archive` 身份，state 因此始终如实描述恢复内容，
+metadata 不需要记录仓库来源：`repository` 是安装机器的持续分发通道，由 install 建立，
+restore 沿用当前安装 state，不属于备份内容。
+
 ### 配置导出
 
 需要创建备份时，必须调用本机固定接口：
@@ -93,6 +103,7 @@ v1 只允许 `scope: "minimal"`，不定义或接受 `full`。
 .
 ├── landscape-webserver
 ├── landscape_init.toml
+├── static.zip
 ├── static/
 │   └── 当前实际静态页面
 └── geo_tmp/
@@ -104,6 +115,8 @@ v1 只允许 `scope: "minimal"`，不定义或接受 `full`。
 
 - `landscape-webserver`：当前实际运行且通过状态摘要验证的二进制；
 - `landscape_init.toml`：通过导出 API 获得的完整当前运行态配置；
+- `static.zip`：当前版本安装时从仓库下载的官方静态压缩包，位于
+  `releases/<version>/static.zip`，缺失时备份创建失败；
 - `static/`：当前实际目录，包括用户自定义页面；
 - `geo_tmp/`：当前 Landscape home 下的 GeoIP/GeoSite 数据缓存。
 
@@ -168,6 +181,7 @@ Header：
   "contents": {
     "binary": true,
     "static": true,
+    "static_archive": true,
     "init_config": true,
     "geo_cache": true
   },
@@ -185,7 +199,10 @@ Header：
 - `remark` 是字符串，可以为空；
 - `auto` 表示是否为安装器自动创建的升级前备份；
 - `scope` v1 只能为 `minimal`；
-- `contents` 四个已定义布尔字段必须为 true；
+- `contents` 五个已定义布尔字段必须为 true；`static_archive` 表示归档携带当前版本的官方
+  静态压缩包，用于 restore 现场计算静态资产身份；
+- 归档中的 `static.zip` 条目必须是普通文件（目录或符号链接条目拒绝），解包校验时与
+  `contents.static_archive: true` 一并确认；
 - `checksum` 为 `sha256:` 加 64 位小写十六进制字符，校验偏移 1 MiB 到 EOF 的完整 tar.gz 字节；
 - 未知字段允许忽略；必填字段缺失或非法时拒绝。
 
@@ -209,12 +226,47 @@ Header：
 6. 设置 `root:root 0600`；
 7. 原子移动到最终路径。
 
-同名备份不得覆盖。自动备份和未来手工备份使用相同格式。v1 永久保留。
+同名备份不得覆盖。自动备份和手工备份使用相同格式。v1 永久保留。
 
 在需要备份的路径中，只有 `.lkb` 完整落盘并自校验成功后，版本切换事务才能停止
 Landscape。
 
 事务文件只记录 `.lkb` 相对路径、backup ID 和整个 `.lkb` 文件 SHA-256，不重复复制备份内容。
+
+## 手工 restore
+
+`lkit restore` 只接受已有且 state/current 一致的安装，目标可以是同版本、较低版本或较高
+版本，不经过仓库下载。命令先完整验证目标备份与架构，交互模式确认当前版本、目标版本、
+backup ID 以及 minimal scope 不包含数据库；确认先于事务创建完成：拒绝或非交互模式
+缺少 `--yes` 时不创建事务、不写任何文件（`--file` 不产生暂存拷贝），返回 `1`/`2`。
+`--backup <ID>` 只接受 `YYYYMMDD-HHMMSS-<8位小写hex>` 格式，其他取值视为参数错误。
+归档内容校验在确认与保护备份之后、停止服务之前完成。
+
+默认情况下，停止服务前先创建当前实例的保护 `.lkb`。保护备份失败时保持现场不变；
+`--allow-no-backup` 才允许在当前实例无法导出配置时继续。该选项只跳过可移植保护备份，
+不跳过目标备份验证和确认。
+
+restore 事务在停止服务前先于事务临时目录完成安全解包与完整内容校验（`landscape-webserver`、
+`landscape_init.toml`、`static.zip` 为普通文件，`static/`、`geo_tmp/` 为目录；解包目录
+与文件分别保持 `0700`/`0600`，不使用可预测路径），停止服务后将旧 `data/` 原子移动到
+事务目录，再从已解包内容创建空 data、导出的初始化配置和 Geo 缓存，并重建目标版本
+release。systemd 模式必须启动并通过完整健康检查后提交；none 模式要求用户确认外部实例
+已停止（非交互模式以 `--yes` 代替），提交 pending 初始化和 `verified: false`，不自行
+启动或探测外部实例。
+
+恢复成功后旧 data 事务现场保留用于中断恢复和人工诊断。它不是 portable 数据库备份，
+也不能改变 minimal `.lkb` 不恢复 SQLite、API token、日志和指标的声明。
+
+失败语义按 service manager 区分：systemd 模式目标激活或健康检查失败但恢复前状态自动
+恢复成功时返回 `5`，自动恢复失败时返回 `6`；none 模式激活后的失败不内联自动回滚，
+返回普通失败 `1`，现场保留在事务目录，由下次 lkit 命令的 phase 恢复入口按原阶段恢复
+原安装。systemd 自动回滚固定按"停止 → 注册恢复 → 恢复 current/data → 启动并健康
+检查"顺序执行；同版本 restore 回滚时会把被替换的原 release 从事务目录移回，保证
+release 内容与回滚前一致。恢复阶段沿用现有 systemd operation worker 和 phase 恢复
+规则，不能猜测缺失的 state、`current` 或 service manager。恢复提交的 state 中：
+`active_version` 取备份 metadata，`webserver` 身份从解包二进制现场计算，
+`static_archive` 身份从备份内 `static.zip` 现场计算，`repository` 沿用当前安装 state，
+不修改、不猜测。
 
 ## 无备份切换的失败恢复
 
@@ -234,7 +286,7 @@ systemd 环境中目标版本启动或健康检查失败时：
 3. 保留失败日志和现场；
 4. 将失败后的 `data/` 原子移动到 `transactions/<transaction-id>/failed-data/`；
 5. 创建新的空 `data/`；
-6. 在事务临时目录校验并安全解包 `.lkb`；
+6. 在事务临时目录校验并安全解包 `.lkb`（校验归档路径、条目类型和 `static.zip` 条目存在且为普通文件）；
 7. 用备份内二进制和静态目录重建 `releases/<from_version>`；若该目录已存在，先移动到 `transactions/<transaction-id>/replaced-release/`，不得原地覆盖；
 8. 将备份内 `geo_tmp/` 恢复到新 `data/geo_tmp/`；
 9. 将 API 导出的配置写为新 `data/landscape_init.toml`，权限 `0600`；

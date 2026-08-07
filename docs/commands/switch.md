@@ -17,6 +17,10 @@ lkit switch --version <VERSION> [--repository [<BASE_URL>]]
 和 `/etc/resolv.conf`，但无法从快照重建 data。无 systemd 环境要求用户确认已通过自己的
 进程管理器停止实例。
 
+`switch` 的 `.lkb` 是升级事务的自动保险，不接受用户选择备份，也不允许把目标版本降到
+更低版本。需要主动创建、查看、验证或从历史 `.lkb` 恢复时，使用 [`lkit backup`](backup.md)
+和 [`lkit restore`](restore.md)；restore 的版本方向独立于 switch。
+
 生产 systemd 环境中，整条 switch 命令由临时 systemd operation unit 托管。SSH 会话
 因 Landscape 重启而断开时，worker 仍会继续健康检查并提交，或在失败时自动回滚。
 事务在 stop 前先写入 `stopping`；主机重启不自动继续，而由下次调用恢复。

@@ -1,0 +1,197 @@
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::Args;
+
+use crate::deployment::runtime::InstallRuntime;
+use crate::deployment::{lock, plan, root, state, transaction};
+use crate::workflows::restore::{RestoreArgs, RestoreOptions, RestoreOutcome};
+
+#[derive(Debug, Args)]
+pub struct Restore {
+    /// 安装根目录 `backups/` 下的备份 ID
+    #[arg(long, value_name = "ID", conflicts_with = "file")]
+    pub backup: Option<String>,
+    /// 外部复制的 `.lkb` 文件路径
+    #[arg(long, value_name = "PATH", conflicts_with = "backup")]
+    pub file: Option<PathBuf>,
+    /// 保护备份无法创建时继续,不产生可移植的当前配置快照
+    #[arg(long)]
+    pub allow_no_backup: bool,
+    /// 非交互模式确认恢复
+    #[arg(long)]
+    pub yes: bool,
+    #[arg(long, value_name = "PATH")]
+    pub install_dir: Option<PathBuf>,
+    #[cfg(feature = "test-support")]
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub test_runtime: Option<PathBuf>,
+}
+
+pub async fn run(args: &Restore) -> ExitCode {
+    let runtime = match resolve_runtime(args) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    };
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
+        eprintln!(
+            "restore: {}",
+            crate::tr!(crate::keys::MANAGE_MUST_RUN_AS_ROOT)
+        );
+        return ExitCode::FAILURE;
+    }
+    let install_root = match plan::select_install_root(
+        args.install_dir.as_deref(),
+        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+    ) {
+        Ok(install_root) => install_root,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    };
+    let normalized = match root::normalize_install_root(&install_root) {
+        Ok(normalized) => normalized,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    };
+    let _lock = match lock::acquire_install_lock(&normalized) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    };
+    let health = match runtime.health_options() {
+        Ok(health) => health,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    };
+    let unfinished = match transaction::find_unfinished(&normalized) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    };
+    if let Some(transaction) = unfinished {
+        if let Err(error) =
+            transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
+                .await
+        {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    }
+    let Some(state) = (match state::load_state(&normalized) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("restore: {error}");
+            return exit_code(&error);
+        }
+    }) else {
+        eprintln!(
+            "restore: {}",
+            crate::tr!(crate::keys::RESTORE_REQUIRES_EXISTING_INSTALLATION)
+        );
+        return ExitCode::from(2);
+    };
+    let data_dir = normalized.canonical.join("data");
+    let options = RestoreOptions {
+        export_base_url: runtime.export_base_url.clone(),
+        token: &(|| {
+            crate::backup::export::read_api_token(
+                &data_dir.join("landscape_api_token"),
+                runtime.managed_uid,
+            )
+        }),
+        confirm: &|prompt| crate::interaction::interactive::confirm(prompt),
+        health: &health,
+    };
+    let args = RestoreArgs {
+        backup_id: args.backup.clone(),
+        file_path: args.file.clone(),
+        allow_no_backup: args.allow_no_backup,
+        yes: args.yes,
+    };
+    match crate::workflows::restore::restore_version(
+        &normalized,
+        &state,
+        &runtime.systemd,
+        &args,
+        &options,
+    )
+    .await
+    {
+        Ok(RestoreOutcome::Committed { version, backup_id }) => {
+            println!(
+                "restore: {}",
+                crate::tr!(
+                    crate::keys::RESTORE_COMMITTED,
+                    version = version,
+                    backup_id = backup_id
+                )
+            );
+            if state.service.manager == crate::deployment::state::StateServiceManager::None {
+                println!(
+                    "restore: {}",
+                    crate::tr!(crate::keys::RESTORE_NONE_REFERENCE_COMMAND)
+                );
+                println!(
+                    "{}",
+                    crate::workflows::install::reference_command(&normalized)
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Ok(RestoreOutcome::RolledBack { version }) => {
+            eprintln!(
+                "restore: {}",
+                crate::tr!(crate::keys::RESTORE_FAILED_ROLLED_BACK, version = version)
+            );
+            ExitCode::from(5)
+        }
+        Ok(RestoreOutcome::RollbackFailed { version, reason }) => {
+            eprintln!(
+                "restore: {}",
+                crate::tr!(
+                    crate::keys::RESTORE_FAILED_ROLLBACK_FAILED,
+                    version = version,
+                    reason = reason
+                )
+            );
+            ExitCode::from(6)
+        }
+        Err(error) => {
+            eprintln!("restore: {error}");
+            exit_code(&error)
+        }
+    }
+}
+
+fn exit_code(error: &plan::InstallError) -> ExitCode {
+    match error {
+        plan::InstallError::ParameterUsage(_) => ExitCode::from(2),
+        _ => ExitCode::FAILURE,
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn resolve_runtime(args: &Restore) -> Result<InstallRuntime, plan::InstallError> {
+    if let Some(path) = args.test_runtime.as_deref() {
+        return InstallRuntime::from_test_file(path);
+    }
+    Ok(InstallRuntime::production())
+}
+
+#[cfg(not(feature = "test-support"))]
+fn resolve_runtime(_args: &Restore) -> Result<InstallRuntime, plan::InstallError> {
+    Ok(InstallRuntime::production())
+}

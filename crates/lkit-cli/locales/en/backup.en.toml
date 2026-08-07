@@ -1,0 +1,6 @@
+backup.requires_existing_installation = "creating a backup requires an existing installation"
+backup.created = "backup %{backup_id} created for version %{version} at %{path}"
+backup.none_found = "no .lkb backups found under %{dir}"
+backup.list_invalid = "%{count} backup(s) are invalid or permission-unsafe"
+backup.verified = "backup %{backup_id} (%{label}) verified"
+backup.remark_prompt = "remark (optional, at most 256 characters; press Enter for none): "

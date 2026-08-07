@@ -2,6 +2,7 @@
 
 pub(crate) mod install;
 pub(crate) mod repair;
+pub(crate) mod restore;
 pub(crate) mod service_manager;
 pub(crate) mod switch;
 

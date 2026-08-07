@@ -122,6 +122,11 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 .join(&state.active_version)
                 .join(WEBSERVER_BINARY);
             let static_dir = root.canonical.join("current/static");
+            let static_archive = root
+                .canonical
+                .join("releases")
+                .join(&state.active_version)
+                .join("static.zip");
             let geo_tmp = root.canonical.join("data/geo_tmp");
             let backup_ref = super::backup::create_backup(
                 &root.canonical.join("backups"),
@@ -130,7 +135,10 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 &webserver,
                 &exported.content,
                 &static_dir,
+                &static_archive,
                 &geo_tmp,
+                "",
+                true,
             )?;
             transaction.backup = Some(backup_ref);
         }
@@ -290,7 +298,41 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 }
             } else {
                 if !activated {
+                    // 激活前失败:可能发生在停止服务阶段,服务状态可能已改变;
+                    // 先按 systemd_before 恢复 unit 注册与 enabled/active 状态,再标记 failed。
+                    let mut systemd_restored = true;
+                    if let Some(before) = &transaction.systemd_before {
+                        let unit_origin = root.canonical.join("service/landscape-router.service");
+                        let restore_error =
+                            super::systemd::restore_systemd_before(systemd, before, &unit_origin)
+                                .and_then(|()| {
+                                    if let Some(backup_path) = &transaction.resolv_conf_backup {
+                                        let backup_dir = root.canonical.join(backup_path);
+                                        super::resolv::restore(&systemd.resolv_conf, &backup_dir)
+                                    } else {
+                                        Ok(())
+                                    }
+                                });
+                        if let Err(restore_error) = restore_error {
+                            systemd_restored = false;
+                            eprintln!(
+                                "install: {}",
+                                crate::tr!(
+                                    crate::keys::SWITCH_ROLLBACK_FAILED,
+                                    rollback_error = restore_error
+                                )
+                            );
+                        }
+                    }
                     let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+                    if !systemd_restored {
+                        // 服务状态恢复也失败:事务已终结且服务可能未恢复,
+                        // 按自动恢复失败处理(退出码 6),不能按普通失败返回。
+                        return Ok(SwitchOutcome::RollbackFailed {
+                            version: from_version,
+                            reason: error.to_string(),
+                        });
+                    }
                 }
                 Err(error)
             }

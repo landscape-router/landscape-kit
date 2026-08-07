@@ -25,7 +25,8 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 首次安装 | `INS-01` 至 `INS-15` | [install.md](functional/install.md) |
 | 版本更新 | `UP-01` 至 `UP-07` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
-| 备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
+| 备份与恢复 | `BKP-01` 至 `BKP-07`、`RST-01` 至 `RST-12` | [backup-and-restore.md](functional/backup-and-restore.md) |
+| 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
 | Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
@@ -50,7 +51,10 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 3. [`RB-06`](functional/rollback.md#rb-06)：自动回滚自身失败及退出码 `6`；
 4. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
 5. [`SM-07`](functional/service-manager.md#sm-07)：service-manager 迁移失败恢复。
+6. [`RST-03`](functional/backup-and-restore.md#rst-03)：restore 激活或健康检查失败后的自动回滚与退出码 `5`；
+7. [`RST-05`](functional/backup-and-restore.md#rst-05)、[`RST-12`](functional/backup-and-restore.md#rst-12)：restore 中断恢复与同版本回滚的 release 恢复；
+8. [`RST-08`](functional/backup-and-restore.md#rst-08) 至 [`RST-11`](functional/backup-and-restore.md#rst-11)：restore 拒绝/失败路径与恢复入口的自动化覆盖。
 
 现有 [发布、安装与成功切换](lifecycle.md)、[失败切换与自动回滚](rollback.md)和
-[扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。公开
-`lkit backup`、`lkit restore`、数据库完整恢复和卸载当前尚未实现，不进入本目录。
+[扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。数据库级完整恢复、
+空目录灾难重建和卸载不属于本版 backup/restore 范围。

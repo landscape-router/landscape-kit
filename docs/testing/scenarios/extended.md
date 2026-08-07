@@ -207,6 +207,6 @@ none → systemd 迁移需要用户通过 `/dev/tty` 确认"外部实例已停�
 
 ## 明确不做
 
-- 公开 `lkit backup` / `lkit restore` 命令与 SQLite 数据库级备份（命令未实现）；
+- SQLite 数据库级备份、空目录灾难重建和数据库内容恢复；当前 `.lkb` 仍是 minimal 配置级备份；
 - 真实 kill -9 崩溃（用 S8 的确定性现场模拟替代）；
 - QEMU 与完整宿主 preflight；systemd-nspawn 另有低频兼容性 smoke test。

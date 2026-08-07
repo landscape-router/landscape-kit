@@ -42,6 +42,10 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             .as_ref()
             .map(|backup| backup.path.as_str()),
         transaction
+            .restore_backup
+            .as_ref()
+            .map(|backup| backup.path.as_str()),
+        transaction
             .static_backup
             .as_ref()
             .map(|backup| backup.path.as_str()),
@@ -74,6 +78,13 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             "backup sha256 must be 64 lowercase hex characters".into(),
         ));
     }
+    if let Some(restore_backup) = &transaction.restore_backup
+        && !is_sha256(&restore_backup.sha256)
+    {
+        return Err(corrupted(
+            "restore_backup sha256 must be 64 lowercase hex characters".into(),
+        ));
+    }
     if let Some(systemd_before) = &transaction.systemd_before
         && systemd_before.registration.kind == RegistrationKind::Symlink
         && systemd_before.registration.target.is_none()
@@ -83,6 +94,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
         ));
     }
     let has_backup = transaction.backup.is_some();
+    let has_restore_backup = transaction.restore_backup.is_some();
     let has_static_backup = transaction.static_backup.is_some();
     let has_managers =
         transaction.from_service_manager.is_some() || transaction.target_service_manager.is_some();
@@ -92,7 +104,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
         || transaction.target_release.is_some();
     match transaction.operation {
         Operation::Install => {
-            if has_backup || has_static_backup || has_managers {
+            if has_backup || has_restore_backup || has_static_backup || has_managers {
                 return Err(corrupted(
                     "install transaction must not record backups, static backups, or service managers"
                         .into(),
@@ -130,6 +142,11 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
         }
         Operation::Switch => {
             reject_network_takeover(transaction, "switch")?;
+            if has_restore_backup {
+                return Err(corrupted(
+                    "switch transaction must not record restore_backup".into(),
+                ));
+            }
             if transaction.no_backup && has_backup {
                 return Err(corrupted(
                     "no-backup switch must not record a .lkb backup".into(),
@@ -159,11 +176,40 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 ));
             }
         }
+        Operation::Restore => {
+            reject_network_takeover(transaction, "restore")?;
+            if has_static_backup || has_managers {
+                return Err(corrupted(
+                    "restore transaction must not record static backups or service managers".into(),
+                ));
+            }
+            if transaction.no_backup && has_backup {
+                return Err(corrupted(
+                    "no-backup restore must not record a .lkb protection backup".into(),
+                ));
+            }
+            if !has_restore_backup && !matches!(transaction.phase, Phase::Preparing | Phase::Failed)
+            {
+                return Err(corrupted(
+                    "restore transaction must record the target backup unless it is still preparing or already failed"
+                        .into(),
+                ));
+            }
+            if transaction.from_version.is_none()
+                || transaction.target_version.is_none()
+                || transaction.previous_current.is_none()
+                || transaction.target_release.is_none()
+            {
+                return Err(corrupted(
+                    "restore transaction must record both versions and both release paths".into(),
+                ));
+            }
+        }
         Operation::Repair => {
             reject_network_takeover(transaction, "repair")?;
-            if transaction.no_backup {
+            if transaction.no_backup || has_restore_backup {
                 return Err(corrupted(
-                    "repair transaction must not record no_backup".into(),
+                    "repair transaction must not record no_backup or restore_backup".into(),
                 ));
             }
             if has_managers {
@@ -203,7 +249,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
         }
         Operation::ServiceMigration => {
             reject_network_takeover(transaction, "service migration")?;
-            if has_backup || has_static_backup || has_versions {
+            if has_backup || has_restore_backup || has_static_backup || has_versions {
                 return Err(corrupted(
                     "service migration must not record backups, static backups, or version changes"
                         .into(),

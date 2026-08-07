@@ -16,6 +16,8 @@ The repository is a Cargo workspace made up of four crates:
 - `check` — host environment checks.
 - `install` — first-time installation.
 - `switch` — switch to a specified stable version.
+- `backup` — create, inspect, and verify `.lkb` minimal backups.
+- `restore` — restore an existing installation from an `.lkb` backup.
 - `repair` — repair static pages or the backend binary.
 - `reconcile` — accept and record changes to init files, service units, or repository sources.
 - `service-manager` — migrate between systemd and external process management.

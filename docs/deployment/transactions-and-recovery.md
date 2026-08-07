@@ -2,9 +2,9 @@
 
 ## 事务文件
 
-### Schema v3
+### Schema v4
 
-每次首次安装、同版本修复、版本切换或 service manager 迁移创建：
+每次首次安装、同版本修复、版本切换、service manager 迁移或 restore 创建：
 
 ```text
 <install-root>/transactions/<transaction-id>.json
@@ -14,7 +14,7 @@
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "transaction_id": "0198c3d2-0000-7000-8000-000000000001",
   "operation": "switch",
   "phase": "prepared",
@@ -31,6 +31,7 @@
     "path": "backups/20260801-163000-a1b2c3d4.lkb",
     "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
   },
+  "restore_backup": null,
   "no_backup": false,
   "static_backup": null,
   "systemd_before": {
@@ -54,7 +55,8 @@
 - `install`；
 - `repair`；
 - `switch`；
-- `service_migration`。
+- `service_migration`；
+- `restore`。
 
 `phase` 只允许：
 
@@ -70,17 +72,29 @@
 - `rolled_back`；
 - `failed`。
 
-`backup` 和 `static_backup` 都是必填但可为 `null` 的字段：
+`backup` 和 `static_backup` 是所有 schema 的必填可空字段；`restore_backup` 是 schema v4
+的必填可空字段，读取 v1/v2/v3 时缺失按 null 处理：
 
-- `switch` 和后端 `repair` 使用 `.lkb` 时，`backup` 必须为对象、`static_backup` 为 null；
-- `lkit repair static` 时，`backup` 为 null，`static_backup` 必须为对象；
-- 无 systemd 的 pending→complete 初始化观测 repair 时，两者均为 null，且不得修改 `current`、版本资产或服务定义；
-- 首次 `install` 时两者均为 null；
-- `service_migration` 时两者均为 null，且 `from_service_manager` 和 `target_service_manager` 必须分别为不同的 `systemd` 或 `none`。
+- `switch` 和后端 `repair` 使用 `.lkb` 时，`backup` 必须为对象，`restore_backup` 和 `static_backup` 为 null；
+- `lkit repair static` 时，`backup` 和 `restore_backup` 为 null，`static_backup` 必须为对象；
+- 无 systemd 的 pending→complete 初始化观测 repair 时，三者均为 null，且不得修改 `current`、版本资产或服务定义；
+- 首次 `install` 时三者均为 null；
+- `service_migration` 时三者均为 null，且 `from_service_manager` 和 `target_service_manager` 必须分别为不同的 `systemd` 或 `none`。
+
+`restore` 时 `restore_backup` 必须记录用户选择的目标 `.lkb`，`from_version`、`target_version`、
+`previous_current` 和 `target_release` 必须同时记录当前与目标版本关系；`backup` 在默认保护备份成功
+后记录当前实例的保护 `.lkb`，使用 `--allow-no-backup` 时为 null；`static_backup` 必须为
+null。目标备份在进入 `prepared` 前必须已经完整验证并放入安装根目录相对路径，外部路径
+不得直接写入事务文件。交互确认（含 minimal scope 数据损失确认）先于 `begin` 完成：
+用户拒绝或非交互模式缺少 `--yes` 时不创建事务、不写任何文件，`--file` 也不产生
+暂存拷贝。
+
+`restore_backup.path` 与 `backup.path` 都必须是安装根目录内的安全相对路径；外部备份先复制
+到本次 restore 事务目录并完成自校验，事务只记录复制后的路径、backup ID 和文件 checksum。
 
 `no_backup` 是布尔字段，只有用户对已停止的 systemd 服务显式使用
-`--allow-no-backup` 的 switch 才为 true；此时 `backup` 必须为 null。其他事务固定为
-false。读取旧 v1 文件时缺失该字段按 false 处理。
+`--allow-no-backup` 的 switch 或 restore 才为 true；此时 `backup` 必须为 null。其他事务
+固定为 false。读取旧 v1 文件时缺失该字段按 false 处理。
 
 `from_service_manager` 和 `target_service_manager` 是必填但可为 `null` 的字段。只有 `service_migration` 时两者必须为非 null；其他 operation 必须为 null。迁移事务不得改变 `from_version`、`target_version`、`previous_current` 或 `target_release` 表示的当前版本关系。
 
@@ -137,7 +151,8 @@ systemd-resolved 的原始 installed/active/enable 状态、确认截止时间�
 首次安装的 `from_version` 和 `previous_current` 可以为 `null`。事务对象允许未知字段并忽略，以便向后兼容；已定义字段缺失、类型错误或组合不满足上述 operation 规则时，事务损坏。事务不得保存密码、初始化 TOML 内容、API token 或预签名 URL。
 
 Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
-`awaiting_network_confirmation`、`finalizing`。读取器兼容 v1/v2；新事务一律写 v3。v1 的
+`awaiting_network_confirmation`、`finalizing`。Schema v4 新增 `restore` operation 和
+`restore_backup` 字段。读取器兼容 v1/v2/v3；新事务一律写 v4。v1 的
 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating”的窗口，恢复时按可能已经
 停止处理。
 
@@ -171,6 +186,24 @@ Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
   - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，不重建 Landscape data；
   - `service_migration` 从 `systemd` 到 `none`：按 `systemd_before` 恢复注册链接和 enabled/active 状态，不修改 `current` 或 data；
   - `service_migration` 从 `none` 到 `systemd`：停止本次 systemd 服务，按 `systemd_before` 撤销注册状态并恢复 `/etc/resolv.conf`，保持已提交状态为 `manager: "none"`，不尝试重新启动外部实例；
+  - `restore` 按阶段恢复：
+    - `preparing`：尚未改变运行状态，清理事务目录并标记 `failed`；
+    - `prepared` 或 `stopping`：`current` 和数据尚未激活，按 `systemd_before` 幂等恢复
+      注册链接、enabled/active 状态，清理事务目录并标记 `failed`；
+    - `activating`、`verifying` 或 `rolling_back`：执行 restore 回滚。systemd 模式回滚
+      顺序固定为：停止目标服务 → 恢复 unit 注册与 enabled 状态（**不启动**）→ 同版本
+      restore 时把被替换的原 release 从事务目录移回 → 恢复 `current` → 恢复 `data/`
+      （幂等，见下）→ 仅在恢复前服务活跃时启动并做完整健康检查 → 重新提交恢复前 state。
+      none 模式只恢复 `data/`、`current` 和 state，不启动、不探测、不检查健康；
+      必要时再使用 `backup` 保护快照；恢复成功标记 `rolled_back`，失败标记 `failed` 并
+      保留目标 release、旧 data 和两个备份引用；
+    - 回滚恢复 `data/` 必须幂等，调用方按三态判定：`previous-data` 存在 → 移回原位；
+      `previous-data` 缺失且 `data/` 存在 → 视为上次回滚已完成（already-restored），
+      不得再次删除或移动 `data/`，直接继续写 state 与标记 `rolled_back`；两者均缺失 →
+      事务损坏，走保护快照分支或报损坏；
+    - 同版本 restore（`previous_current` 与 `target_release` 相同）回滚时，若事务目录
+      存在 `replaced-release`，必须先把原 release 移回 `releases/<版本>`，确保回滚后的
+      release 内容与回滚前完全一致；
 - `rolling_back`：继续事务已经选择的回滚路径，不重新尝试目标版本；
 - `awaiting_network_confirmation` 或 `finalizing`：普通命令不自动处理，要求使用网络
   子命令；超时 timer 或未确认重启执行同一幂等回滚入口；

@@ -35,6 +35,11 @@
 
 ### 备份与回滚
 
+- `lkit backup create` 在不停止服务的情况下通过导出 API 创建 `auto: false` 的 `.lkb`，
+  支持 remark 和可选外部输出路径；`list`、`show`、`verify` 不修改安装现场。
+- `backup list` 不跟随符号链接；损坏、路径不安全或权限过宽的备份不会被当作有效备份。
+- `backup verify` 完整检查 header、metadata、零填充、tar.gz checksum、路径逃逸和条目类型；
+  verify 失败不创建或修改安装状态。
 - 运行中的 systemd 服务在版本切换前必须成功调用导出 API，不能退回旧初始化文件；
   `--allow-no-backup` 不得绕过该要求。
 - systemd 服务已停止时，版本切换默认拒绝；仅显式 `--allow-no-backup` 时允许跳过导出
@@ -48,6 +53,16 @@
 - 无备份切换失败时仍恢复 `current`、服务状态和 `/etc/resolv.conf`，但不执行 data
   重建，也不宣称恢复目标版本可能修改的数据。
 - 回滚成功恢复核心配置和 Geo 数据；不宣称恢复被明确排除的数据。
+- `lkit restore` 只接受已有有效安装和完整验证的 `.lkb`，目标版本可与当前版本相同、较低
+  或较高，不经过仓库下载。
+- restore 默认在停止服务前创建当前实例保护 `.lkb`；`--allow-no-backup` 才能跳过该保护，
+  且必须由用户确认承担风险。
+- restore 的目标 `.lkb` 不包含 SQLite；恢复会创建空 data、重新初始化配置，并保留恢复前
+  data 的事务现场，不得声称恢复数据库。
+- systemd restore 必须恢复服务并通过完整健康检查后提交；none restore 必须保持停止并提交
+  `initialization.status: pending`、`verified: false`。
+- restore 目标失败但原状态恢复成功返回 `5`；恢复失败返回 `6`，保留目标 release、旧
+  data、保护备份和事务日志。
 - 目标版本或后端 repair 失败但回滚成功时返回 `5`；回滚失败或需要人工恢复时返回 `6`。
 - systemd 注册、enabled、active 和 `/etc/resolv.conf` 按事务记录恢复，缺少必要事实时不猜测。
 

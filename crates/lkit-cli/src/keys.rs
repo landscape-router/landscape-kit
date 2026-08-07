@@ -32,6 +32,38 @@ pub(crate) const MAIN_ACCEPT_SERVICE_CHANGE_HELP: &str = "main.accept_service_ch
 pub(crate) const MAIN_ALLOW_NO_BACKUP_HELP: &str = "main.allow_no_backup_help";
 pub(crate) const MAIN_REPAIR_ABOUT: &str = "main.repair_about";
 pub(crate) const MAIN_REPAIR_TARGET_HELP: &str = "main.repair_target_help";
+pub(crate) const MAIN_BACKUP_ABOUT: &str = "main.backup_about";
+pub(crate) const MAIN_BACKUP_CREATE_ABOUT: &str = "main.backup_create_about";
+pub(crate) const MAIN_BACKUP_REMARK_HELP: &str = "main.backup_remark_help";
+pub(crate) const MAIN_BACKUP_OUTPUT_HELP: &str = "main.backup_output_help";
+pub(crate) const MAIN_BACKUP_LIST_ABOUT: &str = "main.backup_list_about";
+pub(crate) const MAIN_BACKUP_SHOW_ABOUT: &str = "main.backup_show_about";
+pub(crate) const MAIN_BACKUP_VERIFY_ABOUT: &str = "main.backup_verify_about";
+pub(crate) const MAIN_BACKUP_ID_HELP: &str = "main.backup_id_help";
+pub(crate) const MAIN_BACKUP_FILE_HELP: &str = "main.backup_file_help";
+pub(crate) const MAIN_RESTORE_ABOUT: &str = "main.restore_about";
+pub(crate) const MAIN_RESTORE_YES_HELP: &str = "main.restore_yes_help";
+pub(crate) const MAIN_RESTORE_ALLOW_NO_BACKUP_HELP: &str = "main.restore_allow_no_backup_help";
+pub(crate) const BACKUP_REQUIRES_EXISTING_INSTALLATION: &str =
+    "backup.requires_existing_installation";
+pub(crate) const BACKUP_CREATED: &str = "backup.created";
+pub(crate) const BACKUP_NONE_FOUND: &str = "backup.none_found";
+pub(crate) const BACKUP_LIST_INVALID: &str = "backup.list_invalid";
+pub(crate) const BACKUP_VERIFIED: &str = "backup.verified";
+pub(crate) const BACKUP_REMARK_PROMPT: &str = "backup.remark_prompt";
+pub(crate) const RESTORE_REQUIRES_EXISTING_INSTALLATION: &str =
+    "restore.requires_existing_installation";
+pub(crate) const RESTORE_CONFIRM_PLAN: &str = "restore.confirm_plan";
+pub(crate) const RESTORE_CONFIRM_MINIMAL_SCOPE: &str = "restore.confirm_minimal_scope";
+pub(crate) const RESTORE_CONFIRM_STOP_WITH_OWN_MANAGER: &str =
+    "restore.confirm_stop_with_own_manager";
+pub(crate) const RESTORE_WARNING_NO_PROTECTION_BACKUP: &str =
+    "restore.warning_no_protection_backup";
+pub(crate) const RESTORE_ROLLBACK_FAILED: &str = "restore.rollback_failed";
+pub(crate) const RESTORE_COMMITTED: &str = "restore.committed";
+pub(crate) const RESTORE_NONE_REFERENCE_COMMAND: &str = "restore.none_reference_command";
+pub(crate) const RESTORE_FAILED_ROLLED_BACK: &str = "restore.failed_rolled_back";
+pub(crate) const RESTORE_FAILED_ROLLBACK_FAILED: &str = "restore.failed_rollback_failed";
 pub(crate) const MAIN_RECONCILE_ABOUT: &str = "main.reconcile_about";
 pub(crate) const MAIN_SERVICE_MANAGER_ABOUT: &str = "main.service_manager_about";
 pub(crate) const MAIN_SERVICE_MANAGER_TARGET_HELP: &str = "main.service_manager_target_help";

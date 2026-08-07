@@ -146,9 +146,10 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
 }
 
 /// 无 `.lkb` 切换失败回滚(`--allow-no-backup`):目标版本启动失败时,
-/// 停止目标进程,按 `systemd_before` 恢复 unit 注册与 enabled/active 状态,
-/// 恢复 `/etc/resolv.conf`,原子恢复 `current` 链接;切换前服务在运行时
-/// 才重新启动原版本并做健康检查。原版本 release 与 data 均未被修改,
+/// 停止目标进程,按 `systemd_before` 恢复 unit 注册与 enabled 状态(不启动),
+/// 恢复 `/etc/resolv.conf`,原子恢复 `current` 链接,之后才在切换前服务
+/// 运行时重新启动原版本并做健康检查。启动必须发生在 `current` 恢复之后,
+/// 避免旧服务在目标版本上启动。原版本 release 与 data 均未被修改,
 /// 因此不需要从备份重建;但无法恢复被目标版本重新初始化过的数据,
 /// 失败后 `rolled_back` 仍按普通回滚提交。
 pub(crate) async fn rollback_no_backup<P: DocsProbe>(
@@ -174,7 +175,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
         })?;
         was_active = before.active;
         let unit_origin = root.canonical.join("service/landscape-router.service");
-        super::systemd::restore_systemd_before(systemd, before, &unit_origin)?;
+        super::systemd::restore_systemd_registration(systemd, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
             let backup_dir = root.canonical.join(backup_path);
             resolv::restore(&systemd.resolv_conf, &backup_dir)?;
@@ -188,6 +189,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     restore_current(root, previous_current)?;
 
     if is_systemd && was_active {
+        super::systemd::start(systemd)?;
         let pid = super::systemd::main_pid(systemd)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
@@ -220,7 +222,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
 /// 将当前 `data` 移入事务目录 `failed-data`。幂等:
 /// 上次回滚中断时 `failed-data` 已存在,则丢弃上次尝试创建的新 `data`,
 /// 重新从备份恢复;`data` 不存在时直接进入创建新目录的步骤。
-fn move_data_aside(data: &Path, failed_data: &Path) -> Result<(), InstallError> {
+pub(crate) fn move_data_aside(data: &Path, failed_data: &Path) -> Result<(), InstallError> {
     std::fs::create_dir_all(failed_data.parent().expect("failed-data has a parent"))
         .map_err(InstallError::Io)?;
     if failed_data.exists() {
@@ -234,7 +236,7 @@ fn move_data_aside(data: &Path, failed_data: &Path) -> Result<(), InstallError> 
     Ok(())
 }
 
-fn rebuild_release_from_backup(
+pub(crate) fn rebuild_release_from_backup(
     root: &InstallRoot,
     tx_dir: &Path,
     from_version: &str,
@@ -268,6 +270,13 @@ fn rebuild_release_from_backup(
         ));
     }
     copy_tree(&static_source, &from_rel.join(super::pipeline::STATIC_DIR))?;
+    let static_archive = restore_dir.join("static.zip");
+    if !static_archive.is_file() {
+        return Err(InstallError::InvalidBackup(
+            "backup is missing static.zip".into(),
+        ));
+    }
+    std::fs::copy(&static_archive, from_rel.join("static.zip")).map_err(InstallError::Io)?;
     Ok(())
 }
 
@@ -343,7 +352,7 @@ fn build_restored_state(
     })
 }
 
-fn restore_current(root: &InstallRoot, target: &str) -> Result<(), InstallError> {
+pub(crate) fn restore_current(root: &InstallRoot, target: &str) -> Result<(), InstallError> {
     let current = root.canonical.join("current");
     let tmp = root.canonical.join("run/.current.tmp");
     std::fs::create_dir_all(tmp.parent().expect("run dir has a parent"))
@@ -472,10 +481,12 @@ mod tests {
         let backup_source = dir.join("backup-source");
         let backup_binary = backup_source.join("landscape-webserver");
         let backup_static = backup_source.join("static");
+        let backup_zip = backup_source.join("static.zip");
         let backup_geo = backup_source.join("geo_tmp");
         std::fs::create_dir_all(backup_static.join("assets")).unwrap();
         std::fs::create_dir_all(backup_geo.join("ip")).unwrap();
         std::fs::write(&backup_binary, b"binary-from-lkb").unwrap();
+        std::fs::write(&backup_zip, b"zip-from-lkb").unwrap();
         std::fs::write(backup_static.join("index.html"), b"static-from-lkb").unwrap();
         std::fs::write(backup_static.join("assets/app.js"), b"asset-from-lkb").unwrap();
         std::fs::write(backup_geo.join("ip/geo.dat"), b"geo-from-lkb").unwrap();
@@ -486,7 +497,10 @@ mod tests {
             &backup_binary,
             "init_config_from_lkb = true\n",
             &backup_static,
+            &backup_zip,
             &backup_geo,
+            "",
+            true,
         )
         .unwrap();
 
@@ -568,6 +582,10 @@ mod tests {
         assert_eq!(
             std::fs::read(old_release.join("static/assets/app.js")).unwrap(),
             b"asset-from-lkb"
+        );
+        assert_eq!(
+            std::fs::read(old_release.join("static.zip")).unwrap(),
+            b"zip-from-lkb"
         );
         assert_eq!(
             std::fs::read(dir.join("data/geo_tmp/ip/geo.dat")).unwrap(),

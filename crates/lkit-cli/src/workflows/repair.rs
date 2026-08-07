@@ -198,6 +198,11 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             )));
         }
         let static_dir = root.canonical.join("current/static");
+        let static_archive = root
+            .canonical
+            .join("releases")
+            .join(&state.active_version)
+            .join("static.zip");
         let geo_tmp = root.canonical.join("data/geo_tmp");
         let backup_ref = backup::create_backup(
             &root.canonical.join("backups"),
@@ -206,7 +211,10 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             &current_binary,
             &exported.content,
             &static_dir,
+            &static_archive,
             &geo_tmp,
+            "",
+            true,
         )?;
         transaction.backup = Some(backup_ref);
 
@@ -716,6 +724,11 @@ mod tests {
         };
         let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
         activate_version(&install_root, "1.2.3");
+        std::fs::write(
+            install_root.canonical.join("releases/1.2.3/static.zip"),
+            &static_zip,
+        )
+        .unwrap();
         let binary = install_root
             .canonical
             .join("releases/1.2.3/landscape-webserver");

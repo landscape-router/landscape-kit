@@ -28,7 +28,7 @@ lkit() {
   local subcommand=$1
   shift
   case $subcommand in
-    install|switch|repair|reconcile|service-manager)
+    install|switch|repair|reconcile|service-manager|backup|restore)
       command /usr/local/bin/lkit "$subcommand" "$@" --test-runtime "$runtime_config"
       ;;
     *) command /usr/local/bin/lkit "$subcommand" "$@" ;;
@@ -165,9 +165,11 @@ assert_backup_metadata() {
   python3 - "$backup" "$expected_version" "$expected_architecture" <<'PY'
 import gzip
 import hashlib
+import io
 import json
 import re
 import sys
+import tarfile
 
 path, expected_version, expected_architecture = sys.argv[1:]
 with open(path, "rb") as stream:
@@ -185,7 +187,47 @@ assert re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{8}", metadata["backup_id"])
 archive = content[1024 * 1024:]
 expected = metadata["checksum"].removeprefix("sha256:")
 assert hashlib.sha256(archive).hexdigest() == expected
-gzip.decompress(archive)
+with tarfile.open(fileobj=io.BytesIO(gzip.decompress(archive))) as tar:
+    names = tar.getnames()
+    assert "static.zip" in names, "backup must carry the static archive"
+    assert "landscape-webserver" in names
+    assert "landscape_init.toml" in names
+    assert "static/" in names
+    assert "geo_tmp/" in names
+PY
+}
+
+assert_manual_backup_metadata() {
+  local backup=$1
+  local expected_version=$2
+  local expected_architecture=$3
+  local expected_remark=$4
+  python3 - "$backup" "$expected_version" "$expected_architecture" "$expected_remark" <<'PY'
+import gzip
+import hashlib
+import io
+import json
+import re
+import sys
+import tarfile
+
+path, expected_version, expected_architecture, expected_remark = sys.argv[1:]
+with open(path, "rb") as stream:
+    content = stream.read()
+assert content[:4] == b"LKB1"
+metadata_length = int.from_bytes(content[6:10], "little")
+metadata = json.loads(content[32:32 + metadata_length])
+assert metadata["landscape_version"] == expected_version
+assert metadata["architecture"] == expected_architecture
+assert metadata["auto"] is False
+assert metadata["remark"] == expected_remark
+assert metadata["contents"]["static_archive"] is True
+assert re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{8}", metadata["backup_id"])
+archive = content[1024 * 1024:]
+expected = metadata["checksum"].removeprefix("sha256:")
+assert hashlib.sha256(archive).hexdigest() == expected
+with tarfile.open(fileobj=io.BytesIO(gzip.decompress(archive))) as tar:
+    assert "static.zip" in tar.getnames()
 PY
 }
 
@@ -466,6 +508,74 @@ backup=$(latest_backup)
 assert_backup_metadata "$backup" 2.0.0 "$state_architecture"
 [[ $(sha256sum "$fixture_resolv_conf" | awk '{print $1}') == "$resolv_sha_before" ]] \
   || fail "fixture resolv.conf content was not restored after delayed_ready rollback"
+
+# ---------------------------------------------------------------- S10 手工备份与恢复
+# 运行中的 systemd 实例创建手工 minimal 备份(auto: false + remark),
+# 列出/查看/校验,再同版本 restore(保护备份 + restore 事务提交)。
+manual_remark="manual e2e backup"
+set +e
+lkit backup create --remark "$manual_remark" --install-dir "$install_root"
+backup_status=$?
+set -e
+[[ $backup_status -eq 0 ]] || fail "backup create returned $backup_status"
+manual_backup=$(latest_backup)
+manual_id=$(basename "$manual_backup" .lkb)
+assert_manual_backup_metadata "$manual_backup" 2.0.0 "$state_architecture" "$manual_remark"
+lkit backup list --install-dir "$install_root" | grep -q "$manual_id" \
+  || fail "backup list does not contain $manual_id"
+lkit backup show --backup "$manual_id" --install-dir "$install_root" \
+  | grep -q "backup_id: $manual_id" \
+  || fail "backup show does not print the backup id"
+lkit backup verify --backup "$manual_id" --install-dir "$install_root" \
+  || fail "backup verify failed for $manual_id"
+restore_lkb_before=$(lkb_count)
+state_before="$install_root/state/install-state.json"
+repository_before=$(json_value "$state_before" repository.location)
+lkit restore --backup "$manual_id" --install-dir "$install_root" --non-interactive --yes \
+  || fail "same-version restore returned nonzero"
+assert_state_version 2.0.0
+assert_service_identity
+assert_latest_phase "$install_root" committed
+[[ $(lkb_count) -eq $((restore_lkb_before + 1)) ]] \
+  || fail "restore must create a protection backup"
+[[ $(json_value "$state_before" repository.location) == "$repository_before" ]] \
+  || fail "restore must keep the current repository source"
+transaction=$(latest_transaction)
+python3 - "$transaction" "$manual_id" <<'PY' || fail "restore transaction shape is wrong"
+import json
+import sys
+
+path, backup_id = sys.argv[1:]
+with open(path, encoding="utf-8") as stream:
+    tx = json.load(stream)
+assert tx["operation"] == "restore"
+assert tx["phase"] == "committed"
+assert tx["restore_backup"]["backup_id"] == backup_id
+assert tx["backup"] is not None, "restore must record the protection backup"
+assert tx["static_backup"] is None
+PY
+python3 - "$manual_backup" "$state_before" <<'PY' || fail "restored state assets do not match the backup"
+import gzip
+import hashlib
+import io
+import json
+import sys
+import tarfile
+
+backup, state_path = sys.argv[1:]
+with open(backup, "rb") as stream:
+    content = stream.read()
+metadata_length = int.from_bytes(content[6:10], "little")
+archive = content[1024 * 1024:]
+with tarfile.open(fileobj=io.BytesIO(gzip.decompress(archive))) as tar:
+    member = tar.extractfile("static.zip")
+    static_sha = hashlib.sha256(member.read()).hexdigest()
+with open(state_path, encoding="utf-8") as stream:
+    state = json.load(stream)
+assert state["assets"]["static_archive"]["sha256"] == static_sha
+PY
+systemctl restart landscape-router.service
+assert_service_identity
 
 # ---------------------------------------------------------------- S4 停止服务后切换
 publish_release 5.0.0 healthy

@@ -54,7 +54,41 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
         }
         Operation::Switch => recover_switch(root, transaction, systemd, health).await,
         Operation::Repair => recover_repair(root, transaction, systemd, health).await,
+        Operation::Restore => recover_restore(root, transaction, systemd, health).await,
         Operation::ServiceMigration => recover_migration(root, transaction, systemd),
+    }
+}
+
+/// 中断的 restore 事务恢复:
+/// - `preparing`:清理事务临时内容并标记 `failed`;
+/// - `prepared`/`stopping`:恢复事务前 systemd 状态后清理并标记 `failed`;
+/// - `activating`/`verifying`/`rolling_back`:执行 restore 回滚,
+///   优先用事务目录中的旧 data 现场,必要时使用保护 `.lkb`。
+async fn recover_restore<P: DocsProbe>(
+    root: &InstallRoot,
+    transaction: &TransactionFile,
+    systemd: &Systemd,
+    health: &HealthOptions<P>,
+) -> Result<(), InstallError> {
+    match transaction.phase {
+        Phase::Preparing => {
+            let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Prepared | Phase::Stopping => {
+            restore_pre_activation_systemd(root, transaction, systemd)?;
+            let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Activating | Phase::Verifying | Phase::RollingBack => {
+            crate::workflows::restore::rollback_restore(root, transaction, systemd, health).await
+        }
+        phase => Err(InstallError::BlockedByTransaction(format!(
+            "restore transaction in terminal phase {} cannot be recovered",
+            phase.key()
+        ))),
     }
 }
 

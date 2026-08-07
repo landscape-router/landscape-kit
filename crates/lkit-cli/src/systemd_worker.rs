@@ -54,6 +54,7 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
     }
     match command {
         Commands::Check(_) | Commands::Reconcile(_) => false,
+        Commands::Backup(_) => false,
         Commands::Network(args) => {
             matches!(args.action, NetworkAction::Rollback { automatic: false })
         }
@@ -80,6 +81,9 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
             args.target == crate::commands::repair::RepairTarget::Binary
                 && load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
         }
+        Commands::Restore(args) => {
+            load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
+        }
         Commands::ServiceManager(args) => {
             let current = load_manager(args.install_dir.as_deref());
             let target = match args.target {
@@ -99,6 +103,13 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Switch(args) => args.test_runtime.as_deref(),
         Commands::Update(args) => args.test_runtime.as_deref(),
         Commands::Repair(args) => args.test_runtime.as_deref(),
+        Commands::Restore(args) => args.test_runtime.as_deref(),
+        Commands::Backup(args) => match &args.action {
+            crate::commands::backup::BackupAction::Create(args) => args.test_runtime.as_deref(),
+            crate::commands::backup::BackupAction::List(args) => args.test_runtime.as_deref(),
+            crate::commands::backup::BackupAction::Show(args) => args.test_runtime.as_deref(),
+            crate::commands::backup::BackupAction::Verify(args) => args.test_runtime.as_deref(),
+        },
         Commands::Reconcile(args) => args.test_runtime.as_deref(),
         Commands::ServiceManager(args) => args.test_runtime.as_deref(),
         Commands::Network(args) => args.test_runtime.as_deref(),
