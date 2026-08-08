@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::plan::{InstallError, RepositoryChoice};
 use super::root::InstallRoot;
+use crate::i18n::Language;
 
 pub(crate) const CONFIG_FILE: &str = "config.toml";
 pub(crate) const CONFIG_SCHEMA_VERSION: u64 = 1;
@@ -30,11 +31,21 @@ impl RepositorySource {
     }
 }
 
+/// 界面偏好 section,目前只用于语言预设。与仓库来源不同,这里的值是宽容读取:
+/// 缺失、损坏或不受支持都不阻断命令。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub(crate) struct UiSection {
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
 /// 安装根目录顶层的用户可编辑配置文件。
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ConfigFile {
     pub schema_version: u64,
     pub repository: RepositorySource,
+    #[serde(default)]
+    pub ui: Option<UiSection>,
 }
 
 /// 读取仓库来源配置。文件不存在时返回 `Ok(None)`,调用方按官方 GitHub 默认处理;
@@ -100,6 +111,21 @@ pub(crate) fn resolve_default_choice(root: &InstallRoot) -> Result<RepositoryCho
             crate::release::repository::github::DEFAULT_REPOSITORY.into(),
         )),
     }
+}
+
+/// 读取配置预设的语言。这是**宽容读取**:文件缺失、TOML 损坏、`[ui] language`
+/// 缺失或值不受支持(如 `fr`)时一律返回 `None`,由调用方回落系统 locale 或默认
+/// 英语,绝不阻断命令。与 `load_repository` 的严格校验不同,语言预设是全局生效的
+/// 展示偏好,不能因为配置问题影响任何命令。
+pub(crate) fn load_language(root: &InstallRoot) -> Option<Language> {
+    let path = root.canonical.join(CONFIG_FILE);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let config: ConfigFile = toml::from_str(&text).ok()?;
+    config
+        .ui
+        .as_ref()
+        .and_then(|ui| ui.language.as_deref())
+        .and_then(Language::from_code)
 }
 
 #[cfg(test)]
@@ -366,5 +392,133 @@ location = "https://repo.example.com/landscape"
             .to_choice(),
             RepositoryChoice::Http("https://repo.example.com/landscape/".into())
         );
+    }
+
+    #[test]
+    fn loads_configured_language() {
+        let temp = temp_root("lang-valid");
+        let root = new_root(&temp);
+        std::fs::write(
+            temp.join(CONFIG_FILE),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[ui]
+language = "zh"
+"#,
+        )
+        .unwrap();
+        assert_eq!(load_language(&root), Some(Language::Zh));
+
+        std::fs::write(
+            temp.join(CONFIG_FILE),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[ui]
+language = "en"
+"#,
+        )
+        .unwrap();
+        assert_eq!(load_language(&root), Some(Language::En));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn missing_config_has_no_language_preset() {
+        let temp = temp_root("lang-missing");
+        let root = new_root(&temp);
+        assert_eq!(load_language(&root), None);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn ignores_unsupported_language_values() {
+        let temp = temp_root("lang-unsupported");
+        let root = new_root(&temp);
+        for language in ["fr", "zh-CN", "42", ""] {
+            std::fs::write(
+                temp.join(CONFIG_FILE),
+                format!(
+                    "schema_version = 1\n\n[repository]\nkind = \"github\"\nlocation = \"ThisSeanZhang/landscape\"\n\n[ui]\nlanguage = \"{language}\"\n"
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                load_language(&root),
+                None,
+                "unsupported language {language:?} must be ignored"
+            );
+        }
+
+        std::fs::write(
+            temp.join(CONFIG_FILE),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[ui]
+language = "ZH"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load_language(&root),
+            Some(Language::Zh),
+            "case must be normalized like --lang"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn ignores_missing_ui_section_and_corrupt_config_for_language() {
+        let temp = temp_root("lang-tolerant");
+        let root = new_root(&temp);
+        std::fs::write(
+            temp.join(CONFIG_FILE),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+"#,
+        )
+        .unwrap();
+        assert_eq!(load_language(&root), None, "no [ui] section");
+
+        std::fs::write(temp.join(CONFIG_FILE), b"not toml [[[").unwrap();
+        assert_eq!(
+            load_language(&root),
+            None,
+            "corrupt config must not block language resolution"
+        );
+
+        std::fs::write(
+            temp.join(CONFIG_FILE),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[ui]
+language = 42
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load_language(&root),
+            None,
+            "wrong field type must be ignored for language"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

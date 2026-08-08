@@ -13,9 +13,10 @@ mod service;
 mod systemd_worker;
 mod workflows;
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
 
 use commands::Commands;
 use i18n::Language;
@@ -68,7 +69,10 @@ async fn main() -> ExitCode {
             return ExitCode::from(code.clamp(0, 255) as u8);
         }
     };
-    i18n::configure(i18n::resolve(cli.lang.as_deref()));
+    i18n::configure(i18n::resolve_with(
+        cli.lang.as_deref(),
+        configured_language(&matches),
+    ));
     interaction::interactive::configure(cli.non_interactive);
     let Some(command) = cli.command else {
         if cli.non_interactive || cli.internal_systemd_worker {
@@ -105,6 +109,23 @@ async fn main() -> ExitCode {
         };
     };
     run_command(command, None, cli.internal_systemd_worker).await
+}
+
+/// 读取配置预设的语言。宽容读取:安装根无法解析(相对路径、危险目录等)、
+/// `config.toml` 缺失或损坏时一律返回 `None`,语言解析回落到系统 locale。
+fn configured_language(matches: &ArgMatches) -> Option<Language> {
+    let mut leaf = matches;
+    while let Some((_, sub)) = leaf.subcommand() {
+        leaf = sub;
+    }
+    let install_dir = match leaf.get_one::<PathBuf>("install_dir") {
+        Some(path) => path.clone(),
+        None => std::env::var("LKIT_INSTALL_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(deployment::plan::DEFAULT_INSTALL_ROOT)),
+    };
+    let root = deployment::root::normalize_install_root(&install_dir).ok()?;
+    deployment::config::load_language(&root)
 }
 
 fn localized_command() -> clap::Command {

@@ -27,6 +27,9 @@ schema_version = 1
 [repository]
 kind = "github"
 location = "ThisSeanZhang/landscape"
+
+[ui]
+language = "zh"
 ```
 
 HTTP 仓库来源示例：
@@ -46,6 +49,8 @@ location = "https://repo.example.com/landscape/"
 - `repository.location` 是仓库位置：GitHub 为 `owner/repo`，HTTP 为 protocol v1 base URL
   （读取时按与 CLI 相同的规则校验并规范化，例如补全尾部 `/`）；
 - `repository.location` 不保存预签名 URL，不得包含凭据或敏感 query；
+- `ui.language` 可选，只允许 `en` 或 `zh`；缺失、值不受支持（如 `fr`）或类型错误时
+  忽略，语言解析回落到系统 locale（见[语言预设](#语言预设)）；
 - 未知字段和未知 section 允许并忽略，供未来配置扩展。
 
 ## 来源解析优先级
@@ -72,6 +77,27 @@ location = "https://repo.example.com/landscape/"
 名称非法）或**不可读**（例如权限不足）时，读取它的命令报配置错误并阻断，提示修复
 或删除 `config.toml` 以回落官方 GitHub 默认；损坏很可能来自用户编辑错误，静默回落
 会让用户误以为配置仍然生效。
+
+## 语言预设
+
+`[ui] language` 预设界面与命令输出语言（仅 `en` 或 `zh`）。语言在命令行解析完成后
+按以下优先级解析：
+
+1. 显式 CLI：`--lang`（放在子命令前后均可）；
+2. 环境变量：`LKIT_LANG`；
+3. 配置：`[ui] language`；
+4. 系统 locale（`LC_ALL`/`LC_MESSAGES`/`LANG` 的主语言标签）；
+5. 默认英文。
+
+与仓库来源的严格校验不同，语言是**宽容读取**：`config.toml` 缺失、损坏、没有
+`[ui] language`，或值不受支持时，该层被跳过、不阻断任何命令。损坏的配置文件仍然
+会阻断需要读取仓库来源的命令（见上文），但不影响语言解析。
+
+配置预设覆盖 CLI 输出、Ratatui 控制台、交互提示、进度与命令结果；clap 帮助与参数
+错误在命令行解析阶段渲染，无法使用配置预设的语言，`--lang` 与 `LKIT_LANG` 可以。
+
+`lkit` 不写回 `[ui] language`：交互控制台按 `L` 键切换语言只影响本次会话，不修改
+`config.toml`。
 
 ## 来源变化与资产身份
 

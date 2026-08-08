@@ -35,9 +35,16 @@ impl Language {
     }
 
     fn from_override(value: &str) -> Self {
+        Self::from_code(value).unwrap_or(Self::En)
+    }
+
+    /// 严格识别支持的语言代码,不支持时返回 `None`。与 `from_override` 不同,
+    /// 调用方可以把 `None` 当作"该来源不决定语言",而不是强制英文。
+    pub(crate) fn from_code(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "zh" => Self::Zh,
-            _ => Self::En,
+            "en" => Some(Self::En),
+            "zh" => Some(Self::Zh),
+            _ => None,
         }
     }
 
@@ -115,19 +122,42 @@ pub(crate) fn static_str(value: String) -> &'static str {
 }
 
 pub(crate) fn resolve(explicit: Option<&str>) -> Language {
+    resolve_with(explicit, None)
+}
+
+/// 语言解析优先级:`--lang` > `LKIT_LANG` > 配置预设(`config.toml` 的
+/// `[ui] language`) > 系统 locale > 默认英文。`configured` 只由调用方在
+/// 命令行解析完成后提供,clap 帮助与解析错误阶段无法使用配置预设。
+pub(crate) fn resolve_with(explicit: Option<&str>, configured: Option<Language>) -> Language {
+    resolve_precedence(
+        explicit,
+        nonempty_environment(LANGUAGE_ENV).and_then(|value| value.into_string().ok()),
+        configured,
+        ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .into_iter()
+            .find_map(nonempty_environment)
+            .and_then(|value| value.into_string().ok())
+            .as_deref(),
+    )
+}
+
+fn resolve_precedence(
+    explicit: Option<&str>,
+    environment: Option<String>,
+    configured: Option<Language>,
+    locale: Option<&str>,
+) -> Language {
     if let Some(value) = explicit {
         return Language::from_override(value);
     }
-    if let Some(value) = nonempty_environment(LANGUAGE_ENV) {
-        return value
-            .to_str()
-            .map(Language::from_override)
-            .unwrap_or(Language::En);
+    if let Some(value) = environment {
+        return Language::from_override(&value);
     }
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .into_iter()
-        .find_map(nonempty_environment)
-        .and_then(|value| value.to_str().map(Language::from_system_locale))
+    if let Some(language) = configured {
+        return language;
+    }
+    locale
+        .map(Language::from_system_locale)
         .unwrap_or(Language::En)
 }
 
@@ -290,5 +320,54 @@ mod tests {
     fn toggles_between_supported_languages() {
         assert_eq!(Language::En.toggled(), Language::Zh);
         assert_eq!(Language::Zh.toggled(), Language::En);
+    }
+
+    #[test]
+    fn recognizes_supported_codes_strictly() {
+        assert_eq!(Language::from_code("en"), Some(Language::En));
+        assert_eq!(Language::from_code("zh"), Some(Language::Zh));
+        assert_eq!(Language::from_code("ZH"), Some(Language::Zh));
+        assert_eq!(Language::from_code("fr"), None);
+        assert_eq!(Language::from_code("zh-CN"), None);
+        assert_eq!(Language::from_code(""), None);
+    }
+
+    #[test]
+    fn configured_language_sits_between_environment_and_locale() {
+        assert_eq!(
+            resolve_precedence(Some("en"), None, Some(Language::Zh), None),
+            Language::En,
+            "--lang beats config"
+        );
+        assert_eq!(
+            resolve_precedence(Some("fr"), None, Some(Language::Zh), None),
+            Language::En,
+            "unsupported --lang still beats config"
+        );
+        assert_eq!(
+            resolve_precedence(None, Some("zh".into()), Some(Language::En), None),
+            Language::Zh,
+            "LKIT_LANG beats config"
+        );
+        assert_eq!(
+            resolve_precedence(None, None, Some(Language::Zh), Some("zh_CN.UTF-8")),
+            Language::Zh,
+            "config beats system locale"
+        );
+        assert_eq!(
+            resolve_precedence(None, None, Some(Language::En), Some("zh_CN.UTF-8")),
+            Language::En,
+            "config beats a chinese system locale"
+        );
+        assert_eq!(
+            resolve_precedence(None, None, None, Some("zh_CN.UTF-8")),
+            Language::Zh,
+            "without config, system locale applies"
+        );
+        assert_eq!(
+            resolve_precedence(None, None, None, None),
+            Language::En,
+            "no sources fall back to english"
+        );
     }
 }

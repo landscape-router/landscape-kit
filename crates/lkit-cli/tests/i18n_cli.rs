@@ -144,3 +144,99 @@ fn chinese_localizes_invalid_value_errors() {
     assert!(text.contains("可选值：auto, always, never"));
     assert!(!text.contains("invalid value"));
 }
+
+fn with_config_language(dir: &std::path::Path, language: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join("config.toml"),
+        format!(
+            "schema_version = 1\n\n[repository]\nkind = \"github\"\nlocation = \"ThisSeanZhang/landscape\"\n\n[ui]\nlanguage = \"{language}\"\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn empty_install_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("lkit-i18n-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn config_presets_chinese_language() {
+    let dir = empty_install_dir("config-zh");
+    with_config_language(&dir, "zh");
+    let output = lkit(
+        &["backup", "list", "--install-dir", dir.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let text = stderr(&output);
+    assert!(text.contains("在") && text.contains("下没有找到 .lkb 备份"));
+    assert!(!text.contains("no .lkb backups found"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explicit_or_environment_language_overrides_config_preset() {
+    let dir = empty_install_dir("config-override");
+    with_config_language(&dir, "zh");
+    for args in [
+        vec![
+            "--lang",
+            "en",
+            "backup",
+            "list",
+            "--install-dir",
+            dir.to_str().unwrap(),
+        ],
+        vec![
+            "backup",
+            "list",
+            "--install-dir",
+            dir.to_str().unwrap(),
+            "--lang",
+            "en",
+        ],
+    ] {
+        let output = lkit(&args, None);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).contains("no .lkb backups found"));
+        assert!(!stderr(&output).contains("下没有找到 .lkb 备份"));
+    }
+    let output = lkit(
+        &["backup", "list", "--install-dir", dir.to_str().unwrap()],
+        Some("en"),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("no .lkb backups found"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsupported_or_corrupt_config_language_falls_back_to_english() {
+    let dir = empty_install_dir("config-unsupported");
+    with_config_language(&dir, "fr");
+    let output = lkit(
+        &["backup", "list", "--install-dir", dir.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("no .lkb backups found"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = empty_install_dir("config-corrupt");
+    std::fs::write(dir.join("config.toml"), b"not toml [[[").unwrap();
+    let output = lkit(
+        &["backup", "list", "--install-dir", dir.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "corrupt config must not block the command"
+    );
+    assert!(stderr(&output).contains("no .lkb backups found"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
