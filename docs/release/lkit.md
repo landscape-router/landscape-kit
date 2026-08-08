@@ -55,8 +55,9 @@ strip = "symbols"
 ```
 
 该 profile 只用于分发的 `lkit`，不改变日常 `release` profile。CI 要求产物是已 strip 的
-动态链接 ELF、架构与 runner 一致、`lkit --version` 与 tag 一致，并且每个文件不超过
-`5 MiB`。`panic=abort` 下意外 panic 等价于进程中断，后续命令仍通过既有事务记录恢复。
+动态链接 ELF、架构与 runner 一致、`lkit --version` 与 tag 一致，并在构建摘要中报告
+实际体积；体积不设硬性上限。`panic=abort` 下意外 panic 等价于进程中断，后续命令仍
+通过既有事务记录恢复。
 
 ## 安装入口
 

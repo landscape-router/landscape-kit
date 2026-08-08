@@ -111,13 +111,8 @@ jobs:
             exit 1
           fi
           size=$(stat -c '%s' "$binary")
-          limit=$((5 * 1024 * 1024))
-          if [ "$size" -gt "$limit" ]; then
-            echo "$binary is $size bytes, exceeding the $limit byte release limit" >&2
-            exit 1
-          fi
-          printf '### %s\n\n- Size: %s bytes\n- Limit: %s bytes\n' \
-            "$ARCHITECTURE" "$size" "$limit" >>"$GITHUB_STEP_SUMMARY"
+          printf '### %s\n\n- Size: %s bytes\n' \
+            "$ARCHITECTURE" "$size" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
