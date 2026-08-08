@@ -57,8 +57,9 @@ systemd 环境继续执行：
 首次安装在 `activating` 或 systemd 的 `verifying` 阶段失败或中断时没有 `.lkb`，必须执行首次安装失败清理，不得进入配置级回滚。
 
 使用 `--takeover-network` 时，健康检查通过后先写入 pending install state 并进入
-`awaiting_network_confirmation`；此时安装尚未提交。只有从新管理地址运行 `lkit network
-confirm` 才能提交状态。10 分钟 timer、确认前重启的 boot rollback 和手工
+`awaiting_network_confirmation`；此时安装尚未提交。只有运行 `lkit network
+confirm`（不限制 SSH 会话来源）通过复检才能提交状态。10 分钟 timer、确认前重启的 boot
+rollback 和手工
 `lkit network rollback` 都进入同一回滚路径；回滚成功后删除整个未提交 `data/`，恢复宿主
 网络，并回到可重新首次安装的状态。
 

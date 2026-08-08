@@ -136,3 +136,19 @@
   带 `--console-confirmed` 的结构化 `Update` 请求与显式 `--repository` 参数，Esc 取消。
 - 缺口：真实网络解析与 worker 全屏更新页的执行链路依赖安装现场，控制台单测覆盖状态机、
   渲染与请求构建；`--console-confirmed` 跳过 tty 由命令层测试覆盖。
+
+## UI-13
+
+**待确认网络接管进入 TUI 时显示阻塞屏，不进入菜单**
+
+- 测试层：Rust 单元、Ratatui TestBackend、PTY CLI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：安装根存在未完成网络接管（`awaiting_network_confirmation`、`finalizing`、
+  `rolling_back`）时，快照进入 `AwaitingNetworkConfirmation`，TUI 启动即渲染阻塞屏而非
+  菜单：显示事务 ID、阶段、管理地址（DHCP 租约时显示占位）、确认截止时间与回滚提示。
+  “稍后”（默认，Enter/Esc/Ctrl+C）退出 TUI 回 shell；↑/↓ 或 Tab 选择“确认执行”后 Enter
+  返回与 CLI 等价的结构化 `Network confirm` 请求，退出 TUI 后按现状命令行语义内联执行
+  （不限制 SSH 会话来源）。`rolling_back` 阶段“确认执行”不可用，只留“稍后”。
+- 缺口：PTY E2E 在非 root 环境跳过（快照显示 RootRequired），阻塞屏的完整端到端路径
+  只在 root 环境验证；确认执行的委托 worker 全屏路径与 QEMU 现场未自动化。

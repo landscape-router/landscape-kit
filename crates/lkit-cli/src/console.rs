@@ -540,6 +540,7 @@ struct ConsoleApp {
     backup_menu_active: bool,
     update: UpdatePanel,
     update_menu_active: bool,
+    takeover_choice: usize,
 }
 
 impl ConsoleApp {
@@ -560,6 +561,7 @@ impl ConsoleApp {
             backup_menu_active: false,
             update: UpdatePanel::default(),
             update_menu_active: false,
+            takeover_choice: 0,
         }
     }
 
@@ -567,9 +569,43 @@ impl ConsoleApp {
         Menu::ALL[self.menu_index]
     }
 
-    /// 已安装时首次安装表单不可用，Install 菜单不可选中。
+    /// 已安装或存在等待确认的网络接管时，首次安装表单不可用，Install 菜单不可选中。
     fn install_available(&self) -> bool {
-        !matches!(self.snapshot, Snapshot::Installed { .. })
+        !matches!(
+            self.snapshot,
+            Snapshot::Installed { .. } | Snapshot::AwaitingNetworkConfirmation { .. }
+        )
+    }
+
+    /// 存在等待确认的网络接管时进入阻塞屏，不渲染菜单。
+    fn takeover_pending(&self) -> bool {
+        matches!(self.snapshot, Snapshot::AwaitingNetworkConfirmation { .. })
+    }
+
+    /// 回滚进行中（rolling_back）时确认不可用，只提供"稍后"。
+    fn takeover_confirm_allowed(&self) -> bool {
+        matches!(
+            self.snapshot,
+            Snapshot::AwaitingNetworkConfirmation { phase, .. } if phase != "rolling_back"
+        )
+    }
+
+    /// 确认执行：退出 TUI 后按现状 CLI 语义内联运行 `lkit network confirm`。
+    fn takeover_confirm_action(&self) -> ConsoleAction {
+        ConsoleAction::Command {
+            command: Commands::Network(crate::commands::network::Network {
+                action: crate::commands::network::NetworkAction::Confirm,
+                install_dir: Some(PathBuf::from(&self.install.install_dir)),
+                #[cfg(feature = "test-support")]
+                test_runtime: None,
+            }),
+            args: vec![
+                "network".into(),
+                "confirm".into(),
+                "--install-dir".into(),
+                self.install.install_dir.clone(),
+            ],
+        }
     }
 
     fn menu_available(&self, menu: Menu) -> bool {
@@ -599,6 +635,9 @@ impl ConsoleApp {
     }
 
     fn update(&mut self) {
+        if self.takeover_pending() {
+            return;
+        }
         if self.menu() == Menu::Install
             && self.install_available()
             && matches!(&self.preflight.state, PreflightState::NotRun)
@@ -631,9 +670,42 @@ impl ConsoleApp {
         self.update.poll(&mut self.notice);
     }
 
+    /// 阻塞屏键处理：↑/↓ 或 Tab 选择，Enter 执行，Esc/Ctrl+C 等同"稍后"退出。
+    fn handle_takeover_pending_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
+        if !self.install.editing && language_toggle_key(&key) {
+            self.toggle_language();
+            return None;
+        }
+        match key.code {
+            KeyCode::Up => self.takeover_choice = 0,
+            KeyCode::Down => {
+                if self.takeover_confirm_allowed() {
+                    self.takeover_choice = 1;
+                }
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                if self.takeover_confirm_allowed() {
+                    self.takeover_choice = 1 - self.takeover_choice;
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if self.takeover_choice == 1 && self.takeover_confirm_allowed() {
+                    return Some(self.takeover_confirm_action());
+                }
+                return Some(ConsoleAction::Quit);
+            }
+            KeyCode::Esc => return Some(ConsoleAction::Quit),
+            _ => {}
+        }
+        None
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(ConsoleAction::Quit);
+        }
+        if self.takeover_pending() {
+            return self.handle_takeover_pending_key(key);
         }
         if self.network_wizard.is_some() {
             return self.handle_network_wizard_key(key);
@@ -2282,6 +2354,12 @@ impl NetworkWizard {
 
 enum Snapshot {
     RootRequired,
+    AwaitingNetworkConfirmation {
+        transaction_id: String,
+        phase: &'static str,
+        deadline: String,
+        management_address: Option<String>,
+    },
     NotInstalled,
     Installed {
         version: String,
@@ -2297,17 +2375,40 @@ impl Snapshot {
             return Self::RootRequired;
         }
         let path = PathBuf::from(install_dir);
-        let result = root::normalize_install_root(&path).and_then(|root| state::load_state(&root));
-        match result {
-            Ok(None) => Self::NotInstalled,
-            Ok(Some(installed)) => Self::Installed {
-                version: installed.active_version,
-                manager: match installed.service.manager {
-                    state::StateServiceManager::Systemd => "systemd",
-                    state::StateServiceManager::None => "none",
+        let result = root::normalize_install_root(&path).and_then(|root| {
+            if let Some(transaction) = crate::deployment::transaction::find_unfinished(&root)?
+                && let Some(network) = transaction.network_takeover.as_ref()
+                && matches!(
+                    transaction.phase,
+                    crate::deployment::transaction::Phase::AwaitingNetworkConfirmation
+                        | crate::deployment::transaction::Phase::Finalizing
+                        | crate::deployment::transaction::Phase::RollingBack
+                )
+            {
+                return Ok(Self::AwaitingNetworkConfirmation {
+                    transaction_id: transaction.transaction_id.clone(),
+                    phase: transaction.phase.key(),
+                    deadline: network.confirmation_deadline.to_rfc3339(),
+                    management_address: network
+                        .plan
+                        .management_address()
+                        .map(|address| address.to_string()),
+                });
+            }
+            state::load_state(&root).map(|installed| match installed {
+                None => Self::NotInstalled,
+                Some(installed) => Self::Installed {
+                    version: installed.active_version,
+                    manager: match installed.service.manager {
+                        state::StateServiceManager::Systemd => "systemd",
+                        state::StateServiceManager::None => "none",
+                    },
+                    initialized: installed.initialization.status == state::InitStatus::Complete,
                 },
-                initialized: installed.initialization.status == state::InitStatus::Complete,
-            },
+            })
+        });
+        match result {
+            Ok(snapshot) => snapshot,
             Err(error) => Self::Unavailable(error.to_string()),
         }
     }
@@ -2316,6 +2417,10 @@ impl Snapshot {
         match self {
             Self::RootRequired => (
                 crate::tr!(crate::keys::CONSOLE_ROOT_REQUIRED_BADGE),
+                Color::Yellow,
+            ),
+            Self::AwaitingNetworkConfirmation { .. } => (
+                crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_BADGE),
                 Color::Yellow,
             ),
             Self::NotInstalled => (
@@ -2335,10 +2440,6 @@ impl Snapshot {
 }
 
 fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
-    if let Some(wizard) = &app.network_wizard {
-        render_network_wizard(frame, wizard);
-        return;
-    }
     if frame.area().width < 72 || frame.area().height < 18 {
         frame.render_widget(
             Paragraph::new(crate::tr!(crate::keys::CONSOLE_TERMINAL_TOO_SMALL))
@@ -2349,6 +2450,14 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
         if app.exit_state == ExitState::Confirming {
             render_exit_confirmation(frame);
         }
+        return;
+    }
+    if app.takeover_pending() {
+        render_pending_takeover(frame, app);
+        return;
+    }
+    if let Some(wizard) = &app.network_wizard {
+        render_network_wizard(frame, wizard);
         return;
     }
     let [header, body, status] = Layout::vertical([
@@ -2801,6 +2910,110 @@ fn language_status(language: Language, switch_available: bool) -> String {
     .into()
 }
 
+fn render_pending_takeover(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let Snapshot::AwaitingNetworkConfirmation {
+        transaction_id,
+        phase,
+        deadline,
+        management_address,
+    } = &app.snapshot
+    else {
+        return;
+    };
+    let confirm_allowed = app.takeover_confirm_allowed();
+    let screen = frame.area();
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 15.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let mut lines = vec![
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_TITLE),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(""),
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_TAKEOVER_PENDING_TRANSACTION,
+            id = transaction_id
+        )),
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_TAKEOVER_PENDING_PHASE,
+            phase = phase
+        )),
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_TAKEOVER_PENDING_ADDRESS,
+            address = management_address
+                .as_deref()
+                .map(str::to_string)
+                .unwrap_or_else(|| crate::tr!(crate::keys::TAKEOVER_DHCP_LEASE))
+        )),
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_TAKEOVER_PENDING_DEADLINE,
+            deadline = deadline
+        )),
+        Line::raw(""),
+        Line::raw(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_HINT)),
+        Line::raw(""),
+    ];
+    let later = crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_LATER);
+    lines.push(Line::from(Span::styled(
+        if app.takeover_choice == 0 {
+            format!("> {later}")
+        } else {
+            format!("  {later}")
+        },
+        if app.takeover_choice == 0 {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        },
+    )));
+    let confirm = crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_CONFIRM);
+    let confirm_line = if confirm_allowed {
+        if app.takeover_choice == 1 {
+            format!("> {confirm}")
+        } else {
+            format!("  {confirm}")
+        }
+    } else {
+        format!(
+            "  {} ({})",
+            confirm,
+            crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_ROLLING_BACK)
+        )
+    };
+    lines.push(Line::from(Span::styled(
+        confirm_line,
+        if confirm_allowed && app.takeover_choice == 1 {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        },
+    )));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_KEY_HINT),
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center).block(
+            Block::bordered().title(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)),
+        ),
+        area,
+    );
+}
+
 fn render_exit_confirmation(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 48.min(screen.width.saturating_sub(2));
@@ -2922,6 +3135,10 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                 root = app.install.install_dir
             )),
         ],
+        Snapshot::AwaitingNetworkConfirmation { .. } => vec![Line::styled(
+            crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_TITLE),
+            Style::default().fg(Color::Yellow),
+        )],
         Snapshot::NotInstalled => vec![
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_LANDSCAPE_NOT_INSTALLED),
@@ -4899,6 +5116,172 @@ mod tests {
             manager: "systemd",
             initialized: true,
         }
+    }
+
+    fn pending_takeover_snapshot() -> Snapshot {
+        Snapshot::AwaitingNetworkConfirmation {
+            transaction_id: "tx-1".into(),
+            phase: "awaiting_network_confirmation",
+            deadline: "2026-08-07T10:00:00Z".into(),
+            management_address: Some("192.168.10.1/24".into()),
+        }
+    }
+
+    #[test]
+    fn pending_takeover_snapshot_is_detected_from_transaction() {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-console-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let root = crate::deployment::root::normalize_install_root(&temp).unwrap();
+        let mut transaction = crate::deployment::transaction::TransactionFile::new_install(
+            &root,
+            &semver::Version::new(1, 0, 0),
+        )
+        .unwrap();
+        transaction.phase = crate::deployment::transaction::Phase::AwaitingNetworkConfirmation;
+        let id = transaction.transaction_id.clone();
+        transaction.network_takeover =
+            Some(crate::deployment::transaction::NetworkTakeoverTransaction {
+                plan: NetworkPlan {
+                    mode: NetworkMode::RoutedLan {
+                        wan: "ens3".into(),
+                        wan_ipv4: None,
+                        lan: vec!["ens4".into()],
+                        management: "192.168.10.1/24".parse().unwrap(),
+                        dhcp_start: "192.168.10.100".parse().unwrap(),
+                        dhcp_end: "192.168.10.254".parse().unwrap(),
+                    },
+                    selected_macs: vec![
+                        SelectedInterface {
+                            name: "ens3".into(),
+                            mac: "02:00:00:00:00:03".into(),
+                        },
+                        SelectedInterface {
+                            name: "ens4".into(),
+                            mac: "02:00:00:00:00:04".into(),
+                        },
+                    ],
+                },
+                host_services: Vec::new(),
+                confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
+                rollback_service: format!("lkit-network-{id}-rollback.service"),
+                rollback_timer: format!("lkit-network-{id}-rollback.timer"),
+                boot_rollback_service: format!("lkit-network-{id}-boot-rollback.service"),
+                recovery_binary: "service/lkit-network-recovery".into(),
+                pending_state: format!("transactions/{id}/pending-install-state.json"),
+            });
+        crate::deployment::transaction::persist(&root, &transaction).unwrap();
+        let snapshot = Snapshot::load(&temp.display().to_string());
+        let _ = std::fs::remove_dir_all(&temp);
+        match snapshot {
+            // 以 root 运行测试时 Snapshot::load 返回 RootRequired，跳过检测断言。
+            Snapshot::RootRequired => {}
+            Snapshot::AwaitingNetworkConfirmation {
+                transaction_id,
+                phase,
+                management_address,
+                ..
+            } => {
+                assert_eq!(transaction_id, id);
+                assert_eq!(phase, "awaiting_network_confirmation");
+                assert_eq!(management_address.as_deref(), Some("192.168.10.1/24"));
+            }
+            _ => panic!("expected pending snapshot, got a different state"),
+        }
+    }
+
+    #[test]
+    fn pending_takeover_blocking_screen_renders_instead_of_menu() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.snapshot = pending_takeover_snapshot();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Network takeover awaiting confirmation"));
+        assert!(content.contains("tx-1"));
+        assert!(content.contains("awaiting_network_confirmation"));
+        assert!(content.contains("192.168.10.1/24"));
+        assert!(content.contains("2026-08-07T10:00:00Z"));
+        assert!(content.contains("Later"));
+        assert!(content.contains("Confirm now"));
+        assert!(!content.contains("Navigation"));
+    }
+
+    #[test]
+    fn pending_takeover_enter_confirm_executes_network_confirm() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.snapshot = pending_takeover_snapshot();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.takeover_choice, 1);
+        let action = app
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .expect("enter on confirm must return an action");
+        let ConsoleAction::Command { command, args } = action else {
+            panic!("expected a command action");
+        };
+        assert!(matches!(
+            command,
+            Commands::Network(crate::commands::network::Network {
+                action: crate::commands::network::NetworkAction::Confirm,
+                ..
+            })
+        ));
+        assert_eq!(args[0], "network");
+        assert_eq!(args[1], "confirm");
+        assert!(args.contains(&"--install-dir".to_string()));
+    }
+
+    #[test]
+    fn pending_takeover_later_and_esc_quit_the_console() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.snapshot = pending_takeover_snapshot();
+        assert!(matches!(
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ConsoleAction::Quit)
+        ));
+        assert!(matches!(
+            app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(ConsoleAction::Quit)
+        ));
+        assert!(
+            app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rolling_back_pending_disables_confirm() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.snapshot = Snapshot::AwaitingNetworkConfirmation {
+            transaction_id: "tx-1".into(),
+            phase: "rolling_back",
+            deadline: "2026-08-07T10:00:00Z".into(),
+            management_address: None,
+        };
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("rollback in progress"));
+        assert!(content.contains("DHCP lease"));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.takeover_choice, 0);
+        assert!(matches!(
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ConsoleAction::Quit)
+        ));
+    }
+
+    #[test]
+    fn pending_takeover_hides_install_menu() {
+        let mut app = ConsoleApp::new();
+        app.snapshot = pending_takeover_snapshot();
+        assert!(!app.install_available());
+        assert!(!app.menu_available(Menu::Install));
     }
 
     fn sample_backup_metadata() -> BackupMetadata {

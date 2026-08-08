@@ -386,7 +386,7 @@ esac
                 lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
                 &self.world.systemctl_config,
             )
-            .env("SSH_CONNECTION", "203.0.113.9 41000 192.168.10.1 22")
+            .env("SSH_CONNECTION", "203.0.113.9 41000 10.1.1.105 22")
             .arg("network")
             .args(action)
             .arg("--install-dir")
@@ -1205,7 +1205,7 @@ fn cleans_up_after_fixture_health_failure() {
 }
 
 #[test]
-fn network_takeover_waits_for_reconnected_ssh_confirmation() {
+fn network_takeover_confirms_from_any_ssh_session() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-confirm", "healthy", 10_000);
     harness.seed_host_services();
@@ -1309,6 +1309,55 @@ fn network_takeover_waits_for_reconnected_ssh_confirmation() {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("lkit-network-"))
+    );
+}
+
+#[test]
+fn console_blocks_on_pending_network_takeover() {
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if unsafe { libc::geteuid() } != 0 {
+        // 非 root 下控制台快照显示 RootRequired，不进入阻塞屏。
+        return;
+    }
+    let harness = InstallHarness::new("console-pending-takeover", "healthy", 10_000);
+    harness.seed_host_services();
+    let output = harness.run_takeover();
+    assert!(
+        output.status.success(),
+        "takeover install failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let transaction = read_only_transaction(&harness.install_root);
+    assert_eq!(transaction["phase"], "awaiting_network_confirmation");
+
+    let mut pty = Pty::open();
+    let mut command = Command::new(LKIT);
+    attach_pty(&mut command, &pty);
+    command.env("LKIT_INSTALL_DIR", &harness.install_root);
+    let mut child = command.spawn().unwrap();
+    let entered = pty.read_until(
+        "Network takeover awaiting confirmation",
+        Duration::from_secs(10),
+    );
+    assert!(
+        entered.contains("awaiting network confirmation"),
+        "blocking screen badge missing: {entered:?}"
+    );
+    assert!(
+        entered.contains("Confirm now"),
+        "blocking screen action missing: {entered:?}"
+    );
+    assert!(
+        !entered.contains("Navigation"),
+        "menu rendered instead of the blocking screen: {entered:?}"
+    );
+    pty.master.write_all(b"\r").unwrap();
+    let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
+    let status = child.wait().unwrap();
+    assert!(status.success(), "later exit failed: {exited:?}");
+    assert!(
+        pty.echo_enabled(),
+        "blocking screen exit did not restore terminal echo"
     );
 }
 

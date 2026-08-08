@@ -92,7 +92,6 @@ pub(crate) fn ensure_management_bridge_absent(sys_class_net: &Path) -> Result<()
 pub(crate) fn prompt_plan(
     interfaces: &[Interface],
     routes: &[DefaultRoute],
-    _ssh_connection: Option<&str>,
     tty: &mut Tty,
 ) -> Result<NetworkPlan, InstallError> {
     let options: Vec<String> = interfaces.iter().map(format_interface).collect();
@@ -293,27 +292,6 @@ fn read_trimmed(path: PathBuf) -> Result<String, InstallError> {
         .to_string())
 }
 
-pub(crate) fn ssh_server_address(value: Option<&str>) -> Result<Option<Ipv4Addr>, InstallError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let fields: Vec<&str> = value.split_whitespace().collect();
-    if fields.len() != 4 {
-        return Err(network_error("SSH_CONNECTION has an invalid shape"));
-    }
-    let server = fields[2]
-        .parse::<std::net::IpAddr>()
-        .map_err(|_| network_error("SSH_CONNECTION contains an invalid server address"))?;
-    Ok(match server {
-        std::net::IpAddr::V4(address) => Some(address),
-        std::net::IpAddr::V6(_) => {
-            return Err(network_error(
-                "single-interface network takeover requires an IPv4 SSH connection",
-            ));
-        }
-    })
-}
-
 pub(crate) fn verify_live(plan: &NetworkPlan, ip_command: &Path) -> Result<(), InstallError> {
     let (iface, expected) = match &plan.mode {
         NetworkMode::WanOnly { wan, address, .. } => (wan.as_str(), Some(*address)),
@@ -365,20 +343,6 @@ pub(crate) fn verify_live(plan: &NetworkPlan, ip_command: &Path) -> Result<(), I
             }
         }
     }
-    if matches!(&plan.mode, NetworkMode::WanDhcp { .. }) {
-        if let Some(current) = ssh_server_address(std::env::var("SSH_CONNECTION").ok().as_deref())?
-        {
-            let current_present = records
-                .iter()
-                .flat_map(|record| &record.addr_info)
-                .any(|info| info.local.parse::<Ipv4Addr>().ok() == Some(current));
-            if !current_present {
-                return Err(network_error(
-                    "the current SSH session is not using the selected WAN DHCP lease",
-                ));
-            }
-        }
-    }
     Ok(())
 }
 
@@ -413,15 +377,6 @@ fn network_error(reason: impl Into<String>) -> InstallError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_ipv4_ssh_connection() {
-        assert_eq!(
-            ssh_server_address(Some("203.0.113.5 51111 198.51.100.10 22")).unwrap(),
-            Some(Ipv4Addr::new(198, 51, 100, 10))
-        );
-        assert!(ssh_server_address(Some("bad input")).is_err());
-    }
 
     #[test]
     fn refuses_an_existing_management_bridge() {

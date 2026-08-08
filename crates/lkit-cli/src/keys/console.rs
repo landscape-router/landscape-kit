@@ -207,3 +207,17 @@ pub(crate) const CONSOLE_UPDATE_CONFIRM_PRESS_ENTER: &str = "console.update_conf
 pub(crate) const CONSOLE_UPDATE_HINT_PANEL: &str = "console.update_hint_panel";
 pub(crate) const CONSOLE_UPDATE_HINT_CONFIRM: &str = "console.update_hint_confirm";
 pub(crate) const CONSOLE_UPDATE_HINT_RESOLVING: &str = "console.update_hint_resolving";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_BADGE: &str = "console.takeover_pending_badge";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_WINDOW: &str = "console.takeover_pending_window";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_TITLE: &str = "console.takeover_pending_title";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_TRANSACTION: &str =
+    "console.takeover_pending_transaction";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_PHASE: &str = "console.takeover_pending_phase";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_ADDRESS: &str = "console.takeover_pending_address";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_DEADLINE: &str = "console.takeover_pending_deadline";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_HINT: &str = "console.takeover_pending_hint";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_LATER: &str = "console.takeover_pending_later";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_CONFIRM: &str = "console.takeover_pending_confirm";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_ROLLING_BACK: &str =
+    "console.takeover_pending_rolling_back";
+pub(crate) const CONSOLE_TAKEOVER_PENDING_KEY_HINT: &str = "console.takeover_pending_key_hint";

@@ -113,6 +113,14 @@ pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇
 该结果用于部署前诊断，不显示在 Overview：安装完成后 Landscape 自身占用的服务端口不应被
 当作部署前端口冲突。
 
+安装根存在未完成网络接管（`awaiting_network_confirmation`、`finalizing`、
+`rolling_back`）时，启动快照进入待确认状态，TUI 直接显示阻塞屏而不渲染菜单：展示事务
+ID、阶段、管理地址（DHCP 租约时显示占位）、确认截止时间和自动回滚提示，并提供“稍后”
+与“确认执行”两个选项。阻塞屏不启动环境检查或备份轮询，Install 菜单不可进入；“稍后”
+（默认选项，Enter/Esc/Ctrl+C）退出 TUI 回 shell，重新进入仍显示阻塞屏；“确认执行”
+（↑/↓ 或 Tab 选择后 Enter）退出 TUI 并按现状命令行语义内联运行 `lkit network confirm`
+（普通终端输出，无全屏页，不限制 SSH 会话来源）。`rolling_back` 阶段只提供“稍后”。
+
 表单在执行前使用与命令模式相同的版本、用户名、路径和仓库校验。网络向导完成后把结构化
 `Install` 请求交给共享命令分发；systemd worker 在同一个无侧栏全屏安装页显示下载、配置、
 网络和服务阶段。下载阶段支持 Ctrl+C 停止，Esc 打开停止确认；进入配置、网络或服务阶段

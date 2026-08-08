@@ -63,12 +63,15 @@
 
 ## NET-06
 
-**只有从新管理地址重新建立的 SSH 会话能确认并提交安装**
+**任意可达会话均可确认并提交安装，TUI 以待确认阻塞屏提示**
 
-- 测试层：CLI fixture E2E、QEMU/KVM
+- 测试层：CLI fixture E2E、QEMU/KVM、Ratatui TestBackend
 - 状态：`部分覆盖`
-- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[QEMU 网络接管](../../qemu-network-takeover.md)
-- 说明：双网口在确认前保留继承的 WAN IPv4，确认检查通过后清除；清除失败不提交。
+- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[QEMU 网络接管](../../qemu-network-takeover.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 说明：`lkit network confirm` 不校验 SSH 会话来源，在任意可达会话（含本地控制台）均可
+  运行；双网口在确认前保留继承的 WAN IPv4，确认检查通过后清除；清除失败不提交。进入
+  TUI 时若存在待确认网络接管，直接显示阻塞屏（“稍后”退出、“确认执行”内联运行
+  `lkit network confirm`），Install 菜单不可进入。
 
 ## NET-07
 

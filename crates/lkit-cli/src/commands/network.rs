@@ -19,7 +19,7 @@ pub struct Network {
 pub enum NetworkAction {
     /// Show a pending or committed network takeover transaction
     Status,
-    /// Confirm the new network from a reconnected SSH session
+    /// Confirm the network takeover
     Confirm,
     /// Restore the host network state saved before takeover
     Rollback {

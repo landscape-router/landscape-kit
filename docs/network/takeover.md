@@ -45,8 +45,8 @@ route 和 DHCP。CLI 使用所选 WAN 发现顺序中的首个 IPv4 和该接口
 停止宿主网络服务后，lkit 只对用户选中的 LAN 物理接口执行 IPv4 和 IPv6 address flush，
 再启动 Landscape；未选择接口不执行地址清理，也不写入 Landscape 初始化配置。
 
-等待确认期间由 Landscape 按计划维护 WAN 静态地址或 DHCP lease。只有确认命令通过新管理
-地址、接口和 Landscape 健康校验后，才提交事务。安装结束输出会向用户说明确认命令，并明确
+等待确认期间由 Landscape 按计划维护 WAN 静态地址或 DHCP lease。只有确认命令通过接口、
+管理地址和 Landscape 健康校验后，才提交事务。安装结束输出会向用户说明确认命令，并明确
 提醒：未在确认期限内执行 `lkit network confirm`，安装将自动回滚。
 
 ## 确认与回滚
@@ -59,10 +59,9 @@ route 和 DHCP。CLI 使用所选 WAN 发现顺序中的首个 IPv4 和该接口
 
 恢复机制 arm 成功后才停止 systemd-resolved、firewalld、`networking.service` 和
 NetworkManager，其中 NetworkManager 在两者都存在时最后停止。Landscape 启动并通过健康
-检查后，安装状态仍不提交。用户必须断开旧连接，重新执行 `ssh root@<管理地址>`，然后运行
-`lkit network confirm`。确认会
-检查 SSH 服务端地址、接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
-DHCP WAN 的确认会额外验证当前 SSH 服务端地址确实存在于所选 WAN 的租约地址中。
+检查后，安装状态仍不提交。用户可在任意可达主机的会话（推荐重新连接到管理地址，因为
+停止宿主网络服务会断开旧会话）运行 `lkit network confirm`。确认会
+检查接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
 
 期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit。恢复不
 依赖原安装进程或原 SSH 连接存活。

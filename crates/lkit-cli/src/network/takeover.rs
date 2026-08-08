@@ -272,7 +272,6 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
                     .into(),
             ));
         }
-        verify_confirmation_session(&network.plan)?;
         verify_interfaces(&network.plan, runtime)?;
         super::discovery::verify_live(&network.plan, &runtime.ip_command)?;
         let pid = systemd::main_pid(&runtime.systemd)?;
@@ -410,25 +409,6 @@ fn rollback(
         "network: {}",
         crate::tr!(crate::keys::TAKEOVER_RESTORED_HOST_NETWORK_SERVICES)
     );
-    Ok(())
-}
-
-fn verify_confirmation_session(plan: &NetworkPlan) -> Result<(), InstallError> {
-    let current =
-        super::discovery::ssh_server_address(std::env::var("SSH_CONNECTION").ok().as_deref())?
-            .ok_or_else(|| {
-                InstallError::ParameterUsage(
-                    "network confirmation must be run from the reconnected SSH session".into(),
-                )
-            })?;
-    if let Some(expected) = plan.management_address() {
-        if current != expected.address {
-            return Err(InstallError::ParameterUsage(format!(
-                "current SSH session targets {current}, expected {}",
-                expected.address
-            )));
-        }
-    }
     Ok(())
 }
 

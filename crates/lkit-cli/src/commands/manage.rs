@@ -257,12 +257,7 @@ async fn run_first_install(
                 return exit_code(&error);
             }
         };
-        match crate::network::discovery::prompt_plan(
-            &interfaces,
-            &routes,
-            std::env::var("SSH_CONNECTION").ok().as_deref(),
-            &mut tty,
-        ) {
+        match crate::network::discovery::prompt_plan(&interfaces, &routes, &mut tty) {
             Ok(plan) => Some(plan),
             Err(error) => {
                 eprintln!("install: {error}");
