@@ -8,6 +8,45 @@ members = [
 default-members = ["crates/lkit-cli"]
 resolver = "3"
 
+[workspace.package]
+version = "0.1.4-rc.2"
+edition = "2024"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+axum-server = "0.8"
+aws-config = "1"
+aws-sdk-s3 = "1"
+chrono = "0.4"
+clap = "4.6.5"
+crossterm = "0.29"
+dotenvy = "0.15.7"
+flate2 = "1"
+futures-util = "0.3"
+libc = "0.2"
+lkit-repository = { path = "crates/lkit-repository" }
+lkit-test-fixture = { path = "crates/lkit-test-fixture" }
+ratatui = { version = "0.30.2", default-features = false }
+rcgen = "0.14"
+reqwest = { version = "0.12", default-features = false }
+rust-i18n = "4.2.1"
+rustls = "0.23"
+semver = "1"
+serde = "1"
+serde_json = "1"
+sha2 = "0.10"
+shell-words = "1"
+tar = "0.4"
+thiserror = "2"
+tokio = "1.53.1"
+toml = "0.8"
+unicode-width = "0.2"
+url = "2"
+uuid = "1"
+zip = { version = "2", default-features = false }
+zstd = "0.13"
+
 [profile.dist]
 inherits = "release"
 opt-level = "z"

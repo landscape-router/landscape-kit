@@ -2,8 +2,10 @@
 
 ## 版本来源与触发
 
-`crates/lkit-cli/Cargo.toml` 中的 `package.version` 是 `lkit` 自身版本的唯一来源。
-正式版本只接受不带 prerelease 的 SemVer，发布 tag 固定为 `v<package.version>`。
+根 `Cargo.toml` 的 `[workspace.package] version` 是所有 workspace crate（包括 `lkit`）的
+唯一版本来源。成员 crate 通过 `version.workspace = true` 继承该版本。
+版本必须是 SemVer；候选版可以带 prerelease 后缀，发布 tag 固定为
+`v<workspace.package.version>`。当前候选版本为 `0.1.4-rc.2`。
 
 发布前执行：
 
@@ -14,12 +16,16 @@ cargo test --features test-support
 scripts/test-install-lkit.sh
 ```
 
-提交版本变更后创建并推送 tag，例如：
+提交候选版本变更后创建并推送 prerelease tag：
 
 ```sh
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4-rc.2
+git push origin v0.1.4-rc.2
 ```
+
+候选版本验证通过后，将 workspace 版本改为 `0.1.4`，再创建并推送正式 tag
+`v0.1.4`。候选版和正式版必须使用两个独立的版本提交，tag、Cargo 版本与
+`lkit --version` 必须完全一致。
 
 `.github/workflows/release-lkit.yml` 会重新校验 tag、Cargo 版本和测试结果。任一架构构建
 失败时不创建 Release；已存在的 Release 不允许由重跑覆盖。

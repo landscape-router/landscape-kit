@@ -33,6 +33,17 @@
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+```
+
+也可以使用 `wget`：
+
+```sh
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+```
+
+然后启动交互式安装：
+
+```sh
 sudo lkit
 ```
 

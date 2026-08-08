@@ -1,7 +1,7 @@
 [package]
 name = "lkit-cli"
-version = "0.1.3"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [features]
 default = []
@@ -22,31 +22,31 @@ path = "src/bin/lkit-test-systemctl.rs"
 required-features = ["test-support"]
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4.6.5", features = ["derive"] }
-crossterm = "0.29"
-dotenvy = "0.15.7"
-libc = "0.2"
-ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "fs", "io-util", "time"] }
-unicode-width = "0.2"
-futures-util = "0.3"
-flate2 = "1"
-tar = "0.4"
-lkit-repository = { path = "../lkit-repository" }
-reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "stream"] }
-rust-i18n = "4.2.1"
-semver = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-thiserror = "2"
-toml = "0.8"
-url = "2"
-uuid = { version = "1", features = ["v7"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
-zstd = "0.13"
-lkit-test-fixture = { path = "../lkit-test-fixture", optional = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+crossterm = { workspace = true }
+dotenvy = { workspace = true }
+libc = { workspace = true }
+ratatui = { workspace = true, features = ["crossterm_0_29"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util", "time"] }
+unicode-width = { workspace = true }
+futures-util = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+lkit-repository = { workspace = true }
+reqwest = { workspace = true, features = ["http2", "rustls-tls", "stream"] }
+rust-i18n = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+zip = { workspace = true, features = ["deflate"] }
+zstd = { workspace = true }
+lkit-test-fixture = { workspace = true, optional = true }
 
 [build-dependencies]
-toml = "0.8"
+toml = { workspace = true }

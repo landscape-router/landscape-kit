@@ -33,6 +33,17 @@ Landscape installation directly from the terminal:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+```
+
+Or with `wget`:
+
+```sh
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+```
+
+Then start the interactive installer:
+
+```sh
 sudo lkit
 ```
 
