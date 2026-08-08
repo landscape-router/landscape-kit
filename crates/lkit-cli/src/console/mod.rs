@@ -343,6 +343,17 @@ impl ConsoleApp {
             }
             return None;
         }
+        if self.exit_state == ExitState::Confirming {
+            match key.code {
+                KeyCode::Enter => return Some(ConsoleAction::Quit),
+                KeyCode::Esc => {
+                    self.exit_state = ExitState::Idle;
+                    self.notice = "Ready".into();
+                }
+                _ => {}
+            }
+            return None;
+        }
         if self.menu() == Menu::Backup && self.focus == Focus::Panel {
             match self.handle_backup_key(key) {
                 Some(action) => return action,
@@ -366,17 +377,6 @@ impl ConsoleApp {
             && let Some(action) = self.handle_reinit_key(key)
         {
             return action;
-        }
-        if self.exit_state == ExitState::Confirming {
-            match key.code {
-                KeyCode::Enter => return Some(ConsoleAction::Quit),
-                KeyCode::Esc => {
-                    self.exit_state = ExitState::Idle;
-                    self.notice = "Ready".into();
-                }
-                _ => {}
-            }
-            return None;
         }
         if !self.install.editing && language_toggle_key(&key) {
             self.toggle_language();

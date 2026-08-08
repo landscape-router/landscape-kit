@@ -225,6 +225,36 @@ fn backup_esc_cancels_restore_confirmation_and_details() {
 }
 
 #[test]
+fn exit_confirmation_takes_precedence_over_backup_panel_keys() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+    let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+    app.handle_key(escape);
+    app.handle_key(escape);
+    assert_eq!(app.exit_state, ExitState::Confirming);
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(
+        app.backup.selected, 0,
+        "panel keys must not leak into the backup list"
+    );
+    assert_eq!(app.exit_state, ExitState::Confirming);
+
+    assert!(matches!(
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ConsoleAction::Quit)
+    ));
+    assert_eq!(app.backup.details, None);
+
+    app.handle_key(escape);
+    assert_eq!(app.exit_state, ExitState::Idle);
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.backup.details, Some(0));
+}
+
+#[test]
 fn mouse_click_backup_rows_open_details_and_create_dialog() {
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
