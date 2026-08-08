@@ -2,6 +2,7 @@ use super::super::backup::*;
 use super::super::network_wizard::*;
 use super::super::update::*;
 use super::super::*;
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::backup::lkb::BackupMetadata;
 use crate::check::model::*;
 use crate::commands::update::ResolvedUpdate;

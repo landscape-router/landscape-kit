@@ -22,8 +22,14 @@ use std::time::Duration;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    self,
+    Event,
+    KeyCode,
+    KeyEvent,
+    KeyEventKind,
+    KeyModifiers,
+    // 鼠标事件导入暂时不使用
+    // DisableMouseCapture, EnableMouseCapture, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -67,11 +73,13 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
                 }
             }
             Event::Paste(value) => app.handle_paste(&value),
-            Event::Mouse(mouse) => {
-                if let Some(action) = app.handle_mouse(mouse) {
-                    return Ok(action);
-                }
-            }
+            // 鼠标点击暂时禁用:忽略鼠标事件,终端不再捕获鼠标
+            Event::Mouse(_) => {}
+            // Event::Mouse(mouse) => {
+            //     if let Some(action) = app.handle_mouse(mouse) {
+            //         return Ok(action);
+            //     }
+            // }
             Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => {}
             Event::Key(_) => {}
         }
@@ -89,7 +97,7 @@ impl ConsoleTerminal {
         if let Err(error) = execute!(
             stdout,
             EnterAlternateScreen,
-            EnableMouseCapture,
+            // EnableMouseCapture, // 鼠标捕获暂时禁用
             Hide,
             ClearScreen(ClearType::All),
             MoveTo(0, 0)
@@ -115,7 +123,7 @@ impl Drop for ConsoleTerminal {
         let _ = execute!(
             self.terminal.backend_mut(),
             Show,
-            DisableMouseCapture,
+            // DisableMouseCapture, // 鼠标捕获暂时禁用
             ClearScreen(ClearType::All),
             MoveTo(0, 0),
             LeaveAlternateScreen
@@ -596,17 +604,19 @@ impl ConsoleApp {
         }
     }
 
+    // 鼠标点击暂时禁用,方法保留供测试直接调用
+    #[allow(dead_code)]
     /// 鼠标事件处理:左键命中渲染时收集的可点击区域,按对应键盘语义执行;
     /// 右键视为 Esc;滚轮滚动当前可滚动视图。
-    fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ConsoleAction> {
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Option<ConsoleAction> {
         match mouse.kind {
-            MouseEventKind::ScrollUp => return self.handle_scroll(false),
-            MouseEventKind::ScrollDown => return self.handle_scroll(true),
-            MouseEventKind::Down(MouseButton::Right) => {
+            crossterm::event::MouseEventKind::ScrollUp => return self.handle_scroll(false),
+            crossterm::event::MouseEventKind::ScrollDown => return self.handle_scroll(true),
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
                 self.focus = Focus::Panel;
                 return self.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             }
-            MouseEventKind::Down(MouseButton::Left) => {}
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {}
             _ => return None,
         }
         if self.exit_state == ExitState::Armed {
@@ -759,6 +769,8 @@ impl ConsoleApp {
         }
     }
 
+    // 鼠标点击暂时禁用,方法保留供测试直接调用
+    #[allow(dead_code)]
     fn handle_scroll(&mut self, down: bool) -> Option<ConsoleAction> {
         if self.preflight.expanded && self.menu() == Menu::Install {
             if down {
