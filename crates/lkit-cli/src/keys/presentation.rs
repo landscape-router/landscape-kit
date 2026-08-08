@@ -41,6 +41,10 @@ pub(crate) const PRESENTATION_OPERATION_RESTORE: &str = "presentation.operation_
 pub(crate) const PRESENTATION_OPERATION_SERVICE_MIGRATION: &str =
     "presentation.operation_service_migration";
 pub(crate) const PRESENTATION_OPERATION_UNINSTALL: &str = "presentation.operation_uninstall";
+pub(crate) const PRESENTATION_OPERATION_REINIT: &str = "presentation.operation_reinit";
+pub(crate) const PRESENTATION_REINIT_COMPLETE: &str = "presentation.reinit_complete";
+pub(crate) const PRESENTATION_REINIT_FAILED: &str = "presentation.reinit_failed";
+pub(crate) const PRESENTATION_REINIT_CANCELLED: &str = "presentation.reinit_cancelled";
 pub(crate) const PRESENTATION_SWITCH_COMPLETE: &str = "presentation.switch_complete";
 pub(crate) const PRESENTATION_SWITCH_FAILED: &str = "presentation.switch_failed";
 pub(crate) const PRESENTATION_SWITCH_CANCELLED: &str = "presentation.switch_cancelled";

@@ -10,6 +10,7 @@ pub(crate) enum Menu {
     Install,
     Backup,
     Update,
+    Reinit,
     /// 卸载面板：暂时从 TUI 侧栏隐藏（功能经 `lkit uninstall` CLI 提供），
     /// 面板渲染、键处理与确认层代码保留；重新启用时把 `Self::Uninstall`
     /// 加回 `ALL` 并放开 `menu_available` 的注释。
@@ -18,11 +19,12 @@ pub(crate) enum Menu {
 }
 
 impl Menu {
-    pub(crate) const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 5] = [
         Self::Overview,
         Self::Install,
         Self::Backup,
         Self::Update,
+        Self::Reinit,
         // Self::Uninstall, // TODO(uninstall-console): 暂隐藏,CLI `lkit uninstall` 保留
     ];
 
@@ -32,6 +34,7 @@ impl Menu {
             Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
             Self::Backup => crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
             Self::Update => crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
+            Self::Reinit => crate::tr!(crate::keys::CONSOLE_REINIT_MENU),
             Self::Uninstall => crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
         }
     }
@@ -67,6 +70,10 @@ pub(crate) enum Hit {
     UpdateField(usize),
     /// 卸载面板“执行卸载”动作行。
     UninstallAction,
+    /// reinit 面板:可编辑凭据行(0=admin 用户,1=密码)。
+    ReinitField(usize),
+    /// reinit 面板:开始/执行动作行(视为 Enter)。
+    ReinitAction,
     /// 备份面板行:0 为“创建备份”,其余为备份条目。
     BackupRow(usize),
     /// 网络向导:WAN 接口行。

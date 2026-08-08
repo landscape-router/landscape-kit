@@ -19,7 +19,8 @@ lkit --non-interactive install ... # 严格非交互命令模式
 - Overview：读取默认或 `LKIT_INSTALL_DIR` 指定根目录的安装状态；
 - Install：首次安装表单；
 - Backup：备份列表、创建与恢复；
-- Update：版本更新表单（仅已安装时可用）。
+- Update：版本更新表单（仅已安装时可用）；
+- Reinit：重新初始化面板（仅已安装、systemd 且宿主网络服务已被接管时可用）。
 
 检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
 Up/Down 导航会跳过它；面板仍可显示“已安装”提示。反之，未安装、非 root 或安装
@@ -122,6 +123,23 @@ Uninstall 面板（侧栏第 5 项）暂未在 TUI 中启用：侧栏只显示 O
 委托 worker，在无侧栏全屏卸载页显示准备、停止服务、注销与清理阶段及结果页，成功时展示
 保护备份 ID 与保留物清单；Esc 取消确认层并留在面板。卸载确认层与 restore 一样承担
 全部确认，命令不再请求 `/dev/tty` 二次确认。
+
+Reinit 面板只对已安装、`service.manager == systemd` 且宿主网络服务已被接管
+（NetworkManager、`networking.service`、firewalld、systemd-resolved 被 stop/disable/mask）
+的安装可用，其余情况面板显示不可用原因且菜单被导航跳过；CLI `lkit reinit` 与
+[`lkit install --takeover-network`](install.md) 的前置条件一致。面板顶部展示当前版本与
+服务摘要，并说明 reinit 会清空除新网络计划与新凭据外的全部配置（DNS 规则、已登记设备、
+证书、DDNS 任务等由 Landscape 重建数据库）。聚焦面板时“开始 reinit”动作行显示 `>`
+光标标记并高亮，Enter 进入与 Install 相同的全屏网络向导；向导确认后回到面板的凭据
+步骤：管理员用户名、密码与密码确认三个字段（密码以等长 `*` 显示，提交前检查两次输入
+一致并复用密码复杂度规则），下方显示新计划摘要（WAN 与 LAN，未选 LAN 时显示
+none/无）与“重新初始化
+Landscape”动作。动作行校验通过后打开居中确认层，说明清空范围、保护 `.lkb` 备份与
+确认窗口（提交等待 `lkit network confirm`，会话可能断开）；Enter 确认后控制台把结构化
+`Reinit` 请求（标记 `--console-confirmed` 与 `--yes`，密码与网络计划经凭据文件和计划
+文件传入 worker）交给共享命令分发并退出 alternate screen，systemd 模式委托 worker，
+在无侧栏全屏重新初始化页显示准备、停止服务、激活与健康检查阶段及结果页，成功进入
+待确认状态后由 `lkit network confirm`/`rollback` 收尾；Esc 取消确认层并留在面板。
 
 首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
 pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个

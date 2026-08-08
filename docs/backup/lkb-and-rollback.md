@@ -18,10 +18,11 @@
 - 保证核心配置一致，不保证恢复日志、指标、缓存状态或 API token。
 
 公开的 `lkit backup` 使用同一 v1 容器和 minimal scope。手工备份将 `auto` 设为 `false`，
-并可写入用户提供的单行 `remark`；switch、后端 repair 和 restore 创建的保护快照仍将
-`auto` 设为 `true`，并带固定本地化备注（`switch 前自动备份`、`repair 前自动备份`、
-`restore 前自动保护备份`），使备份列表能区分保护快照的用途。`backup create` 不停止或
-重启服务，但必须在取得安装锁后从当前运行实例成功导出配置。
+并可写入用户提供的单行 `remark`；switch、后端 repair、restore 与 reinit 创建的保护
+快照仍将 `auto` 设为 `true`，并带固定本地化备注（`switch 前自动备份`、
+`repair 前自动备份`、`restore 前自动保护备份`、`reinit 前自动备份`），使备份列表能
+区分保护快照的用途。`backup create` 不停止或重启服务，但必须在取得安装锁后从当前
+运行实例成功导出配置。
 
 每个 v1 备份固定携带该版本官方静态压缩包 `static.zip`，与归档内 `static/` 解压树同源。
 restore 从备份内压缩包现场计算 `static_archive` 身份，state 因此始终如实描述恢复内容，

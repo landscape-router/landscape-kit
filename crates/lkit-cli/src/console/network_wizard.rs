@@ -26,6 +26,8 @@ impl ConsoleApp {
             match key.code {
                 KeyCode::Enter => {
                     self.network_wizard = None;
+                    self.reinit.wizard = false;
+                    self.reinit.step = super::reinit::ReinitStep::Overview;
                     self.notice = "Ready".into();
                 }
                 KeyCode::Esc => wizard.cancel_confirming = false,
@@ -140,6 +142,16 @@ impl ConsoleApp {
                             return None;
                         }
                     };
+                    if self.reinit.wizard {
+                        self.network_wizard = None;
+                        self.reinit.wizard = false;
+                        self.reinit.plan = Some(plan);
+                        self.reinit.step = super::reinit::ReinitStep::Credentials;
+                        self.reinit.selected = 0;
+                        self.reinit.editing = false;
+                        self.notice = crate::tr!(crate::keys::CONSOLE_REINIT_ENTER_CREDENTIALS);
+                        return None;
+                    }
                     match self.install.command_with_network_plan(Some(plan)) {
                         Ok(action) => {
                             self.network_wizard = None;
@@ -200,8 +212,6 @@ pub(crate) struct NetworkWizard {
 
 impl NetworkWizard {
     pub(crate) fn discover() -> Result<Self, String> {
-        discovery::ensure_management_bridge_absent(std::path::Path::new("/sys/class/net"))
-            .map_err(|error| error.to_string())?;
         let (interfaces, routes) = discovery::discover(
             std::path::Path::new("/sys/class/net"),
             std::path::Path::new("/usr/sbin/ip"),

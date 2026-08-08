@@ -44,6 +44,9 @@ pub(crate) const MAIN_BACKUP_FILE_HELP: &str = "main.backup_file_help";
 pub(crate) const MAIN_RESTORE_ABOUT: &str = "main.restore_about";
 pub(crate) const MAIN_RESTORE_YES_HELP: &str = "main.restore_yes_help";
 pub(crate) const MAIN_RESTORE_ALLOW_NO_BACKUP_HELP: &str = "main.restore_allow_no_backup_help";
+pub(crate) const MAIN_REINIT_ABOUT: &str = "main.reinit_about";
+pub(crate) const MAIN_REINIT_YES_HELP: &str = "main.reinit_yes_help";
+pub(crate) const MAIN_REINIT_ALLOW_NO_BACKUP_HELP: &str = "main.reinit_allow_no_backup_help";
 pub(crate) const BACKUP_REQUIRES_EXISTING_INSTALLATION: &str =
     "backup.requires_existing_installation";
 pub(crate) const MAIN_RECONCILE_ABOUT: &str = "main.reconcile_about";

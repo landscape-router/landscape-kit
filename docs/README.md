@@ -17,6 +17,7 @@
 - [`backup`](commands/backup.md)：创建、查看和验证 `.lkb` minimal 备份。
 - [`restore`](commands/restore.md)：在现有安装内从 `.lkb` 恢复版本和配置。
 - [`uninstall`](commands/uninstall.md)：卸载已安装的 Landscape 并清理受管文件。
+- [`reinit`](commands/reinit.md)：备份并重建已安装配置,按新网络计划与凭据重新初始化。
 - [`repair`](commands/repair.md)：修复静态页面或后端二进制。
 - [`reconcile`](commands/reconcile.md)：协调初始化完成状态、service unit 或仓库来源变化。
 - [`service-manager`](commands/service-manager.md)：在 systemd 与外部进程管理之间迁移。
@@ -32,6 +33,7 @@
 - [初始化与凭据](interaction/initialization-and-credentials.md)
 - [服务、进程与健康检查](service/runtime-and-health.md)
 - [网络接管](network/takeover.md)
+- [网络重配置(reinit)](network/reinit.md)
 - [`.lkb` 备份与回滚](backup/lkb-and-rollback.md)
 - [发布仓库协议](repository.md)
 - [生命周期流程](workflows/lifecycle.md)

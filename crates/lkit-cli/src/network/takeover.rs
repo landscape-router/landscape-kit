@@ -200,7 +200,7 @@ async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
     match &args.action {
         NetworkAction::Status => status(&root),
         NetworkAction::Confirm => confirm(&root, &runtime).await,
-        NetworkAction::Rollback { automatic } => rollback(&root, &runtime, *automatic),
+        NetworkAction::Rollback { automatic } => rollback(&root, &runtime, *automatic).await,
     }
 }
 
@@ -263,7 +263,9 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
         )));
     }
     let network = pending.network_takeover.clone().ok_or_else(|| {
-        InstallError::CorruptedTransaction("pending install has no network takeover state".into())
+        InstallError::CorruptedTransaction(
+            "pending transaction has no network takeover state".into(),
+        )
     })?;
     if pending.phase == transaction::Phase::AwaitingNetworkConfirmation {
         if Utc::now() > network.confirmation_deadline {
@@ -363,7 +365,7 @@ pub(crate) fn clear_selected_lan_addresses(
     Ok(())
 }
 
-fn rollback(
+async fn rollback(
     root: &InstallRoot,
     runtime: &InstallRuntime,
     automatic: bool,
@@ -373,33 +375,57 @@ fn rollback(
     })?;
     let network = pending.network_takeover.clone().ok_or_else(|| {
         InstallError::CorruptedTransaction(
-            "unfinished install has no network takeover state".into(),
+            "unfinished transaction has no network takeover state".into(),
         )
     })?;
-    if pending.operation != transaction::Operation::Install
-        || !matches!(
-            pending.phase,
-            transaction::Phase::AwaitingNetworkConfirmation
-                | transaction::Phase::Finalizing
-                | transaction::Phase::RollingBack
-        )
-    {
+    if !matches!(
+        pending.operation,
+        transaction::Operation::Install | transaction::Operation::Reinit
+    ) || !matches!(
+        pending.phase,
+        transaction::Phase::AwaitingNetworkConfirmation
+            | transaction::Phase::Finalizing
+            | transaction::Phase::RollingBack
+    ) {
         return Err(InstallError::BlockedByTransaction(format!(
             "transaction {} is {}; network rollback only handles an uncommitted confirmation phase",
             pending.transaction_id,
             pending.phase.key()
         )));
     }
+    let health = runtime.health_options()?;
     transaction::mark_phase(root, &pending, transaction::Phase::RollingBack)?;
-    let result = (|| {
-        transaction::restore_uncommitted_network_systemd(root, &pending, &runtime.systemd)?;
-        for before in &network.host_services {
-            systemd::restore_host_service(&runtime.systemd, before)?;
+    let result: Result<(), InstallError> = async {
+        match pending.operation {
+            transaction::Operation::Install => {
+                transaction::restore_uncommitted_network_systemd(root, &pending, &runtime.systemd)?;
+                for before in &network.host_services {
+                    systemd::restore_host_service(&runtime.systemd, before)?;
+                }
+            }
+            transaction::Operation::Reinit => {
+                crate::workflows::reinit::rollback_reinit_inner(
+                    root,
+                    &pending,
+                    &runtime.systemd,
+                    &health,
+                )
+                .await?;
+            }
+            other => {
+                return Err(InstallError::BlockedByTransaction(format!(
+                    "network rollback does not handle {} transactions",
+                    other.key()
+                )));
+            }
         }
         remove_recovery_units(root, &network, &runtime.systemd, automatic)?;
-        transaction::cleanup_uncommitted_network_install(root, &pending)?;
-        Ok::<(), InstallError>(())
-    })();
+        if pending.operation == transaction::Operation::Install {
+            transaction::cleanup_uncommitted_network_install(root, &pending)?;
+        }
+        Ok(())
+    }
+    .await;
     if let Err(error) = result {
         let _ = transaction::mark_phase(root, &pending, transaction::Phase::Failed);
         return Err(error);

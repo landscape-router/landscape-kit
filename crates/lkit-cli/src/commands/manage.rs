@@ -228,12 +228,6 @@ async fn run_first_install(
     let network_plan = if let Some(network_plan) = args.network_plan.clone() {
         Some(network_plan)
     } else if args.takeover_network {
-        if let Err(error) =
-            crate::network::discovery::ensure_management_bridge_absent(&runtime.sys_class_net)
-        {
-            eprintln!("install: {error}");
-            return exit_code(&error);
-        }
         let (interfaces, routes) = match crate::network::discovery::discover(
             &runtime.sys_class_net,
             &runtime.ip_command,

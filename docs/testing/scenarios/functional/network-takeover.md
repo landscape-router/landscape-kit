@@ -98,9 +98,11 @@
 
 ## NET-08
 
-**SELinux、已有 br_lan 或不受支持的活动网络管理器在任何网络变更前阻断**
+**SELinux 与不受支持的活动网络管理器在任何网络变更前阻断**
 
 - 测试层：CLI fixture E2E、Rust 单元
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[接口发现](../../../../crates/lkit-cli/src/network/discovery.rs)
-- 说明：`networking.service` 是受支持的 Debian ifupdown 宿主服务，不属于本场景的未知管理器。
+- 说明：`networking.service` 是受支持的 Debian ifupdown 宿主服务，不属于本场景的未知
+  管理器。已有 `br_lan` 不阻断安装：install 与 reinit 都不检查桥接是否存在，桥接的
+  创建、成员同步与清理由 Landscape 按新配置处理。

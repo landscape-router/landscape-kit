@@ -5,6 +5,7 @@ pub mod install;
 mod manage;
 pub mod network;
 pub mod reconcile;
+pub mod reinit;
 pub mod repair;
 pub mod restore;
 pub mod service_manager;
@@ -20,6 +21,7 @@ pub use install::Install;
 pub(crate) use manage::ServiceManagerArg;
 pub use network::Network;
 pub use reconcile::Reconcile;
+pub use reinit::Reinit;
 pub use repair::Repair;
 pub use restore::Restore;
 pub use service_manager::ServiceManager;
@@ -36,6 +38,7 @@ pub enum Commands {
     Update(Update),
     Repair(Repair),
     Restore(Restore),
+    Reinit(Reinit),
     Backup(Backup),
     Reconcile(Reconcile),
     ServiceManager(ServiceManager),

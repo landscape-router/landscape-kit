@@ -2,6 +2,7 @@ mod backup;
 mod install_form;
 mod network_wizard;
 mod preflight;
+mod reinit;
 mod render;
 mod update;
 mod widgets;
@@ -11,6 +12,7 @@ use backup::{BackupListState, BackupPanel};
 use install_form::InstallForm;
 use network_wizard::{NetworkWizard, Snapshot, WizardStep};
 use preflight::{GateState, Preflight, PreflightState};
+use reinit::{ReinitPanel, ReinitStep};
 use update::{UninstallPanel, UpdatePanel};
 use widgets::{Clicks, Focus, Hit, Menu};
 
@@ -143,6 +145,7 @@ struct ConsoleApp {
     backup_menu_active: bool,
     update: UpdatePanel,
     update_menu_active: bool,
+    reinit: ReinitPanel,
     uninstall: UninstallPanel,
     takeover_choice: usize,
     hits: Clicks,
@@ -166,6 +169,7 @@ impl ConsoleApp {
             backup_menu_active: false,
             update: UpdatePanel::default(),
             update_menu_active: false,
+            reinit: ReinitPanel::default(),
             uninstall: UninstallPanel::default(),
             takeover_choice: 0,
             hits: Clicks::default(),
@@ -219,6 +223,7 @@ impl ConsoleApp {
         match menu {
             Menu::Install => self.install_available(),
             Menu::Update | Menu::Uninstall => matches!(self.snapshot, Snapshot::Installed { .. }),
+            Menu::Reinit => reinit::reinit_eligible(self),
             _ => true,
         }
     }
@@ -353,6 +358,12 @@ impl ConsoleApp {
         if self.menu() == Menu::Uninstall
             && self.focus == Focus::Panel
             && let Some(action) = self.handle_uninstall_key(key)
+        {
+            return action;
+        }
+        if self.menu() == Menu::Reinit
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_reinit_key(key)
         {
             return action;
         }
@@ -654,6 +665,18 @@ impl ConsoleApp {
                 self.focus = Focus::Panel;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
+            Hit::ReinitField(index) => {
+                self.focus = Focus::Panel;
+                if self.reinit.step == ReinitStep::Credentials && index < 3 {
+                    self.reinit.selected = index;
+                    self.reinit.editing = true;
+                }
+                None
+            }
+            Hit::ReinitAction => {
+                self.focus = Focus::Panel;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
             Hit::BackupRow(index) => {
                 self.focus = Focus::Panel;
                 self.backup.selected = index;
@@ -784,6 +807,14 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_CONFIRM)
             } else {
                 crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_PANEL)
+            }
+        } else if self.menu() == Menu::Reinit && self.focus == Focus::Panel {
+            if self.reinit.confirming {
+                crate::tr!(crate::keys::CONSOLE_REINIT_HINT_CONFIRM)
+            } else if self.reinit.editing {
+                crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_REINIT_HINT_PANEL)
             }
         } else if self.menu() == Menu::Backup && self.focus == Focus::Panel {
             if self.backup.delete_confirming {

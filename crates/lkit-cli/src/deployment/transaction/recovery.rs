@@ -57,6 +57,55 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
         Operation::Restore => recover_restore(root, transaction, systemd, health).await,
         Operation::ServiceMigration => recover_migration(root, transaction, systemd),
         Operation::Uninstall => recover_uninstall(root, transaction, systemd),
+        Operation::Reinit => recover_reinit(root, transaction, systemd, health).await,
+    }
+}
+
+/// 中断的 reinit 事务恢复:
+/// - `awaiting_network_confirmation`/`finalizing`/`rolling_back`:阻断并提示使用
+///   `lkit network confirm` 或 `lkit network rollback`,与首次接管一致;
+/// - `preparing`:清理事务临时内容并标记 `failed`;
+/// - `prepared`/`stopping`:恢复事务前 systemd 状态后清理并标记 `failed`;
+/// - `activating`/`verifying`:执行 reinit 回滚,优先用事务目录中的旧 data 现场。
+async fn recover_reinit<P: DocsProbe>(
+    root: &InstallRoot,
+    transaction: &TransactionFile,
+    systemd: &Systemd,
+    health: &HealthOptions<P>,
+) -> Result<(), InstallError> {
+    if matches!(
+        transaction.phase,
+        Phase::AwaitingNetworkConfirmation | Phase::Finalizing | Phase::RollingBack
+    ) {
+        return Err(InstallError::BlockedByTransaction(format!(
+            "network reinit {} is {}; use `lkit network confirm` or `lkit network rollback`",
+            transaction.transaction_id,
+            transaction.phase.key()
+        )));
+    }
+    match transaction.phase {
+        Phase::Preparing => {
+            let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Prepared | Phase::Stopping => {
+            restore_pre_activation_systemd(root, transaction, systemd)?;
+            if let Some(backup_path) = &transaction.resolv_conf_backup {
+                let backup_dir = root.canonical.join(backup_path);
+                super::super::resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+            }
+            let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Activating | Phase::Verifying => {
+            crate::workflows::reinit::rollback_reinit(root, transaction, systemd, health).await
+        }
+        phase => Err(InstallError::BlockedByTransaction(format!(
+            "reinit transaction in terminal phase {} cannot be recovered",
+            phase.key()
+        ))),
     }
 }
 

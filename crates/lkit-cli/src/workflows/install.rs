@@ -610,7 +610,7 @@ struct AdminAuth<'a> {
     admin_pass: &'a str,
 }
 
-fn build_init_config(
+pub(crate) fn build_init_config(
     version: &semver::Version,
     credentials: &Credentials,
     network: Option<&crate::network::config::NetworkPlan>,

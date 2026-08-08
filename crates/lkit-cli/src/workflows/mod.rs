@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub(crate) mod install;
+pub(crate) mod reinit;
 pub(crate) mod repair;
 pub(crate) mod restore;
 pub(crate) mod service_manager;

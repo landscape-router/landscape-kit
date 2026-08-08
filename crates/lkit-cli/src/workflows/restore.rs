@@ -721,7 +721,7 @@ fn restore_replaced_release_if_same_version(
 /// 将事务目录中的旧 data 恢复为当前 data。幂等:
 /// 丢弃回滚中断时残留的部分新 data,再把 previous-data 移回原位;
 /// previous-data 已被消费、data 已恢复时直接视为已完成,不得再次删除 data。
-fn restore_previous_data(data: &Path, previous_data: &Path) -> Result<(), InstallError> {
+pub(crate) fn restore_previous_data(data: &Path, previous_data: &Path) -> Result<(), InstallError> {
     if previous_data.exists() {
         if data.exists() {
             std::fs::remove_dir_all(data).map_err(InstallError::Io)?;
@@ -738,7 +738,7 @@ fn restore_previous_data(data: &Path, previous_data: &Path) -> Result<(), Instal
     Ok(())
 }
 
-fn write_file_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
+pub(crate) fn write_file_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;

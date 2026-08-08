@@ -143,6 +143,14 @@ impl NetworkPlan {
         }
     }
 
+    /// 计划中的 LAN 物理接口;WAN-only/WAN-DHCP 模式为空。
+    pub(crate) fn lan(&self) -> Vec<&str> {
+        match &self.mode {
+            NetworkMode::RoutedLan { lan, .. } => lan.iter().map(String::as_str).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub(crate) fn management_address(&self) -> Option<Ipv4Cidr> {
         match self.mode {
             NetworkMode::WanOnly { address, .. } => Some(address),

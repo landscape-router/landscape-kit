@@ -181,6 +181,40 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
 卸载中断恢复采用前向完成:继续注销服务、删除文件并提交,不自动回滚;恢复再次失败
 标记 `failed` 并保留现场要求人工诊断。卸载成功后该根目录视为全新首次安装。
 
+### 10. 重新初始化
+
+`lkit reinit` 是独立的 `reinit` 事务,只接受已提交、systemd 且宿主网络服务已被接管的
+安装,配置级重建语义与 restore 一致(不复制数据库字节文件,按新 init 配置重建)。
+完整命令规格见 [`lkit reinit`](../commands/reinit.md),网络细节见
+[网络重配置](../network/reinit.md)。
+
+1. 获取安装锁并恢复未完成事务;读取已提交 state,不存在则参数错误;校验 systemd 与
+   宿主网络服务已接管;
+2. 交互收集目标配置(凭据 + 网络计划)并确认破坏性计划,非交互模式以 `--yes` 代替;
+   收集与确认先于任何修改,拒绝时不创建事务、不写文件;
+3. 默认创建保护 `.lkb`(`reinit 前自动备份`,auto 标记为 true),失败阻断;
+   `--allow-no-backup` 显式跳过;
+4. 创建 `preparing` reinit 事务,记录 `systemd_before`、`/etc/resolv.conf` 备份、状态
+   快照与网络计划;`version` 固定为当前活动版本,不下载任何资产;
+5. 更新为 `stopping` 后停止服务并确认进程退出;
+6. 更新为 `activating`:旧 `data/` 原子移动到事务目录,创建新空 `data/` 并写入新
+   `landscape_init.toml`(权限 `0600`,版本等于当前活动版本,凭据为用户新输入,网络为
+   新计划),清理新选 LAN 接口地址;不检查、不协调 `br_lan`,桥接创建、成员同步与
+   清理全部由 Landscape 按新配置处理;
+7. 更新为 `verifying`:启动服务并完成 180 秒启动检查与 10 秒稳定观察;
+8. 一律进入 `awaiting_network_confirmation`:arm 恢复二进制、确认 timer 与 boot
+   rollback,写入 pending state;`lkit network confirm` 复核接口 MAC、管理地址、
+   `br_lan` 成员、PID 与健康后提交;
+9. 成功提交后保留旧 data 事务现场与保护备份,事务进入 `committed`,输出新管理地址与
+   备份 ID。
+
+失败语义:目标激活或健康检查失败时进入 `rolling_back`,从事务目录恢复旧 `data/` 并
+重启旧配置,回滚成功返回 `5`、失败返回 `6`;timer 到期、确认前重启与手工 rollback
+走同一回滚入口。中断恢复:`preparing` 标记 `failed`;`prepared`/`stopping` 恢复事务前
+systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
+`awaiting_network_confirmation`/`finalizing`/`rolling_back` 阻断并提示使用
+`lkit network confirm` 或 `lkit network rollback`。
+
 ## 首次安装失败
 
 systemd 环境首次安装启动失败时：

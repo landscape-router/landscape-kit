@@ -118,7 +118,9 @@ fn configured_language(matches: &ArgMatches) -> Option<Language> {
     while let Some((_, sub)) = leaf.subcommand() {
         leaf = sub;
     }
-    let install_dir = match leaf.get_one::<PathBuf>("install_dir") {
+    // `get_one` 对未定义的参数 id 在 debug 断言下 panic(如裸控制台、check),
+    // 这里用 `try_get_one` 宽容读取:未定义时回落到环境变量与默认安装根。
+    let install_dir = match leaf.try_get_one::<PathBuf>("install_dir").ok().flatten() {
         Some(path) => path.clone(),
         None => std::env::var("LKIT_INSTALL_DIR")
             .map(PathBuf::from)
@@ -333,6 +335,25 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_RESTORE_YES_HELP))
                 })
         })
+        .mut_subcommand("reinit", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_REINIT_ABOUT))
+                .mut_arg("install_dir", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                })
+                .mut_arg("admin_user", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_ADMIN_USER_HELP))
+                })
+                .mut_arg("password_file", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_PASSWORD_FILE_HELP))
+                })
+                .mut_arg("allow_no_backup", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_REINIT_ALLOW_NO_BACKUP_HELP))
+                })
+                .mut_arg("yes", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_REINIT_YES_HELP))
+                })
+        })
         .mut_subcommand("update", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_UPDATE_ABOUT))
@@ -440,10 +461,12 @@ async fn run_command(
         };
         let interactive_password = match &mut command {
             Commands::Install(install) => install.interactive_password.take(),
+            Commands::Reinit(reinit) => reinit.interactive_password.take(),
             _ => None,
         };
         let network_plan = match &mut command {
             Commands::Install(install) => install.network_plan.take(),
+            Commands::Reinit(reinit) => reinit.network_plan.take(),
             _ => None,
         };
         return match systemd_worker::delegate(
@@ -472,6 +495,7 @@ async fn run_command(
         Commands::Update(args) => commands::update::run(&args).await,
         Commands::Repair(args) => commands::repair::run(&args).await,
         Commands::Restore(args) => commands::restore::run(&args).await,
+        Commands::Reinit(args) => commands::reinit::run(&args).await,
         Commands::Backup(args) => commands::backup::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,

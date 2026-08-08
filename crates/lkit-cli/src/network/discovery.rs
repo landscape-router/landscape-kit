@@ -80,15 +80,6 @@ pub(crate) fn discover(
     Ok((interfaces, routes))
 }
 
-pub(crate) fn ensure_management_bridge_absent(sys_class_net: &Path) -> Result<(), InstallError> {
-    if sys_class_net.join(MANAGEMENT_BRIDGE).exists() {
-        return Err(network_error(format!(
-            "{MANAGEMENT_BRIDGE} already exists; remove the existing bridge before network takeover"
-        )));
-    }
-    Ok(())
-}
-
 pub(crate) fn prompt_plan(
     interfaces: &[Interface],
     routes: &[DefaultRoute],
@@ -377,16 +368,6 @@ fn network_error(reason: impl Into<String>) -> InstallError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn refuses_an_existing_management_bridge() {
-        let root =
-            std::env::temp_dir().join(format!("lkit-existing-bridge-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(MANAGEMENT_BRIDGE)).unwrap();
-        assert!(ensure_management_bridge_absent(&root).is_err());
-        let _ = std::fs::remove_dir_all(root);
-    }
 
     #[test]
     fn builds_wan_only_plan_for_a_multi_interface_host() {

@@ -307,6 +307,60 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 ));
             }
         }
+        Operation::Reinit => {
+            if has_restore_backup || has_static_backup || has_managers {
+                return Err(corrupted(
+                    "reinit transaction must not record restore backups, static backups, or service managers"
+                        .into(),
+                ));
+            }
+            if transaction.no_backup && has_backup {
+                return Err(corrupted(
+                    "no-backup reinit must not record a .lkb protection backup".into(),
+                ));
+            }
+            if !has_backup
+                && !transaction.no_backup
+                && !matches!(transaction.phase, Phase::Preparing | Phase::Failed)
+            {
+                return Err(corrupted(
+                    "reinit transaction must record a .lkb protection backup unless it is still preparing, already failed, or an explicitly allowed no-backup reinit"
+                        .into(),
+                ));
+            }
+            if transaction.from_version.is_none() {
+                return Err(corrupted(
+                    "reinit transaction must record the current version".into(),
+                ));
+            }
+            if transaction.target_version.is_some()
+                || transaction.target_release.is_some()
+                || transaction.previous_current.is_some()
+            {
+                return Err(corrupted(
+                    "reinit transaction must not record a target version or release".into(),
+                ));
+            }
+            if let Some(network) = &transaction.network_takeover {
+                network.plan.validate()?;
+                if transaction.schema_version < 3 {
+                    return Err(corrupted(
+                        "reinit network confirmation requires transaction schema version 3".into(),
+                    ));
+                }
+                for unit in [
+                    &network.rollback_service,
+                    &network.rollback_timer,
+                    &network.boot_rollback_service,
+                ] {
+                    if !is_safe_unit_name(unit) {
+                        return Err(corrupted(format!(
+                            "invalid network recovery unit name {unit}"
+                        )));
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }

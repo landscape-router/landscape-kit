@@ -85,6 +85,30 @@
 - 非 Debian 的 glibc Linux 发行版不因 `/etc/os-release` 的 `ID` 被拒绝；仍必须通过完整
   的内核、BPF、Cgroup、依赖、端口和服务检查。依赖错误保留可执行的包管理器安装建议。
 
+### 重新初始化
+
+- `lkit reinit` 只接受已提交、`service.manager == systemd` 且宿主网络服务已被接管的
+  安装;目标目录无有效状态、非 systemd 或未接管时返回参数错误,不隐式接管。
+- 凭据与网络计划在交互中收集,破坏性计划确认先于任何修改;确认被拒或非交互缺少
+  `--yes` 时不创建事务、不写任何文件、不停止服务。
+- reinit 默认在停止服务前创建保护 `.lkb`(备注 `reinit 前自动备份`、auto 为 true),
+  失败阻断;`--allow-no-backup` 显式跳过并记录 `no_backup: true`。
+- 新 `landscape_init.toml` 的 `version` 固定为当前活动版本,只包含新凭据与用户选择的
+  WAN/LAN 网络实体;其余配置实体全部清空并由 Landscape 重建数据库,release 与静态
+  资产逐字节不变,`config.toml` 不读取不修改。
+- install 与 reinit 都不检查 `br_lan` 是否存在;桥接的创建、成员同步与清理由 Landscape
+  按新配置处理。新选 LAN 接口执行地址 flush,WAN 不清理。
+- 健康检查通过后一律进入 `awaiting_network_confirmation`,arm 恢复二进制、10 分钟
+  timer 与 boot rollback,不直接提交;`lkit network confirm` 复核接口 MAC、管理地址、
+  `br_lan` 成员、PID 与健康后提交。
+- 确认前重启、timer 到期与手工 rollback 走同一幂等回滚:停止服务 → 恢复旧 `data/` →
+  重启旧配置并通过健康检查;回滚成功 `rolled_back`,失败 `failed` 并保留现场与保护
+  备份。
+- 激活或健康检查失败但自动回滚成功返回 `5`;回滚失败返回 `6`。
+- 中断事务按阶段恢复:`preparing` 标记 `failed`;`prepared`/`stopping` 恢复事务前
+  systemd 状态;`activating`/`verifying` 执行旧 data 回滚;待确认阶段阻断并提示
+  `lkit network confirm`/`rollback`。
+
 ### 卸载
 
 - `lkit uninstall` 只接受已有有效 `install-state.json` 的安装；无状态返回 `2`，损坏状态

@@ -12,6 +12,7 @@ use super::backup::{
 use super::install_form::render_install;
 use super::network_wizard::{Snapshot, render_network_wizard, render_pending_takeover};
 use super::preflight::render_preflight_dialog;
+use super::reinit::{render_reinit, render_reinit_confirmation};
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
@@ -78,6 +79,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     if app.menu() == Menu::Uninstall && app.uninstall.confirming {
         render_uninstall_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Reinit && app.reinit.confirming {
+        render_reinit_confirmation(frame, app);
     }
 }
 
@@ -250,6 +254,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         }
         Menu::Backup => render_backup(frame, app, area),
         Menu::Update => render_update(frame, app, area),
+        Menu::Reinit => render_reinit(frame, app, area),
         Menu::Uninstall => render_uninstall(frame, app, area),
     }
 }

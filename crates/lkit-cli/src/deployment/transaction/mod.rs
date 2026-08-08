@@ -25,6 +25,7 @@ pub(crate) enum Operation {
     Restore,
     ServiceMigration,
     Uninstall,
+    Reinit,
 }
 
 impl Operation {
@@ -36,6 +37,7 @@ impl Operation {
             Self::Restore => "restore",
             Self::ServiceMigration => "service_migration",
             Self::Uninstall => "uninstall",
+            Self::Reinit => "reinit",
         }
     }
 }
@@ -393,6 +395,43 @@ impl TransactionFile {
             from_service_manager: None,
             target_service_manager: None,
             previous_current: Some(format!("releases/{version}")),
+            target_release: None,
+            backup: None,
+            restore_backup: None,
+            no_backup: false,
+            static_backup: None,
+            systemd_before: None,
+            resolv_conf_backup: None,
+            network_takeover: None,
+            log_path: format!("logs/{transaction_id}.log"),
+            started_at: now,
+            updated_at: now,
+        };
+        validate_transaction(&transaction)?;
+        Ok(transaction)
+    }
+
+    /// reinit 事务:同版本配置重建,不改变版本关系。`backup` 在保护 `.lkb` 创建成功后
+    /// 由调用方记录;`--allow-no-backup` 时保持 null 且 `no_backup: true`。
+    /// `network_takeover` 在健康检查通过、arm 恢复机制后由调用方记录。
+    pub(crate) fn new_reinit(
+        root: &InstallRoot,
+        version: &semver::Version,
+    ) -> Result<Self, InstallError> {
+        let transaction_id = Uuid::now_v7().to_string();
+        let now = Utc::now();
+        let transaction = Self {
+            schema_version: TRANSACTION_SCHEMA_VERSION,
+            transaction_id: transaction_id.clone(),
+            operation: Operation::Reinit,
+            phase: Phase::Preparing,
+            install_root: root.install_root.display().to_string(),
+            canonical_install_root: root.canonical.display().to_string(),
+            from_version: Some(version.to_string()),
+            target_version: None,
+            from_service_manager: None,
+            target_service_manager: None,
+            previous_current: None,
             target_release: None,
             backup: None,
             restore_backup: None,
@@ -953,6 +992,142 @@ mod tests {
             sha256: "b".repeat(64),
         });
         assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_reinit_transaction_rules() {
+        let temp = temp_root("reinit");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        assert_eq!(transaction.operation, Operation::Reinit);
+        assert_eq!(transaction.phase, Phase::Preparing);
+        assert_eq!(transaction.from_version.as_deref(), Some("1.2.3"));
+        assert!(transaction.target_version.is_none());
+        assert!(transaction.target_release.is_none());
+        assert!(transaction.previous_current.is_none());
+        assert!(validate_transaction(&transaction).is_ok());
+
+        // 保护备份记录后(仍在 preparing)合法;进入 prepared 后必须有备份或 no_backup。
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.backup = None;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.no_backup = true;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.no_backup = false;
+        transaction.phase = Phase::Failed;
+        assert!(validate_transaction(&transaction).is_ok());
+
+        // 非法组合:版本变化、release、previous_current、restore_backup、managers。
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_version = Some("1.3.0".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_release = Some("releases/1.2.3".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.previous_current = Some("releases/1.2.3".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.restore_backup = Some(BackupRef {
+            backup_id: "r".into(),
+            path: "transactions/tx/target-backup.lkb".into(),
+            sha256: "b".repeat(64),
+        });
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.from_version = None;
+        assert!(validate_transaction(&invalid).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn rejects_reinit_network_confirmation_below_schema_three() {
+        let temp = temp_root("reinit-network");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        transaction.schema_version = 1;
+        transaction.phase = Phase::AwaitingNetworkConfirmation;
+        assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn recovers_interrupted_reinit_in_preparing() {
+        let temp = temp_root("reinit-recover");
+        let root = new_root(&temp);
+        let transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        begin(&root, &transaction).unwrap();
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Failed);
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn blocks_reinit_awaiting_confirmation_on_recovery() {
+        let temp = temp_root("reinit-blocked");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        transaction.network_takeover = Some(NetworkTakeoverTransaction {
+            plan: crate::network::config::NetworkPlan {
+                mode: crate::network::config::NetworkMode::WanDhcp { wan: "ens3".into() },
+                selected_macs: vec![crate::network::config::SelectedInterface {
+                    name: "ens3".into(),
+                    mac: "02:00:00:00:00:03".into(),
+                }],
+            },
+            host_services: Vec::new(),
+            confirmation_deadline: Utc::now(),
+            rollback_service: "lkit-network-tx-rollback.service".into(),
+            rollback_timer: "lkit-network-tx-rollback.timer".into(),
+            boot_rollback_service: "lkit-network-tx-boot-rollback.service".into(),
+            recovery_binary: "service/lkit-network-recovery".into(),
+            pending_state: "transactions/tx/pending-install-state.json".into(),
+        });
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::AwaitingNetworkConfirmation).unwrap();
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(async { recover_interrupted(&root, &tx, &Systemd::host(), &health).await });
+        assert!(matches!(error, Err(InstallError::BlockedByTransaction(_))));
         let _ = std::fs::remove_dir_all(&temp);
     }
 
