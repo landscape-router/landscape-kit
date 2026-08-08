@@ -23,6 +23,8 @@ lkit [--non-interactive] install [--version <VERSION>]
 - `--force` 不删除文件，只显示规范化安装根目录并要求用户自行清理。
 - `--takeover-network` 仅用于首次安装，要求 systemd 和交互终端。它让用户选择 WAN/LAN
   接口，并在 Landscape 健康后进入待确认状态；完整行为见[网络接管](../network/takeover.md)。
+  管理控制台的 Install 面板始终启用该模式（开关暂隐藏，见代码中的
+  `TODO(network-takeover)`）；CLI 的 `--takeover-network` 仍为显式参数。
 - `--takeover-network` 只允许目标 `data/` 目录不存在或为空；已有数据必须先由对应的
   `lkit network rollback` 清理。确认前重启会触发 boot rollback，不会让本次安装继续等待。
 - 已安装环境的版本更新、切换、修复和状态变更不再通过本命令的互斥 flags 表达。

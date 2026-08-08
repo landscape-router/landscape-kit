@@ -9,7 +9,8 @@
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
 - 说明：内存终端断言品牌、Navigation、Install root 和安装操作均已渲染，不要求测试进程
   连接真实终端；同时断言 Repository URL 默认隐藏、仅在选择 Custom HTTP 后显示，字段导航
-  会跳过隐藏行，并验证所有安装字段都有随选择变化的说明。
+  会跳过隐藏行，并验证所有安装字段都有随选择变化的说明。网络接管开关暂隐藏（固定启用，
+  见代码中的 `TODO(network-takeover)`），不在表单字段中。
 
 ## UI-02
 
@@ -79,8 +80,10 @@
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
-- 说明：覆盖从 Install 表单进入无侧栏网络向导、LAN 空集合的 WAN-only 计划，以及 LAN
-  列表的 Up/Down、Space、Enter 语义。systemd worker 的安装页在下载阶段可停止，配置阶段
+- 说明：覆盖从 Install 表单进入无侧栏网络向导、WAN 配置面板（Static/DHCP client tab、
+  静态字段与底部“确认并继续”按钮）、LAN 空集合的 WAN-only 计划，以及 LAN
+  列表的 Up/Down、Space、Enter 语义。Install 面板始终启用网络接管（开关暂隐藏），激活
+  “开始安装”固定进入向导。systemd worker 的安装页在下载阶段可停止，配置阶段
   忽略停止请求，结果页等待 Ctrl+C。
 
 ## UI-09
@@ -102,10 +105,11 @@
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
-- 说明：WAN 列表显示首个发现 IPv4 和该接口首个默认网关；选中后以完整对预填并默认
-  Static，缺任一项默认 DHCP。Static/DHCP 使用 Left/Right 和 Enter，静态地址/CIDR 与网关
-  同页编辑。计划摘要展示 WAN、LAN、LAN 配置和接管影响；Enter 开始安装，Esc 逐步回退，
-  在 WAN 首页打开取消确认层。
+- 说明：WAN 列表显示首个发现 IPv4 和该接口首个默认网关；选中后进入 WAN 配置面板，
+  tab 以完整对预填并默认 Static，缺任一项默认 DHCP。Static/DHCP 用 Left/Right 切换，
+  静态地址/CIDR 与网关同页编辑，底部“确认并继续”按钮校验并前进；选择 LAN 后在同一页
+  填写管理地址与 DHCP 范围并一次性确认。计划摘要展示 WAN、LAN、LAN 配置和接管影响；
+  Enter 开始安装，Esc 逐步回退，在 WAN 首页打开取消确认层。
 
 ## UI-11
 

@@ -25,25 +25,33 @@ lkit --non-interactive install ... # 严格非交互命令模式
 Up/Down 导航会跳过它；面板仍可显示“已安装”提示。反之，未安装、非 root 或安装
 状态不可读时 Update 菜单置灰且被导航跳过，面板显示不可用原因。
 
-Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认、service
-manager 和网络接管选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。
+Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认和 service
+manager 选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。
 版本默认 `latest`，也可直接编辑为精确 stable 版本；HTTP repository protocol v1 没有版本
 目录接口，因此首版不伪造远端版本列表。密码和确认密码在界面中只显示等长 `*`，提交前
 检查两次输入相同并复用 Landscape 密码复杂度规则；用户无需为控制台安装准备密码文件。
 表单为当前选中项显示配置含义和影响；宽终端在表单右侧显示，窄终端空间允许时显示在
 表单下方。
 
-启用网络接管后，激活“开始安装”不会在表单内继续逐行询问，而是进入无侧栏的全屏网络
-向导。向导依次选择 WAN、WAN IPv4 模式、LAN 和 LAN 配置。WAN 列表与默认网关一同识别：
-每个网卡显示发现顺序中的首个 IPv4 及该接口的首个默认网关；没有默认网关时明确显示未发现。
-选中 WAN 后，向导按与 CLI 相同的发现顺序预填该 IPv4 和网关：两项均存在时默认 Static，
-缺任一时默认 DHCP。Static 与 DHCP 模式用 Left/Right 选择、Enter 确认，不使用 Space
-切换。Static 的地址/CIDR 和默认网关在同一页填写，Up/Down 切换字段，普通输入、paste 和
-Backspace 编辑当前字段；两个字段均通过校验后，Enter 进入 LAN 选择。
+Install 面板始终启用网络接管（开关暂隐藏，见代码中的 `TODO(network-takeover)`；处理完
+不同发行版网络服务差异后恢复）。激活“开始安装”不会在表单内继续逐行询问，而是进入
+无侧栏的全屏网络向导。向导依次进入 WAN 选择、WAN 配置面板、LAN 选择和 LAN DHCP
+配置面板，最后显示计划摘要。
+
+WAN 列表与默认网关一同识别：每个网卡显示发现顺序中的首个 IPv4 及该接口的首个默认网关；
+没有默认网关时明确显示未发现。选中 WAN 后进入 WAN 配置面板：顶部两个 tab（静态 /
+DHCP client）用 Left/Right 切换模式，按与 CLI 相同的发现顺序预填该 IPv4 和网关
+（两项均存在时默认 Static，缺任一项默认 DHCP）；面板中部在静态模式下显示
+IPv4 地址/CIDR 与默认网关两个可编辑字段（Up/Down 移动焦点，普通输入、paste 和
+Backspace 编辑，Enter 提交字段并下移），DHCP 模式下显示 DHCP client 说明；
+面板底部是“确认并继续”按钮（Up/Down 移动到后按 Enter 确认，静态模式会校验
+地址与网关）。切换 tab 保留已填写的静态值。
 
 LAN 列表只包含 WAN 以外的物理网卡，使用 Up/Down 移动、Space 多选、Enter 确认。LAN 可以
-不选择，包括多网卡主机；空集合生成 WAN-only 计划，不创建 `br_lan` 或 LAN DHCP。选择 LAN
-后继续填写管理地址和 DHCP 范围。向导结束前显示计划摘要，列出 WAN 接口和 MAC、Static
+不选择，包括多网卡主机；空集合生成 WAN-only 计划，直接进入摘要，不创建 `br_lan` 或
+LAN DHCP。选择至少一个 LAN 后进入单页 LAN DHCP 配置面板：管理地址、DHCP 地址池起始
+和结束三个字段在同一页编辑（进入时按管理地址默认池预填起始/结束），底部“确认并继续”
+按钮一次性校验并进入摘要。向导结束前显示计划摘要，列出 WAN 接口和 MAC、Static
 IPv4/网关或 DHCP、LAN/WAN-only 模式、管理地址和 DHCP 范围（适用时），并明确所选 LAN
 会清理 IPv4/IPv6 地址、未选择接口保持不变。Enter 确认摘要后才开始安装。
 

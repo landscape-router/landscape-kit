@@ -34,7 +34,10 @@ use crate::network::config::{
 };
 use crate::network::discovery::{self, DefaultRoute, Interface};
 
-const FORM_FIELDS: usize = 10;
+// TODO(network-takeover): 处理完不同发行版网络服务差异后恢复网络接管开关:
+// `FORM_FIELDS` 改回 10,恢复下方被注释的字段 8 代码,并把
+// `InstallForm::default` 的 `takeover_network` 改回 false。
+const FORM_FIELDS: usize = 9;
 
 pub(crate) enum ConsoleAction {
     Quit,
@@ -852,7 +855,7 @@ impl ConsoleApp {
                 if self.menu() == Menu::Install {
                     if self.install.checks_selected {
                         self.preflight.expanded = true;
-                    } else if self.install.selected == 9 {
+                    } else if self.install.selected == 8 {
                         match self.preflight_gate() {
                             GateState::None => {
                                 if self.install.takeover_network {
@@ -1049,17 +1052,10 @@ impl ConsoleApp {
             }
             return None;
         }
-        if matches!(
-            wizard.step,
-            WizardStep::WanStatic
-                | WizardStep::Management
-                | WizardStep::DhcpStart
-                | WizardStep::DhcpEnd
-        ) && wizard.editing
-        {
+        if wizard.editing {
             match key.code {
-                KeyCode::Up | KeyCode::Down if wizard.step == WizardStep::WanStatic => {
-                    wizard.wan_static_field = (wizard.wan_static_field + 1) % 2;
+                KeyCode::Up | KeyCode::Down => {
+                    wizard.move_focus(key.code == KeyCode::Up);
                 }
                 KeyCode::Backspace => {
                     wizard.value_mut().map(String::pop);
@@ -1088,20 +1084,26 @@ impl ConsoleApp {
                 KeyCode::Down => wizard.set_wan((wizard.wan + 1).min(wizard.interfaces.len() - 1)),
                 KeyCode::Enter => {
                     wizard.apply_wan_selection();
-                    wizard.step = WizardStep::WanMode;
+                    wizard.step = WizardStep::WanConfig;
+                    wizard.focus = 0;
                 }
                 _ => {}
             },
-            WizardStep::WanMode => match key.code {
-                KeyCode::Left | KeyCode::Right => wizard.wan_mode = wizard.wan_mode.toggle(),
-                KeyCode::Enter => {
-                    wizard.step = if wizard.wan_mode == WanMode::Static {
-                        WizardStep::WanStatic
-                    } else {
-                        WizardStep::Lan
-                    };
-                    wizard.editing = matches!(wizard.step, WizardStep::WanStatic);
-                    wizard.wan_static_field = 0;
+            WizardStep::WanConfig => match key.code {
+                KeyCode::Up | KeyCode::Down => wizard.move_focus(key.code == KeyCode::Up),
+                KeyCode::Left | KeyCode::Right if wizard.focus == 0 => {
+                    wizard.wan_mode = wizard.wan_mode.toggle();
+                }
+                KeyCode::Enter if wizard.focus == 0 => wizard.move_focus(false),
+                KeyCode::Enter if wizard.focus == wizard.focus_max() => {
+                    if wizard.wan_mode == WanMode::Static
+                        && let Err(error) = wizard.validate_wan_static()
+                    {
+                        self.notice = error;
+                        return None;
+                    }
+                    wizard.step = WizardStep::Lan;
+                    wizard.focus = 0;
                 }
                 _ => {}
             },
@@ -1119,12 +1121,24 @@ impl ConsoleApp {
                     }
                 }
                 KeyCode::Enter => {
-                    wizard.step = if wizard.lan_selected.iter().any(|selected| *selected) {
-                        WizardStep::Management
+                    if wizard.lan_selected.iter().any(|selected| *selected) {
+                        wizard.enter_lan_dhcp();
                     } else {
-                        WizardStep::Confirm
-                    };
-                    wizard.editing = matches!(wizard.step, WizardStep::Management);
+                        wizard.step = WizardStep::Confirm;
+                        wizard.editing = false;
+                    }
+                }
+                _ => {}
+            },
+            WizardStep::LanDhcp => match key.code {
+                KeyCode::Up | KeyCode::Down => wizard.move_focus(key.code == KeyCode::Up),
+                KeyCode::Enter if wizard.focus == wizard.focus_max() => {
+                    if let Err(error) = wizard.validate_lan_dhcp() {
+                        self.notice = error;
+                        return None;
+                    }
+                    wizard.step = WizardStep::Confirm;
+                    wizard.focus = 0;
                 }
                 _ => {}
             },
@@ -1147,7 +1161,6 @@ impl ConsoleApp {
                 }
                 _ => {}
             },
-            _ => {}
         }
         None
     }
@@ -1657,7 +1670,9 @@ impl Default for InstallForm {
             password: String::new(),
             password_confirmation: String::new(),
             manager: ManagerMode::Auto,
-            takeover_network: false,
+            // TODO(network-takeover): 开关暂隐藏且恒为 true,console 安装始终走网络接管;
+            // 处理完不同发行版网络服务差异后恢复开关并把默认改回 false。
+            takeover_network: true,
             selected: 0,
             checks_selected: true,
             editing: false,
@@ -1726,11 +1741,13 @@ impl InstallForm {
                 crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_LABEL),
                 crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_HELP),
             ),
+            // TODO(network-takeover): 恢复网络接管开关时,该字段回到索引 8,
+            // 开始安装回到索引 9,并放开下面被注释的接管 arm。
+            // 8 => (
+            //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
+            //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_HELP),
+            // ),
             8 => (
-                crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
-                crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_HELP),
-            ),
-            9 => (
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_LABEL),
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_HELP),
             ),
@@ -1757,7 +1774,8 @@ impl InstallForm {
         match self.selected {
             1 => self.repository.change(forward),
             7 => self.manager.change(forward),
-            8 => self.takeover_network = !self.takeover_network,
+            // TODO(network-takeover): 恢复网络接管开关时放开:
+            // 8 => self.takeover_network = !self.takeover_network,
             _ => {}
         }
     }
@@ -1772,11 +1790,13 @@ impl InstallForm {
                 self.editing = true;
                 Ok(None)
             }
-            1 | 7 | 8 => {
+            // TODO(network-takeover): 恢复网络接管开关时改回 `1 | 7 | 8`。
+            1 | 7 => {
                 self.change_choice(true);
                 Ok(None)
             }
-            9 => self.command().map(Some),
+            // TODO(network-takeover): 恢复网络接管开关时改回 `9`。
+            8 => self.command().map(Some),
             _ => Ok(None),
         }
     }
@@ -2061,12 +2081,9 @@ impl UpdatePanel {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WizardStep {
     Wan,
-    WanMode,
-    WanStatic,
+    WanConfig,
     Lan,
-    Management,
-    DhcpStart,
-    DhcpEnd,
+    LanDhcp,
     Confirm,
 }
 
@@ -2093,7 +2110,7 @@ struct NetworkWizard {
     wan_mode: WanMode,
     address: String,
     gateway: String,
-    wan_static_field: usize,
+    focus: usize,
     lan_candidates: Vec<Interface>,
     lan_cursor: usize,
     lan_selected: Vec<bool>,
@@ -2121,7 +2138,7 @@ impl NetworkWizard {
             wan_mode: WanMode::Static,
             address: String::new(),
             gateway: String::new(),
-            wan_static_field: 0,
+            focus: 0,
             lan_candidates: Vec::new(),
             lan_cursor: 0,
             lan_selected: Vec::new(),
@@ -2150,7 +2167,7 @@ impl NetworkWizard {
             .collect();
         self.lan_selected = vec![false; self.lan_candidates.len()];
         self.lan_cursor = 0;
-        self.wan_static_field = 0;
+        self.focus = 0;
         self.cancel_confirming = false;
     }
 
@@ -2177,21 +2194,12 @@ impl NetworkWizard {
         self.editing = false;
         self.cancel_confirming = false;
         match self.step {
-            WizardStep::WanMode => self.step = WizardStep::Wan,
-            WizardStep::WanStatic => self.step = WizardStep::WanMode,
-            WizardStep::Lan => {
-                self.step = if self.wan_mode == WanMode::Static {
-                    WizardStep::WanStatic
-                } else {
-                    WizardStep::WanMode
-                };
-            }
-            WizardStep::Management => self.step = WizardStep::Lan,
-            WizardStep::DhcpStart => self.step = WizardStep::Management,
-            WizardStep::DhcpEnd => self.step = WizardStep::DhcpStart,
+            WizardStep::WanConfig => self.step = WizardStep::Wan,
+            WizardStep::Lan => self.step = WizardStep::WanConfig,
+            WizardStep::LanDhcp => self.step = WizardStep::Lan,
             WizardStep::Confirm => {
                 self.step = if self.lan_selected.iter().any(|selected| *selected) {
-                    WizardStep::DhcpEnd
+                    WizardStep::LanDhcp
                 } else {
                     WizardStep::Lan
                 };
@@ -2200,67 +2208,132 @@ impl NetworkWizard {
         }
     }
 
+    /// 页面内焦点位置的最大值。
+    fn focus_max(&self) -> usize {
+        match self.step {
+            WizardStep::WanConfig if self.wan_mode == WanMode::Dhcp => 1,
+            WizardStep::WanConfig | WizardStep::LanDhcp => 3,
+            _ => 0,
+        }
+    }
+
+    /// 焦点是否落在可编辑字段上。
+    fn focus_is_field(&self) -> bool {
+        match self.step {
+            WizardStep::WanConfig => {
+                self.wan_mode == WanMode::Static && (1..=2).contains(&self.focus)
+            }
+            WizardStep::LanDhcp => self.focus <= 2,
+            _ => false,
+        }
+    }
+
+    /// 在页面内移动焦点;落到字段上时立即进入编辑。
+    fn move_focus(&mut self, up: bool) {
+        self.editing = false;
+        let max = self.focus_max();
+        self.focus = if up {
+            self.focus.saturating_sub(1)
+        } else {
+            (self.focus + 1).min(max)
+        };
+        self.editing = self.focus_is_field();
+    }
+
+    /// 从 LAN 选择进入单页 DHCP 配置:按管理地址的默认池预填 DHCP 范围。
+    fn enter_lan_dhcp(&mut self) {
+        if self.dhcp_start.is_empty()
+            && let Ok(management) = self.management.trim().parse::<Ipv4Cidr>()
+            && let Ok((start, end)) = management.default_pool()
+        {
+            self.dhcp_start = start.to_string();
+            self.dhcp_end = end.to_string();
+        }
+        self.step = WizardStep::LanDhcp;
+        self.focus = 0;
+        self.editing = true;
+    }
+
+    fn validate_wan_static(&self) -> Result<(), String> {
+        self.address
+            .trim()
+            .parse::<Ipv4Cidr>()
+            .map_err(|error| error.to_string())?;
+        self.gateway
+            .trim()
+            .parse::<std::net::Ipv4Addr>()
+            .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_WAN_GATEWAY))?;
+        Ok(())
+    }
+
+    fn validate_lan_dhcp(&self) -> Result<(), String> {
+        self.management
+            .trim()
+            .parse::<Ipv4Cidr>()
+            .map_err(|error| error.to_string())?;
+        self.dhcp_start
+            .trim()
+            .parse::<std::net::Ipv4Addr>()
+            .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_START))?;
+        self.dhcp_end
+            .trim()
+            .parse::<std::net::Ipv4Addr>()
+            .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_END))?;
+        Ok(())
+    }
+
     fn value_mut(&mut self) -> Option<&mut String> {
         match self.step {
-            WizardStep::WanStatic if self.wan_static_field == 0 => Some(&mut self.address),
-            WizardStep::WanStatic => Some(&mut self.gateway),
-            WizardStep::Management => Some(&mut self.management),
-            WizardStep::DhcpStart => Some(&mut self.dhcp_start),
-            WizardStep::DhcpEnd => Some(&mut self.dhcp_end),
+            WizardStep::WanConfig if self.wan_mode == WanMode::Static && self.focus == 1 => {
+                Some(&mut self.address)
+            }
+            WizardStep::WanConfig if self.wan_mode == WanMode::Static && self.focus == 2 => {
+                Some(&mut self.gateway)
+            }
+            WizardStep::LanDhcp if self.focus == 0 => Some(&mut self.management),
+            WizardStep::LanDhcp if self.focus == 1 => Some(&mut self.dhcp_start),
+            WizardStep::LanDhcp if self.focus == 2 => Some(&mut self.dhcp_end),
             _ => None,
         }
     }
 
     fn advance_after_edit(&mut self) -> Result<(), String> {
         match self.step {
-            WizardStep::WanStatic if self.wan_static_field == 0 => {
+            WizardStep::WanConfig if self.wan_mode == WanMode::Static && self.focus == 1 => {
                 self.address
                     .trim()
                     .parse::<Ipv4Cidr>()
                     .map_err(|error| error.to_string())?;
-                self.wan_static_field = 1;
+                self.focus = 2;
                 self.editing = true;
             }
-            WizardStep::WanStatic => {
-                self.gateway
-                    .trim()
-                    .parse::<std::net::Ipv4Addr>()
-                    .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_WAN_GATEWAY))?;
-                self.address
-                    .trim()
-                    .parse::<Ipv4Cidr>()
-                    .map_err(|error| error.to_string())?;
+            WizardStep::WanConfig if self.wan_mode == WanMode::Static && self.focus == 2 => {
+                self.validate_wan_static()?;
+                self.focus = 3;
                 self.editing = false;
-                self.step = WizardStep::Lan;
             }
-            WizardStep::Management => {
+            WizardStep::LanDhcp if self.focus == 0 => {
                 self.management
                     .trim()
                     .parse::<Ipv4Cidr>()
                     .map_err(|error| error.to_string())?;
-                let management: Ipv4Cidr = self.management.trim().parse().unwrap();
-                let (start, end) = management
-                    .default_pool()
-                    .map_err(|error| error.to_string())?;
-                self.dhcp_start = start.to_string();
-                self.dhcp_end = end.to_string();
-                self.step = WizardStep::DhcpStart;
+                self.focus = 1;
                 self.editing = true;
             }
-            WizardStep::DhcpStart => {
+            WizardStep::LanDhcp if self.focus == 1 => {
                 self.dhcp_start
                     .trim()
                     .parse::<std::net::Ipv4Addr>()
                     .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_START))?;
-                self.step = WizardStep::DhcpEnd;
+                self.focus = 2;
                 self.editing = true;
             }
-            WizardStep::DhcpEnd => {
+            WizardStep::LanDhcp if self.focus == 2 => {
                 self.dhcp_end
                     .trim()
                     .parse::<std::net::Ipv4Addr>()
                     .map_err(|_| crate::tr!(crate::keys::CONSOLE_INVALID_LAN_DHCP_RANGE_END))?;
-                self.step = WizardStep::Confirm;
+                self.focus = 3;
                 self.editing = false;
             }
             _ => {}
@@ -2620,59 +2693,57 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                 ));
             }
         }
-        WizardStep::WanMode => {
+        WizardStep::WanConfig => {
             lines.push(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_WAN_IPV4_MODE),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
-            lines.push(Line::raw(format!(
-                "{} Static   {} DHCP",
-                if wizard.wan_mode == WanMode::Static {
-                    "(*)"
-                } else {
-                    "( )"
-                },
-                if wizard.wan_mode == WanMode::Dhcp {
-                    "(*)"
-                } else {
-                    "( )"
-                },
-            )));
-        }
-        WizardStep::WanStatic => {
-            lines.push(Line::styled(
-                crate::tr!(crate::keys::CONSOLE_WAN_STATIC_IPV4_CONFIGURATION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
-            lines.push(Line::raw(""));
-            let fields = [
-                (
-                    crate::tr!(crate::keys::CONSOLE_IPV4_ADDRESS_CIDR),
-                    &wizard.address,
-                ),
-                (
-                    crate::tr!(crate::keys::CONSOLE_DEFAULT_GATEWAY),
-                    &wizard.gateway,
-                ),
-            ];
-            for (index, (label, value)) in fields.iter().enumerate() {
-                let focused = index == wizard.wan_static_field;
-                let style = if focused {
+            let tab_focus = wizard.focus == 0;
+            let mut tab_spans = Vec::new();
+            for (mode, label) in [
+                (WanMode::Static, crate::tr!(crate::keys::CONSOLE_TAB_STATIC)),
+                (WanMode::Dhcp, crate::tr!(crate::keys::CONSOLE_TAB_DHCP)),
+            ] {
+                let active = wizard.wan_mode == mode;
+                let style = if tab_focus && active {
                     Style::default()
                         .fg(Color::Black)
                         .bg(Color::Cyan)
                         .add_modifier(Modifier::BOLD)
+                } else if tab_focus || active {
+                    Style::default().add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
-                let marker = if focused && wizard.editing { "_" } else { "" };
-                lines.push(Line::from(vec![
-                    Span::styled(if focused { "> " } else { "  " }, style),
-                    Span::styled(display_pad(label, 20), style),
-                    Span::styled(format!("{value}{marker}"), style),
-                ]));
+                tab_spans.push(Span::styled(format!("[ {label} ]"), style));
+                tab_spans.push(Span::raw("  "));
             }
+            lines.push(Line::from(tab_spans));
+            lines.push(Line::raw(""));
+            if wizard.wan_mode == WanMode::Static {
+                lines.push(wizard_field_row(
+                    wizard.focus == 1,
+                    wizard.editing,
+                    &crate::tr!(crate::keys::CONSOLE_IPV4_ADDRESS_CIDR),
+                    &wizard.address,
+                ));
+                lines.push(wizard_field_row(
+                    wizard.focus == 2,
+                    wizard.editing,
+                    &crate::tr!(crate::keys::CONSOLE_DEFAULT_GATEWAY),
+                    &wizard.gateway,
+                ));
+            } else {
+                lines.push(Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_WAN_DHCP_CLIENT_HINT),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            lines.push(Line::raw(""));
+            lines.push(wizard_confirm_button_row(
+                wizard.focus == wizard.focus_max(),
+            ));
         }
         WizardStep::Lan => {
             lines.push(Line::styled(
@@ -2708,32 +2779,32 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                 ));
             }
         }
-        WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => {
-            let (label, value) = match wizard.step {
-                WizardStep::Management => (
-                    crate::tr!(crate::keys::CONSOLE_LAN_MANAGEMENT_IPV4_ADDRESS),
-                    &wizard.management,
-                ),
-                WizardStep::DhcpStart => (
-                    crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_START),
-                    &wizard.dhcp_start,
-                ),
-                WizardStep::DhcpEnd => (
-                    crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_END),
-                    &wizard.dhcp_end,
-                ),
-                _ => unreachable!(),
-            };
+        WizardStep::LanDhcp => {
             lines.push(Line::styled(
-                label,
+                crate::tr!(crate::keys::CONSOLE_LAN_DHCP_CONFIGURATION),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::raw(""));
-            lines.push(Line::raw(format!(
-                "{}{}_",
-                crate::tr!(crate::keys::CONSOLE_VALUE_PREFIX),
-                value
-            )));
+            lines.push(wizard_field_row(
+                wizard.focus == 0,
+                wizard.editing,
+                &crate::tr!(crate::keys::CONSOLE_LAN_MANAGEMENT_IPV4_ADDRESS),
+                &wizard.management,
+            ));
+            lines.push(wizard_field_row(
+                wizard.focus == 1,
+                wizard.editing,
+                &crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_START),
+                &wizard.dhcp_start,
+            ));
+            lines.push(wizard_field_row(
+                wizard.focus == 2,
+                wizard.editing,
+                &crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_END),
+                &wizard.dhcp_end,
+            ));
+            lines.push(Line::raw(""));
+            lines.push(wizard_confirm_button_row(wizard.focus == 3));
         }
         WizardStep::Confirm => {
             let wan = wizard.selected_wan();
@@ -2810,18 +2881,55 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
     }
 }
 
+fn wizard_field_row(focused: bool, editing: bool, label: &str, value: &str) -> Line<'static> {
+    let style = if focused {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let marker = if focused && editing { "_" } else { "" };
+    Line::from(vec![
+        Span::styled(if focused { "> " } else { "  " }, style),
+        Span::styled(display_pad(label, 20), style),
+        Span::styled(format!("{value}{marker}"), style),
+    ])
+}
+
+fn wizard_confirm_button_row(focused: bool) -> Line<'static> {
+    let style = if focused {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    };
+    Line::from(vec![
+        Span::styled(if focused { "> " } else { "  " }, style),
+        Span::styled(
+            format!(
+                "[ {} ]",
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_AND_CONTINUE)
+            ),
+            style,
+        ),
+    ])
+}
+
 fn wizard_hints(wizard: &NetworkWizard) -> String {
     if wizard.cancel_confirming {
         return crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_CANCEL);
     }
     match wizard.step {
         WizardStep::Wan => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_WAN),
-        WizardStep::WanMode => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_MODE),
-        WizardStep::WanStatic => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_STATIC),
+        WizardStep::WanConfig => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_CONFIG),
         WizardStep::Lan => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_LAN),
-        WizardStep::Management | WizardStep::DhcpStart | WizardStep::DhcpEnd => {
-            crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_EDIT)
-        }
+        WizardStep::LanDhcp => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_EDIT),
         WizardStep::Confirm => crate::tr!(crate::keys::CONSOLE_WIZARD_HINT_CONFIRM),
     }
 }
@@ -4006,7 +4114,8 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         mask(&form.password),
         mask(&form.password_confirmation),
         form.manager.label().into(),
-        if form.takeover_network { "[x]" } else { "[ ]" }.into(),
+        // TODO(network-takeover): 恢复网络接管开关时放开该行。
+        // if form.takeover_network { "[x]" } else { "[ ]" }.into(),
         crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON).into(),
     ];
     let labels = [
@@ -4018,7 +4127,8 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
         crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
         crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_LABEL),
-        crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
+        // TODO(network-takeover): 恢复网络接管开关时放开该行。
+        // crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
         String::new(),
     ];
     let lines: Vec<Line<'_>> = labels
@@ -4041,7 +4151,7 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             };
             let value_style = if selected {
                 selected_style
-            } else if index == 9 {
+            } else if index == 8 {
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD)
@@ -4263,7 +4373,7 @@ mod tests {
             wan_mode: WanMode::Static,
             address: String::new(),
             gateway: String::new(),
-            wan_static_field: 0,
+            focus: 0,
             lan_candidates: Vec::new(),
             lan_cursor: 0,
             lan_selected: Vec::new(),
@@ -4335,7 +4445,8 @@ mod tests {
         );
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let wizard = app.network_wizard.as_ref().unwrap();
-        assert_eq!(wizard.step, WizardStep::WanMode);
+        assert_eq!(wizard.step, WizardStep::WanConfig);
+        assert_eq!(wizard.focus, 0);
         assert_eq!(wizard.wan_mode, WanMode::Dhcp);
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
         assert_eq!(
@@ -4345,9 +4456,35 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         assert_eq!(app.network_wizard.as_ref().unwrap().wan_mode, WanMode::Dhcp);
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.focus, 1);
+        assert!(!wizard.editing);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.network_wizard.as_ref().unwrap().step, WizardStep::Lan);
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
         assert!(app.network_wizard.as_ref().unwrap().lan_selected[0]);
+    }
+
+    #[test]
+    fn network_wizard_dhcp_panel_highlights_confirm_button_on_focus() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(sample_network_wizard());
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::WanConfig);
+        assert_eq!(wizard.focus, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.focus, 1);
+        assert!(!wizard.editing);
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("> [ Confirm and continue ]"));
     }
 
     #[test]
@@ -4754,7 +4891,7 @@ mod tests {
             password_confirmation: "Secret123".into(),
             manager: ManagerMode::None,
             takeover_network: false,
-            selected: 9,
+            selected: 8,
             checks_selected: false,
             editing: false,
         };
@@ -4776,6 +4913,24 @@ mod tests {
         assert_eq!(args[0], "install");
         assert!(args.windows(2).any(|pair| pair == ["--version", "1.2.3"]));
         assert!(args.iter().all(|argument| !argument.contains("Secret123")));
+    }
+
+    #[test]
+    fn install_form_defaults_to_network_takeover() {
+        let mut form = InstallForm {
+            password: "Secret123".into(),
+            password_confirmation: "Secret123".into(),
+            ..InstallForm::default()
+        };
+        assert!(form.takeover_network);
+        let ConsoleAction::Command { command, args } = form.command().unwrap() else {
+            panic!("expected install command");
+        };
+        let Commands::Install(install) = command else {
+            panic!("expected install request");
+        };
+        assert!(install.takeover_network);
+        assert!(args.iter().any(|argument| argument == "--takeover-network"));
     }
 
     #[test]
@@ -4864,7 +5019,7 @@ mod tests {
             wan_mode: WanMode::Dhcp,
             address: String::new(),
             gateway: String::new(),
-            wan_static_field: 0,
+            focus: 0,
             lan_candidates: Vec::new(),
             lan_cursor: 0,
             lan_selected: Vec::new(),
@@ -4888,7 +5043,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         let wizard = app.network_wizard.as_ref().unwrap();
-        assert_eq!(wizard.step, WizardStep::WanMode);
+        assert_eq!(wizard.step, WizardStep::WanConfig);
         assert_eq!(wizard.wan_mode, WanMode::Static);
         assert_eq!(wizard.address, "10.1.1.105/24");
         assert_eq!(wizard.gateway, "10.1.1.1");
@@ -4902,42 +5057,48 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::WanConfig);
         assert_eq!(wizard.wan_mode, WanMode::Dhcp);
         assert!(wizard.address.is_empty());
         assert!(wizard.gateway.is_empty());
     }
 
     #[test]
-    fn network_wizard_static_page_edits_both_fields_and_validates() {
+    fn network_wizard_wan_config_edits_static_fields_and_validates() {
         let mut app = ConsoleApp::new();
         app.network_wizard = Some(routes_armed_wizard());
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         let wizard = app.network_wizard.as_ref().unwrap();
-        assert_eq!(wizard.step, WizardStep::WanStatic);
+        assert_eq!(wizard.step, WizardStep::WanConfig);
         assert!(wizard.editing);
-        assert_eq!(wizard.wan_static_field, 0);
+        assert_eq!(wizard.focus, 1);
 
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.network_wizard.as_ref().unwrap().wan_static_field, 1);
+        assert_eq!(app.network_wizard.as_ref().unwrap().focus, 2);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.network_wizard.as_ref().unwrap().wan_static_field, 0);
+        assert_eq!(app.network_wizard.as_ref().unwrap().focus, 1);
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let wizard = app.network_wizard.as_ref().unwrap();
-        assert_eq!(wizard.wan_static_field, 1);
+        assert_eq!(wizard.focus, 2);
         assert!(wizard.editing);
 
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let wizard = app.network_wizard.as_ref().unwrap();
-        assert_eq!(wizard.step, WizardStep::WanStatic);
+        assert_eq!(wizard.step, WizardStep::WanConfig);
         assert!(wizard.editing);
         assert!(!app.notice.is_empty());
 
         app.network_wizard.as_mut().unwrap().gateway = "10.1.1.1".into();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.focus, 3);
+        assert!(!wizard.editing);
+
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let wizard = app.network_wizard.as_ref().unwrap();
         assert_eq!(wizard.step, WizardStep::Lan);
@@ -4951,6 +5112,7 @@ mod tests {
         app.install.password_confirmation = "Secret123".into();
         app.network_wizard = Some(sample_network_wizard());
 
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -4972,6 +5134,46 @@ mod tests {
             Some(ConsoleAction::Command { .. })
         ));
         assert!(app.network_wizard.is_none());
+    }
+
+    #[test]
+    fn network_wizard_lan_dhcp_edits_all_fields_on_one_page() {
+        let mut app = ConsoleApp::new();
+        app.network_wizard = Some(sample_network_wizard());
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.step, WizardStep::LanDhcp);
+        assert!(wizard.editing);
+        assert_eq!(wizard.focus, 0);
+        assert_eq!(wizard.dhcp_start, "192.168.10.100");
+        assert_eq!(wizard.dhcp_end, "192.168.10.254");
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.network_wizard.as_mut().unwrap().dhcp_start = "192.168.10.150".into();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.focus, 2);
+        assert!(wizard.editing);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.focus, 3);
+        assert!(!wizard.editing);
+
+        let plan = wizard.plan().unwrap();
+        assert!(matches!(plan.mode, NetworkMode::RoutedLan { .. }));
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().step,
+            WizardStep::Confirm
+        );
     }
 
     #[test]
@@ -5065,7 +5267,7 @@ mod tests {
         app.focus = Focus::Panel;
         app.preflight.state = PreflightState::Complete(error_preflight_report());
         app.install.checks_selected = false;
-        app.install.selected = 9;
+        app.install.selected = 8;
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.preflight_dialog);
@@ -5091,6 +5293,18 @@ mod tests {
         assert!(content.contains("gw 10.1.1.1"));
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().step,
+            WizardStep::WanConfig
+        );
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("WAN IPv4 mode"));
+        assert!(content.contains("[ Static ]"));
+        assert!(content.contains("[ DHCP client ]"));
+        assert!(content.contains("Confirm and continue"));
+
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

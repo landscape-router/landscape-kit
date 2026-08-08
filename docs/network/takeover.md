@@ -37,8 +37,10 @@ WAN-only 模式初始化配置与单网口模式相同：静态模式设置 WAN 
 Landscape firewall 和管理端口的 Local 静态映射；DHCP 模式设置 WAN DHCP client、route
 与 firewall。RoutedLan 模式同样显式写入 WAN 的静态或 DHCP 配置，并设置 `br_lan` 的 LAN
 route 和 DHCP。CLI 使用所选 WAN 发现顺序中的首个 IPv4 和该接口首个默认网关；缺任一项时
-使用 DHCP。控制台向导展示相同的 IPv4 与网关，选中 WAN 后预填两项：完整对默认 Static，
-缺任一项默认 DHCP。Static 地址/CIDR 与网关在同一页确认或修改，向导结束前显示完整计划
+使用 DHCP。控制台向导展示相同的 IPv4 与网关：WAN 配置面板顶部用 Static / DHCP client
+两个 tab 切换模式，选中 WAN 后预填两项（完整对默认 Static，缺任一项默认 DHCP），静态
+模式下地址/CIDR 与网关在同一页编辑，页面底部是“确认并继续”按钮；LAN 的 DHCP 配置
+（管理地址、地址池起始与结束）在同一页表单中一次性填写并确认。向导结束前显示完整计划
 摘要并要求用户确认；摘要明确所选 LAN 会清理 IPv4/IPv6 地址，未选择接口不会接管或修改。
 网络计划中的接口列表只包含 WAN 和用户选中的 LAN，不自动接管其他物理接口。
 
