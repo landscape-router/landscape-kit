@@ -4,7 +4,10 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear as ClearScreen, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
@@ -16,6 +19,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 use crate::backup::lkb::{BackupMetadata, BackupProgress};
@@ -57,7 +61,7 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
         app.update();
         terminal
             .terminal
-            .draw(|frame| render(frame, &app))
+            .draw(|frame| render(frame, &mut app))
             .map_err(|error| format!("draw console: {error}"))?;
         if !event::poll(Duration::from_millis(100))
             .map_err(|error| format!("poll terminal event: {error}"))?
@@ -71,7 +75,12 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
                 }
             }
             Event::Paste(value) => app.handle_paste(&value),
-            Event::Resize(_, _) | Event::FocusGained | Event::FocusLost | Event::Mouse(_) => {}
+            Event::Mouse(mouse) => {
+                if let Some(action) = app.handle_mouse(mouse) {
+                    return Ok(action);
+                }
+            }
+            Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => {}
             Event::Key(_) => {}
         }
     }
@@ -88,6 +97,7 @@ impl ConsoleTerminal {
         if let Err(error) = execute!(
             stdout,
             EnterAlternateScreen,
+            EnableMouseCapture,
             Hide,
             ClearScreen(ClearType::All),
             MoveTo(0, 0)
@@ -113,6 +123,7 @@ impl Drop for ConsoleTerminal {
         let _ = execute!(
             self.terminal.backend_mut(),
             Show,
+            DisableMouseCapture,
             ClearScreen(ClearType::All),
             MoveTo(0, 0),
             LeaveAlternateScreen
@@ -158,6 +169,129 @@ impl Menu {
 enum Focus {
     Navigation,
     Panel,
+}
+
+/// 鼠标左键可命中的界面元素。命中后按对应键盘语义处理(如 Enter/Esc),
+/// 保证鼠标与键盘行为一致。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Hit {
+    /// 点击弹层内部但不触发任何动作(如输入框内点击)。
+    Nothing,
+    /// 弹层外的整屏区域:视为 Esc。
+    Outside,
+    /// 确认类弹层整体:视为 Enter。
+    DialogConfirm,
+    /// 侧栏区域:聚焦导航。
+    Navigation,
+    /// 面板区域:聚焦面板。
+    Panel,
+    /// 侧栏菜单项。
+    Menu(usize),
+    /// 安装面板“环境检查”行。
+    InstallChecks,
+    /// 安装面板表单行(索引与 `InstallForm.selected` 一致)。
+    InstallField(usize),
+    /// 更新面板表单行。
+    UpdateField(usize),
+    /// 卸载面板“执行卸载”动作行。
+    UninstallAction,
+    /// 备份面板行:0 为“创建备份”,其余为备份条目。
+    BackupRow(usize),
+    /// 网络向导:WAN 接口行。
+    WizardWan(usize),
+    /// 网络向导:WAN 模式页 Tab。
+    WizardTab(WanMode),
+    /// 网络向导:可编辑字段行(页面内焦点序号)。
+    WizardField(usize),
+    /// 网络向导:LAN 候选行(切换勾选)。
+    WizardLan(usize),
+    /// 网络向导:继续/确认(视为 Enter)。
+    WizardContinue,
+    /// 阻塞接管屏:选择行(0=稍后,1=确认接管)。
+    TakeoverChoice(usize),
+}
+
+/// 渲染时收集的可点击区域;后注册者优先(弹层覆盖底层界面)。
+#[derive(Default)]
+struct Clicks {
+    regions: Vec<(Rect, Hit)>,
+}
+
+impl Clicks {
+    fn clear(&mut self) {
+        self.regions.clear();
+    }
+
+    fn add(&mut self, area: Rect, hit: Hit) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        self.regions.push((area, hit));
+    }
+
+    /// 注册带边框块内第 `row` 行(0-based 内容行,不含边框)的可点击区。
+    fn block_row(&mut self, area: Rect, row: u16, hit: Hit) {
+        self.add(
+            Rect::new(
+                area.x.saturating_add(1),
+                area.y.saturating_add(1).saturating_add(row),
+                area.width.saturating_sub(2),
+                1,
+            ),
+            hit,
+        );
+    }
+
+    /// 命中测试:从后向前(后绘制者优先),返回命中区域对应的动作。
+    fn hit_at(&self, column: u16, row: u16) -> Option<Hit> {
+        self.regions
+            .iter()
+            .rev()
+            .find(|(area, _)| {
+                column >= area.x
+                    && column < area.x.saturating_add(area.width)
+                    && row >= area.y
+                    && row < area.y.saturating_add(area.height)
+            })
+            .map(|(_, hit)| *hit)
+    }
+}
+
+/// 模拟 Paragraph 在指定宽度下的按字符换行,返回占用的行数。
+fn wrapped_rows(width: u16, text: &str) -> u16 {
+    let width = usize::from(width.max(1));
+    let mut rows = 1u16;
+    let mut used = 0usize;
+    for character in text.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width > width {
+            rows = rows.saturating_add(1);
+            used = character_width;
+        } else {
+            used = usize::min(used + character_width, width);
+        }
+    }
+    rows
+}
+
+/// 拼接 `Line` 的全部 Span 文本,用于按宽度的换行模拟。
+fn line_text(line: &Line) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
+/// 计算 `lines` 中第 `target` 行在带边框块内容区内的行偏移(模拟换行)。
+fn block_row_of(lines: &[Line], target: usize, width: u16) -> u16 {
+    let mut row = 0u16;
+    for (index, line) in lines.iter().enumerate() {
+        if index == target {
+            return row;
+        }
+        row = row.saturating_add(wrapped_rows(width, &line_text(line)));
+    }
+    row
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -557,6 +691,7 @@ struct ConsoleApp {
     update_menu_active: bool,
     uninstall: UninstallPanel,
     takeover_choice: usize,
+    hits: Clicks,
 }
 
 impl ConsoleApp {
@@ -579,6 +714,7 @@ impl ConsoleApp {
             update_menu_active: false,
             uninstall: UninstallPanel::default(),
             takeover_choice: 0,
+            hits: Clicks::default(),
         }
     }
 
@@ -993,6 +1129,176 @@ impl ConsoleApp {
                     .take(remaining),
             );
         }
+    }
+
+    /// 鼠标事件处理:左键命中渲染时收集的可点击区域,按对应键盘语义执行;
+    /// 右键视为 Esc;滚轮滚动当前可滚动视图。
+    fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ConsoleAction> {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => return self.handle_scroll(false),
+            MouseEventKind::ScrollDown => return self.handle_scroll(true),
+            MouseEventKind::Down(MouseButton::Right) => {
+                self.focus = Focus::Panel;
+                return self.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            }
+            MouseEventKind::Down(MouseButton::Left) => {}
+            _ => return None,
+        }
+        if self.exit_state == ExitState::Armed {
+            self.exit_state = ExitState::Idle;
+            self.notice = "Ready".into();
+        }
+        let Some(hit) = self.hits.hit_at(mouse.column, mouse.row) else {
+            return None;
+        };
+        match hit {
+            Hit::Nothing => None,
+            Hit::Outside => {
+                self.focus = Focus::Panel;
+                self.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            }
+            Hit::DialogConfirm => {
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::Navigation => {
+                self.focus = Focus::Navigation;
+                None
+            }
+            Hit::Panel => {
+                self.focus = Focus::Panel;
+                None
+            }
+            Hit::Menu(index) => {
+                if !self.menu_available(Menu::ALL[index]) {
+                    return None;
+                }
+                self.menu_index = index;
+                self.focus = Focus::Panel;
+                None
+            }
+            Hit::InstallChecks => {
+                self.focus = Focus::Panel;
+                self.install.checks_selected = true;
+                self.install.editing = false;
+                self.install.selected = 0;
+                None
+            }
+            Hit::InstallField(index) => {
+                self.focus = Focus::Panel;
+                self.install.checks_selected = false;
+                self.install.editing = false;
+                self.install.selected = index;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::UpdateField(index) => {
+                self.focus = Focus::Panel;
+                self.update.editing = false;
+                self.update.selected = index;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::UninstallAction => {
+                self.focus = Focus::Panel;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::BackupRow(index) => {
+                self.focus = Focus::Panel;
+                self.backup.selected = index;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::WizardWan(index) => {
+                let Some(wizard) = self.network_wizard.as_mut() else {
+                    return None;
+                };
+                if wizard.step != WizardStep::Wan || wizard.cancel_confirming {
+                    return None;
+                }
+                wizard.set_wan(index);
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::WizardTab(mode) => {
+                let Some(wizard) = self.network_wizard.as_mut() else {
+                    return None;
+                };
+                if wizard.step != WizardStep::WanConfig || wizard.cancel_confirming {
+                    return None;
+                }
+                wizard.wan_mode = mode;
+                wizard.focus = 0;
+                wizard.editing = false;
+                None
+            }
+            Hit::WizardField(focus) => {
+                let Some(wizard) = self.network_wizard.as_mut() else {
+                    return None;
+                };
+                if wizard.cancel_confirming || !wizard.is_field_focus(focus) {
+                    return None;
+                }
+                wizard.focus = focus;
+                wizard.editing = true;
+                None
+            }
+            Hit::WizardLan(index) => {
+                let Some(wizard) = self.network_wizard.as_mut() else {
+                    return None;
+                };
+                if wizard.step != WizardStep::Lan || wizard.cancel_confirming {
+                    return None;
+                }
+                if index >= wizard.lan_selected.len() {
+                    return None;
+                }
+                wizard.lan_cursor = index;
+                wizard.lan_selected[index] = !wizard.lan_selected[index];
+                None
+            }
+            Hit::WizardContinue => {
+                let Some(wizard) = self.network_wizard.as_mut() else {
+                    return None;
+                };
+                if wizard.cancel_confirming {
+                    return None;
+                }
+                match wizard.step {
+                    WizardStep::WanConfig | WizardStep::LanDhcp => {
+                        wizard.focus = wizard.focus_max();
+                        wizard.editing = false;
+                    }
+                    _ => {}
+                }
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::TakeoverChoice(index) => {
+                if index == 0 {
+                    self.takeover_choice = 0;
+                    return None;
+                }
+                if !self.takeover_confirm_allowed() {
+                    return None;
+                }
+                self.takeover_choice = 1;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+        }
+    }
+
+    fn handle_scroll(&mut self, down: bool) -> Option<ConsoleAction> {
+        if self.preflight.expanded && self.menu() == Menu::Install {
+            if down {
+                self.preflight.scroll_down(1);
+            } else {
+                self.preflight.scroll = self.preflight.scroll.saturating_sub(1);
+            }
+            return None;
+        }
+        if self.backup.details.is_some() {
+            if down {
+                self.backup.details_scroll = self.backup.details_scroll.saturating_add(1);
+            } else {
+                self.backup.details_scroll = self.backup.details_scroll.saturating_sub(1);
+            }
+        }
+        None
     }
 
     fn hints(&self) -> String {
@@ -2311,11 +2617,14 @@ impl NetworkWizard {
 
     /// 焦点是否落在可编辑字段上。
     fn focus_is_field(&self) -> bool {
+        self.is_field_focus(self.focus)
+    }
+
+    /// `focus` 位置是否落在可编辑字段上(与 `focus_is_field` 同规则,接受外部值)。
+    fn is_field_focus(&self, focus: usize) -> bool {
         match self.step {
-            WizardStep::WanConfig => {
-                self.wan_mode == WanMode::Static && (1..=2).contains(&self.focus)
-            }
-            WizardStep::LanDhcp => self.focus <= 2,
+            WizardStep::WanConfig => self.wan_mode == WanMode::Static && (1..=2).contains(&focus),
+            WizardStep::LanDhcp => focus <= 2,
             _ => false,
         }
     }
@@ -2604,7 +2913,8 @@ impl Snapshot {
     }
 }
 
-fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+    app.hits.clear();
     if frame.area().width < 72 || frame.area().height < 18 {
         frame.render_widget(
             Paragraph::new(crate::tr!(crate::keys::CONSOLE_TERMINAL_TOO_SMALL))
@@ -2613,7 +2923,7 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
             frame.area(),
         );
         if app.exit_state == ExitState::Confirming {
-            render_exit_confirmation(frame);
+            render_exit_confirmation(frame, &mut app.hits);
         }
         return;
     }
@@ -2622,7 +2932,7 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
         return;
     }
     if let Some(wizard) = &app.network_wizard {
-        render_network_wizard(frame, wizard);
+        render_network_wizard(frame, wizard, &mut app.hits);
         return;
     }
     let [header, body, status] = Layout::vertical([
@@ -2634,11 +2944,13 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     render_header(frame, app, header);
     let [navigation, panel] =
         Layout::horizontal([Constraint::Length(24), Constraint::Min(24)]).areas(body);
+    app.hits.add(navigation, Hit::Navigation);
+    app.hits.add(panel, Hit::Panel);
     render_navigation(frame, app, navigation);
     render_panel(frame, app, panel);
     render_status(frame, app, status);
     if app.exit_state == ExitState::Confirming {
-        render_exit_confirmation(frame);
+        render_exit_confirmation(frame, &mut app.hits);
     }
     if app.preflight_dialog {
         render_preflight_dialog(frame, app);
@@ -2663,7 +2975,19 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     }
 }
 
-fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
+/// 注册确认弹层的命中区:弹层整体视为 Enter,弹层外整屏视为 Esc。
+fn register_dialog_hits(hits: &mut Clicks, screen: Rect, area: Rect) {
+    hits.add(screen, Hit::Outside);
+    hits.add(area, Hit::DialogConfirm);
+}
+
+/// 注册输入/进度弹层的命中区:弹层内部不响应,弹层外整屏视为 Esc。
+fn register_modal_hits(hits: &mut Clicks, screen: Rect, area: Rect) {
+    hits.add(screen, Hit::Outside);
+    hits.add(area, Hit::Nothing);
+}
+
+fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let lines: Vec<Line<'_>> = match &app.preflight.state {
         PreflightState::Failed(error) => vec![
             Line::styled(
@@ -2709,6 +3033,7 @@ fn render_preflight_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)
@@ -2735,7 +3060,7 @@ fn blocking_items(report: &CheckReport) -> Vec<String> {
         .collect()
 }
 
-fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
+fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard, hits: &mut Clicks) {
     let area = frame.area();
     let [title, body, footer] = Layout::vertical([
         Constraint::Length(3),
@@ -2749,14 +3074,21 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
             .block(Block::default().borders(Borders::BOTTOM)),
         title,
     );
+    hits.add(body, Hit::WizardContinue);
     let mut lines = Vec::new();
+    let mut clickables: Vec<(usize, Hit)> = Vec::new();
+    macro_rules! push {
+        ($line:expr) => {
+            lines.push($line)
+        };
+    }
     match wizard.step {
         WizardStep::Wan => {
-            lines.push(Line::styled(
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_SELECT_WAN_INTERFACE),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
-            lines.push(Line::raw(""));
+            push!(Line::raw(""));
             for (index, iface) in wizard.interfaces.iter().enumerate() {
                 let selected = index == wizard.wan;
                 let address = iface
@@ -2770,7 +3102,8 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                     .find(|route| route.iface == iface.name)
                     .map(|route| route.gateway.to_string())
                     .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_GATEWAY_NOT_FOUND).into());
-                lines.push(Line::styled(
+                clickables.push((lines.len(), Hit::WizardWan(index)));
+                push!(Line::styled(
                     format!(
                         "{}{}  {}  {}  {}  gw {}",
                         if selected { "> " } else { "  " },
@@ -2789,17 +3122,32 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
             }
         }
         WizardStep::WanConfig => {
-            lines.push(Line::styled(
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_WAN_IPV4_MODE),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
-            lines.push(Line::raw(""));
+            push!(Line::raw(""));
             let tab_focus = wizard.focus == 0;
+            let content_width = body.width.saturating_sub(2);
+            let tab_row = block_row_of(&lines, lines.len(), content_width);
+            let mut tab_x = body.x.saturating_add(1);
             let mut tab_spans = Vec::new();
             for (mode, label) in [
                 (WanMode::Static, crate::tr!(crate::keys::CONSOLE_TAB_STATIC)),
                 (WanMode::Dhcp, crate::tr!(crate::keys::CONSOLE_TAB_DHCP)),
             ] {
+                let tab_text = format!("[ {label} ]");
+                let tab_width = UnicodeWidthStr::width(tab_text.as_str()) as u16;
+                hits.add(
+                    Rect::new(
+                        tab_x,
+                        body.y.saturating_add(1).saturating_add(tab_row),
+                        tab_width,
+                        1,
+                    ),
+                    Hit::WizardTab(mode),
+                );
+                tab_x = tab_x.saturating_add(tab_width).saturating_add(2);
                 let active = wizard.wan_mode == mode;
                 let style = if tab_focus && active {
                     Style::default()
@@ -2811,49 +3159,52 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                 } else {
                     Style::default()
                 };
-                tab_spans.push(Span::styled(format!("[ {label} ]"), style));
+                tab_spans.push(Span::styled(tab_text, style));
                 tab_spans.push(Span::raw("  "));
             }
-            lines.push(Line::from(tab_spans));
-            lines.push(Line::raw(""));
+            push!(Line::from(tab_spans));
+            push!(Line::raw(""));
             if wizard.wan_mode == WanMode::Static {
-                lines.push(wizard_field_row(
+                clickables.push((lines.len(), Hit::WizardField(1)));
+                push!(wizard_field_row(
                     wizard.focus == 1,
                     wizard.editing,
                     &crate::tr!(crate::keys::CONSOLE_IPV4_ADDRESS_CIDR),
                     &wizard.address,
                 ));
-                lines.push(wizard_field_row(
+                clickables.push((lines.len(), Hit::WizardField(2)));
+                push!(wizard_field_row(
                     wizard.focus == 2,
                     wizard.editing,
                     &crate::tr!(crate::keys::CONSOLE_DEFAULT_GATEWAY),
                     &wizard.gateway,
                 ));
             } else {
-                lines.push(Line::styled(
+                push!(Line::styled(
                     crate::tr!(crate::keys::CONSOLE_WAN_DHCP_CLIENT_HINT),
                     Style::default().fg(Color::DarkGray),
                 ));
             }
-            lines.push(Line::raw(""));
-            lines.push(wizard_confirm_button_row(
+            push!(Line::raw(""));
+            push!(wizard_confirm_button_row(
                 wizard.focus == wizard.focus_max(),
             ));
         }
         WizardStep::Lan => {
-            lines.push(Line::styled(
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_SELECT_LAN_INTERFACES),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
-            lines.push(Line::raw(""));
+            push!(Line::raw(""));
             if wizard.lan_candidates.is_empty() {
-                lines.push(Line::raw(crate::tr!(
+                push!(Line::raw(crate::tr!(
                     crate::keys::CONSOLE_NO_OTHER_INTERFACES
                 )));
             }
             for (index, iface) in wizard.lan_candidates.iter().enumerate() {
                 let cursor = index == wizard.lan_cursor;
-                lines.push(Line::styled(
+                clickables.push((lines.len(), Hit::WizardLan(index)));
+                push!(Line::styled(
                     format!(
                         "{}[{}] {}  {}  {}",
                         if cursor { "> " } else { "  " },
@@ -2875,45 +3226,48 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
             }
         }
         WizardStep::LanDhcp => {
-            lines.push(Line::styled(
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_LAN_DHCP_CONFIGURATION),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
-            lines.push(Line::raw(""));
-            lines.push(wizard_field_row(
+            push!(Line::raw(""));
+            clickables.push((lines.len(), Hit::WizardField(0)));
+            push!(wizard_field_row(
                 wizard.focus == 0,
                 wizard.editing,
                 &crate::tr!(crate::keys::CONSOLE_LAN_MANAGEMENT_IPV4_ADDRESS),
                 &wizard.management,
             ));
-            lines.push(wizard_field_row(
+            clickables.push((lines.len(), Hit::WizardField(1)));
+            push!(wizard_field_row(
                 wizard.focus == 1,
                 wizard.editing,
                 &crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_START),
                 &wizard.dhcp_start,
             ));
-            lines.push(wizard_field_row(
+            clickables.push((lines.len(), Hit::WizardField(2)));
+            push!(wizard_field_row(
                 wizard.focus == 2,
                 wizard.editing,
                 &crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_END),
                 &wizard.dhcp_end,
             ));
-            lines.push(Line::raw(""));
-            lines.push(wizard_confirm_button_row(wizard.focus == 3));
+            push!(Line::raw(""));
+            push!(wizard_confirm_button_row(wizard.focus == 3));
         }
         WizardStep::Confirm => {
             let wan = wizard.selected_wan();
-            lines.push(Line::styled(
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_NETWORK_TAKEOVER_PLAN),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
-            lines.push(Line::raw(""));
-            lines.push(Line::raw(crate::tr!(
+            push!(Line::raw(""));
+            push!(Line::raw(crate::tr!(
                 crate::keys::CONSOLE_CONFIRM_WAN_INTERFACE,
                 name = wan.name,
                 mac = wan.mac
             )));
-            lines.push(Line::raw(match wizard.wan_mode {
+            push!(Line::raw(match wizard.wan_mode {
                 WanMode::Static => crate::tr!(
                     crate::keys::CONSOLE_CONFIRM_WAN_MODE_STATIC,
                     address = wizard.address,
@@ -2931,35 +3285,39 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
                 .map(|(iface, _)| iface.name.as_str())
                 .collect();
             if lan.is_empty() {
-                lines.push(Line::raw(crate::tr!(
+                push!(Line::raw(crate::tr!(
                     crate::keys::CONSOLE_CONFIRM_LAN_MODE_WAN_ONLY
                 )));
             } else {
                 let names = lan.join(", ");
-                lines.push(Line::raw(crate::tr!(
+                push!(Line::raw(crate::tr!(
                     crate::keys::CONSOLE_CONFIRM_LAN_INTERFACES,
                     names = names
                 )));
-                lines.push(Line::raw(crate::tr!(
+                push!(Line::raw(crate::tr!(
                     crate::keys::CONSOLE_CONFIRM_MANAGEMENT,
                     management = wizard.management
                 )));
-                lines.push(Line::raw(crate::tr!(
+                push!(Line::raw(crate::tr!(
                     crate::keys::CONSOLE_CONFIRM_DHCP_RANGE,
                     start = wizard.dhcp_start,
                     end = wizard.dhcp_end
                 )));
             }
-            lines.push(Line::raw(""));
-            lines.push(Line::styled(
+            push!(Line::raw(""));
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_LAN_FLUSH_NOTE),
                 Style::default().fg(Color::Yellow),
             ));
-            lines.push(Line::styled(
+            push!(Line::styled(
                 crate::tr!(crate::keys::CONSOLE_PRESS_ENTER_TO_START_INSTALLATION),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
         }
+    }
+    let content_width = body.width.saturating_sub(2);
+    for (index, hit) in clickables {
+        hits.block_row(body, block_row_of(&lines, index, content_width), hit);
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -2972,7 +3330,7 @@ fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
         footer,
     );
     if wizard.cancel_confirming {
-        render_wizard_cancel_confirmation(frame);
+        render_wizard_cancel_confirmation(frame, hits);
     }
 }
 
@@ -3029,7 +3387,7 @@ fn wizard_hints(wizard: &NetworkWizard) -> String {
     }
 }
 
-fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
+fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
     let screen = frame.area();
     let width = 52.min(screen.width.saturating_sub(2));
     let height = 7.min(screen.height.saturating_sub(2));
@@ -3039,6 +3397,7 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
         width,
         height,
     );
+    register_dialog_hits(hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -3113,7 +3472,7 @@ fn language_status(language: Language, switch_available: bool) -> String {
     .into()
 }
 
-fn render_pending_takeover(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Snapshot::AwaitingNetworkConfirmation {
         transaction_id,
         phase,
@@ -3165,6 +3524,7 @@ fn render_pending_takeover(frame: &mut Frame<'_>, app: &ConsoleApp) {
         Line::raw(""),
     ];
     let later = crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_LATER);
+    let later_row = lines.len();
     lines.push(Line::from(Span::styled(
         if app.takeover_choice == 0 {
             format!("> {later}")
@@ -3180,6 +3540,7 @@ fn render_pending_takeover(frame: &mut Frame<'_>, app: &ConsoleApp) {
         },
     )));
     let confirm = crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_CONFIRM);
+    let confirm_row = lines.len();
     let confirm_line = if confirm_allowed {
         if app.takeover_choice == 1 {
             format!("> {confirm}")
@@ -3208,6 +3569,17 @@ fn render_pending_takeover(frame: &mut Frame<'_>, app: &ConsoleApp) {
         crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_KEY_HINT),
         Style::default().fg(Color::DarkGray),
     ));
+    let content_width = area.width.saturating_sub(2);
+    app.hits.block_row(
+        area,
+        block_row_of(&lines, later_row, content_width),
+        Hit::TakeoverChoice(0),
+    );
+    app.hits.block_row(
+        area,
+        block_row_of(&lines, confirm_row, content_width),
+        Hit::TakeoverChoice(1),
+    );
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center).block(
@@ -3217,7 +3589,7 @@ fn render_pending_takeover(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
-fn render_exit_confirmation(frame: &mut Frame<'_>) {
+fn render_exit_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
     let screen = frame.area();
     let width = 48.min(screen.width.saturating_sub(2));
     let height = 7.min(screen.height.saturating_sub(2));
@@ -3227,6 +3599,7 @@ fn render_exit_confirmation(frame: &mut Frame<'_>) {
         width,
         height,
     );
+    register_dialog_hits(hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -3266,10 +3639,12 @@ fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     );
 }
 
-fn render_navigation(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_navigation(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let items: Vec<ListItem<'_>> = Menu::ALL
         .iter()
-        .map(|menu| {
+        .enumerate()
+        .map(|(index, menu)| {
+            app.hits.block_row(area, index as u16, Hit::Menu(index));
             let style = if app.menu_available(*menu) {
                 Style::default()
             } else {
@@ -3294,7 +3669,7 @@ fn render_navigation(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     );
 }
 
-fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_panel(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     match app.menu() {
         Menu::Overview => render_overview(frame, app, area),
@@ -3325,7 +3700,6 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         Menu::Uninstall => render_uninstall(frame, app, area),
     }
 }
-
 fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let lines = match &app.snapshot {
         Snapshot::RootRequired => vec![
@@ -3402,7 +3776,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     );
 }
 
-fn render_update(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     if !matches!(app.snapshot, Snapshot::Installed { .. }) {
         frame.render_widget(
@@ -3427,6 +3801,7 @@ fn render_update(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         return;
     }
     let mut lines = Vec::new();
+    let content_width = area.width.saturating_sub(2);
     if let Snapshot::Installed { version, .. } = &app.snapshot {
         lines.push(Line::styled(
             format!(
@@ -3470,6 +3845,11 @@ fn render_update(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         if index == 2 && app.update.repository != UpdateRepositoryMode::Custom {
             continue;
         }
+        app.hits.block_row(
+            area,
+            block_row_of(&lines, lines.len(), content_width),
+            Hit::UpdateField(index),
+        );
         let selected = focused && app.update.selected == index;
         let selected_style = if selected {
             Style::default()
@@ -3527,7 +3907,7 @@ fn render_update(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     );
 }
 
-fn render_update_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Some(resolved) = &app.update.confirming else {
         return;
     };
@@ -3540,6 +3920,7 @@ fn render_update_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -3567,7 +3948,7 @@ fn render_update_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
-fn render_uninstall(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     if !matches!(app.snapshot, Snapshot::Installed { .. }) {
         let message = match &app.snapshot {
@@ -3633,6 +4014,7 @@ fn render_uninstall(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         ));
     }
     lines.push(Line::raw(""));
+    let action_row = lines.len();
     lines.push(Line::styled(
         format!(
             "{}{}",
@@ -3643,6 +4025,11 @@ fn render_uninstall(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
     ));
+    app.hits.block_row(
+        area,
+        block_row_of(&lines, action_row, area.width.saturating_sub(2)),
+        Hit::UninstallAction,
+    );
     frame.render_widget(
         Paragraph::new(lines).block(panel_block(
             &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
@@ -3652,7 +4039,7 @@ fn render_uninstall(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     );
 }
 
-fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
     let height = 13.min(screen.height.saturating_sub(2));
@@ -3662,6 +4049,7 @@ fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let mut lines = vec![
         Line::styled(
@@ -3702,7 +4090,7 @@ fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
-fn render_backup(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_backup(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     if app.backup.details.is_some() {
         render_backup_details(frame, app, focused, area);
@@ -3759,7 +4147,7 @@ fn render_backup(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     render_backup_list(frame, app, focused, area);
 }
 
-fn render_backup_list(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, area: Rect) {
+fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool, area: Rect) {
     let create_selected = app.focus == Focus::Panel && app.backup.selected == 0;
     let highlight = Style::default()
         .fg(Color::Black)
@@ -3779,6 +4167,7 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, ar
                 .add_modifier(Modifier::BOLD)
         },
     )];
+    let mut entry_lines: Vec<usize> = Vec::new();
     match &app.backup.state {
         BackupListState::NotRun | BackupListState::Running(_) => {
             lines.push(Line::raw(""));
@@ -3801,6 +4190,7 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, ar
             }
             for (index, entry) in rows.iter().enumerate() {
                 let cursor = app.focus == Focus::Panel && app.backup.selected == index + 1;
+                entry_lines.push(lines.len());
                 match &entry.metadata {
                     Some(metadata) => {
                         let text = format!(
@@ -3844,6 +4234,15 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, ar
                 }
             }
         }
+    }
+    let content_width = area.width.saturating_sub(2);
+    app.hits.block_row(area, 0, Hit::BackupRow(0));
+    for (index, line) in entry_lines.iter().enumerate() {
+        app.hits.block_row(
+            area,
+            block_row_of(&lines, *line, content_width),
+            Hit::BackupRow(index + 1),
+        );
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -3948,7 +4347,7 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
     );
 }
 
-fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 68.min(screen.width.saturating_sub(2));
     let height = 9.min(screen.height.saturating_sub(2));
@@ -3958,6 +4357,7 @@ fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_modal_hits(&mut app.hits, screen, area);
     let remark = app.backup.remark.clone();
     let remark_display = if remark.is_empty() {
         "_".to_string()
@@ -3989,7 +4389,7 @@ fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
 }
 
 /// 创建备份进行中的居中弹窗：阶段文案 + 文件数 Gauge。
-fn render_backup_create_progress(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Some(run) = &app.backup.create else {
         return;
     };
@@ -4002,6 +4402,7 @@ fn render_backup_create_progress(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_modal_hits(&mut app.hits, screen, area);
     let (stage_text, ratio) = match &run.progress {
         BackupProgress::Exporting => (
             crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_PROGRESS_EXPORT),
@@ -4067,7 +4468,7 @@ fn render_backup_create_progress(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
-fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Some(metadata) = app
         .backup
         .selected_entry()
@@ -4084,6 +4485,7 @@ fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -4113,7 +4515,7 @@ fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
-fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Some(metadata) = app.backup.delete_target.as_deref().and_then(|id| {
         app.backup
             .rows()
@@ -4131,6 +4533,7 @@ fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
+    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -4157,7 +4560,7 @@ fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
-fn render_install(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_install(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     if app.preflight.expanded {
         render_preflight_details(frame, &app.preflight, app.focus == Focus::Panel, area);
         return;
@@ -4186,7 +4589,7 @@ fn render_install(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     }
 }
 
-fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_preflight_summary(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let (status, detail, color) = match &app.preflight.state {
         PreflightState::NotRun => (
             crate::tr!(crate::keys::CONSOLE_NOT_RUN),
@@ -4223,6 +4626,7 @@ fn render_preflight_summary(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect)
     } else {
         Style::default().fg(color)
     };
+    app.hits.block_row(area, 0, Hit::InstallChecks);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(if selected { "> " } else { "  " }, style),
@@ -4334,7 +4738,7 @@ fn preflight_counts(report: &CheckReport) -> String {
     )
 }
 
-fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let form = &app.install;
     let values = [
         form.version.clone(),
@@ -4362,56 +4766,63 @@ fn render_install_form(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         // crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
         String::new(),
     ];
-    let lines: Vec<Line<'_>> = labels
-        .iter()
-        .zip(values)
-        .enumerate()
-        .filter_map(|(index, (label, value))| {
-            if index == 2 && form.repository != RepositoryMode::Custom {
-                return None;
-            }
-            let selected =
-                app.focus == Focus::Panel && !form.checks_selected && form.selected == index;
-            let selected_style = if selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            let value_style = if selected {
-                selected_style
-            } else if index == 8 {
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            let line = Line::from(vec![
-                Span::styled(if selected { "> " } else { "  " }, selected_style),
-                Span::styled(
-                    display_pad(label, 17),
-                    if selected {
-                        selected_style
-                    } else {
-                        Style::default().fg(Color::DarkGray)
-                    },
-                ),
-                Span::styled(value, value_style),
-                Span::styled(
-                    if selected && form.editing { "_" } else { "" },
-                    selected_style,
-                ),
-            ]);
+    let mut form_rows: Vec<(usize, Line)> = Vec::new();
+    for (index, (label, value)) in labels.iter().zip(values).enumerate() {
+        if index == 2 && form.repository != RepositoryMode::Custom {
+            continue;
+        }
+        let selected = app.focus == Focus::Panel && !form.checks_selected && form.selected == index;
+        let selected_style = if selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let value_style = if selected {
+            selected_style
+        } else if index == 8 {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let line = Line::from(vec![
+            Span::styled(if selected { "> " } else { "  " }, selected_style),
+            Span::styled(
+                display_pad(label, 17),
+                if selected {
+                    selected_style
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            ),
+            Span::styled(value, value_style),
+            Span::styled(
+                if selected && form.editing { "_" } else { "" },
+                selected_style,
+            ),
+        ]);
+        form_rows.push((
+            index,
             if selected {
-                Some(line.style(Style::default().bg(Color::Cyan)))
+                line.style(Style::default().bg(Color::Cyan))
             } else {
-                Some(line)
-            }
-        })
-        .collect();
+                line
+            },
+        ));
+    }
+    let content_width = area.width.saturating_sub(2);
+    let lines: Vec<Line> = form_rows.iter().map(|(_, line)| line.clone()).collect();
+    for (row, (index, _)) in form_rows.iter().enumerate() {
+        app.hits.block_row(
+            area,
+            block_row_of(&lines, row, content_width),
+            Hit::InstallField(*index),
+        );
+    }
     frame.render_widget(
         Paragraph::new(lines).block(panel_block(
             &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
@@ -4635,7 +5046,7 @@ mod tests {
         let mut app = ConsoleApp::new();
         app.menu_index = 1;
         app.focus = Focus::Panel;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content: String = terminal
             .backend()
             .buffer()
@@ -4663,7 +5074,7 @@ mod tests {
         let mut app = ConsoleApp::new();
         app.network_wizard = Some(sample_network_wizard());
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Select the WAN interface"));
         assert!(content.contains("not found"));
@@ -4713,7 +5124,7 @@ mod tests {
         assert_eq!(wizard.focus, 1);
         assert!(!wizard.editing);
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("> [ Confirm and continue ]"));
     }
@@ -4726,12 +5137,12 @@ mod tests {
         let mut app = ConsoleApp::new();
         app.focus = Focus::Panel;
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         assert!(terminal_content(&terminal).contains("> Overview"));
 
         app.menu_index = 2;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert!(terminal_content(&terminal).contains("> Backup"));
     }
 
@@ -4768,7 +5179,7 @@ mod tests {
         let mut app = ConsoleApp::new();
         app.snapshot = installed_snapshot();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let buffer = terminal.backend().buffer();
         let width = buffer.area.width as usize;
         let mut found = false;
@@ -4798,7 +5209,7 @@ mod tests {
         app.focus = Focus::Panel;
         app.snapshot = installed_snapshot();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Landscape is installed"));
         assert!(content.contains("unavailable"));
@@ -4815,7 +5226,7 @@ mod tests {
         app.install.checks_selected = false;
         app.install.selected = 0;
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let buffer = terminal.backend().buffer();
         assert!(terminal_content(&terminal).contains("> Install"));
@@ -4835,7 +5246,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = ConsoleApp::new();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let english = terminal_content(&terminal);
         assert!(english.contains("Navigation"));
         assert!(english.contains("Ctrl+C Exit"));
@@ -4844,7 +5255,9 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
         assert_eq!(crate::i18n::current(), Language::Zh);
         let mut chinese_terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        chinese_terminal.draw(|frame| render(frame, &app)).unwrap();
+        chinese_terminal
+            .draw(|frame| render(frame, &mut app))
+            .unwrap();
         let chinese = terminal_content(&chinese_terminal);
         assert!(chinese.contains("导航"));
         assert!(chinese.contains("Ctrl+C 退出"));
@@ -4883,7 +5296,7 @@ mod tests {
         app.install.checks_selected = false;
         app.install.repository = RepositoryMode::Custom;
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let content: String = terminal
             .backend()
@@ -4904,7 +5317,7 @@ mod tests {
         app.focus = Focus::Panel;
         app.install.checks_selected = false;
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
         let content: String = terminal
             .backend()
@@ -4927,7 +5340,7 @@ mod tests {
         app.focus = Focus::Panel;
         app.preflight.state = PreflightState::Complete(sample_preflight_report());
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let summary: String = terminal
             .backend()
             .buffer()
@@ -4939,7 +5352,7 @@ mod tests {
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.preflight.expanded);
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let details: String = terminal
             .backend()
             .buffer()
@@ -5056,7 +5469,7 @@ mod tests {
 
         let backend = TestBackend::new(100, 28);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let armed: String = terminal
             .backend()
             .buffer()
@@ -5077,7 +5490,7 @@ mod tests {
         assert!(app.handle_key(escape).is_none());
         assert_eq!(app.exit_state, ExitState::Confirming);
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let confirmation: String = terminal
             .backend()
             .buffer()
@@ -5098,8 +5511,8 @@ mod tests {
     fn renders_stable_small_terminal_state() {
         let backend = TestBackend::new(60, 14);
         let mut terminal = Terminal::new(backend).unwrap();
-        let app = ConsoleApp::new();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut app = ConsoleApp::new();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content: String = terminal
             .backend()
             .buffer()
@@ -5444,7 +5857,7 @@ mod tests {
         assert!(app.preflight_dialog);
 
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Install blocked"));
         assert!(content.contains("Port 6443"));
@@ -5518,7 +5931,7 @@ mod tests {
         app.install.password_confirmation = "Secret123".into();
         app.network_wizard = Some(routes_armed_wizard());
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("10.1.1.105/24"));
         assert!(content.contains("gw 10.1.1.1"));
@@ -5529,7 +5942,7 @@ mod tests {
             app.network_wizard.as_ref().unwrap().step,
             WizardStep::WanConfig
         );
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("WAN IPv4 mode"));
         assert!(content.contains("[ Static ]"));
@@ -5545,7 +5958,7 @@ mod tests {
             WizardStep::Confirm
         );
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Confirm network takeover plan"));
         assert!(content.contains("ens32"));
@@ -5642,7 +6055,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
         let mut app = ConsoleApp::new();
         app.snapshot = pending_takeover_snapshot();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Network takeover awaiting confirmation"));
         assert!(content.contains("tx-1"));
@@ -5709,7 +6122,7 @@ mod tests {
             deadline: "2026-08-07T10:00:00Z".into(),
             management_address: None,
         };
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("rollback in progress"));
         assert!(content.contains("DHCP lease"));
@@ -5774,9 +6187,9 @@ mod tests {
     fn backup_menu_lists_backups_and_opens_details() {
         let _language = LanguageGuard::set(Language::En);
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        let app = backup_ready_app();
+        let mut app = backup_ready_app();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Backup"));
         assert!(content.contains("Create backup"));
@@ -5788,7 +6201,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.backup.details, Some(0));
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let details = terminal_content(&terminal);
         assert!(details.contains("Backup details"));
         assert!(details.contains("x86_64"));
@@ -5808,7 +6221,7 @@ mod tests {
         app.focus = Focus::Panel;
         app.snapshot = Snapshot::NotInstalled;
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Landscape is not installed"));
         assert!(content.contains("Backup and restore require an existing installation"));
@@ -5827,7 +6240,7 @@ mod tests {
         assert!(app.backup.editing);
 
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(
             content.contains("Create backup"),
@@ -5848,7 +6261,7 @@ mod tests {
             "Enter must start the in-console backup create worker"
         );
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(
             content.contains("Creating backup"),
@@ -5873,7 +6286,7 @@ mod tests {
         assert!(app.backup.restore_confirming);
 
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Restore this backup?"));
         assert!(content.contains("version 1.2.3"));
@@ -5935,7 +6348,7 @@ mod tests {
         );
 
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Confirm delete"));
         assert!(content.contains("Delete this backup?"));
@@ -6039,8 +6452,8 @@ mod tests {
     fn update_panel_renders_current_version_and_form() {
         let _language = LanguageGuard::set(Language::En);
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        let app = update_ready_app();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut app = update_ready_app();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Current version"));
         assert!(content.contains("1.2.3"));
@@ -6057,7 +6470,7 @@ mod tests {
         app.menu_index = 3;
         app.focus = Focus::Panel;
         app.snapshot = Snapshot::NotInstalled;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Landscape is not installed"));
         assert!(content.contains("Update requires an existing installation"));
@@ -6157,7 +6570,7 @@ mod tests {
         app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
 
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Confirm update"));
         assert!(content.contains("Update Landscape?"));
@@ -6335,7 +6748,7 @@ mod tests {
 
         let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
         terminal
-            .draw(|frame| render_uninstall(frame, &app, frame.area()))
+            .draw(|frame| render_uninstall(frame, &mut app, frame.area()))
             .unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Uninstall"));
@@ -6354,7 +6767,7 @@ mod tests {
         assert!(app.uninstall.confirming);
 
         terminal
-            .draw(|frame| render_uninstall_confirmation(frame, &app))
+            .draw(|frame| render_uninstall_confirmation(frame, &mut app))
             .unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Confirm uninstall"));
@@ -6396,7 +6809,7 @@ mod tests {
         app.snapshot = Snapshot::NotInstalled;
 
         terminal
-            .draw(|frame| render_uninstall(frame, &app, frame.area()))
+            .draw(|frame| render_uninstall(frame, &mut app, frame.area()))
             .unwrap();
         let content = terminal_content(&terminal);
         assert!(content.contains("Uninstall requires an installed Landscape"));
@@ -6404,6 +6817,169 @@ mod tests {
         assert!(
             !app.menu_available(Menu::Uninstall),
             "the uninstall menu must be skipped when nothing is installed"
+        );
+    }
+
+    fn mouse_click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn mouse_scroll(down: bool) -> MouseEvent {
+        MouseEvent {
+            kind: if down {
+                MouseEventKind::ScrollDown
+            } else {
+                MouseEventKind::ScrollUp
+            },
+            column: 30,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn mouse_right_click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_click_selects_navigation_menu_and_switches_focus() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.hits.hit_at(10, 5), Some(Hit::Menu(1)));
+        assert_eq!(app.hits.hit_at(10, 6), Some(Hit::Menu(2)));
+        assert_eq!(app.hits.hit_at(30, 4), Some(Hit::InstallChecks));
+        assert_eq!(app.hits.hit_at(50, 20), Some(Hit::Panel));
+        app.handle_mouse(mouse_click(10, 6));
+        assert_eq!(app.menu_index, 2);
+        assert_eq!(app.focus, Focus::Panel);
+        app.handle_mouse(mouse_click(5, 25));
+        assert_eq!(
+            app.focus,
+            Focus::Panel,
+            "clicks outside any region are ignored"
+        );
+        app.handle_mouse(mouse_click(10, 4));
+        assert_eq!(app.menu_index, 0);
+        assert_eq!(app.focus, Focus::Panel);
+    }
+
+    #[test]
+    fn mouse_click_install_field_enters_editing_and_checks_switches_back() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        app.handle_mouse(mouse_click(30, 7));
+        assert!(
+            app.install.editing,
+            "clicking the version field must edit it"
+        );
+        assert_eq!(app.install.selected, 0);
+        app.handle_mouse(mouse_click(30, 4));
+        assert!(app.install.checks_selected);
+        assert!(!app.install.editing);
+    }
+
+    #[test]
+    fn mouse_click_dialog_inside_confirms_and_outside_cancels() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.exit_state = ExitState::Confirming;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert!(matches!(
+            app.handle_mouse(mouse_click(49, 13)),
+            Some(ConsoleAction::Quit)
+        ));
+
+        let mut app = ConsoleApp::new();
+        app.exit_state = ExitState::Confirming;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert!(app.handle_mouse(mouse_click(2, 2)).is_none());
+        assert_eq!(app.exit_state, ExitState::Idle);
+    }
+
+    #[test]
+    fn mouse_click_wizard_tab_and_field() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        let mut wizard = sample_network_wizard();
+        wizard.step = WizardStep::WanConfig;
+        wizard.wan_mode = WanMode::Static;
+        wizard.focus = 0;
+        app.network_wizard = Some(wizard);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.hits.hit_at(3, 6), Some(Hit::WizardTab(WanMode::Static)));
+        assert_eq!(app.hits.hit_at(15, 6), Some(Hit::WizardTab(WanMode::Dhcp)));
+        app.handle_mouse(mouse_click(15, 6));
+        assert_eq!(app.network_wizard.as_ref().unwrap().wan_mode, WanMode::Dhcp);
+        app.handle_mouse(mouse_click(3, 6));
+        assert_eq!(
+            app.network_wizard.as_ref().unwrap().wan_mode,
+            WanMode::Static
+        );
+        app.handle_mouse(mouse_click(30, 8));
+        let wizard = app.network_wizard.as_ref().unwrap();
+        assert_eq!(wizard.focus, 1);
+        assert!(wizard.editing);
+    }
+
+    #[test]
+    fn mouse_scroll_moves_preflight_details() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.preflight.state = PreflightState::Complete(sample_preflight_report());
+        app.preflight.expanded = true;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.preflight.scroll, 0);
+        app.handle_mouse(mouse_scroll(true));
+        assert_eq!(app.preflight.scroll, 1);
+        app.handle_mouse(mouse_scroll(false));
+        assert_eq!(app.preflight.scroll, 0);
+    }
+
+    #[test]
+    fn mouse_right_click_acts_as_escape() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.handle_mouse(mouse_right_click(30, 10));
+        assert_eq!(app.exit_state, ExitState::Armed);
+    }
+
+    #[test]
+    fn mouse_click_backup_rows_open_details_and_create_dialog() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = backup_ready_app();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        app.handle_mouse(mouse_click(30, 5));
+        assert_eq!(app.backup.details, Some(0));
+
+        let mut app = backup_ready_app();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        app.handle_mouse(mouse_click(30, 4));
+        assert!(
+            app.backup.editing,
+            "clicking the create row must open the remark dialog"
         );
     }
 }
