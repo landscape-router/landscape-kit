@@ -189,6 +189,28 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
 }
 
 #[test]
+fn left_returns_from_reinit_panel_to_navigation() {
+    let _guard = ELIGIBLE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _language = LanguageGuard::set(Language::En);
+    unsafe {
+        std::env::set_var("LKIT_TEST_REINIT_ELIGIBLE", "1");
+    }
+    let mut app = reinit_ready_app();
+    assert_eq!(app.focus, Focus::Panel);
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert_eq!(
+        app.focus,
+        Focus::Navigation,
+        "Left must return from the reinit panel to the navigation bar"
+    );
+    unsafe {
+        std::env::remove_var("LKIT_TEST_REINIT_ELIGIBLE");
+    }
+}
+
+#[test]
 fn reinit_esc_cancels_confirmation_layer() {
     let mut app = reinit_ready_app();
     app.reinit.step = ReinitStep::Credentials;

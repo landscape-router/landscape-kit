@@ -138,7 +138,7 @@ impl ConsoleApp {
                         Err(error) => self.notice = error,
                     }
                 }
-                _ => {}
+                _ => return None,
             },
             ReinitStep::Credentials => match key.code {
                 KeyCode::Up => {
@@ -162,7 +162,7 @@ impl ConsoleApp {
                     }
                     _ => {}
                 },
-                _ => {}
+                _ => return None,
             },
         }
         Some(None)
