@@ -178,7 +178,7 @@
 
 - 测试层：Rust workflow、Rust 单元（console）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`console_confirmed_skips_interactive_confirmations`（crates/lkit-cli/src/workflows/restore.rs）、`backup_restore_flow_builds_restore_command`（crates/lkit-cli/src/console.rs，断言 `console_confirmed` 与 `--console-confirmed` 参数）
+- 证据：[交互控制台](../../../interaction/console.md)、`console_confirmed_skips_interactive_confirmations`（crates/lkit-cli/src/workflows/restore.rs）、`backup_restore_flow_builds_restore_command`（crates/lkit-cli/src/console/tests/backup.rs，断言 `console_confirmed` 与 `--console-confirmed` 参数）
 - 说明：交互模式下 `console_confirmed` 使恢复工作流跳过恢复计划与 minimal scope 的 tty 确认（worker 是独立进程，无法读取 TUI 输入，继续交互确认会阻塞），恢复正常提交；控制台覆盖层同时展示 minimal scope 数据损失警告，`--backup`/`--yes`/`--console-confirmed` 均传入分发参数。
 - 缺口：真实 systemd worker 内的无 tty 阻塞路径未单独做 E2E 断言（Docker E2E 恢复用例均带 `--non-interactive`）。
 
@@ -188,7 +188,7 @@
 
 - 测试层：Rust 单元（console）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（crates/lkit-cli/src/console.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
+- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（crates/lkit-cli/src/console/tests/backup.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
 - 说明：Enter 打开创建对话框（标题、minimal scope 说明、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、Enter 提交走与 CLI 相同的备注校验，空备注直接创建。提交后在 TUI 内后台执行与 CLI 相同的完整流程（共用 `create_manual_backup`），居中弹窗显示导出/归档/落盘阶段，不退出控制台。
 - 缺口：真实安装现场下 TUI 内创建并刷新列表的完整链路未做 E2E 断言（控制台单测在无安装现场下验证状态机与渲染）。
 
@@ -237,7 +237,7 @@
 
 - 测试层：Rust 单元（commands、console）
 - 状态：`已覆盖`
-- 证据：[`backup delete`](../../../commands/backup.md#backup-delete)、`deletes_a_valid_backup_file`、`refuses_unsafe_or_missing_backups_on_delete`、`delete_requires_yes_in_non_interactive_mode`、`delete_rejects_malformed_ids_and_missing_files`（crates/lkit-cli/src/commands/backup.rs）、`backup_delete_confirms_and_removes_the_backup`、`backup_delete_esc_cancels_confirmation`（crates/lkit-cli/src/console.rs）
+- 证据：[`backup delete`](../../../commands/backup.md#backup-delete)、`deletes_a_valid_backup_file`、`refuses_unsafe_or_missing_backups_on_delete`、`delete_requires_yes_in_non_interactive_mode`、`delete_rejects_malformed_ids_and_missing_files`（crates/lkit-cli/src/commands/backup.rs）、`backup_delete_confirms_and_removes_the_backup`、`backup_delete_esc_cancels_confirmation`（crates/lkit-cli/src/console/tests/backup.rs）
 - 说明：`backup delete` 只接受格式合法的备份 ID；目标必须是 root 所有、权限不宽于 `0600` 的普通文件（符号链接与权限不安全条目拒绝删除，不跟随链接）；交互模式要求输入 `yes` 确认、`--yes` 跳过、非交互缺 `--yes` 返回参数错误 `2`，删除前持安装锁。控制台列表/详情按 D 打开删除确认层（展示 ID、版本与永久删除提示），Enter 在控制台内同步删除并刷新列表，Esc 取消且不改动现场。
 - 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的 pty 路径未覆盖（仓库无 pty 测试设施）；删除仍被未完成事务引用的备份未做专门断言。
 

@@ -67,7 +67,7 @@
 
 - 测试层：CLI fixture E2E、QEMU/KVM、Ratatui TestBackend
 - 状态：`部分覆盖`
-- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[QEMU 网络接管](../../qemu-network-takeover.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)
+- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)、[QEMU 网络接管](../../qemu-network-takeover.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
 - 说明：`lkit network confirm` 不校验 SSH 会话来源，在任意可达会话（含本地控制台）均可
   运行；双网口在确认前保留继承的 WAN IPv4，确认检查通过后清除；清除失败不提交。进入
   TUI 时若存在待确认网络接管，直接显示阻塞屏（“稍后”退出、“确认执行”内联运行
