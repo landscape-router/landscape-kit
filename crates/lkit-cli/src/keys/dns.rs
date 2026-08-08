@@ -1,0 +1,11 @@
+pub(crate) const DNS_RISK_NOTE: &str = "dns.risk_note";
+pub(crate) const DNS_UNABLE_READ_SYMLINK_TARGET: &str = "dns.unable_read_symlink_target";
+pub(crate) const DNS_RESOLV_CONF_SYMLINK: &str = "dns.resolv_conf_symlink";
+pub(crate) const DNS_NO_NAMESERVER_ENTRIES: &str = "dns.no_nameserver_entries";
+pub(crate) const DNS_NO_USABLE_NAMESERVER: &str = "dns.no_usable_nameserver";
+pub(crate) const DNS_SYMLINK_RECOVERY_RISK: &str = "dns.symlink_recovery_risk";
+pub(crate) const DNS_CONFIGURATION_VALID: &str = "dns.configuration_valid";
+pub(crate) const DNS_UNREADABLE: &str = "dns.unreadable";
+pub(crate) const DNS_RESOLV_CONF_EXISTS_CANNOT_READ: &str = "dns.resolv_conf_exists_cannot_read";
+pub(crate) const DNS_MISSING: &str = "dns.missing";
+pub(crate) const DNS_RESOLV_CONF_DOES_NOT_EXIST: &str = "dns.resolv_conf_does_not_exist";

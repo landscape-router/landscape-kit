@@ -1,0 +1,191 @@
+pub(crate) const CONSOLE_TERMINAL_REQUIRED: &str = "console.terminal_required";
+pub(crate) const CONSOLE_OVERVIEW: &str = "console.overview";
+pub(crate) const CONSOLE_INSTALL_MENU: &str = "console.install_menu";
+pub(crate) const CONSOLE_CHECK_WORKER_STOPPED: &str = "console.check_worker_stopped";
+pub(crate) const CONSOLE_CONFIGURE_NETWORK_TAKEOVER: &str = "console.configure_network_takeover";
+pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_NOT_COMPLETED: &str =
+    "console.environment_checks_not_completed";
+pub(crate) const CONSOLE_HINT_CTRL_C_EXIT_ENTER_CONFIRM_ESC_CANCEL: &str =
+    "console.hint_ctrl_c_exit_enter_confirm_esc_cancel";
+pub(crate) const CONSOLE_HINT_CTRL_C_EXIT_ESC_AGAIN: &str = "console.hint_ctrl_c_exit_esc_again";
+pub(crate) const CONSOLE_HINT_CTRL_C_EXIT_SCROLL: &str = "console.hint_ctrl_c_exit_scroll";
+pub(crate) const CONSOLE_HINT_ENTER_DETAILS_ESC_CLOSE_R: &str =
+    "console.hint_enter_details_esc_close_r";
+pub(crate) const CONSOLE_HINT_CTRL_C_EXIT_EDIT: &str = "console.hint_ctrl_c_exit_edit";
+pub(crate) const CONSOLE_HINT_NAVIGATION: &str = "console.hint_navigation";
+pub(crate) const CONSOLE_HINT_CHECKS_SELECTED: &str = "console.hint_checks_selected";
+pub(crate) const CONSOLE_HINT_INSTALL_PANEL: &str = "console.hint_install_panel";
+pub(crate) const CONSOLE_HINT_PANEL: &str = "console.hint_panel";
+pub(crate) const CONSOLE_REPOSITORY_DEFAULT: &str = "console.repository_default";
+pub(crate) const CONSOLE_REPOSITORY_MIRROR: &str = "console.repository_mirror";
+pub(crate) const CONSOLE_REPOSITORY_CUSTOM: &str = "console.repository_custom";
+pub(crate) const CONSOLE_MANAGER_AUTO: &str = "console.manager_auto";
+pub(crate) const CONSOLE_VERSION_HELP: &str = "console.version_help";
+pub(crate) const CONSOLE_REPOSITORY_HELP: &str = "console.repository_help";
+pub(crate) const CONSOLE_REPOSITORY_URL_HELP: &str = "console.repository_url_help";
+pub(crate) const CONSOLE_INSTALL_ROOT_HELP: &str = "console.install_root_help";
+pub(crate) const CONSOLE_ADMIN_USER_HELP: &str = "console.admin_user_help";
+pub(crate) const CONSOLE_PASSWORD_HELP: &str = "console.password_help";
+pub(crate) const CONSOLE_CONFIRM_PASSWORD_HELP: &str = "console.confirm_password_help";
+pub(crate) const CONSOLE_SERVICE_MANAGER_HELP: &str = "console.service_manager_help";
+pub(crate) const CONSOLE_NETWORK_TAKEOVER_HELP: &str = "console.network_takeover_help";
+pub(crate) const CONSOLE_START_INSTALLATION_HELP: &str = "console.start_installation_help";
+pub(crate) const CONSOLE_INSTALL_HELP_FALLBACK_DESC: &str = "console.install_help_fallback_desc";
+pub(crate) const CONSOLE_PASSWORD_CONFIRMATION_MISMATCH: &str =
+    "console.password_confirmation_mismatch";
+pub(crate) const CONSOLE_INVALID_WAN_GATEWAY: &str = "console.invalid_wan_gateway";
+pub(crate) const CONSOLE_INVALID_LAN_DHCP_RANGE_START: &str =
+    "console.invalid_lan_dhcp_range_start";
+pub(crate) const CONSOLE_INVALID_LAN_DHCP_RANGE_END: &str = "console.invalid_lan_dhcp_range_end";
+pub(crate) const CONSOLE_ROOT_REQUIRED_BADGE: &str = "console.root_required_badge";
+pub(crate) const CONSOLE_NOT_INSTALLED_BADGE: &str = "console.not_installed_badge";
+pub(crate) const CONSOLE_INSTALLED_BADGE: &str = "console.installed_badge";
+pub(crate) const CONSOLE_ATTENTION_REQUIRED_BADGE: &str = "console.attention_required_badge";
+pub(crate) const CONSOLE_TERMINAL_TOO_SMALL: &str = "console.terminal_too_small";
+pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_COULD_NOT_COMPLETE: &str =
+    "console.environment_checks_could_not_complete";
+pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_BLOCK_INSTALLATION: &str =
+    "console.environment_checks_block_installation";
+pub(crate) const CONSOLE_CHECKS_DID_NOT_PASS: &str = "console.checks_did_not_pass";
+pub(crate) const CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R: &str =
+    "console.dialog_enter_details_esc_close_r";
+pub(crate) const CONSOLE_INSTALL_BLOCKED: &str = "console.install_blocked";
+pub(crate) const CONSOLE_LANDSCAPE_NETWORK_TAKEOVER: &str = "console.landscape_network_takeover";
+pub(crate) const CONSOLE_SELECT_WAN_INTERFACE: &str = "console.select_wan_interface";
+pub(crate) const CONSOLE_NO_IPV4: &str = "console.no_ipv4";
+pub(crate) const CONSOLE_GATEWAY_NOT_FOUND: &str = "console.gateway_not_found";
+pub(crate) const CONSOLE_WAN_IPV4_MODE: &str = "console.wan_ipv4_mode";
+pub(crate) const CONSOLE_WAN_STATIC_IPV4_CONFIGURATION: &str =
+    "console.wan_static_ipv4_configuration";
+pub(crate) const CONSOLE_IPV4_ADDRESS_CIDR: &str = "console.ipv4_address_cidr";
+pub(crate) const CONSOLE_DEFAULT_GATEWAY: &str = "console.default_gateway";
+pub(crate) const CONSOLE_SELECT_LAN_INTERFACES: &str = "console.select_lan_interfaces";
+pub(crate) const CONSOLE_NO_OTHER_INTERFACES: &str = "console.no_other_interfaces";
+pub(crate) const CONSOLE_LINK_UP: &str = "console.link_up";
+pub(crate) const CONSOLE_LINK_DOWN: &str = "console.link_down";
+pub(crate) const CONSOLE_LAN_MANAGEMENT_IPV4_ADDRESS: &str = "console.lan_management_ipv4_address";
+pub(crate) const CONSOLE_LAN_DHCP_RANGE_START: &str = "console.lan_dhcp_range_start";
+pub(crate) const CONSOLE_LAN_DHCP_RANGE_END: &str = "console.lan_dhcp_range_end";
+pub(crate) const CONSOLE_VALUE_PREFIX: &str = "console.value_prefix";
+pub(crate) const CONSOLE_CONFIRM_NETWORK_TAKEOVER_PLAN: &str =
+    "console.confirm_network_takeover_plan";
+pub(crate) const CONSOLE_CONFIRM_WAN_INTERFACE: &str = "console.confirm_wan_interface";
+pub(crate) const CONSOLE_CONFIRM_WAN_MODE_STATIC: &str = "console.confirm_wan_mode_static";
+pub(crate) const CONSOLE_CONFIRM_WAN_MODE_DHCP: &str = "console.confirm_wan_mode_dhcp";
+pub(crate) const CONSOLE_CONFIRM_LAN_MODE_WAN_ONLY: &str = "console.confirm_lan_mode_wan_only";
+pub(crate) const CONSOLE_CONFIRM_LAN_INTERFACES: &str = "console.confirm_lan_interfaces";
+pub(crate) const CONSOLE_CONFIRM_MANAGEMENT: &str = "console.confirm_management";
+pub(crate) const CONSOLE_CONFIRM_DHCP_RANGE: &str = "console.confirm_dhcp_range";
+pub(crate) const CONSOLE_CONFIRM_LAN_FLUSH_NOTE: &str = "console.confirm_lan_flush_note";
+pub(crate) const CONSOLE_PRESS_ENTER_TO_START_INSTALLATION: &str =
+    "console.press_enter_to_start_installation";
+pub(crate) const CONSOLE_NETWORK_PANEL_TITLE: &str = "console.network_panel_title";
+pub(crate) const CONSOLE_WIZARD_HINT_CANCEL: &str = "console.wizard_hint_cancel";
+pub(crate) const CONSOLE_WIZARD_HINT_WAN: &str = "console.wizard_hint_wan";
+pub(crate) const CONSOLE_WIZARD_HINT_MODE: &str = "console.wizard_hint_mode";
+pub(crate) const CONSOLE_WIZARD_HINT_STATIC: &str = "console.wizard_hint_static";
+pub(crate) const CONSOLE_WIZARD_HINT_LAN: &str = "console.wizard_hint_lan";
+pub(crate) const CONSOLE_WIZARD_HINT_EDIT: &str = "console.wizard_hint_edit";
+pub(crate) const CONSOLE_WIZARD_HINT_CONFIRM: &str = "console.wizard_hint_confirm";
+pub(crate) const CONSOLE_CANCEL_NETWORK_WIZARD_QUESTION: &str =
+    "console.cancel_network_wizard_question";
+pub(crate) const CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ENTER: &str =
+    "console.cancel_network_wizard_press_enter";
+pub(crate) const CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ESC: &str =
+    "console.cancel_network_wizard_press_esc";
+pub(crate) const CONSOLE_CANCEL_WIZARD: &str = "console.cancel_wizard";
+pub(crate) const CONSOLE_READY: &str = "console.ready";
+pub(crate) const CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION: &str = "console.exit_landscape_kit_question";
+pub(crate) const CONSOLE_PRESS_ENTER_TO_EXIT: &str = "console.press_enter_to_exit";
+pub(crate) const CONSOLE_PRESS_ESC_TO_CANCEL: &str = "console.press_esc_to_cancel";
+pub(crate) const CONSOLE_CONFIRM_EXIT: &str = "console.confirm_exit";
+pub(crate) const CONSOLE_NAVIGATION: &str = "console.navigation";
+pub(crate) const CONSOLE_INSTALL_UNAVAILABLE: &str = "console.install_unavailable";
+pub(crate) const CONSOLE_ROOT_PRIVILEGES_REQUIRED: &str = "console.root_privileges_required";
+pub(crate) const CONSOLE_OVERVIEW_INSTALL_ROOT: &str = "console.overview_install_root";
+pub(crate) const CONSOLE_LANDSCAPE_NOT_INSTALLED: &str = "console.landscape_not_installed";
+pub(crate) const CONSOLE_LANDSCAPE_IS_INSTALLED: &str = "console.landscape_is_installed";
+pub(crate) const CONSOLE_OVERVIEW_VERSION: &str = "console.overview_version";
+pub(crate) const CONSOLE_OVERVIEW_SERVICE: &str = "console.overview_service";
+pub(crate) const CONSOLE_OVERVIEW_INITIALIZATION_COMPLETE: &str =
+    "console.overview_initialization_complete";
+pub(crate) const CONSOLE_OVERVIEW_INITIALIZATION_PENDING: &str =
+    "console.overview_initialization_pending";
+pub(crate) const CONSOLE_INSTALLATION_STATE_NEEDS_ATTENTION: &str =
+    "console.installation_state_needs_attention";
+pub(crate) const CONSOLE_ENVIRONMENT_CHECKS: &str = "console.environment_checks";
+pub(crate) const CONSOLE_NOT_RUN: &str = "console.not_run";
+pub(crate) const CONSOLE_WAITING_TO_CHECK_HOST: &str = "console.waiting_to_check_host";
+pub(crate) const CONSOLE_RUNNING: &str = "console.running";
+pub(crate) const CONSOLE_CHECKING_THIS_HOST: &str = "console.checking_this_host";
+pub(crate) const CONSOLE_FAILED: &str = "console.failed";
+pub(crate) const CONSOLE_CHECKS_HAVE_NOT_RUN: &str = "console.checks_have_not_run";
+pub(crate) const CONSOLE_PREFLIGHT_COUNTS: &str = "console.preflight_counts";
+pub(crate) const CONSOLE_START_INSTALLATION_BUTTON: &str = "console.start_installation_button";
+pub(crate) const CONSOLE_ABOUT_PREFIX: &str = "console.about_prefix";
+pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_HELP: &str = "console.environment_checks_help";
+pub(crate) const CONSOLE_VERSION_LABEL: &str = "console.version_label";
+pub(crate) const CONSOLE_REPOSITORY_LABEL: &str = "console.repository_label";
+pub(crate) const CONSOLE_REPOSITORY_URL_LABEL: &str = "console.repository_url_label";
+pub(crate) const CONSOLE_INSTALL_ROOT_LABEL: &str = "console.install_root_label";
+pub(crate) const CONSOLE_ADMIN_USER_LABEL: &str = "console.admin_user_label";
+pub(crate) const CONSOLE_PASSWORD_LABEL: &str = "console.password_label";
+pub(crate) const CONSOLE_CONFIRM_PASSWORD_LABEL: &str = "console.confirm_password_label";
+pub(crate) const CONSOLE_SERVICE_MANAGER_LABEL: &str = "console.service_manager_label";
+pub(crate) const CONSOLE_NETWORK_TAKEOVER_LABEL: &str = "console.network_takeover_label";
+pub(crate) const CONSOLE_START_INSTALLATION_LABEL: &str = "console.start_installation_label";
+pub(crate) const CONSOLE_BACKUP_MENU: &str = "console.backup_menu";
+pub(crate) const CONSOLE_BACKUP_CREATE: &str = "console.backup_create";
+pub(crate) const CONSOLE_BACKUP_LOADING: &str = "console.backup_loading";
+pub(crate) const CONSOLE_BACKUP_NONE_FOUND: &str = "console.backup_none_found";
+pub(crate) const CONSOLE_BACKUP_INVALID_BADGE: &str = "console.backup_invalid_badge";
+pub(crate) const CONSOLE_BACKUP_INVALID: &str = "console.backup_invalid";
+pub(crate) const CONSOLE_BACKUP_SELECT_TO_RESTORE: &str = "console.backup_select_to_restore";
+pub(crate) const CONSOLE_BACKUP_REQUIRES_INSTALL: &str = "console.backup_requires_install";
+pub(crate) const CONSOLE_BACKUP_DETAILS_TITLE: &str = "console.backup_details_title";
+pub(crate) const CONSOLE_BACKUP_ID_LABEL: &str = "console.backup_id_label";
+pub(crate) const CONSOLE_BACKUP_CREATED_LABEL: &str = "console.backup_created_label";
+pub(crate) const CONSOLE_BACKUP_VERSION_LABEL: &str = "console.backup_version_label";
+pub(crate) const CONSOLE_BACKUP_LKIT_LABEL: &str = "console.backup_lkit_label";
+pub(crate) const CONSOLE_BACKUP_ARCH_LABEL: &str = "console.backup_arch_label";
+pub(crate) const CONSOLE_BACKUP_HOSTNAME_LABEL: &str = "console.backup_hostname_label";
+pub(crate) const CONSOLE_BACKUP_REMARK_LABEL: &str = "console.backup_remark_label";
+pub(crate) const CONSOLE_BACKUP_AUTO_LABEL: &str = "console.backup_auto_label";
+pub(crate) const CONSOLE_BACKUP_SCOPE_LABEL: &str = "console.backup_scope_label";
+pub(crate) const CONSOLE_BACKUP_CONTENTS_LABEL: &str = "console.backup_contents_label";
+pub(crate) const CONSOLE_BACKUP_VERIFY_RUNNING: &str = "console.backup_verify_running";
+pub(crate) const CONSOLE_BACKUP_VERIFIED: &str = "console.backup_verified";
+pub(crate) const CONSOLE_BACKUP_VERIFY_WORKER_STOPPED: &str =
+    "console.backup_verify_worker_stopped";
+pub(crate) const CONSOLE_BACKUP_RESTORE_TITLE: &str = "console.backup_restore_title";
+pub(crate) const CONSOLE_BACKUP_RESTORE_QUESTION: &str = "console.backup_restore_question";
+pub(crate) const CONSOLE_BACKUP_RESTORE_PLAN: &str = "console.backup_restore_plan";
+pub(crate) const CONSOLE_BACKUP_RESTORE_PRESS_ENTER: &str = "console.backup_restore_press_enter";
+pub(crate) const CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE: &str =
+    "console.backup_restore_minimal_scope";
+pub(crate) const CONSOLE_BACKUP_CREATE_TITLE: &str = "console.backup_create_title";
+pub(crate) const CONSOLE_BACKUP_CREATE_SCOPE: &str = "console.backup_create_scope";
+pub(crate) const CONSOLE_BACKUP_CREATE_HINT: &str = "console.backup_create_hint";
+pub(crate) const CONSOLE_BACKUP_DETAILS_RESTORE_HINT: &str = "console.backup_details_restore_hint";
+pub(crate) const CONSOLE_BACKUP_HINT_LIST: &str = "console.backup_hint_list";
+pub(crate) const CONSOLE_BACKUP_HINT_DETAILS: &str = "console.backup_hint_details";
+pub(crate) const CONSOLE_BACKUP_HINT_RESTORE_CONFIRM: &str = "console.backup_hint_restore_confirm";
+pub(crate) const CONSOLE_BACKUP_HINT_CREATE: &str = "console.backup_hint_create";
+pub(crate) const CONSOLE_BACKUP_CREATED: &str = "console.backup_created";
+pub(crate) const CONSOLE_BACKUP_CREATE_RUNNING: &str = "console.backup_create_running";
+pub(crate) const CONSOLE_BACKUP_CREATE_PROGRESS_EXPORT: &str =
+    "console.backup_create_progress_export";
+pub(crate) const CONSOLE_BACKUP_CREATE_PROGRESS_ARCHIVE: &str =
+    "console.backup_create_progress_archive";
+pub(crate) const CONSOLE_BACKUP_CREATE_PROGRESS_FINALIZE: &str =
+    "console.backup_create_progress_finalize";
+pub(crate) const CONSOLE_BACKUP_CREATE_WORKER_STOPPED: &str =
+    "console.backup_create_worker_stopped";
+pub(crate) const CONSOLE_BACKUP_HINT_CREATE_RUNNING: &str = "console.backup_hint_create_running";
+pub(crate) const CONSOLE_BACKUP_DELETE_TITLE: &str = "console.backup_delete_title";
+pub(crate) const CONSOLE_BACKUP_DELETE_QUESTION: &str = "console.backup_delete_question";
+pub(crate) const CONSOLE_BACKUP_DELETE_PLAN: &str = "console.backup_delete_plan";
+pub(crate) const CONSOLE_BACKUP_DELETE_PRESS_ENTER: &str = "console.backup_delete_press_enter";
+pub(crate) const CONSOLE_BACKUP_DELETED: &str = "console.backup_deleted";
+pub(crate) const CONSOLE_BACKUP_HINT_DELETE_CONFIRM: &str = "console.backup_hint_delete_confirm";
+pub(crate) const CONSOLE_BACKUP_SELECT_TO_DELETE: &str = "console.backup_select_to_delete";

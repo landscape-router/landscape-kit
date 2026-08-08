@@ -1,0 +1,9 @@
+pub(crate) const UPDATE_SELECT_REPOSITORY: &str = "update.select_repository";
+pub(crate) const UPDATE_REPOSITORY_CURRENT: &str = "update.repository_current";
+pub(crate) const UPDATE_REPOSITORY_GITHUB: &str = "update.repository_github";
+pub(crate) const UPDATE_REPOSITORY_MIRROR: &str = "update.repository_mirror";
+pub(crate) const UPDATE_REPOSITORY_CUSTOM: &str = "update.repository_custom";
+pub(crate) const UPDATE_REPOSITORY_URL: &str = "update.repository_url";
+pub(crate) const UPDATE_ALREADY_UP_TO_DATE: &str = "update.already_up_to_date";
+pub(crate) const UPDATE_CONFIRM_UPDATE: &str = "update.confirm_update";
+pub(crate) const UPDATE_CANCELLED: &str = "update.cancelled";

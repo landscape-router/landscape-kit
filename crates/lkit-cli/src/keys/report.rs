@@ -1,0 +1,10 @@
+pub(crate) const REPORT_STATUS_HEADER: &str = "report.status_header";
+pub(crate) const REPORT_CHECK_HEADER: &str = "report.check_header";
+pub(crate) const REPORT_RESULT_HEADER: &str = "report.result_header";
+pub(crate) const REPORT_TITLE_DETAIL: &str = "report.title_detail";
+pub(crate) const REPORT_SUMMARY_LINE: &str = "report.summary_line";
+pub(crate) const REPORT_CONCLUSION_BLOCKERS: &str = "report.conclusion_blockers";
+pub(crate) const REPORT_CONCLUSION_UNKNOWN: &str = "report.conclusion_unknown";
+pub(crate) const REPORT_CONCLUSION_WARNING: &str = "report.conclusion_warning";
+pub(crate) const REPORT_CONCLUSION_PASS: &str = "report.conclusion_pass";
+pub(crate) const REPORT_CONCLUSION_LINE: &str = "report.conclusion_line";
