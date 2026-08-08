@@ -210,6 +210,22 @@ pub(crate) const CONSOLE_UPDATE_CONFIRM_PRESS_ENTER: &str = "console.update_conf
 pub(crate) const CONSOLE_UPDATE_HINT_PANEL: &str = "console.update_hint_panel";
 pub(crate) const CONSOLE_UPDATE_HINT_CONFIRM: &str = "console.update_hint_confirm";
 pub(crate) const CONSOLE_UPDATE_HINT_RESOLVING: &str = "console.update_hint_resolving";
+pub(crate) const CONSOLE_UNINSTALL_MENU: &str = "console.uninstall_menu";
+pub(crate) const CONSOLE_UNINSTALL_UNAVAILABLE: &str = "console.uninstall_unavailable";
+pub(crate) const CONSOLE_UNINSTALL_ACTION: &str = "console.uninstall_action";
+pub(crate) const CONSOLE_UNINSTALL_VERSION_LABEL: &str = "console.uninstall_version_label";
+pub(crate) const CONSOLE_UNINSTALL_SERVICE_LABEL: &str = "console.uninstall_service_label";
+pub(crate) const CONSOLE_UNINSTALL_DATA_LOSS: &str = "console.uninstall_data_loss";
+pub(crate) const CONSOLE_UNINSTALL_RETAINED: &str = "console.uninstall_retained";
+pub(crate) const CONSOLE_UNINSTALL_HOST_NETWORK_WARNING: &str =
+    "console.uninstall_host_network_warning";
+pub(crate) const CONSOLE_UNINSTALL_CONFIRM_TITLE: &str = "console.uninstall_confirm_title";
+pub(crate) const CONSOLE_UNINSTALL_CONFIRM_QUESTION: &str = "console.uninstall_confirm_question";
+pub(crate) const CONSOLE_UNINSTALL_CONFIRM_PLAN: &str = "console.uninstall_confirm_plan";
+pub(crate) const CONSOLE_UNINSTALL_CONFIRM_PRESS_ENTER: &str =
+    "console.uninstall_confirm_press_enter";
+pub(crate) const CONSOLE_UNINSTALL_HINT_PANEL: &str = "console.uninstall_hint_panel";
+pub(crate) const CONSOLE_UNINSTALL_HINT_CONFIRM: &str = "console.uninstall_hint_confirm";
 pub(crate) const CONSOLE_TAKEOVER_PENDING_BADGE: &str = "console.takeover_pending_badge";
 pub(crate) const CONSOLE_TAKEOVER_PENDING_WINDOW: &str = "console.takeover_pending_window";
 pub(crate) const CONSOLE_TAKEOVER_PENDING_TITLE: &str = "console.takeover_pending_title";

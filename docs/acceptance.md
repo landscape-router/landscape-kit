@@ -84,3 +84,22 @@
 - 密码、API token、Authorization header 和带 query/fragment 的 URL 不进入终端输出或事务日志。
 - 非 Debian 的 glibc Linux 发行版不因 `/etc/os-release` 的 `ID` 被拒绝；仍必须通过完整
   的内核、BPF、Cgroup、依赖、端口和服务检查。依赖错误保留可执行的包管理器安装建议。
+
+### 卸载
+
+- `lkit uninstall` 只接受已有有效 `install-state.json` 的安装；无状态返回 `2`，损坏状态
+  不被猜测重建。
+- 卸载前默认创建保护 `.lkb`（备注 `uninstall 前自动保护备份`、auto 标记为 true），失败
+  阻断；`--allow-no-backup` 显式跳过并记录 `no_backup: true`。
+- 非交互模式必须提供 `--yes`，否则返回 `2` 且不创建事务、不写任何文件。
+- systemd 模式按 stop → disable → 注销注册链接 → `daemon-reload` 的顺序清理；none 模式
+  要求确认外部实例已停且不探测运行态。
+- 默认保留 `config.toml`、`backups/` 与 `transactions/`；`config.toml` 内容逐字节不变。
+- `--keep-data` 保留 `data/` 并删除其余受管内容；`--purge-root` 整树删除安装根目录且
+  必须同时给出 `--allow-no-backup`；两者与缺参组合都返回 `2`。
+- 网络接管特征（宿主网络服务被 stop/disable/mask）在卸载前输出警告但不阻断，卸载不
+  恢复宿主网络服务。
+- 卸载中断恢复采用前向完成，不自动回滚；恢复再次失败标记 `failed` 并保留保护 `.lkb`
+  与事务现场供人工诊断。
+- 卸载成功后该根目录不存在 `install-state.json`，再次 `lkit install` 按全新首次安装处理。
+- 卸载只定义退出码 `0/1/2` 和 `130`，不定义 `5/6`。

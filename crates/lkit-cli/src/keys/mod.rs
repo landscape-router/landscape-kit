@@ -26,6 +26,7 @@ pub(crate) mod service_manager;
 pub(crate) mod switch;
 pub(crate) mod systemd_worker;
 pub(crate) mod takeover;
+pub(crate) mod uninstall;
 pub(crate) mod update;
 
 pub(crate) use self::backup::*;
@@ -54,4 +55,5 @@ pub(crate) use self::service_manager::*;
 pub(crate) use self::switch::*;
 pub(crate) use self::systemd_worker::*;
 pub(crate) use self::takeover::*;
+pub(crate) use self::uninstall::*;
 pub(crate) use self::update::*;

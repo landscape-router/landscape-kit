@@ -56,6 +56,34 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
         Operation::Repair => recover_repair(root, transaction, systemd, health).await,
         Operation::Restore => recover_restore(root, transaction, systemd, health).await,
         Operation::ServiceMigration => recover_migration(root, transaction, systemd),
+        Operation::Uninstall => recover_uninstall(root, transaction, systemd),
+    }
+}
+
+/// 中断的卸载事务恢复:卸载是用户明确请求的终态,采用**前向完成**语义,不自动回滚。
+/// - `preparing`:尚未改变运行状态,清理临时内容并标记 `failed`;
+/// - `prepared`/`stopping`/`activating`:继续完成服务注销、受管内容删除并标记
+///   `committed`;恢复再次失败标记 `failed` 并保留保护 `.lkb` 与事务现场。
+fn recover_uninstall(
+    root: &InstallRoot,
+    transaction: &TransactionFile,
+    systemd: &Systemd,
+) -> Result<(), InstallError> {
+    match transaction.phase {
+        Phase::Preparing => {
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Prepared | Phase::Stopping | Phase::Activating => {
+            crate::workflows::uninstall::complete_uninstall(root, transaction, systemd)?;
+            transaction::mark_phase(root, transaction, Phase::Committed)?;
+            crate::workflows::uninstall::cleanup_runtime_dirs(root)?;
+            Ok(())
+        }
+        phase => Err(InstallError::BlockedByTransaction(format!(
+            "uninstall transaction in terminal phase {} cannot be recovered",
+            phase.key()
+        ))),
     }
 }
 

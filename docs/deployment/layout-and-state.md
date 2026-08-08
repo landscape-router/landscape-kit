@@ -100,6 +100,20 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 网络接管的未提交首次安装是例外：确认前回滚可以删除本次创建的整个 `data/`，但不得删除
 已提交安装、switch、repair 或 service-manager 迁移的数据。
 
+### 卸载保留物
+
+`lkit uninstall` 是唯一显式清理入口，完整语义见 [`lkit uninstall`](../commands/uninstall.md)。
+默认卸载删除 `releases/`、`data/`、`state/`、`service/`、`logs/`、`run/` 与 `current`，
+并保留：
+
+- `config.toml`：由用户维护，任何卸载模式都不创建、更新或删除它；
+- `backups/` 与 `transactions/`：卸载的保护 `.lkb` 与事务现场存放点，默认保留供用户
+  取走备份和人工诊断，输出提示用户确认删除后自行清理。
+
+`--keep-data` 额外保留 `data/`；`--purge-root`（必须同时给出 `--allow-no-backup`）在
+默认清理基础上删除整个安装根目录（含 `config.toml` 与残留文件）。卸载成功后
+`install-state.json` 不再存在，同一根目录再次 `lkit install` 按全新首次安装处理。
+
 ## 并发与原子文件操作
 
 ### 安装锁

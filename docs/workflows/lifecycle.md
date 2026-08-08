@@ -158,6 +158,29 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
 必要时使用保护 `.lkb`；恢复成功进入 `rolled_back` 并返回 `5`，恢复失败进入 `failed`
 并返回 `6`。`--allow-no-backup` 只跳过保护 `.lkb`，不跳过目标校验、确认或中断恢复事实。
 
+### 9. 卸载
+
+`lkit uninstall` 是独立的 `uninstall` 事务,只处理已提交安装,不负责空目录或状态损坏
+现场。完整命令规格见 [`lkit uninstall`](../commands/uninstall.md)。
+
+1. 获取安装锁并恢复未完成事务;读取已提交 state,不存在则参数错误;
+2. 交互确认卸载计划与数据损失范围(非交互模式以 `--yes` 代替);网络接管特征警告
+   (宿主网络服务被 stop/disable/mask)只提示不阻断;
+3. 默认创建保护 `.lkb`(`uninstall 前自动保护备份`,auto 标记为 true),失败阻断;
+   `--allow-no-backup` 显式跳过;
+4. 创建 `preparing` 卸载事务,记录 `systemd_before`、`previous_current`、备份引用和
+   systemd 环境必要的 `/etc/resolv.conf` 备份现场;
+5. systemd 环境更新为 `stopping` 后停止服务并确认进程退出,再更新为 `activating`,
+   执行 `disable`、注销注册链接和 `daemon-reload`;none 环境要求用户确认外部实例已停
+   止,`lkit` 不验证运行态;
+6. 删除受管内容。默认保留 `config.toml`、`backups/` 与 `transactions/`;`--keep-data`
+   额外保留 `data/`;`--purge-root` 整树删除安装根目录(必须同时给出
+   `--allow-no-backup`);
+7. 提交 `committed`,输出卸载结果、保护备份 ID 与保留物清单。
+
+卸载中断恢复采用前向完成:继续注销服务、删除文件并提交,不自动回滚;恢复再次失败
+标记 `failed` 并保留现场要求人工诊断。卸载成功后该根目录视为全新首次安装。
+
 ## 首次安装失败
 
 systemd 环境首次安装启动失败时：

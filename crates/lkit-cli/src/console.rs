@@ -127,10 +127,21 @@ enum Menu {
     Install,
     Backup,
     Update,
+    /// 卸载面板：暂时从 TUI 侧栏隐藏（功能经 `lkit uninstall` CLI 提供），
+    /// 面板渲染、键处理与确认层代码保留；重新启用时把 `Self::Uninstall`
+    /// 加回 `ALL` 并放开 `menu_available` 的注释。
+    #[allow(dead_code)]
+    Uninstall,
 }
 
 impl Menu {
-    const ALL: [Self; 4] = [Self::Overview, Self::Install, Self::Backup, Self::Update];
+    const ALL: [Self; 4] = [
+        Self::Overview,
+        Self::Install,
+        Self::Backup,
+        Self::Update,
+        // Self::Uninstall, // TODO(uninstall-console): 暂隐藏,CLI `lkit uninstall` 保留
+    ];
 
     fn label(self) -> String {
         match self {
@@ -138,6 +149,7 @@ impl Menu {
             Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
             Self::Backup => crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
             Self::Update => crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
+            Self::Uninstall => crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
         }
     }
 }
@@ -543,6 +555,7 @@ struct ConsoleApp {
     backup_menu_active: bool,
     update: UpdatePanel,
     update_menu_active: bool,
+    uninstall: UninstallPanel,
     takeover_choice: usize,
 }
 
@@ -564,6 +577,7 @@ impl ConsoleApp {
             backup_menu_active: false,
             update: UpdatePanel::default(),
             update_menu_active: false,
+            uninstall: UninstallPanel::default(),
             takeover_choice: 0,
         }
     }
@@ -614,7 +628,7 @@ impl ConsoleApp {
     fn menu_available(&self, menu: Menu) -> bool {
         match menu {
             Menu::Install => self.install_available(),
-            Menu::Update => matches!(self.snapshot, Snapshot::Installed { .. }),
+            Menu::Update | Menu::Uninstall => matches!(self.snapshot, Snapshot::Installed { .. }),
             _ => true,
         }
     }
@@ -743,6 +757,12 @@ impl ConsoleApp {
         if self.menu() == Menu::Update
             && self.focus == Focus::Panel
             && let Some(action) = self.handle_update_key(key)
+        {
+            return action;
+        }
+        if self.menu() == Menu::Uninstall
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_uninstall_key(key)
         {
             return action;
         }
@@ -998,6 +1018,12 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
             } else {
                 crate::tr!(crate::keys::CONSOLE_UPDATE_HINT_PANEL)
+            }
+        } else if self.menu() == Menu::Uninstall && self.focus == Focus::Panel {
+            if self.uninstall.confirming {
+                crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_CONFIRM)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_PANEL)
             }
         } else if self.menu() == Menu::Backup && self.focus == Focus::Panel {
             if self.backup.delete_confirming {
@@ -1444,6 +1470,56 @@ impl ConsoleApp {
         });
         self.update.resolving = Some(receiver);
         Ok(())
+    }
+
+    /// 卸载面板键处理：面板 Enter 打开确认层并检测网络接管警告；
+    /// 确认层 Enter 分发带 `--console-confirmed` 的结构化 `Uninstall` 请求，
+    /// Esc 取消确认层留在面板。
+    fn handle_uninstall_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
+        if self.uninstall.confirming {
+            match key.code {
+                KeyCode::Enter => {
+                    self.uninstall.confirming = false;
+                    return Some(Some(self.uninstall_action()));
+                }
+                KeyCode::Esc => self.uninstall.confirming = false,
+                _ => {}
+            }
+            return Some(None);
+        }
+        match key.code {
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.uninstall.confirming = true;
+                self.uninstall.masked = crate::workflows::uninstall::host_network_services_masked(
+                    &crate::service::systemd::Systemd::host(),
+                );
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// 确认层 Enter：构建带 `--console-confirmed` 与 `--yes` 的结构化 `Uninstall` 请求。
+    fn uninstall_action(&self) -> ConsoleAction {
+        let install_dir = PathBuf::from(&self.install.install_dir);
+        let command = Commands::Uninstall(crate::commands::uninstall::Uninstall {
+            yes: true,
+            allow_no_backup: false,
+            keep_data: false,
+            purge_root: false,
+            console_confirmed: true,
+            install_dir: Some(install_dir.clone()),
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        });
+        let args = vec![
+            "uninstall".into(),
+            "--yes".into(),
+            "--console-confirmed".into(),
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+        ];
+        ConsoleAction::Command { command, args }
     }
 
     /// 确认层 Enter：构建带 `--console-confirmed` 的结构化 `Update` 请求。
@@ -1915,6 +1991,22 @@ impl UpdateRepositoryMode {
             Self::Github => crate::tr!(crate::keys::UPDATE_REPOSITORY_GITHUB),
             Self::Mirror => crate::tr!(crate::keys::UPDATE_REPOSITORY_MIRROR),
             Self::Custom => crate::tr!(crate::keys::UPDATE_REPOSITORY_CUSTOM),
+        }
+    }
+}
+
+/// 卸载面板：版本/服务摘要 + 数据损失与保留物说明 + 确认层。
+/// 确认层打开时检测网络接管特征并展示警告;Enter 分发结构化请求。
+struct UninstallPanel {
+    confirming: bool,
+    masked: bool,
+}
+
+impl Default for UninstallPanel {
+    fn default() -> Self {
+        Self {
+            confirming: false,
+            masked: false,
         }
     }
 }
@@ -2565,6 +2657,9 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     }
     if app.menu() == Menu::Update && app.update.confirming.is_some() {
         render_update_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Uninstall && app.uninstall.confirming {
+        render_uninstall_confirmation(frame, app);
     }
 }
 
@@ -3227,6 +3322,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         }
         Menu::Backup => render_backup(frame, app, area),
         Menu::Update => render_update(frame, app, area),
+        Menu::Uninstall => render_uninstall(frame, app, area),
     }
 }
 
@@ -3467,6 +3563,141 @@ fn render_update_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         ])
         .alignment(Alignment::Center)
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_TITLE))),
+        area,
+    );
+}
+
+fn render_uninstall(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+    let focused = app.focus == Focus::Panel;
+    if !matches!(app.snapshot, Snapshot::Installed { .. }) {
+        let message = match &app.snapshot {
+            Snapshot::NotInstalled => {
+                crate::tr!(crate::keys::CONSOLE_LANDSCAPE_NOT_INSTALLED)
+            }
+            Snapshot::RootRequired => crate::tr!(crate::keys::CONSOLE_ROOT_PRIVILEGES_REQUIRED),
+            Snapshot::Unavailable(error) => error.clone(),
+            _ => unreachable!(),
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(message, Style::default().fg(Color::Yellow)),
+                Line::raw(""),
+                Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_UNINSTALL_UNAVAILABLE),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
+                focused,
+            ))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    let mut lines = Vec::new();
+    if let Snapshot::Installed {
+        version, manager, ..
+    } = &app.snapshot
+    {
+        lines.push(Line::styled(
+            format!(
+                "{}  {}",
+                crate::tr!(crate::keys::CONSOLE_UNINSTALL_VERSION_LABEL),
+                version
+            ),
+            Style::default().fg(Color::Green),
+        ));
+        lines.push(Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_SERVICE_LABEL),
+            manager
+        )));
+        lines.push(Line::raw(""));
+    }
+    lines.push(Line::styled(
+        crate::tr!(crate::keys::CONSOLE_UNINSTALL_DATA_LOSS),
+        Style::default().fg(Color::Yellow),
+    ));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        crate::tr!(crate::keys::CONSOLE_UNINSTALL_RETAINED),
+        Style::default().fg(Color::DarkGray),
+    ));
+    if app.uninstall.masked {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_HOST_NETWORK_WARNING),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        format!(
+            "{}{}",
+            if focused { "> " } else { "  " },
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_ACTION)
+        ),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(
+        Paragraph::new(lines).block(panel_block(
+            &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
+            focused,
+        )),
+        area,
+    );
+}
+
+fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let screen = frame.area();
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 13.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    let mut lines = vec![
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_QUESTION),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(""),
+    ];
+    if let Snapshot::Installed { version, .. } = &app.snapshot {
+        lines.push(Line::raw(crate::tr!(
+            crate::keys::CONSOLE_UNINSTALL_CONFIRM_PLAN,
+            version = version
+        )));
+    }
+    lines.push(Line::styled(
+        crate::tr!(crate::keys::CONSOLE_UNINSTALL_DATA_LOSS),
+        Style::default().fg(Color::Yellow),
+    ));
+    if app.uninstall.masked {
+        lines.push(Line::styled(
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_HOST_NETWORK_WARNING),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::raw(crate::tr!(
+        crate::keys::CONSOLE_UNINSTALL_CONFIRM_PRESS_ENTER
+    )));
+    lines.push(Line::styled(
+        crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center).block(
+            Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_TITLE)),
+        ),
         area,
     );
 }
@@ -6093,5 +6324,86 @@ mod tests {
         assert_eq!(app.update.repository, UpdateRepositoryMode::Github);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn uninstall_panel_renders_summary_and_opens_confirmation() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.focus = Focus::Panel;
+        app.snapshot = installed_snapshot();
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        terminal
+            .draw(|frame| render_uninstall(frame, &app, frame.area()))
+            .unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Uninstall"));
+        assert!(content.contains("1.2.3"));
+        assert!(content.contains("Start uninstall"));
+        assert!(
+            content.contains("permanently deleted"),
+            "the panel must warn about the data loss scope"
+        );
+        assert!(
+            content.contains("config.toml, backups/, transactions/"),
+            "the panel must list the retained items"
+        );
+
+        app.handle_uninstall_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.uninstall.confirming);
+
+        terminal
+            .draw(|frame| render_uninstall_confirmation(frame, &app))
+            .unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Confirm uninstall"));
+        assert!(content.contains("Version 1.2.3"));
+        assert!(content.contains("Enter to confirm uninstall"));
+
+        app.handle_uninstall_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(
+            !app.uninstall.confirming,
+            "Esc must cancel the confirmation"
+        );
+    }
+
+    #[test]
+    fn uninstall_confirmation_builds_delegated_command() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = ConsoleApp::new();
+        app.focus = Focus::Panel;
+        app.snapshot = installed_snapshot();
+
+        app.handle_uninstall_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let Some(Some(ConsoleAction::Command { command, args })) =
+            app.handle_uninstall_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        else {
+            panic!("confirming Enter must dispatch the uninstall command");
+        };
+        assert!(matches!(command, Commands::Uninstall(_)));
+        assert!(args.contains(&"uninstall".into()));
+        assert!(args.contains(&"--yes".into()));
+        assert!(args.contains(&"--console-confirmed".into()));
+    }
+
+    #[test]
+    fn uninstall_menu_requires_an_installation() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.focus = Focus::Panel;
+        app.snapshot = Snapshot::NotInstalled;
+
+        terminal
+            .draw(|frame| render_uninstall(frame, &app, frame.area()))
+            .unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Uninstall requires an installed Landscape"));
+
+        assert!(
+            !app.menu_available(Menu::Uninstall),
+            "the uninstall menu must be skipped when nothing is installed"
+        );
     }
 }

@@ -6,6 +6,7 @@ pub(crate) const BACKUP_REMARK_PROMPT: &str = "backup.remark_prompt";
 pub(crate) const BACKUP_AUTO_REMARK_SWITCH: &str = "backup.auto_remark_switch";
 pub(crate) const BACKUP_AUTO_REMARK_REPAIR: &str = "backup.auto_remark_repair";
 pub(crate) const BACKUP_AUTO_REMARK_RESTORE: &str = "backup.auto_remark_restore";
+pub(crate) const BACKUP_AUTO_REMARK_UNINSTALL: &str = "backup.auto_remark_uninstall";
 pub(crate) const BACKUP_DELETED: &str = "backup.deleted";
 pub(crate) const BACKUP_DELETE_CONFIRM: &str = "backup.delete_confirm";
 pub(crate) const BACKUP_DELETE_REFUSED: &str = "backup.delete_refused";

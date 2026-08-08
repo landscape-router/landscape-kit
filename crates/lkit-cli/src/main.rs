@@ -388,6 +388,25 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
         })
+        .mut_subcommand("uninstall", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_UNINSTALL_ABOUT))
+                .mut_arg("yes", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_YES_HELP))
+                })
+                .mut_arg("allow_no_backup", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_ALLOW_NO_BACKUP_HELP))
+                })
+                .mut_arg("keep_data", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_KEEP_DATA_HELP))
+                })
+                .mut_arg("purge_root", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_PURGE_ROOT_HELP))
+                })
+                .mut_arg("install_dir", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                })
+        })
 }
 
 async fn run_command(
@@ -456,6 +475,7 @@ async fn run_command(
         Commands::Backup(args) => commands::backup::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,
+        Commands::Uninstall(args) => commands::uninstall::run(&args).await,
     }
 }
 

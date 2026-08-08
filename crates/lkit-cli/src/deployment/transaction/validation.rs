@@ -274,6 +274,39 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 ));
             }
         }
+        Operation::Uninstall => {
+            reject_network_takeover(transaction, "uninstall")?;
+            if has_restore_backup || has_static_backup || has_managers {
+                return Err(corrupted(
+                    "uninstall transaction must not record restore backups, static backups, or service managers"
+                        .into(),
+                ));
+            }
+            if transaction.no_backup && has_backup {
+                return Err(corrupted(
+                    "no-backup uninstall must not record a .lkb protection backup".into(),
+                ));
+            }
+            if !has_backup
+                && !transaction.no_backup
+                && !matches!(transaction.phase, Phase::Preparing | Phase::Failed)
+            {
+                return Err(corrupted(
+                    "uninstall transaction must record a .lkb protection backup unless it is still preparing, already failed, or an explicitly allowed no-backup uninstall"
+                        .into(),
+                ));
+            }
+            if transaction.from_version.is_none() || transaction.previous_current.is_none() {
+                return Err(corrupted(
+                    "uninstall transaction must record the current version and release".into(),
+                ));
+            }
+            if transaction.target_version.is_some() || transaction.target_release.is_some() {
+                return Err(corrupted(
+                    "uninstall transaction must not record a target version".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }

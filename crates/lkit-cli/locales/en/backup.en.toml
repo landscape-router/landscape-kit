@@ -7,6 +7,7 @@ backup.remark_prompt = "remark (optional, at most 256 characters; press Enter fo
 backup.auto_remark_switch = "automatic backup before switch"
 backup.auto_remark_repair = "automatic backup before repair"
 backup.auto_remark_restore = "automatic protection backup before restore"
+backup.auto_remark_uninstall = "automatic protection backup before uninstall"
 backup.deleted = "backup %{backup_id} deleted"
 backup.delete_confirm = "delete backup %{backup_id}? (type yes to continue)"
 backup.delete_refused = "deletion cancelled"

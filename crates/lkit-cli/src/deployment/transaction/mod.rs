@@ -24,6 +24,7 @@ pub(crate) enum Operation {
     Switch,
     Restore,
     ServiceMigration,
+    Uninstall,
 }
 
 impl Operation {
@@ -34,6 +35,7 @@ impl Operation {
             Self::Switch => "switch",
             Self::Restore => "restore",
             Self::ServiceMigration => "service_migration",
+            Self::Uninstall => "uninstall",
         }
     }
 }
@@ -370,6 +372,42 @@ impl TransactionFile {
         validate_transaction(&transaction)?;
         Ok(transaction)
     }
+
+    /// 卸载事务:记录当前已提交版本关系。`backup` 在保护 `.lkb` 创建成功后由调用方
+    /// 记录;`--allow-no-backup` 时保持 null 且 `no_backup: true`。
+    pub(crate) fn new_uninstall(
+        root: &InstallRoot,
+        version: &semver::Version,
+    ) -> Result<Self, InstallError> {
+        let transaction_id = Uuid::now_v7().to_string();
+        let now = Utc::now();
+        let transaction = Self {
+            schema_version: TRANSACTION_SCHEMA_VERSION,
+            transaction_id: transaction_id.clone(),
+            operation: Operation::Uninstall,
+            phase: Phase::Preparing,
+            install_root: root.install_root.display().to_string(),
+            canonical_install_root: root.canonical.display().to_string(),
+            from_version: Some(version.to_string()),
+            target_version: None,
+            from_service_manager: None,
+            target_service_manager: None,
+            previous_current: Some(format!("releases/{version}")),
+            target_release: None,
+            backup: None,
+            restore_backup: None,
+            no_backup: false,
+            static_backup: None,
+            systemd_before: None,
+            resolv_conf_backup: None,
+            network_takeover: None,
+            log_path: format!("logs/{transaction_id}.log"),
+            started_at: now,
+            updated_at: now,
+        };
+        validate_transaction(&transaction)?;
+        Ok(transaction)
+    }
 }
 
 pub(crate) fn begin(root: &InstallRoot, transaction: &TransactionFile) -> Result<(), InstallError> {
@@ -432,6 +470,31 @@ pub(crate) fn find_unfinished(root: &InstallRoot) -> Result<Option<TransactionFi
         }
         let transaction = load_transaction_file(root, &path)?;
         if !transaction.phase.is_terminal() {
+            return Ok(Some(transaction));
+        }
+    }
+    Ok(None)
+}
+
+/// 查找指定 operation 的已提交事务(用于识别已被中断恢复完成的卸载)。
+pub(crate) fn find_committed_operation(
+    root: &InstallRoot,
+    operation: Operation,
+) -> Result<Option<TransactionFile>, InstallError> {
+    let dir = root.canonical.join("transactions");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(InstallError::Io)?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let transaction = load_transaction_file(root, &path)?;
+        if transaction.operation == operation && transaction.phase == Phase::Committed {
             return Ok(Some(transaction));
         }
     }
@@ -890,6 +953,135 @@ mod tests {
             sha256: "b".repeat(64),
         });
         assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_uninstall_transaction_rules() {
+        let temp = temp_root("uninstall");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        assert_eq!(transaction.operation, Operation::Uninstall);
+        assert_eq!(transaction.phase, Phase::Preparing);
+        assert_eq!(transaction.from_version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            transaction.previous_current.as_deref(),
+            Some("releases/1.2.3")
+        );
+        assert!(transaction.target_version.is_none());
+        assert!(transaction.target_release.is_none());
+        assert!(validate_transaction(&transaction).is_ok());
+
+        // 保护备份记录后(仍在 preparing)合法。
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+        // 进入 prepared 后必须有备份或 no_backup。
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.backup = None;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.no_backup = true;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.no_backup = false;
+
+        // 非法组合:restore_backup、static_backup、managers、目标版本。
+        let mut invalid =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.restore_backup = Some(BackupRef {
+            backup_id: "r".into(),
+            path: "transactions/tx/target-backup.lkb".into(),
+            sha256: "b".repeat(64),
+        });
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_version = Some("1.3.0".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_service_manager = Some(TransactionServiceManager::Systemd);
+        assert!(validate_transaction(&invalid).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn recovers_interrupted_uninstall_by_forward_completion() {
+        let temp = temp_root("uninstall-recover");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        transaction.no_backup = false;
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::Activating).unwrap();
+
+        std::fs::create_dir_all(temp.join("releases/1.2.3")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
+        std::fs::create_dir_all(temp.join("data")).unwrap();
+        std::fs::create_dir_all(temp.join("state")).unwrap();
+        std::fs::write(temp.join("state/install-state.json"), b"{}").unwrap();
+        std::fs::create_dir_all(temp.join("service")).unwrap();
+        std::fs::create_dir_all(temp.join("backups")).unwrap();
+        std::fs::write(temp.join("config.toml"), b"[repository]\n").unwrap();
+
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        assert!(!temp.join("releases").exists());
+        assert!(!temp.join("current").exists());
+        assert!(!temp.join("data").exists());
+        assert!(!temp.join("state").exists());
+        assert!(!temp.join("service").exists());
+        assert!(!temp.join("logs").exists());
+        assert!(!temp.join("run").exists());
+        assert_eq!(
+            std::fs::read_to_string(temp.join("config.toml")).unwrap(),
+            "[repository]\n"
+        );
+        assert!(temp.join("backups").is_dir());
+        assert!(temp.join("transactions").is_dir());
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Committed);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn keeps_uninstall_in_preparing_on_recovery() {
+        let temp = temp_root("uninstall-preparing");
+        let root = new_root(&temp);
+        let transaction =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        begin(&root, &transaction).unwrap();
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Failed);
         let _ = std::fs::remove_dir_all(&temp);
     }
 

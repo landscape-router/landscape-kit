@@ -5,6 +5,7 @@ pub(crate) mod repair;
 pub(crate) mod restore;
 pub(crate) mod service_manager;
 pub(crate) mod switch;
+pub(crate) mod uninstall;
 
 pub(crate) use crate::backup::{export, lkb as backup, rollback};
 pub(crate) use crate::deployment::{config, plan, root, state, transaction};

@@ -23,7 +23,8 @@ lkit --non-interactive install ... # 严格非交互命令模式
 
 检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
 Up/Down 导航会跳过它；面板仍可显示“已安装”提示。反之，未安装、非 root 或安装
-状态不可读时 Update 菜单置灰且被导航跳过，面板显示不可用原因。
+状态不可读时 Update 菜单置灰且被导航跳过，面板显示不可用原因。卸载入口暂未在侧栏
+启用（见下文 Uninstall 面板说明）。
 
 Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认和 service
 manager 选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。
@@ -107,6 +108,20 @@ worker，在无侧栏全屏更新页（标题“正在更新 Landscape”）显�
 `--repository`（官方 GitHub、默认镜像与自定义 URL 分别映射为 `--repository github`、
 裸 `--repository` 与 `--repository <URL>`），“当前来源”不传该参数，由命令按
 `config.toml` > 官方 GitHub 的规则解析，与命令模式选中“当前来源”的语义一致。
+
+Uninstall 面板（侧栏第 5 项）暂未在 TUI 中启用：侧栏只显示 Overview、Install、Backup
+与 Update 四项，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板渲染、键处理与确认层
+代码完整保留供重新启用（`TODO(uninstall-console)`）。卸载当前只能通过命令模式
+`lkit uninstall` 使用；本段描述的是面板重新启用后的行为：面板在已安装、root 且安装
+状态可读时可用。进入面板后展示当前版本、服务 manager 与运行状态摘要，并列出卸载数据
+损失范围（数据库、API token、日志和指标不可逆删除）与默认保留物（`config.toml`、
+`backups/`、`transactions/`）；检测到网络接管特征（宿主网络服务被 stop/disable/mask）
+时追加醒目警告，说明卸载不会恢复宿主网络服务。面板提供“开始卸载”动作，激活后打开居中
+确认层，展示上述摘要并明确要求确认；Enter 确认后控制台把结构化 `Uninstall` 请求
+（标记 `--console-confirmed`）交给共享命令分发并退出 alternate screen，systemd 模式
+委托 worker，在无侧栏全屏卸载页显示准备、停止服务、注销与清理阶段及结果页，成功时展示
+保护备份 ID 与保留物清单；Esc 取消确认层并留在面板。卸载确认层与 restore 一样承担
+全部确认，命令不再请求 `/dev/tty` 二次确认。
 
 首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
 pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个

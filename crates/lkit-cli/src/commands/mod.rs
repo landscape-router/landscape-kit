@@ -9,6 +9,7 @@ pub mod repair;
 pub mod restore;
 pub mod service_manager;
 pub mod switch;
+pub mod uninstall;
 pub mod update;
 
 use clap::Subcommand;
@@ -23,6 +24,7 @@ pub use repair::Repair;
 pub use restore::Restore;
 pub use service_manager::ServiceManager;
 pub use switch::Switch;
+pub use uninstall::Uninstall;
 pub use update::Update;
 
 #[derive(Debug, Subcommand)]
@@ -37,4 +39,5 @@ pub enum Commands {
     Backup(Backup),
     Reconcile(Reconcile),
     ServiceManager(ServiceManager),
+    Uninstall(Uninstall),
 }

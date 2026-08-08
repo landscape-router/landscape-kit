@@ -26,6 +26,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 版本更新 | `UP-01` 至 `UP-08` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-10` | [switch.md](functional/switch.md) |
 | 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-14` | [backup-and-restore.md](functional/backup-and-restore.md) |
+| 卸载 | `UNI-01` 至 `UNI-14` | [uninstall.md](functional/uninstall.md) |
 | 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
 | Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
@@ -56,5 +57,6 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 8. [`RST-08`](functional/backup-and-restore.md#rst-08) 至 [`RST-11`](functional/backup-and-restore.md#rst-11)：restore 拒绝/失败路径与恢复入口的自动化覆盖。
 
 现有 [发布、安装与成功切换](lifecycle.md)、[失败切换与自动回滚](rollback.md)和
-[扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。数据库级完整恢复、
-空目录灾难重建和卸载不属于本版 backup/restore 范围。
+[扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。数据库级完整恢复
+和空目录灾难重建不属于本版 backup/restore 范围；卸载见
+[uninstall.md](functional/uninstall.md)。

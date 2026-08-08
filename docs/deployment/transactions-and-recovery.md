@@ -4,7 +4,7 @@
 
 ### Schema v4
 
-每次首次安装、同版本修复、版本切换、service manager 迁移或 restore 创建：
+每次首次安装、同版本修复、版本切换、service manager 迁移、restore 或卸载创建：
 
 ```text
 <install-root>/transactions/<transaction-id>.json
@@ -56,7 +56,8 @@
 - `repair`；
 - `switch`；
 - `service_migration`；
-- `restore`。
+- `restore`；
+- `uninstall`。
 
 `phase` 只允许：
 
@@ -89,11 +90,19 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 用户拒绝或非交互模式缺少 `--yes` 时不创建事务、不写任何文件，`--file` 也不产生
 暂存拷贝。
 
+`uninstall` 时 `from_version` 和 `previous_current` 必须记录当前已提交版本关系，
+`target_version` 和 `target_release` 为 null；`backup` 在默认保护备份成功后记录卸载前
+的保护 `.lkb`，使用 `--allow-no-backup` 时为 null，`restore_backup` 和 `static_backup`
+必须为 null。`--purge-root` 会连保护备份一起删除，因此该模式下事务只允许在
+`--allow-no-backup` 下创建（`backup` 为 null）。卸载确认先于 `begin` 完成：用户拒绝或
+非交互模式缺少 `--yes` 时不创建事务、不写任何文件。
+
 `restore_backup.path` 与 `backup.path` 都必须是安装根目录内的安全相对路径；外部备份先复制
 到本次 restore 事务目录并完成自校验，事务只记录复制后的路径、backup ID 和文件 checksum。
 
 `no_backup` 是布尔字段，只有用户对已停止的 systemd 服务显式使用
-`--allow-no-backup` 的 switch 或 restore 才为 true；此时 `backup` 必须为 null。其他事务
+`--allow-no-backup` 的 switch 或 restore 才为 true；此时 `backup` 必须为 null。卸载使用
+`--allow-no-backup` 时同样为 true 且 `backup` 必须为 null。其他事务
 固定为 false。读取旧 v1 文件时缺失该字段按 false 处理。
 
 `from_service_manager` 和 `target_service_manager` 是必填但可为 `null` 的字段。只有 `service_migration` 时两者必须为非 null；其他 operation 必须为 null。迁移事务不得改变 `from_version`、`target_version`、`previous_current` 或 `target_release` 表示的当前版本关系。
@@ -152,8 +161,8 @@ systemd-resolved 的原始 installed/active/enable 状态、确认截止时间�
 
 Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
 `awaiting_network_confirmation`、`finalizing`。Schema v4 新增 `restore` operation 和
-`restore_backup` 字段。读取器兼容 v1/v2/v3；新事务一律写 v4。v1 的
-`prepared` 可能来自旧实现中“已经 stop 但尚未写 activating”的窗口，恢复时按可能已经
+`restore_backup` 字段。卸载 operation 不新增字段，新事务仍写 v4。读取器兼容 v1/v2/v3；
+v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating”的窗口，恢复时按可能已经
 停止处理。
 
 ### 生命周期
@@ -174,6 +183,12 @@ Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
 - `prepared` 或 `stopping`：`current` 和数据尚未激活，但服务可能已经停止；按
   `systemd_before` 幂等恢复注册链接、enabled/active 状态，清理目标临时资产并标记
   `failed`。无 systemd 事务只清理临时资产；
+- `uninstall` 的 `preparing`：尚未改变运行状态，清理临时文件并标记 `failed`，用户可
+  重新执行卸载；
+- `uninstall` 的 `prepared`、`stopping` 或 `activating`：采用**前向完成**语义，不恢复
+  systemd 或已提交状态；按 `systemd_before` 查询当前状态后继续完成 stop/disable/
+  注销、文件删除并标记 `committed`。恢复再次失败时标记 `failed`，保留保护 `.lkb` 与
+  事务现场供人工诊断；
 - `activating` 或 `verifying`：
   - systemd 下 `no_backup: true` 的 `switch`：停止目标版本，恢复 `previous_current`、
     unit 注册、enabled/active 状态和 `/etc/resolv.conf`，不重建 data；切换前服务已停止，
