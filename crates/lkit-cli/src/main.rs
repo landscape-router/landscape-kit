@@ -279,6 +279,19 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                             arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                         })
                 })
+                .mut_subcommand("delete", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_BACKUP_DELETE_ABOUT))
+                        .mut_arg("backup", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_ID_HELP))
+                        })
+                        .mut_arg("yes", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_BACKUP_DELETE_YES_HELP))
+                        })
+                        .mut_arg("install_dir", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                        })
+                })
         })
         .mut_subcommand("restore", |command| {
             command

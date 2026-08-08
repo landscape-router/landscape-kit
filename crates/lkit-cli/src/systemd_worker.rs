@@ -13,7 +13,8 @@ use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::state::StateServiceManager;
 use crate::interaction::interactive::SYSTEMD_WORKER_TTY_ENV;
 use crate::interaction::presentation::{
-    InterruptGuard, OPERATIONS_DIR, PRESENTATION_EVENTS_ENV, WorkerPresentation,
+    InterruptGuard, OPERATIONS_DIR, OperationResult, OperationScreen, PRESENTATION_EVENTS_ENV,
+    WorkerPresentation, operation_screen,
 };
 use crate::network::config::NetworkPlan;
 use crate::service::systemd::{Availability, Systemd};
@@ -109,6 +110,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
             crate::commands::backup::BackupAction::List(args) => args.test_runtime.as_deref(),
             crate::commands::backup::BackupAction::Show(args) => args.test_runtime.as_deref(),
             crate::commands::backup::BackupAction::Verify(args) => args.test_runtime.as_deref(),
+            crate::commands::backup::BackupAction::Delete(_) => None,
         },
         Commands::Reconcile(args) => args.test_runtime.as_deref(),
         Commands::ServiceManager(args) => args.test_runtime.as_deref(),
@@ -147,7 +149,7 @@ pub(crate) fn delegate(
     network_plan: Option<NetworkPlan>,
     full_screen: bool,
 ) -> Result<ExitCode, String> {
-    let title = operation_title(&args);
+    let operation = operation_screen(&args);
     let systemd = Systemd::host();
     if !matches!(systemd.probe(), Availability::Available { .. }) {
         return Err("the systemd manager is not available".into());
@@ -281,7 +283,7 @@ pub(crate) fn delegate(
         &presentation_path,
         interrupt,
         full_screen,
-        &title,
+        operation,
     );
     if matches!(result, Ok(WaitOutcome::Interrupted)) {
         return interrupt_worker(
@@ -439,20 +441,6 @@ fn run_worker_inner(request_path: &Path) -> Result<i32, String> {
         .stderr(Stdio::null())
         .status();
     Ok(exit_code)
-}
-
-/// 根据委托参数中的子命令名生成全屏页标题,缺省回落到"正在安装 Landscape"。
-fn operation_title(args: &[String]) -> String {
-    let key = match args.first().map(String::as_str) {
-        Some("install") => crate::keys::PRESENTATION_OPERATION_INSTALL,
-        Some("switch") => crate::keys::PRESENTATION_OPERATION_SWITCH,
-        Some("update") => crate::keys::PRESENTATION_OPERATION_UPDATE,
-        Some("repair") => crate::keys::PRESENTATION_OPERATION_REPAIR,
-        Some("restore") => crate::keys::PRESENTATION_OPERATION_RESTORE,
-        Some("service-manager") => crate::keys::PRESENTATION_OPERATION_SERVICE_MIGRATION,
-        _ => crate::keys::PRESENTATION_OPERATION_INSTALL,
-    };
-    crate::tr!(key)
 }
 
 pub(crate) fn string_args() -> Result<Vec<String>, String> {
@@ -678,11 +666,11 @@ fn wait_for_result(
     presentation_path: &Path,
     interrupt: &InterruptGuard,
     full_screen: bool,
-    title: &str,
+    operation: Box<dyn OperationScreen>,
 ) -> Result<WaitOutcome, String> {
     let mut stdout = None;
     let mut stderr = None;
-    let mut presentation = WorkerPresentation::new(full_screen, title.to_string());
+    let mut presentation = WorkerPresentation::new(full_screen, operation);
     let mut inactive_polls = 0_u8;
     loop {
         presentation.drain(presentation_path)?;
@@ -725,7 +713,7 @@ fn wait_for_result(
             if full_screen {
                 presentation.wait_for_close(interrupt)?;
             }
-            announce_completion(raw_code);
+            announce_completion(presentation.operation(), raw_code);
             presentation.finish();
             return Ok(WaitOutcome::Completed(code));
         }
@@ -803,22 +791,24 @@ fn cleanup_files(paths: &[&Path]) {
 }
 
 /// 操作结束后在普通终端输出明确的结果提示。全屏安装页关闭、或命令模式
-/// 委托安装的流式输出结束（可能被忽略）后，用户都能看到安装是否完成。
-fn announce_completion(exit_code: u8) {
+/// 委托安装的流式输出结束（可能被忽略）后，用户都能看到操作是否完成。
+/// 文案与全屏结果页标题一致（按操作区分，不复用安装文案），前缀为子命令名。
+fn announce_completion(operation: &dyn OperationScreen, exit_code: u8) {
+    let message = completion_message(operation, exit_code);
     if exit_code == 0 {
-        println!("install: {}", completion_message(exit_code));
+        println!("{}: {}", operation.announce_prefix(), message);
     } else {
-        eprintln!("install: {}", completion_message(exit_code));
+        eprintln!("{}: {}", operation.announce_prefix(), message);
     }
 }
 
-fn completion_message(exit_code: u8) -> String {
+fn completion_message(operation: &dyn OperationScreen, exit_code: u8) -> String {
     if exit_code == 0 {
-        crate::tr!(crate::keys::SYSTEMD_WORKER_INSTALLATION_COMPLETE)
+        crate::tr!(operation.result_key(OperationResult::Success))
     } else {
-        crate::tr!(
-            crate::keys::SYSTEMD_WORKER_INSTALLATION_FAILED,
-            exit_code = exit_code
+        format!(
+            "{} (exit code {exit_code})",
+            crate::tr!(operation.result_key(OperationResult::Failed))
         )
     }
 }
@@ -826,6 +816,7 @@ fn completion_message(exit_code: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interaction::presentation::{InstallScreen, RestoreScreen};
 
     #[test]
     fn internal_credential_file_is_private_and_removed_by_guard() {
@@ -846,9 +837,16 @@ mod tests {
 
     #[test]
     fn completion_message_announces_success_and_failure() {
-        assert_eq!(completion_message(0), "installation complete");
-        let failure = completion_message(3);
-        assert!(failure.contains("installation failed with exit code 3"));
-        assert!(completion_message(0).contains("installation complete"));
+        assert_eq!(
+            completion_message(&InstallScreen, 0),
+            "Installation complete"
+        );
+        let failure = completion_message(&InstallScreen, 3);
+        assert!(failure.contains("Installation failed"));
+        assert!(failure.contains("exit code 3"));
+        assert_eq!(completion_message(&RestoreScreen, 0), "Restore complete");
+        let failure = completion_message(&RestoreScreen, 3);
+        assert!(failure.contains("Restore failed"));
+        assert!(failure.contains("exit code 3"));
     }
 }

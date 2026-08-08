@@ -39,6 +39,8 @@ pub(crate) const MAIN_BACKUP_OUTPUT_HELP: &str = "main.backup_output_help";
 pub(crate) const MAIN_BACKUP_LIST_ABOUT: &str = "main.backup_list_about";
 pub(crate) const MAIN_BACKUP_SHOW_ABOUT: &str = "main.backup_show_about";
 pub(crate) const MAIN_BACKUP_VERIFY_ABOUT: &str = "main.backup_verify_about";
+pub(crate) const MAIN_BACKUP_DELETE_ABOUT: &str = "main.backup_delete_about";
+pub(crate) const MAIN_BACKUP_DELETE_YES_HELP: &str = "main.backup_delete_yes_help";
 pub(crate) const MAIN_BACKUP_ID_HELP: &str = "main.backup_id_help";
 pub(crate) const MAIN_BACKUP_FILE_HELP: &str = "main.backup_file_help";
 pub(crate) const MAIN_RESTORE_ABOUT: &str = "main.restore_about";
@@ -54,6 +56,11 @@ pub(crate) const BACKUP_REMARK_PROMPT: &str = "backup.remark_prompt";
 pub(crate) const BACKUP_AUTO_REMARK_SWITCH: &str = "backup.auto_remark_switch";
 pub(crate) const BACKUP_AUTO_REMARK_REPAIR: &str = "backup.auto_remark_repair";
 pub(crate) const BACKUP_AUTO_REMARK_RESTORE: &str = "backup.auto_remark_restore";
+pub(crate) const BACKUP_DELETED: &str = "backup.deleted";
+pub(crate) const BACKUP_DELETE_CONFIRM: &str = "backup.delete_confirm";
+pub(crate) const BACKUP_DELETE_REFUSED: &str = "backup.delete_refused";
+pub(crate) const BACKUP_DELETE_REQUIRES_YES: &str = "backup.delete_requires_yes";
+pub(crate) const BACKUP_DELETE_INVALID_ID: &str = "backup.delete_invalid_id";
 pub(crate) const RESTORE_REQUIRES_EXISTING_INSTALLATION: &str =
     "restore.requires_existing_installation";
 pub(crate) const RESTORE_CONFIRM_PLAN: &str = "restore.confirm_plan";
@@ -304,7 +311,6 @@ pub(crate) const PRESENTATION_SUGGESTION_PREFIX: &str = "presentation.suggestion
 pub(crate) const PRESENTATION_INSTALLATION_COMPLETE: &str = "presentation.installation_complete";
 pub(crate) const PRESENTATION_INSTALLATION_FAILED: &str = "presentation.installation_failed";
 pub(crate) const PRESENTATION_INSTALLATION_CANCELLED: &str = "presentation.installation_cancelled";
-pub(crate) const PRESENTATION_INSTALLING_LANDSCAPE: &str = "presentation.installing_landscape";
 pub(crate) const PRESENTATION_DOWNLOAD: &str = "presentation.download";
 pub(crate) const PRESENTATION_INSTALLATION_FINISHED_SUCCESSFULLY: &str =
     "presentation.installation_finished_successfully";
@@ -328,6 +334,9 @@ pub(crate) const PRESENTATION_STOP_DOWNLOAD_CONFIRM: &str = "presentation.stop_d
 pub(crate) const PRESENTATION_CONFIRM_STOP: &str = "presentation.confirm_stop";
 pub(crate) const PRESENTATION_INSTALLATION_IS_APPLYING: &str =
     "presentation.installation_is_applying";
+pub(crate) const PRESENTATION_OPERATION_IS_APPLYING: &str = "presentation.operation_is_applying";
+pub(crate) const PRESENTATION_OPERATION_IN_PROGRESS_STOP_IGNORED: &str =
+    "presentation.operation_in_progress_stop_ignored";
 pub(crate) const PRESENTATION_PREPARING: &str = "presentation.preparing";
 pub(crate) const PRESENTATION_STOPPING: &str = "presentation.stopping";
 pub(crate) const PRESENTATION_ACTIVATING: &str = "presentation.activating";
@@ -339,6 +348,38 @@ pub(crate) const PRESENTATION_OPERATION_REPAIR: &str = "presentation.operation_r
 pub(crate) const PRESENTATION_OPERATION_RESTORE: &str = "presentation.operation_restore";
 pub(crate) const PRESENTATION_OPERATION_SERVICE_MIGRATION: &str =
     "presentation.operation_service_migration";
+pub(crate) const PRESENTATION_SWITCH_COMPLETE: &str = "presentation.switch_complete";
+pub(crate) const PRESENTATION_SWITCH_FAILED: &str = "presentation.switch_failed";
+pub(crate) const PRESENTATION_SWITCH_CANCELLED: &str = "presentation.switch_cancelled";
+pub(crate) const PRESENTATION_UPDATE_COMPLETE: &str = "presentation.update_complete";
+pub(crate) const PRESENTATION_UPDATE_FAILED: &str = "presentation.update_failed";
+pub(crate) const PRESENTATION_UPDATE_CANCELLED: &str = "presentation.update_cancelled";
+pub(crate) const PRESENTATION_REPAIR_COMPLETE: &str = "presentation.repair_complete";
+pub(crate) const PRESENTATION_REPAIR_FAILED: &str = "presentation.repair_failed";
+pub(crate) const PRESENTATION_REPAIR_CANCELLED: &str = "presentation.repair_cancelled";
+pub(crate) const PRESENTATION_RESTORE_COMPLETE: &str = "presentation.restore_complete";
+pub(crate) const PRESENTATION_RESTORE_FAILED: &str = "presentation.restore_failed";
+pub(crate) const PRESENTATION_RESTORE_CANCELLED: &str = "presentation.restore_cancelled";
+pub(crate) const PRESENTATION_SERVICE_MIGRATION_COMPLETE: &str =
+    "presentation.service_migration_complete";
+pub(crate) const PRESENTATION_SERVICE_MIGRATION_FAILED: &str =
+    "presentation.service_migration_failed";
+pub(crate) const PRESENTATION_SERVICE_MIGRATION_CANCELLED: &str =
+    "presentation.service_migration_cancelled";
+pub(crate) const PRESENTATION_OPERATION_FINISHED_SUCCESSFULLY: &str =
+    "presentation.operation_finished_successfully";
+pub(crate) const PRESENTATION_OPERATION_REPORTED_FAILURE: &str =
+    "presentation.operation_reported_failure";
+pub(crate) const PRESENTATION_OPERATION_STOPPED_DURING_DOWNLOAD: &str =
+    "presentation.operation_stopped_during_download";
+pub(crate) const PRESENTATION_BACKUP_CREATING: &str = "presentation.backup_creating";
+pub(crate) const PRESENTATION_BACKUP_PROGRESS_EXPORTING: &str =
+    "presentation.backup_progress_exporting";
+pub(crate) const PRESENTATION_BACKUP_ARCHIVING: &str = "presentation.backup_archiving";
+pub(crate) const PRESENTATION_BACKUP_PROGRESS_FINALIZING: &str =
+    "presentation.backup_progress_finalizing";
+pub(crate) const PRESENTATION_BACKUP_PROGRESS_DONE: &str = "presentation.backup_progress_done";
+pub(crate) const PRESENTATION_BACKUP_PROGRESS_FAILED: &str = "presentation.backup_progress_failed";
 pub(crate) const INTERACTIVE_SELECT_ONE_OPTION: &str = "interactive.select_one_option";
 pub(crate) const INTERACTIVE_SELECT_ONE_OPTION_DEFAULT: &str =
     "interactive.select_one_option_default";
@@ -357,9 +398,6 @@ pub(crate) const REPORT_CONCLUSION_UNKNOWN: &str = "report.conclusion_unknown";
 pub(crate) const REPORT_CONCLUSION_WARNING: &str = "report.conclusion_warning";
 pub(crate) const REPORT_CONCLUSION_PASS: &str = "report.conclusion_pass";
 pub(crate) const REPORT_CONCLUSION_LINE: &str = "report.conclusion_line";
-pub(crate) const SYSTEMD_WORKER_INSTALLATION_COMPLETE: &str =
-    "systemd_worker.installation_complete";
-pub(crate) const SYSTEMD_WORKER_INSTALLATION_FAILED: &str = "systemd_worker.installation_failed";
 pub(crate) const SYSTEMD_WORKER_STOP_FAILED_WARNING: &str = "systemd_worker.stop_failed_warning";
 pub(crate) const PREFLIGHT_SUGGESTION_PREFIX: &str = "preflight.suggestion_prefix";
 pub(crate) const MANAGE_INSTALLATION_ALREADY_EXISTS: &str = "manage.installation_already_exists";
@@ -668,3 +706,21 @@ pub(crate) const CONSOLE_BACKUP_HINT_LIST: &str = "console.backup_hint_list";
 pub(crate) const CONSOLE_BACKUP_HINT_DETAILS: &str = "console.backup_hint_details";
 pub(crate) const CONSOLE_BACKUP_HINT_RESTORE_CONFIRM: &str = "console.backup_hint_restore_confirm";
 pub(crate) const CONSOLE_BACKUP_HINT_CREATE: &str = "console.backup_hint_create";
+pub(crate) const CONSOLE_BACKUP_CREATED: &str = "console.backup_created";
+pub(crate) const CONSOLE_BACKUP_CREATE_RUNNING: &str = "console.backup_create_running";
+pub(crate) const CONSOLE_BACKUP_CREATE_PROGRESS_EXPORT: &str =
+    "console.backup_create_progress_export";
+pub(crate) const CONSOLE_BACKUP_CREATE_PROGRESS_ARCHIVE: &str =
+    "console.backup_create_progress_archive";
+pub(crate) const CONSOLE_BACKUP_CREATE_PROGRESS_FINALIZE: &str =
+    "console.backup_create_progress_finalize";
+pub(crate) const CONSOLE_BACKUP_CREATE_WORKER_STOPPED: &str =
+    "console.backup_create_worker_stopped";
+pub(crate) const CONSOLE_BACKUP_HINT_CREATE_RUNNING: &str = "console.backup_hint_create_running";
+pub(crate) const CONSOLE_BACKUP_DELETE_TITLE: &str = "console.backup_delete_title";
+pub(crate) const CONSOLE_BACKUP_DELETE_QUESTION: &str = "console.backup_delete_question";
+pub(crate) const CONSOLE_BACKUP_DELETE_PLAN: &str = "console.backup_delete_plan";
+pub(crate) const CONSOLE_BACKUP_DELETE_PRESS_ENTER: &str = "console.backup_delete_press_enter";
+pub(crate) const CONSOLE_BACKUP_DELETED: &str = "console.backup_deleted";
+pub(crate) const CONSOLE_BACKUP_HINT_DELETE_CONFIRM: &str = "console.backup_hint_delete_confirm";
+pub(crate) const CONSOLE_BACKUP_SELECT_TO_DELETE: &str = "console.backup_select_to_delete";

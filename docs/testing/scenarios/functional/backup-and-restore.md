@@ -25,7 +25,7 @@
 - 测试层：CLI fixture E2E、Rust 单元、Docker E2E
 - 状态：`已覆盖`
 - 证据：[backup list、show 与 verify](../../../commands/backup.md#backup-list)、[容器格式](../../../backup/lkb-and-rollback.md#容器格式-v1)、`list_marks_symlinks_and_unsafe_permissions_invalid`、`list_marks_content_incomplete_backups_invalid`（crates/lkit-cli/src/commands/backup.rs）、Docker E2E S10
-- 说明：验证损坏 checksum、header、路径逃逸、符号链接和权限不安全文件不会被误报为有效；Docker E2E S10 覆盖 list/show/verify 成功路径。
+- 说明：CLI `backup list` 保持完整校验（checksum + 安全解包检查必需条目），验证损坏 checksum、header、路径逃逸、符号链接和权限不安全文件不会被误报为有效；Docker E2E S10 覆盖 list/show/verify 成功路径。控制台列表改用快速读取（见 BKP-11），不改变 CLI 语义。
 
 ## BKP-04
 
@@ -184,12 +184,13 @@
 
 ## BKP-08
 
-**控制台创建备份对话框：备注输入、校验与分发**
+**控制台创建备份：备注输入、TUI 内执行与进度弹窗**
 
 - 测试层：Rust 单元（console）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_action_builds_cli_and_domain_request`（crates/lkit-cli/src/console.rs，断言创建对话框渲染、备注逐字符输入、`--remark` 与结构化请求一致）
-- 说明：Enter 打开创建对话框（标题、minimal scope 说明、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、Enter 提交走与 CLI 相同的备注校验，空备注直接创建不带 `--remark`。
+- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（crates/lkit-cli/src/console.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
+- 说明：Enter 打开创建对话框（标题、minimal scope 说明、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、Enter 提交走与 CLI 相同的备注校验，空备注直接创建。提交后在 TUI 内后台执行与 CLI 相同的完整流程（共用 `create_manual_backup`），居中弹窗显示导出/归档/落盘阶段，不退出控制台。
+- 缺口：真实安装现场下 TUI 内创建并刷新列表的完整链路未做 E2E 断言（控制台单测在无安装现场下验证状态机与渲染）。
 
 ## BKP-09
 
@@ -203,10 +204,40 @@
 
 ## RST-14
 
-**委托 restore 全屏页显示操作标题与步骤进度条**
+**委托 restore 全屏页显示操作标题与步骤进度条，结果文案按操作独立**
 
-- 测试层：Rust 单元（presentation）、Rust workflow
+- 测试层：Rust 单元（presentation/screens）、Rust workflow
 - 状态：`已覆盖`
-- 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`（crates/lkit-cli/src/interaction/presentation.rs，断言操作标题与 `2/4` 步骤 Gauge）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（crates/lkit-cli/src/workflows/restore.rs）、`operation_title` 按子命令生成标题（crates/lkit-cli/src/systemd_worker.rs）
-- 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；install 的字节进度条不受影响。
+- 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`、`renders_restore_result_with_its_own_title_not_install_wording`、`restore_in_progress_hint_is_not_installation_wording`（crates/lkit-cli/src/interaction/presentation/screens/restore.rs，断言 restore 页显示 `Restore complete`/`The operation is in progress` 且不含 `Installation` 文案）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（crates/lkit-cli/src/workflows/restore.rs）、`operation_screen` 按子命令选择操作页面组件（crates/lkit-cli/src/interaction/presentation/screens/mod.rs）
+- 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；每个委托操作（install/switch/update/repair/restore/service-manager）在 `screens/` 下有一个完全独立的页面文件（布局、进行中标题、完成/失败/取消结果页标题与状态框、底栏提示全部各自实现，不复用安装文案），命令行结束提示同样按操作输出（如 `restore: Restore complete`）；install 的字节进度条不受影响。
 - 缺口：真实 worker 进程到全屏页的事件链路未单独 E2E 断言（Docker E2E 在无控制台终端下运行）。
+
+## BKP-10
+
+**备份创建进度：文件数上报与 CLI 内联进度条**
+
+- 测试层：Rust 单元（lkb、presentation、commands）
+- 状态：`已覆盖`
+- 证据：[创建顺序与存放](../../../backup/lkb-and-rollback.md#创建顺序与存放)、`reports_file_count_progress_while_creating`（crates/lkit-cli/src/backup/lkb.rs，断言归档事件数与总数一致：固定 3 个文件 + 目录树文件数，最后事件为落盘校验）、`renders_step_progress_with_test_backend`（crates/lkit-cli/src/interaction/presentation.rs，断言 `N/M files` 百分比 Gauge）、`backup create` 交互终端 stderr 内联进度（crates/lkit-cli/src/commands/backup.rs）
+- 说明：归档按文件数上报进度（导出配置 → 归档 N/M 与当前文件名 → 落盘校验），CLI 在交互终端用 2 行内联 Gauge 显示（如 `50% 3 / 6 files`），非终端或 `--non-interactive` 不显示；进度不影响退出码与输出。
+- 缺口：真实慢速终端上的内联渲染刷新频率未做 E2E 断言。
+
+## BKP-11
+
+**控制台备份列表快速读取：只读 header 与 metadata，不校验归档体**
+
+- 测试层：Rust 单元（lkb、commands）
+- 状态：`已覆盖`
+- 证据：[交互控制台](../../../interaction/console.md)、`streamed_metadata_reader_skips_the_archive_but_keeps_header_checks`（crates/lkit-cli/src/backup/lkb.rs）、`metadata_list_mode_reads_only_the_metadata_region`（crates/lkit-cli/src/commands/backup.rs，断言 `BackupListCheck::Metadata` 只读 header+JSON：归档体被篡改仍可展示，结构性损坏标记 invalid；`Full` 模式两者都拒绝）
+- 说明：控制台列表通过 `read_backup_metadata_streamed` 只读 32 字节 header 与 `json_len` 字节 metadata JSON（流式，不读 1 MiB 零填充与归档体），切换面板几乎瞬时；完整校验保留给详情页 V 与 restore 流程。CLI `backup list` 仍使用完整校验。
+
+## BKP-12
+
+**删除备份：CLI 确认语义、文件校验与控制台删除层**
+
+- 测试层：Rust 单元（commands、console）
+- 状态：`已覆盖`
+- 证据：[`backup delete`](../../../commands/backup.md#backup-delete)、`deletes_a_valid_backup_file`、`refuses_unsafe_or_missing_backups_on_delete`、`delete_requires_yes_in_non_interactive_mode`、`delete_rejects_malformed_ids_and_missing_files`（crates/lkit-cli/src/commands/backup.rs）、`backup_delete_confirms_and_removes_the_backup`、`backup_delete_esc_cancels_confirmation`（crates/lkit-cli/src/console.rs）
+- 说明：`backup delete` 只接受格式合法的备份 ID；目标必须是 root 所有、权限不宽于 `0600` 的普通文件（符号链接与权限不安全条目拒绝删除，不跟随链接）；交互模式要求输入 `yes` 确认、`--yes` 跳过、非交互缺 `--yes` 返回参数错误 `2`，删除前持安装锁。控制台列表/详情按 D 打开删除确认层（展示 ID、版本与永久删除提示），Enter 在控制台内同步删除并刷新列表，Esc 取消且不改动现场。
+- 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的 pty 路径未覆盖（仓库无 pty 测试设施）；删除仍被未完成事务引用的备份未做专门断言。
+

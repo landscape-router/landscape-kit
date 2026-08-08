@@ -11,20 +11,20 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use unicode_width::UnicodeWidthStr;
 
-use crate::backup::lkb::BackupMetadata;
+use crate::backup::lkb::{BackupMetadata, BackupProgress};
 use crate::check;
 use crate::check::model::{CheckReport, Status};
 use crate::commands::backup::{architecture_key, scope_key};
 use crate::commands::install::Install;
 use crate::commands::{Commands, ServiceManagerArg};
-use crate::deployment::{plan, root, state};
+use crate::deployment::{lock, plan, root, state};
 use crate::i18n::Language;
 use crate::interaction::credentials;
 use crate::network::config::{
@@ -258,7 +258,18 @@ enum BackupVerifyState {
     Running(Receiver<Result<String, String>>),
 }
 
-/// 备份面板：列表 + 详情 + 创建备注 + 恢复确认。
+enum BackupCreateMessage {
+    Progress(BackupProgress),
+    Done(Result<BackupMetadata, String>),
+}
+
+/// 在 TUI 内执行备份创建：worker 线程跑完整创建流程并通过 channel 回传进度。
+struct BackupCreateRun {
+    receiver: Receiver<BackupCreateMessage>,
+    progress: BackupProgress,
+}
+
+/// 备份面板：列表 + 详情 + 创建备注/进度 + 删除/恢复确认。
 struct BackupPanel {
     state: BackupListState,
     selected: usize,
@@ -267,7 +278,10 @@ struct BackupPanel {
     details: Option<usize>,
     details_scroll: u16,
     verify: BackupVerifyState,
+    create: Option<BackupCreateRun>,
     restore_confirming: bool,
+    delete_confirming: bool,
+    delete_target: Option<String>,
 }
 
 impl Default for BackupPanel {
@@ -280,7 +294,10 @@ impl Default for BackupPanel {
             details: None,
             details_scroll: 0,
             verify: BackupVerifyState::Idle,
+            create: None,
             restore_confirming: false,
+            delete_confirming: false,
+            delete_target: None,
         }
     }
 }
@@ -304,7 +321,53 @@ impl BackupPanel {
         self.details = None;
         self.details_scroll = 0;
         self.verify = BackupVerifyState::Idle;
+        self.create = None;
         self.restore_confirming = false;
+        self.delete_confirming = false;
+        self.delete_target = None;
+    }
+
+    /// 在后台线程执行完整创建流程（与 CLI 共用 `create_manual_backup`），
+    /// 进度经 channel 回传；结束后由 `poll` 刷新列表并显示结果。
+    fn start_create(&mut self, install_dir: &str, remark: &str) {
+        if self.create.is_some() {
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        let install_dir = install_dir.to_string();
+        let remark = remark.to_string();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let requested = PathBuf::from(&install_dir);
+                let selected = plan::select_install_root(
+                    Some(&requested),
+                    std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+                )
+                .map_err(|error| error.to_string())?;
+                let root =
+                    root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| format!("build backup create runtime: {error}"))?;
+                runtime
+                    .block_on(crate::commands::backup::create_manual_backup(
+                        &root,
+                        &crate::deployment::runtime::InstallRuntime::production(),
+                        &remark,
+                        None,
+                        |progress| {
+                            let _ = sender.send(BackupCreateMessage::Progress(progress));
+                        },
+                    ))
+                    .map_err(|error| error.to_string())
+            })();
+            let _ = sender.send(BackupCreateMessage::Done(result));
+        });
+        self.create = Some(BackupCreateRun {
+            receiver,
+            progress: BackupProgress::Exporting,
+        });
     }
 
     fn poll(&mut self, notice: &mut String) {
@@ -342,6 +405,38 @@ impl BackupPanel {
                 }
             }
         }
+        loop {
+            let message = match &self.create {
+                Some(run) => run.receiver.try_recv(),
+                None => break,
+            };
+            match message {
+                Ok(BackupCreateMessage::Progress(progress)) => {
+                    if let Some(run) = &mut self.create {
+                        run.progress = progress;
+                    }
+                }
+                Ok(BackupCreateMessage::Done(result)) => {
+                    self.create = None;
+                    match result {
+                        Ok(metadata) => {
+                            self.state = BackupListState::NotRun;
+                            *notice = crate::tr!(
+                                crate::keys::CONSOLE_BACKUP_CREATED,
+                                backup_id = metadata.backup_id
+                            )
+                            .into();
+                        }
+                        Err(error) => *notice = error,
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.create = None;
+                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_WORKER_STOPPED).into();
+                }
+            }
+        }
     }
 
     fn rows(&self) -> &[BackupEntry] {
@@ -374,12 +469,28 @@ fn load_backups(install_dir: &str) -> Result<Vec<BackupEntry>, String> {
     )
     .map_err(|error| error.to_string())?;
     let normalized = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
-    let rows =
-        crate::commands::backup::list_backups(&normalized).map_err(|error| error.to_string())?;
+    let rows = crate::commands::backup::list_backups_with(
+        &normalized,
+        crate::commands::backup::BackupListCheck::Metadata,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(rows
         .into_iter()
         .map(|(metadata, path)| BackupEntry { metadata, path })
         .collect())
+}
+
+/// 与 CLI `backup delete` 相同的根目录解析、安装锁与文件删除。
+fn delete_backup_via_console(install_dir: &str, backup_id: &str) -> Result<(), String> {
+    let requested = PathBuf::from(install_dir);
+    let selected = plan::select_install_root(
+        Some(&requested),
+        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    let root = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+    let _lock = lock::acquire_install_lock(&root).map_err(|error| error.to_string())?;
+    crate::commands::backup::delete_backup(&root, backup_id).map_err(|error| error.to_string())
 }
 
 /// 环境检查门禁：Pass 和 warning 放行；NotRun/Running 静默等待；
@@ -467,6 +578,9 @@ impl ConsoleApp {
         }
         if self.network_wizard.is_some() {
             return self.handle_network_wizard_key(key);
+        }
+        if self.backup.create.is_some() {
+            return None;
         }
         if self.preflight_dialog {
             match key.code {
@@ -718,6 +832,8 @@ impl ConsoleApp {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ENTER_CONFIRM_ESC_CANCEL)
         } else if self.exit_state == ExitState::Armed {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ESC_AGAIN)
+        } else if self.backup.create.is_some() {
+            crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CREATE_RUNNING)
         } else if self.preflight.expanded && self.menu() == Menu::Install {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_SCROLL)
         } else if self.preflight_dialog {
@@ -726,7 +842,9 @@ impl ConsoleApp {
         {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
         } else if self.menu() == Menu::Backup && self.focus == Focus::Panel {
-            if self.backup.restore_confirming {
+            if self.backup.delete_confirming {
+                crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_DELETE_CONFIRM)
+            } else if self.backup.restore_confirming {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_RESTORE_CONFIRM)
             } else if self.backup.editing {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CREATE)
@@ -908,6 +1026,23 @@ impl ConsoleApp {
             }
             return Some(None);
         }
+        if self.backup.delete_confirming {
+            match key.code {
+                KeyCode::Enter => {
+                    let backup_id = self.backup.delete_target.take();
+                    self.backup.delete_confirming = false;
+                    if let Some(backup_id) = backup_id {
+                        self.delete_backup(backup_id);
+                    }
+                }
+                KeyCode::Esc => {
+                    self.backup.delete_confirming = false;
+                    self.backup.delete_target = None;
+                }
+                _ => {}
+            }
+            return Some(None);
+        }
         if self.backup.editing {
             match key.code {
                 KeyCode::Enter => {
@@ -915,7 +1050,8 @@ impl ConsoleApp {
                     match crate::backup::lkb::validate_remark(&remark) {
                         Ok(()) => {
                             self.backup.editing = false;
-                            return Some(Some(self.backup_create_action(&remark)));
+                            self.backup.remark.clear();
+                            self.backup.start_create(&self.install.install_dir, &remark);
                         }
                         Err(error) => self.notice = error.to_string(),
                     }
@@ -955,6 +1091,14 @@ impl ConsoleApp {
                         && entry.metadata.is_some()
                     {
                         self.backup.restore_confirming = true;
+                    }
+                }
+                KeyCode::Char('d' | 'D') => {
+                    if let Some(entry) = self.backup.details_entry()
+                        && let Some(metadata) = &entry.metadata
+                    {
+                        self.backup.delete_target = Some(metadata.backup_id.clone());
+                        self.backup.delete_confirming = true;
                     }
                 }
                 _ => {}
@@ -1001,9 +1145,34 @@ impl ConsoleApp {
                     self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE).into();
                 }
             }
+            KeyCode::Char('d' | 'D') => {
+                if let Some(entry) = self.backup.selected_entry()
+                    && let Some(metadata) = &entry.metadata
+                {
+                    self.backup.delete_target = Some(metadata.backup_id.clone());
+                    self.backup.delete_confirming = true;
+                } else {
+                    self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_DELETE);
+                }
+            }
             _ => return None,
         }
         Some(None)
+    }
+
+    /// 同步删除备份（与 CLI 相同的根目录解析、安装锁与文件校验）并刷新列表。
+    fn delete_backup(&mut self, backup_id: String) {
+        let result = delete_backup_via_console(&self.install.install_dir, &backup_id);
+        match result {
+            Ok(()) => {
+                self.backup.details = None;
+                self.backup.details_scroll = 0;
+                self.backup.state = BackupListState::NotRun;
+                self.notice =
+                    crate::tr!(crate::keys::CONSOLE_BACKUP_DELETED, backup_id = backup_id);
+            }
+            Err(error) => self.notice = format!("backup: {error}"),
+        }
     }
 
     fn start_backup_verify(&mut self) {
@@ -1044,27 +1213,6 @@ impl ConsoleApp {
         });
         self.backup.verify = BackupVerifyState::Running(receiver);
         self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING).into();
-    }
-
-    fn backup_create_action(&self, remark: &str) -> ConsoleAction {
-        let install_dir = PathBuf::from(&self.install.install_dir);
-        let command = Commands::Backup(crate::commands::backup::Backup {
-            action: crate::commands::backup::BackupAction::Create(
-                crate::commands::backup::BackupCreate {
-                    remark: Some(remark.to_string()),
-                    output: None,
-                    install_dir: Some(install_dir.clone()),
-                    #[cfg(feature = "test-support")]
-                    test_runtime: None,
-                },
-            ),
-        });
-        let mut args = vec!["backup".into(), "create".into()];
-        if !remark.is_empty() {
-            args.extend(["--remark".into(), remark.to_string()]);
-        }
-        args.extend(["--install-dir".into(), install_dir.display().to_string()]);
-        ConsoleAction::Command { command, args }
     }
 
     fn backup_restore_action(&self, backup_id: &str) -> ConsoleAction {
@@ -1790,8 +1938,14 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     if app.menu() == Menu::Backup && app.backup.restore_confirming {
         render_backup_restore_confirmation(frame, app);
     }
+    if app.menu() == Menu::Backup && app.backup.delete_confirming {
+        render_backup_delete_confirmation(frame, app);
+    }
     if app.menu() == Menu::Backup && app.backup.editing {
         render_backup_create_dialog(frame, app);
+    }
+    if app.menu() == Menu::Backup && app.backup.create.is_some() {
+        render_backup_create_progress(frame, app);
     }
 }
 
@@ -2662,6 +2816,85 @@ fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
 }
 
+/// 创建备份进行中的居中弹窗：阶段文案 + 文件数 Gauge。
+fn render_backup_create_progress(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let Some(run) = &app.backup.create else {
+        return;
+    };
+    let screen = frame.area();
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let (stage_text, ratio) = match &run.progress {
+        BackupProgress::Exporting => (
+            crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_PROGRESS_EXPORT),
+            0.0,
+        ),
+        BackupProgress::Archiving {
+            done,
+            total,
+            current,
+        } => {
+            let ratio = if *total == 0 {
+                0.0
+            } else {
+                *done as f64 / *total as f64
+            };
+            (
+                crate::tr!(
+                    crate::keys::CONSOLE_BACKUP_CREATE_PROGRESS_ARCHIVE,
+                    done = *done,
+                    total = *total,
+                    current = current
+                ),
+                ratio,
+            )
+        }
+        BackupProgress::Finalizing => (
+            crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_PROGRESS_FINALIZE),
+            1.0,
+        ),
+    };
+    let percent = (ratio * 100.0).round() as u64;
+    let inner = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+    let [stage_area, gauge_area, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_RUNNING)),
+        area,
+    );
+    frame.render_widget(
+        Paragraph::new(stage_text).wrap(Wrap { trim: true }),
+        stage_area,
+    );
+    frame.render_widget(
+        Gauge::default()
+            .ratio(ratio.clamp(0.0, 1.0))
+            .label(format!("{percent:>3}%"))
+            .gauge_style(Style::default().fg(Color::Cyan))
+            .use_unicode(false),
+        gauge_area,
+    );
+    frame.render_widget(
+        Paragraph::new(crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CREATE_RUNNING))
+            .style(Style::default().fg(Color::DarkGray)),
+        hint_area,
+    );
+}
+
 fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let Some(metadata) = app
         .backup
@@ -2704,6 +2937,50 @@ fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         ])
         .alignment(Alignment::Center)
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_TITLE))),
+        area,
+    );
+}
+
+fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let Some(metadata) = app.backup.delete_target.as_deref().and_then(|id| {
+        app.backup
+            .rows()
+            .iter()
+            .find_map(|entry| entry.metadata.as_ref().filter(|m| m.backup_id == id))
+    }) else {
+        return;
+    };
+    let screen = frame.area();
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_QUESTION),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_BACKUP_DELETE_PLAN,
+                id = metadata.backup_id,
+                version = metadata.landscape_version
+            )),
+            Line::raw(""),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_PRESS_ENTER)),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_TITLE))),
         area,
     );
 }
@@ -4025,9 +4302,13 @@ mod tests {
     }
 
     #[test]
-    fn backup_create_action_builds_cli_and_domain_request() {
+    fn backup_create_runs_in_console_with_progress_dialog() {
         let _language = LanguageGuard::set(Language::En);
         let mut app = backup_ready_app();
+        app.install.install_dir = std::env::temp_dir()
+            .join(format!("lkit-console-create-{}", std::process::id()))
+            .display()
+            .to_string();
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.backup.editing);
@@ -4046,25 +4327,26 @@ mod tests {
         }
         assert_eq!(app.backup.remark, "my-backup");
 
-        let action = app
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-            .unwrap();
-        let ConsoleAction::Command { command, args } = action else {
-            panic!("expected backup create command");
-        };
-        let Commands::Backup(backup) = command else {
-            panic!("expected backup request");
-        };
-        let crate::commands::backup::BackupAction::Create(create) = backup.action else {
-            panic!("expected create action");
-        };
-        assert_eq!(create.remark.as_deref(), Some("my-backup"));
-        assert_eq!(args[0], "backup");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.backup.editing);
+        assert_eq!(app.backup.remark, "");
         assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--remark", "my-backup"])
+            app.backup.create.is_some(),
+            "Enter must start the in-console backup create worker"
         );
-        assert!(args.iter().any(|argument| argument == "create"));
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(
+            content.contains("Creating backup"),
+            "the progress dialog must be visible while the backup is created"
+        );
+        assert!(
+            content.contains("Exporting configuration"),
+            "the progress dialog must show the export stage"
+        );
+
+        let _ = std::fs::remove_dir_all(&app.install.install_dir);
     }
 
     #[test]
@@ -4112,6 +4394,68 @@ mod tests {
             args.iter()
                 .any(|argument| argument == "--console-confirmed")
         );
+    }
+
+    #[test]
+    fn backup_delete_confirms_and_removes_the_backup() {
+        use std::os::unix::fs::PermissionsExt;
+        let _language = LanguageGuard::set(Language::En);
+        let dir = std::env::temp_dir().join(format!("lkit-console-delete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let backups = dir.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+        let path = backups.join("20260807-131500-ab12cd34.lkb");
+        std::fs::write(&path, b"lkb bytes").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let mut app = backup_ready_app();
+        app.install.install_dir = dir.display().to_string();
+        app.backup.state =
+            BackupListState::Complete(vec![sample_backup_entry(), sample_backup_entry()]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(app.backup.delete_confirming);
+        assert_eq!(
+            app.backup.delete_target.as_deref(),
+            Some("20260807-131500-ab12cd34")
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Confirm delete"));
+        assert!(content.contains("Delete this backup?"));
+        assert!(content.contains("version 1.2.3"));
+        assert!(content.contains("Press Enter to delete."));
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.backup.delete_confirming);
+        assert!(app.backup.delete_target.is_none());
+        assert!(
+            !path.exists(),
+            "confirming the delete must remove the backup file"
+        );
+        assert!(app.notice.contains("deleted"));
+        assert!(matches!(app.backup.state, BackupListState::NotRun));
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backup_delete_esc_cancels_confirmation() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = backup_ready_app();
+        app.backup.state = BackupListState::Complete(vec![sample_backup_entry()]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(app.backup.delete_confirming);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.backup.delete_confirming);
+        assert!(app.backup.delete_target.is_none());
+        assert_eq!(app.exit_state, ExitState::Idle);
     }
 
     #[test]

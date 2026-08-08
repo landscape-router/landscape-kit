@@ -22,6 +22,12 @@ use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod screens;
+
+pub(crate) use screens::{
+    InstallScreen, OperationResult, OperationScreen, RestoreScreen, operation_screen,
+};
+
 pub(crate) const PRESENTATION_EVENTS_ENV: &str = "LKIT_INTERNAL_PRESENTATION_EVENTS";
 pub(crate) const OPERATIONS_DIR: &str = "/run/lkit/operations";
 const PROGRESS_REFRESH: Duration = Duration::from_millis(100);
@@ -65,7 +71,7 @@ pub(crate) fn warning(id: &str, reason: &str, suggestion: &str) {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct DownloadState {
+pub(crate) struct DownloadState {
     id: u64,
     label: String,
     total: u64,
@@ -274,11 +280,150 @@ impl InteractiveDownload {
         Ok(())
     }
 
+    fn render_step(&mut self, state: &StepState) -> std::io::Result<()> {
+        self.terminal.draw(|frame| render_step(frame, state))?;
+        Ok(())
+    }
+
     fn finish(mut self) {
         let _ = self.terminal.show_cursor();
         drop(self.terminal);
         eprintln!();
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StepStatus {
+    Running,
+    Complete,
+    Failed,
+}
+
+struct StepState {
+    label: String,
+    total: u64,
+    position: u64,
+    status: StepStatus,
+}
+
+enum StepOutput {
+    Interactive(InteractiveDownload),
+    Hidden,
+}
+
+/// 无字节下载的按步骤操作（如 `backup create` 的按文件进度）在普通终端上
+/// 渲染的内联进度条。事件文件由 systemd worker 专用，备份创建不委托，因此
+/// 只支持 stderr 内联渲染。
+pub(crate) struct StepProgress {
+    state: StepState,
+    started: Instant,
+    last_refresh: Instant,
+    output: StepOutput,
+}
+
+impl StepProgress {
+    pub(crate) fn new(label: String, total: u64) -> Self {
+        let now = Instant::now();
+        let state = StepState {
+            label,
+            total,
+            position: 0,
+            status: StepStatus::Running,
+        };
+        let output = (std::io::stderr().is_terminal()
+            && !crate::interaction::interactive::is_non_interactive())
+        .then(|| InteractiveDownload::new().ok())
+        .flatten()
+        .map(StepOutput::Interactive)
+        .unwrap_or(StepOutput::Hidden);
+        let mut progress = Self {
+            state,
+            output,
+            started: now,
+            last_refresh: now.checked_sub(PROGRESS_REFRESH).unwrap_or(now),
+        };
+        progress.refresh(true);
+        progress
+    }
+
+    pub(crate) fn set_state(&mut self, label: String, position: u64, total: u64) {
+        self.state.label = label;
+        self.state.total = total;
+        self.state.position = position.min(total);
+        self.refresh(false);
+    }
+
+    pub(crate) fn finish(mut self) {
+        self.state.status = StepStatus::Complete;
+        self.state.position = self.state.total;
+        self.refresh(true);
+        self.finish_interactive();
+    }
+
+    pub(crate) fn abandon_failed(mut self) {
+        self.state.status = StepStatus::Failed;
+        self.refresh(true);
+        self.finish_interactive();
+    }
+
+    fn refresh(&mut self, force: bool) {
+        let now = Instant::now();
+        if !force && now.duration_since(self.last_refresh) < PROGRESS_REFRESH {
+            return;
+        }
+        if let StepOutput::Interactive(renderer) = &mut self.output {
+            let _ = renderer.render_step(&self.state);
+        }
+        self.last_refresh = now;
+    }
+
+    fn finish_interactive(&mut self) {
+        let output = std::mem::replace(&mut self.output, StepOutput::Hidden);
+        if let StepOutput::Interactive(renderer) = output {
+            renderer.finish();
+        }
+    }
+}
+
+fn render_step(frame: &mut Frame<'_>, state: &StepState) {
+    let [title_area, gauge_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(frame.area());
+    let (verb, color) = match state.status {
+        StepStatus::Running => (
+            crate::tr!(crate::keys::PRESENTATION_BACKUP_ARCHIVING),
+            Color::Cyan,
+        ),
+        StepStatus::Complete => (
+            crate::tr!(crate::keys::PRESENTATION_BACKUP_PROGRESS_DONE),
+            Color::Green,
+        ),
+        StepStatus::Failed => (
+            crate::tr!(crate::keys::PRESENTATION_BACKUP_PROGRESS_FAILED),
+            Color::Red,
+        ),
+    };
+    let title = Line::from(vec![
+        Span::styled(
+            verb,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("  {}", state.label)),
+    ]);
+    frame.render_widget(Paragraph::new(title), title_area);
+
+    let ratio = if state.total == 0 {
+        0.0
+    } else {
+        state.position as f64 / state.total as f64
+    };
+    let percent = (ratio * 100.0).round() as u64;
+    let label = format!("{percent:>3}%  {} / {} files", state.position, state.total);
+    let gauge = Gauge::default()
+        .ratio(ratio.clamp(0.0, 1.0))
+        .label(label)
+        .gauge_style(Style::default().fg(color))
+        .use_unicode(false);
+    frame.render_widget(gauge, gauge_area);
 }
 
 pub(crate) struct InterruptGuard {
@@ -455,210 +600,6 @@ fn render_download(frame: &mut Frame<'_>, state: &DownloadState) {
     frame.render_widget(gauge, gauge_area);
 }
 
-/// 步骤进度条使用的阶段文案(与下载字节进度无关的操作,如 restore)。
-fn step_phase_text(phase: OperationPhase) -> String {
-    match phase {
-        OperationPhase::Preparing => crate::tr!(crate::keys::PRESENTATION_PREPARING),
-        OperationPhase::Stopping => crate::tr!(crate::keys::PRESENTATION_STOPPING),
-        OperationPhase::Activating => crate::tr!(crate::keys::PRESENTATION_ACTIVATING),
-        OperationPhase::Verifying => crate::tr!(crate::keys::PRESENTATION_VERIFYING),
-        OperationPhase::Downloading | OperationPhase::Applying => {
-            crate::tr!(crate::keys::PRESENTATION_APPLYING_CONFIGURATION)
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_operation(
-    frame: &mut Frame<'_>,
-    title: &str,
-    phase: OperationPhase,
-    step_progress: Option<(u8, u8)>,
-    current: Option<&DownloadState>,
-    logs: &[String],
-    notice: &str,
-    confirming_stop: bool,
-    result: Option<OperationResult>,
-) {
-    let [header, body, footer] = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(8),
-        Constraint::Length(3),
-    ])
-    .areas(frame.area());
-    let header_text = match result {
-        Some(OperationResult::Success) => {
-            crate::tr!(crate::keys::PRESENTATION_INSTALLATION_COMPLETE)
-        }
-        Some(OperationResult::Failed) => crate::tr!(crate::keys::PRESENTATION_INSTALLATION_FAILED),
-        Some(OperationResult::Cancelled) => {
-            crate::tr!(crate::keys::PRESENTATION_INSTALLATION_CANCELLED)
-        }
-        None if !title.is_empty() => title.to_string(),
-        None => crate::tr!(crate::keys::PRESENTATION_INSTALLING_LANDSCAPE),
-    };
-    frame.render_widget(
-        Paragraph::new(header_text)
-            .style(Style::default().add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::BOTTOM)),
-        header,
-    );
-    let [progress, log_area] =
-        Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(body);
-    if let Some(state) = current {
-        let percent = if state.total == 0 {
-            0.0
-        } else {
-            state.position as f64 / state.total as f64
-        };
-        let label = format!(
-            "{}  {:>3}%  {} / {}",
-            state.label,
-            (percent * 100.0).round() as u64,
-            human_bytes(state.position),
-            human_bytes(state.total),
-        );
-        frame.render_widget(
-            Gauge::default()
-                .ratio(percent.clamp(0.0, 1.0))
-                .label(label)
-                .gauge_style(Style::default().fg(Color::Cyan))
-                .use_unicode(false)
-                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_DOWNLOAD))),
-            progress,
-        );
-    } else if let Some((step, total)) = step_progress {
-        let ratio = if total == 0 {
-            0.0
-        } else {
-            f64::from(step) / f64::from(total)
-        };
-        let label = format!("{}  {step}/{total}", step_phase_text(phase));
-        frame.render_widget(
-            Gauge::default()
-                .ratio(ratio.clamp(0.0, 1.0))
-                .label(label)
-                .gauge_style(Style::default().fg(Color::Cyan))
-                .use_unicode(false)
-                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_STATUS))),
-            progress,
-        );
-    } else {
-        let status = match result {
-            Some(OperationResult::Success) => {
-                crate::tr!(crate::keys::PRESENTATION_INSTALLATION_FINISHED_SUCCESSFULLY)
-            }
-            Some(OperationResult::Failed) => {
-                crate::tr!(crate::keys::PRESENTATION_INSTALLATION_REPORTED_FAILURE)
-            }
-            Some(OperationResult::Cancelled) => {
-                crate::tr!(crate::keys::PRESENTATION_INSTALLATION_STOPPED_DURING_DOWNLOAD)
-            }
-            None => match phase {
-                OperationPhase::Preparing => {
-                    crate::tr!(crate::keys::PRESENTATION_PREPARING_INSTALLATION)
-                }
-                OperationPhase::Downloading => {
-                    crate::tr!(crate::keys::PRESENTATION_WAITING_FOR_DOWNLOAD_PROGRESS)
-                }
-                OperationPhase::Applying => {
-                    crate::tr!(crate::keys::PRESENTATION_APPLYING_CONFIGURATION)
-                }
-                OperationPhase::Stopping => {
-                    crate::tr!(crate::keys::PRESENTATION_STOPPING)
-                }
-                OperationPhase::Activating => {
-                    crate::tr!(crate::keys::PRESENTATION_ACTIVATING)
-                }
-                OperationPhase::Verifying => {
-                    crate::tr!(crate::keys::PRESENTATION_VERIFYING)
-                }
-            },
-        };
-        frame.render_widget(
-            Paragraph::new(status)
-                .style(if matches!(result, Some(OperationResult::Success)) {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Green)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                })
-                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_STATUS))),
-            progress,
-        );
-    }
-    let visible_logs = logs.iter().rev().take(8).rev().collect::<Vec<_>>();
-    let log_lines: Vec<Line<'_>> = visible_logs
-        .iter()
-        .map(|line| {
-            if is_confirmation_line(line) {
-                Line::styled(
-                    line.as_str(),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Line::raw(line.as_str())
-            }
-        })
-        .collect();
-    frame.render_widget(
-        Paragraph::new(log_lines)
-            .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_OUTPUT)))
-            .wrap(Wrap { trim: true }),
-        log_area,
-    );
-    let hint = if result.is_some() {
-        crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
-    } else if confirming_stop {
-        crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
-    } else if phase == OperationPhase::Downloading {
-        crate::tr!(crate::keys::PRESENTATION_CTRL_C_STOP_ESC_OPTIONS)
-    } else {
-        crate::tr!(crate::keys::PRESENTATION_INSTALLATION_IN_PROGRESS_STOP_IGNORED)
-    };
-    let footer_text = if notice.is_empty() {
-        hint.to_string()
-    } else {
-        format!("{notice}  {hint}")
-    };
-    frame.render_widget(
-        Paragraph::new(footer_text)
-            .alignment(Alignment::Left)
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default().borders(Borders::TOP)),
-        footer,
-    );
-    if confirming_stop {
-        let width = 48.min(frame.area().width.saturating_sub(2));
-        let height = 5.min(frame.area().height.saturating_sub(2));
-        let area = Rect::new(
-            frame.area().x + frame.area().width.saturating_sub(width) / 2,
-            frame.area().y + frame.area().height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
-        frame.render_widget(Clear, area);
-        frame.render_widget(
-            Paragraph::new(crate::tr!(crate::keys::PRESENTATION_STOP_DOWNLOAD_CONFIRM))
-                .alignment(Alignment::Center)
-                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_CONFIRM_STOP))),
-            area,
-        );
-    }
-}
-
-/// 全屏结果页里把网络接管的确认与回滚后果提示行用醒目背景标出。
-/// 中英文输出都包含 `lkit network confirm` 命令；等待确认、重新连接和
-/// 未确认回滚的提示行分别包含 `confirm`/`确认`。
-fn is_confirmation_line(line: &str) -> bool {
-    line.contains("confirm") || line.contains("确认")
-}
-
 fn speed_bytes(state: &DownloadState) -> u64 {
     if state.elapsed_millis == 0 {
         return 0;
@@ -706,7 +647,7 @@ pub(crate) struct WorkerPresentation {
     current: Option<DownloadState>,
     renderer: Option<InteractiveDownload>,
     screen: Option<FullScreenOperation>,
-    title: String,
+    operation: Box<dyn OperationScreen>,
     phase: OperationPhase,
     progress: Option<(u8, u8)>,
     logs: Vec<String>,
@@ -721,15 +662,8 @@ pub(crate) enum PresentationAction {
     Close,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OperationResult {
-    Success,
-    Failed,
-    Cancelled,
-}
-
 impl WorkerPresentation {
-    pub(crate) fn new(full_screen: bool, title: String) -> Self {
+    pub(crate) fn new(full_screen: bool, operation: Box<dyn OperationScreen>) -> Self {
         Self {
             events: None,
             pending: String::new(),
@@ -738,7 +672,7 @@ impl WorkerPresentation {
             screen: full_screen
                 .then(FullScreenOperation::start)
                 .and_then(Result::ok),
-            title,
+            operation,
             phase: OperationPhase::Preparing,
             progress: None,
             logs: Vec::new(),
@@ -746,6 +680,10 @@ impl WorkerPresentation {
             confirming_stop: false,
             result: None,
         }
+    }
+
+    pub(crate) fn operation(&self) -> &dyn OperationScreen {
+        self.operation.as_ref()
     }
 
     pub(crate) fn drain(&mut self, path: &Path) -> Result<(), String> {
@@ -802,7 +740,7 @@ impl WorkerPresentation {
     }
 
     pub(crate) fn ignore_stop(&mut self) {
-        self.notice = crate::tr!(crate::keys::PRESENTATION_INSTALLATION_IS_APPLYING).into();
+        self.notice = crate::tr!(self.operation.stop_ignored_key());
         self.confirming_stop = false;
         self.render_screen();
     }
@@ -934,7 +872,7 @@ impl WorkerPresentation {
         let Some(screen) = self.screen.as_mut() else {
             return;
         };
-        let title = &self.title;
+        let operation = self.operation.as_ref();
         let phase = self.phase;
         let progress = self.progress;
         let current = self.current.as_ref();
@@ -943,9 +881,8 @@ impl WorkerPresentation {
         let confirming_stop = self.confirming_stop;
         let result = self.result;
         let _ = screen.terminal.draw(|frame| {
-            render_operation(
+            operation.render(
                 frame,
-                title,
                 phase,
                 progress,
                 current,
@@ -959,7 +896,7 @@ impl WorkerPresentation {
 }
 
 pub(crate) fn show_cancelled_screen(interrupt: &InterruptGuard) -> Result<(), String> {
-    let mut presentation = WorkerPresentation::new(true, String::new());
+    let mut presentation = WorkerPresentation::new(true, Box::new(InstallScreen));
     presentation.result = Some(OperationResult::Cancelled);
     presentation.render_screen();
     presentation.wait_for_close(interrupt)?;
@@ -1048,137 +985,31 @@ mod tests {
     }
 
     #[test]
-    fn renders_full_screen_operation_without_sidebar() {
-        let backend = TestBackend::new(100, 24);
+    fn renders_step_progress_with_test_backend() {
+        let backend = TestBackend::new(80, PROGRESS_HEIGHT);
         let mut terminal = Terminal::new(backend).unwrap();
-        let state = DownloadState {
-            id: 1,
-            label: "Landscape webserver".into(),
-            total: 8,
-            position: 4,
-            elapsed_millis: 1_000,
-            status: DownloadStatus::Downloading,
+        let state = StepState {
+            label: "static.zip".into(),
+            total: 6,
+            position: 3,
+            status: StepStatus::Running,
         };
-        terminal
-            .draw(|frame| {
-                render_operation(
-                    frame,
-                    "",
-                    OperationPhase::Downloading,
-                    None,
-                    Some(&state),
-                    &[],
-                    "",
-                    false,
-                    None,
-                )
-            })
-            .unwrap();
-        let content: String = terminal
+        terminal.draw(|frame| render_step(frame, &state)).unwrap();
+        let lines: Vec<String> = terminal
             .backend()
             .buffer()
             .content
-            .iter()
-            .map(|cell| cell.symbol())
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect();
-        assert!(content.contains("Installing Landscape"));
-        assert!(content.contains("Landscape webserver"));
-        assert!(content.contains("Ctrl+C Stop"));
-        assert!(!content.contains("Navigation"));
-    }
-
-    #[test]
-    fn renders_completed_operation_result() {
-        let backend = TestBackend::new(100, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                render_operation(
-                    frame,
-                    "",
-                    OperationPhase::Applying,
-                    None,
-                    None,
-                    &[],
-                    "",
-                    false,
-                    Some(OperationResult::Success),
-                )
-            })
-            .unwrap();
-        let content: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
-        assert!(content.contains("Installation complete"));
-        assert!(content.contains("The installation finished successfully."));
-        assert!(content.contains("Ctrl+C Close"));
-        let buffer = terminal.backend().buffer();
-        assert!(
-            buffer
-                .content
-                .iter()
-                .any(|cell| cell.bg == Color::Green && !cell.symbol().is_empty()),
-            "success status box should use a green background"
-        );
-    }
-
-    #[test]
-    fn highlights_network_confirmation_lines_in_the_output_panel() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let rollback_line = "install: confirm the network takeover within 10 minutes or the installation will be rolled back automatically";
-        terminal
-            .draw(|frame| {
-                render_operation(
-                    frame,
-                    "",
-                    OperationPhase::Applying,
-                    None,
-                    None,
-                    &[
-                        "install: systemd unit landscape-router.service is registered".into(),
-                        "install: network takeover is awaiting confirmation".into(),
-                        "install: reconnect to 10.1.1.105 and run `lkit network confirm`".into(),
-                        rollback_line.into(),
-                    ],
-                    "",
-                    false,
-                    Some(OperationResult::Success),
-                )
-            })
-            .unwrap();
-        let content: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
-        assert!(content.contains("network takeover is awaiting confirmation"));
-        assert!(content.contains("run `lkit network confirm`"));
-        assert!(content.contains("rolled back automatically"));
-        let buffer = terminal.backend().buffer();
-        let highlighted = buffer
-            .content
-            .iter()
-            .filter(|cell| cell.bg == Color::Yellow && !cell.symbol().is_empty())
-            .count();
-        let confirmation_lines = "install: network takeover is awaiting confirmation".len()
-            + "install: reconnect to 10.1.1.105 and run `lkit network confirm`".len()
-            + rollback_line.len();
-        assert_eq!(
-            highlighted, confirmation_lines,
-            "only the confirmation and rollback lines should have a yellow background"
-        );
+        assert!(lines[0].contains("Archiving  static.zip"));
+        assert!(lines[1].contains("50%"));
+        assert!(lines[1].contains("3 / 6 files"));
     }
 
     #[test]
     fn only_download_phase_is_cancellable() {
-        let mut presentation = WorkerPresentation::new(false, String::new());
+        let mut presentation = WorkerPresentation::new(false, Box::new(InstallScreen));
         assert!(!presentation.is_cancellable());
         presentation.apply(PresentationEvent::Phase {
             phase: OperationPhase::Downloading,
@@ -1192,36 +1023,6 @@ mod tests {
             total: None,
         });
         assert!(!presentation.is_cancellable());
-    }
-
-    #[test]
-    fn renders_step_progress_gauge_for_stepped_operations() {
-        let backend = TestBackend::new(100, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                render_operation(
-                    frame,
-                    "Restoring Landscape",
-                    OperationPhase::Stopping,
-                    Some((2, 4)),
-                    None,
-                    &["install: stopping landscape-router.service".into()],
-                    "",
-                    false,
-                    None,
-                )
-            })
-            .unwrap();
-        let content: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
-        assert!(content.contains("Restoring Landscape"));
-        assert!(content.contains("2/4"));
     }
 
     #[test]

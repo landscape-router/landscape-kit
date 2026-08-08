@@ -185,6 +185,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             &geo_tmp,
             &crate::tr!(crate::keys::BACKUP_AUTO_REMARK_REPAIR),
             true,
+            None,
         )?;
         transaction.backup = Some(backup_ref);
 

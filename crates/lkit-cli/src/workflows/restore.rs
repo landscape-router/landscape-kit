@@ -500,6 +500,7 @@ async fn create_protection_backup<P: DocsProbe>(
         &geo_tmp,
         &crate::tr!(crate::keys::BACKUP_AUTO_REMARK_RESTORE),
         true,
+        None,
     )?;
     transaction.backup = Some(backup_ref);
     Ok(())
@@ -880,6 +881,7 @@ mod tests {
             &geo,
             "manual backup",
             false,
+            None,
         )
         .unwrap();
         let bytes = std::fs::read(

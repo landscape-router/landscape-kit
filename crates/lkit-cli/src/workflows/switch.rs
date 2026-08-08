@@ -138,6 +138,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 &geo_tmp,
                 &crate::tr!(crate::keys::BACKUP_AUTO_REMARK_SWITCH),
                 true,
+                None,
             )?;
             transaction.backup = Some(backup_ref);
         }

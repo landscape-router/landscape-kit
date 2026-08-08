@@ -9,14 +9,18 @@ lkit backup create [--remark <TEXT>] [--output <PATH>]
 lkit backup list [--install-dir <PATH>]
 lkit backup show (--backup <ID> | --file <PATH>) [--install-dir <PATH>]
 lkit backup verify (--backup <ID> | --file <PATH>) [--install-dir <PATH>]
+lkit backup delete --backup <ID> [--yes] [--install-dir <PATH>]
 ```
 
 `--non-interactive` 和 `--lang` 仍是全局参数，可放在子命令前后。
 
-控制台（裸 `lkit`）在 Backup 面板提供同样的能力：后台执行与 `backup list` 相同的解析与
-完整校验列出备份，Enter 查看 metadata 详情，R 进入恢复确认，V 执行完整 verify；面板顶部
-的“创建备份”动作允许输入备注后创建，恢复通过确认层后由控制台把结构化 `Restore` 请求交给
-共享命令分发（systemd 模式仍委托 worker 执行）。面板在未安装或非 root 时明确提示不可用。
+控制台（裸 `lkit`）在 Backup 面板提供同样的能力：列表做快速读取（只读 32 字节 header 与
+metadata JSON，不做归档校验和与解包校验），Enter 查看 metadata 详情，R 进入恢复确认，
+V 对选中备份执行与 `backup verify` 相同的完整校验，D 打开删除确认层（Enter 删除、
+Esc 取消，删除后自动刷新列表）；“创建备份”动作输入备注后直接在控制台内创建——进度以
+文件数显示在居中弹窗（如 `归档 12/87 个文件`），完成后自动刷新列表，不退出控制台。
+恢复通过确认层后由控制台把结构化 `Restore` 请求交给共享命令分发（systemd 模式仍委托
+worker 执行）。面板在未安装或非 root 时明确提示不可用。
 
 ## `backup create`
 
@@ -56,6 +60,10 @@ lkit backup verify (--backup <ID> | --file <PATH>) [--install-dir <PATH>]
 
 因此它是配置级恢复能力，不是数据库级灾难备份。
 
+在交互式终端直接运行 `lkit backup create` 时，stderr 显示内联进度条：先显示导出配置，
+然后按文件数显示归档进度（如 `50% 3 / 6 files`）与当前文件名，落盘校验阶段显示完成。
+进度条只用于展示，不改变命令的退出码与输出；非终端或 `--non-interactive` 下不显示。
+
 ## `backup list`
 
 只枚举安装根目录下的普通 `.lkb` 文件，按 `created_at` 从新到旧排列。输出至少包含备份
@@ -76,6 +84,17 @@ tar.gz checksum、归档路径、条目类型和内容完整性，但不会改�
 普通文件，`static/` 与 `geo_tmp/` 必须为目录；缺失任一必需条目的备份拒绝通过。
 verify 解包到随机命名的 `0700` 临时目录，解包目录与文件分别保持 `0700`/`0600`，
 不使用可预测路径，也不会在 `/tmp` 留下中间产物。
+
+## `backup delete`
+
+`--backup <ID>` 只解析安装根目录的备份 ID，ID 必须符合备份 ID 格式
+`YYYYMMDD-HHMMSS-<8位小写hex>`，其他取值视为参数错误。目标必须存在且为 root 所有、
+权限不宽于 `0600` 的普通文件（不跟随符号链接），符号链接、权限不安全与缺失的备份
+拒绝删除。删除前取得安装锁，避免与 switch、repair、restore 等正在引用备份的事务并发。
+
+交互模式先提示输入完整 `yes` 确认（其他输入视为取消并返回普通失败）；`--yes` 跳过
+确认；非交互模式缺少 `--yes` 视为参数错误。删除不可恢复，不会检查该备份是否仍被
+未完成事务引用。
 
 已有 v1 `.lkb` 始终可以 verify。所有 v1 备份都携带 `static.zip`，restore 可以从备份
 内容现场计算静态资产身份，不需要在 metadata 中记录仓库来源。

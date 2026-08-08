@@ -1,3 +1,1 @@
-systemd_worker.installation_complete = "安装完成"
-systemd_worker.installation_failed = "安装失败，退出码 %{exit_code}"
 systemd_worker.stop_failed_warning = "警告：Ctrl+C 已恢复终端，但无法停止委托操作，该操作可能仍在运行：%{error}"

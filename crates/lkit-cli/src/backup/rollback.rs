@@ -500,6 +500,7 @@ mod tests {
             &backup_geo,
             "",
             true,
+            None,
         )
         .unwrap();
 

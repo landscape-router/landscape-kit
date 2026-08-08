@@ -54,20 +54,28 @@ Esc 在非首页步骤返回上一步并保留已填写值；从 WAN 首页按 E
 确认层使用 Enter 取消向导并返回 Install 表单，Esc 关闭确认层并继续向导，尚未开始安装。
 
 Backup 面板在未安装、非 root 或安装状态不可读时只显示原因提示，不执行隐式操作。可用时
-进入面板后在后台执行与 `lkit backup list` 相同的解析和完整校验（含归档解包），列表顶部
-固定为“创建备份”动作，下方按创建时间从新到旧排列备份；损坏或权限不安全的条目标记为
-invalid 且不能打开或恢复。Up/Down 选择，Enter 在“创建备份”上打开创建对话框、在备份条目上
-打开 metadata 详情（与 `backup show` 相同的字段，Up/Down 滚动），详情页 V 在后台执行与
-`backup verify` 相同的完整校验并把结果显示在底栏，R 打开恢复确认层，Esc 返回列表。创建
-对话框显示 minimal scope 说明（不含 SQLite 数据文件、API token、日志和指标，需从运行中
-实例导出配置），并提供备注输入行：普通字符、退格、paste，最多 256 个字符，Enter 提交
-（走与 CLI 相同的备注校验，空备注直接创建，不带 `--remark`）、Esc 取消。恢复确认层展示
-备份 ID 与版本、提示当前版本将被替换，并显示 minimal scope 数据损失警告（不含 SQLite
-数据文件，数据库恢复后按备份配置重建；API token、日志和指标不包含，备份之后产生的数据
-将丢失）。Enter 确认后控制台把结构化 `Restore` 请求交给共享命令分发并退出 alternate
-screen（systemd 模式仍委托 worker，不解析 CLI 文本输出）；该请求标记为已确认
-（`--console-confirmed`），命令不再请求 `/dev/tty` 二次确认——worker 是独立进程，无法
-读取 TUI 键盘输入，继续交互确认会阻塞。Esc 取消。
+进入面板后在后台读取 `backups/` 下的 `.lkb` 列表：只读 32 字节 header 与 metadata JSON
+（不读取归档体，不计算校验和，不做解包校验），因此切换面板几乎瞬时。列表顶部固定为
+“创建备份”动作，下方按创建时间从新到旧排列备份；结构性损坏（magic、header、metadata
+JSON 等）或权限不安全的条目标记为 invalid 且不能打开或恢复，归档体损坏但 metadata
+完好的条目在列表内视为可读，完整校验交给详情页 V 与恢复流程。Up/Down 选择，Enter 在
+“创建备份”上打开创建对话框、在备份条目上打开 metadata 详情（与 `backup show` 相同的
+字段，Up/Down 滚动），详情页 V 在后台执行与 `backup verify` 相同的完整校验并把结果
+显示在底栏，R 打开恢复确认层，D 打开删除确认层（展示备份 ID、版本与"将永久删除"提示，
+Enter 删除、Esc 取消；删除在控制台内同步执行——与 CLI 相同的根目录解析、安装锁与文件
+校验，成功后自动刷新列表），Esc 返回列表。创建对话框显示 minimal scope 说明（不含
+SQLite 数据文件、API token、日志和指标，需从运行中实例导出配置），并提供备注输入行：
+普通字符、退格、paste，最多 256 个字符，Enter 提交（走与 CLI 相同的备注校验，空备注
+直接创建）、Esc 取消。提交后创建在控制台内进行：后台 worker 执行与 CLI 相同的完整
+流程（安装锁、中断事务恢复、配置导出、归档、落盘自校验），居中弹窗按阶段显示
+“导出配置 / 归档 N/M 个文件（当前文件名）/ 落盘校验”并带百分比 Gauge，完成自动刷新
+列表并显示创建的备份 ID，全程不退出控制台。恢复确认层展示备份 ID 与版本、提示当前
+版本将被替换，并显示 minimal scope 数据损失警告（不含 SQLite 数据文件，数据库恢复后
+按备份配置重建；API token、日志和指标不包含，备份之后产生的数据将丢失）。Enter 确认后
+控制台把结构化 `Restore` 请求交给共享命令分发并退出 alternate screen（systemd 模式仍
+委托 worker，不解析 CLI 文本输出）；该请求标记为已确认（`--console-confirmed`），命令
+不再请求 `/dev/tty` 二次确认——worker 是独立进程，无法读取 TUI 键盘输入，继续交互确认
+会阻塞。Esc 取消。
 
 首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
 pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个
@@ -93,10 +101,13 @@ pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇
 没有全屏结果页或流式输出被忽略时继续等待。控制台不得启动另一个 lkit
 进程或解析 CLI 文本输出。
 
-全屏页标题按操作显示（“正在安装/切换/更新/修复/恢复 Landscape”等）。restore 等没有字节
-下载的委托操作使用步骤进度条：worker 在准备、停止服务、激活、初始化与健康检查各阶段
-发送阶段与步骤事件（如 `2/4`），全屏页以百分比 Gauge 显示；下载型操作（install）仍显示
-字节进度条。
+全屏页标题按操作显示（“正在安装/切换/更新/修复/恢复 Landscape”等），每个委托操作
+一个完全独立的页面组件（`src/interaction/presentation/screens/` 下每个操作一个文件），
+各自维护完整的布局、进行中标题、完成/失败/取消结果页标题（如恢复完成显示
+“恢复完成/Restore complete”，不复用安装文案）、结果状态框文案与底栏提示；将来某个
+操作需要不同布局时只改它自己的文件。restore 等没有字节下载的委托操作使用步骤进度条：
+worker 在准备、停止服务、激活、初始化与健康检查各阶段发送阶段与步骤事件（如 `2/4`），
+全屏页以百分比 Gauge 显示；下载型操作（install）仍显示字节进度条。
 inline 安装只在内存中传递控制台密码。systemd worker 需要跨进程传递时，在
 `/run/lkit/operations` 创建 root-only `0600` 临时凭据文件，只把文件路径加入内部 worker
 参数；密码不进入 argv、环境、request JSON、stdout/stderr 或展示事件。worker 正常完成、

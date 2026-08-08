@@ -7,8 +7,10 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand};
 
 use crate::backup::lkb::{
-    BackupMetadata, LKB_METADATA_CAPACITY, backup_id_format_ok, validate_remark, verify_lkb,
+    BackupMetadata, BackupProgress, LKB_METADATA_CAPACITY, backup_id_format_ok,
+    read_backup_metadata_streamed, validate_remark, verify_lkb,
 };
+use crate::deployment::plan::InstallError;
 use crate::deployment::root::InstallRoot;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, plan, state, transaction};
@@ -31,6 +33,8 @@ pub enum BackupAction {
     Show(BackupShow),
     /// 完整校验备份
     Verify(BackupVerify),
+    /// 删除安装根目录下的备份
+    Delete(BackupDelete),
 }
 
 #[derive(Debug, Args)]
@@ -87,12 +91,25 @@ pub struct BackupVerify {
     pub test_runtime: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+pub struct BackupDelete {
+    /// 安装根目录 `backups/` 下的备份 ID
+    #[arg(long, value_name = "ID")]
+    pub backup: String,
+    /// 非交互模式确认删除
+    #[arg(long)]
+    pub yes: bool,
+    #[arg(long, value_name = "PATH")]
+    pub install_dir: Option<PathBuf>,
+}
+
 pub async fn run(args: &Backup) -> ExitCode {
     match &args.action {
         BackupAction::Create(args) => run_create(args).await,
         BackupAction::List(args) => run_list(args),
         BackupAction::Show(args) => run_show(args),
         BackupAction::Verify(args) => run_verify(args),
+        BackupAction::Delete(args) => run_delete(args),
     }
 }
 
@@ -125,107 +142,42 @@ async fn run_create(args: &BackupCreate) -> ExitCode {
             return exit_code(&error);
         }
     };
-    let _lock = match lock::acquire_install_lock(&root) {
-        Ok(lock) => lock,
-        Err(error) => {
-            eprintln!("backup: {error}");
-            return exit_code(&error);
+    let mut step = None::<crate::interaction::presentation::StepProgress>;
+    let mut total = 0u64;
+    let result = create_manual_backup(&root, &runtime, &remark, args.output.as_deref(), |p| {
+        let progress = step.get_or_insert_with(|| {
+            crate::interaction::presentation::StepProgress::new(
+                crate::tr!(crate::keys::PRESENTATION_BACKUP_CREATING),
+                0,
+            )
+        });
+        match p {
+            BackupProgress::Exporting => progress.set_state(
+                crate::tr!(crate::keys::PRESENTATION_BACKUP_PROGRESS_EXPORTING),
+                0,
+                0,
+            ),
+            BackupProgress::Archiving {
+                done,
+                total: t,
+                current,
+            } => {
+                total = t;
+                progress.set_state(current, done, t);
+            }
+            BackupProgress::Finalizing => progress.set_state(
+                crate::tr!(crate::keys::PRESENTATION_BACKUP_PROGRESS_FINALIZING),
+                total,
+                total,
+            ),
         }
-    };
-    let health = match runtime.health_options() {
-        Ok(health) => health,
-        Err(error) => {
-            eprintln!("backup: {error}");
-            return exit_code(&error);
-        }
-    };
-    let unfinished = match transaction::find_unfinished(&root) {
-        Ok(transaction) => transaction,
-        Err(error) => {
-            eprintln!("backup: {error}");
-            return exit_code(&error);
-        }
-    };
-    if let Some(transaction) = unfinished
-        && let Err(error) =
-            transaction::recover_interrupted(&root, &transaction, &runtime.systemd, &health).await
-    {
-        eprintln!("backup: {error}");
-        return exit_code(&error);
-    }
-    let Some(installed) = (match state::load_state(&root) {
-        Ok(state) => state,
-        Err(error) => {
-            eprintln!("backup: {error}");
-            return exit_code(&error);
-        }
-    }) else {
-        eprintln!(
-            "backup: {}",
-            crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION)
-        );
-        return ExitCode::from(2);
-    };
-    let result = (async {
-        crate::workflows::install::check_initialization(&root, &installed)?;
-        crate::workflows::install::verify_current_backend(&root, &installed)?;
-        let token = crate::backup::export::read_api_token(
-            &root.canonical.join("data/landscape_api_token"),
-            runtime.managed_uid,
-        )?;
-        let exported =
-            crate::backup::export::export_config(&runtime.export_base_url, &token).await?;
-        if exported.version != installed.active_version {
-            return Err(plan::InstallError::ExportFailed(format!(
-                "exported version {} does not match the running version {}",
-                exported.version, installed.active_version
-            )));
-        }
-        let version = crate::workflows::install::parse_stable_version(&installed.active_version)
-            .map_err(|error| {
-                plan::InstallError::CorruptedState(format!("invalid active version: {error}"))
-            })?;
-        let architecture = match installed.assets.webserver.architecture {
-            crate::deployment::state::StateArchitecture::X86_64 => "x86_64",
-            crate::deployment::state::StateArchitecture::Aarch64 => "aarch64",
-        };
-        let webserver = root
-            .canonical
-            .join("releases")
-            .join(&installed.active_version)
-            .join(WEBSERVER_BINARY);
-        let static_dir = root.canonical.join("current/static");
-        let static_archive = root
-            .canonical
-            .join("releases")
-            .join(&installed.active_version)
-            .join("static.zip");
-        let geo_tmp = root.canonical.join("data/geo_tmp");
-        let backup_ref = crate::backup::lkb::create_backup(
-            &root.canonical.join("backups"),
-            &version,
-            architecture,
-            &webserver,
-            &exported.content,
-            &static_dir,
-            &static_archive,
-            &geo_tmp,
-            &remark,
-            false,
-        )?;
-        if let Some(output) = &args.output {
-            let final_path = root.canonical.join(&backup_ref.path);
-            copy_backup_to_output(&final_path, output)?;
-        }
-        let metadata = verify_lkb(
-            &std::fs::read(root.canonical.join(&backup_ref.path))
-                .map_err(plan::InstallError::Io)?,
-        )?;
-        Ok(metadata)
     })
     .await;
     match result {
         Ok(metadata) => {
+            if let Some(progress) = step {
+                progress.finish();
+            }
             let path = if let Some(output) = &args.output {
                 output.display().to_string()
             } else {
@@ -247,10 +199,94 @@ async fn run_create(args: &BackupCreate) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
+            if let Some(progress) = step {
+                progress.abandon_failed();
+            }
             eprintln!("backup: {error}");
             exit_code(&error)
         }
     }
+}
+
+/// CLI 与交互控制台共用的手工备份创建流程：安装锁、中断事务恢复、运行状态
+/// 校验、配置导出、归档创建（含文件数进度）与最终自校验。`progress` 在
+/// 导出阶段和每个归档文件后收到事件。
+pub(crate) async fn create_manual_backup(
+    root: &InstallRoot,
+    runtime: &InstallRuntime,
+    remark: &str,
+    output: Option<&Path>,
+    mut progress: impl FnMut(BackupProgress),
+) -> Result<BackupMetadata, InstallError> {
+    let _lock = lock::acquire_install_lock(root)?;
+    let health = runtime.health_options()?;
+    let unfinished = transaction::find_unfinished(root)?;
+    if let Some(transaction) = unfinished
+        && let Err(error) =
+            transaction::recover_interrupted(root, &transaction, &runtime.systemd, &health).await
+    {
+        return Err(error);
+    }
+    let Some(installed) = state::load_state(root)? else {
+        return Err(plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION
+        )));
+    };
+    crate::workflows::install::check_initialization(root, &installed)?;
+    crate::workflows::install::verify_current_backend(root, &installed)?;
+    progress(BackupProgress::Exporting);
+    let token = crate::backup::export::read_api_token(
+        &root.canonical.join("data/landscape_api_token"),
+        runtime.managed_uid,
+    )?;
+    let exported = crate::backup::export::export_config(&runtime.export_base_url, &token).await?;
+    if exported.version != installed.active_version {
+        return Err(plan::InstallError::ExportFailed(format!(
+            "exported version {} does not match the running version {}",
+            exported.version, installed.active_version
+        )));
+    }
+    let version = crate::workflows::install::parse_stable_version(&installed.active_version)
+        .map_err(|error| {
+            plan::InstallError::CorruptedState(format!("invalid active version: {error}"))
+        })?;
+    let architecture = match installed.assets.webserver.architecture {
+        crate::deployment::state::StateArchitecture::X86_64 => "x86_64",
+        crate::deployment::state::StateArchitecture::Aarch64 => "aarch64",
+    };
+    let webserver = root
+        .canonical
+        .join("releases")
+        .join(&installed.active_version)
+        .join(WEBSERVER_BINARY);
+    let static_dir = root.canonical.join("current/static");
+    let static_archive = root
+        .canonical
+        .join("releases")
+        .join(&installed.active_version)
+        .join("static.zip");
+    let geo_tmp = root.canonical.join("data/geo_tmp");
+    let backup_ref = crate::backup::lkb::create_backup(
+        &root.canonical.join("backups"),
+        &version,
+        architecture,
+        &webserver,
+        &exported.content,
+        &static_dir,
+        &static_archive,
+        &geo_tmp,
+        remark,
+        false,
+        Some(&mut progress),
+    )?;
+    if let Some(output) = output {
+        let final_path = root.canonical.join(&backup_ref.path);
+        copy_backup_to_output(&final_path, output)?;
+    }
+    let metadata = verify_lkb(
+        &std::fs::read(root.canonical.join(&backup_ref.path)).map_err(plan::InstallError::Io)?,
+    )?;
+    Ok(metadata)
 }
 
 fn run_list(args: &BackupList) -> ExitCode {
@@ -321,6 +357,22 @@ fn run_list(args: &BackupList) -> ExitCode {
 pub(crate) fn list_backups(
     root: &InstallRoot,
 ) -> Result<Vec<(Option<BackupMetadata>, PathBuf)>, plan::InstallError> {
+    list_backups_with(root, BackupListCheck::Full)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BackupListCheck {
+    /// 完整校验：checksum + 安全解包并检查必需条目。CLI `backup list` 使用。
+    Full,
+    /// 只读容器 Header 与 metadata 区（前 1 MiB），不读取归档体。控制台列表
+    /// 使用，保证切换面板时的响应速度；完整校验由 V 与恢复流程按需执行。
+    Metadata,
+}
+
+pub(crate) fn list_backups_with(
+    root: &InstallRoot,
+    check: BackupListCheck,
+) -> Result<Vec<(Option<BackupMetadata>, PathBuf)>, plan::InstallError> {
     let backups_dir = root.canonical.join("backups");
     let entries = match std::fs::read_dir(&backups_dir) {
         Ok(entries) => entries,
@@ -342,30 +394,11 @@ pub(crate) fn list_backups(
             rows.push((None, path));
             continue;
         }
-        let bytes = std::fs::read(&path)?;
-        let parsed = match verify_lkb(&bytes) {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                rows.push((None, path));
-                continue;
-            }
+        let parsed = match check {
+            BackupListCheck::Metadata => read_metadata_only(&path)?,
+            BackupListCheck::Full => read_verified(&path)?,
         };
-        // 内容完整性校验与 verify 相同:归档必须包含全部必需条目。
-        let verify_dir =
-            std::env::temp_dir().join(format!("lkit-backup-list-{}", uuid::Uuid::now_v7()));
-        let content = crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
-            .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir));
-        match content {
-            Ok(_) => rows.push((Some(parsed), path)),
-            Err(plan::InstallError::InvalidBackup(_)) => {
-                rows.push((None, path));
-            }
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&verify_dir);
-                return Err(error);
-            }
-        }
-        let _ = std::fs::remove_dir_all(&verify_dir);
+        rows.push((parsed, path));
     }
     rows.sort_by(|a, b| match (&a.0, &b.0) {
         (Some(a), Some(b)) => b.created_at.cmp(&a.created_at),
@@ -374,6 +407,34 @@ pub(crate) fn list_backups(
         (None, None) => std::cmp::Ordering::Equal,
     });
     Ok(rows)
+}
+
+fn read_verified(path: &Path) -> Result<Option<BackupMetadata>, plan::InstallError> {
+    let bytes = std::fs::read(path)?;
+    let parsed = match verify_lkb(&bytes) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(None),
+    };
+    // 内容完整性校验与 verify 相同:归档必须包含全部必需条目。
+    let verify_dir =
+        std::env::temp_dir().join(format!("lkit-backup-list-{}", uuid::Uuid::now_v7()));
+    let content = crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
+        .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir));
+    let result = match content {
+        Ok(_) => Ok(Some(parsed)),
+        Err(plan::InstallError::InvalidBackup(_)) => Ok(None),
+        Err(error) => Err(error),
+    };
+    let _ = std::fs::remove_dir_all(&verify_dir);
+    result
+}
+
+fn read_metadata_only(path: &Path) -> Result<Option<BackupMetadata>, plan::InstallError> {
+    let file_len = std::fs::metadata(path)
+        .map_err(plan::InstallError::Io)?
+        .len();
+    let mut file = std::fs::File::open(path).map_err(plan::InstallError::Io)?;
+    Ok(read_backup_metadata_streamed(&mut file, file_len).ok())
 }
 
 fn run_show(args: &BackupShow) -> ExitCode {
@@ -457,6 +518,84 @@ fn run_verify(args: &BackupVerify) -> ExitCode {
         )
     );
     ExitCode::SUCCESS
+}
+
+fn run_delete(args: &BackupDelete) -> ExitCode {
+    if !backup_id_format_ok(&args.backup) {
+        eprintln!(
+            "backup: {}",
+            crate::tr!(crate::keys::BACKUP_DELETE_INVALID_ID, id = args.backup)
+        );
+        return ExitCode::from(2);
+    }
+    if !args.yes {
+        if crate::interaction::interactive::is_non_interactive() {
+            eprintln!(
+                "backup: {}",
+                crate::tr!(crate::keys::BACKUP_DELETE_REQUIRES_YES)
+            );
+            return ExitCode::from(2);
+        }
+        let accepted = match crate::interaction::interactive::confirm(&crate::tr!(
+            crate::keys::BACKUP_DELETE_CONFIRM,
+            backup_id = args.backup
+        )) {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                eprintln!("backup: {error}");
+                return exit_code(&error);
+            }
+        };
+        if !accepted {
+            eprintln!("backup: {}", crate::tr!(crate::keys::BACKUP_DELETE_REFUSED));
+            return ExitCode::FAILURE;
+        }
+    }
+    let root = match resolve_root(args.install_dir.as_deref()) {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("backup: {error}");
+            return exit_code(&error);
+        }
+    };
+    let _lock = match lock::acquire_install_lock(&root) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("backup: {error}");
+            return exit_code(&error);
+        }
+    };
+    match delete_backup(&root, &args.backup) {
+        Ok(()) => {
+            println!(
+                "backup: {}",
+                crate::tr!(crate::keys::BACKUP_DELETED, backup_id = args.backup)
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("backup: {error}");
+            exit_code(&error)
+        }
+    }
+}
+
+/// 删除安装根目录 `backups/` 下的备份：ID 必须已通过格式校验，目标必须是
+/// root 所有、权限不宽于 `0600` 的普通文件（不跟随符号链接）。CLI 与
+/// 交互控制台共用。
+pub(crate) fn delete_backup(root: &InstallRoot, backup_id: &str) -> Result<(), InstallError> {
+    let path = root
+        .canonical
+        .join("backups")
+        .join(format!("{backup_id}.lkb"));
+    if !path.is_file() {
+        return Err(plan::InstallError::InvalidBackup(format!(
+            "backup {backup_id} not found under {}",
+            root.canonical.join("backups").display()
+        )));
+    }
+    validate_backup_file(&path)?;
+    std::fs::remove_file(&path).map_err(plan::InstallError::Io)
 }
 
 fn resolve_backup_bytes(
@@ -696,6 +835,7 @@ mod tests {
             &source.join("geo_tmp"),
             "",
             true,
+            None,
         )
         .unwrap();
         let valid = backups.join(format!("{}.lkb", backup.backup_id));
@@ -908,6 +1048,162 @@ mod tests {
             install_dir: Some(dir.clone()),
         };
         assert_eq!(run_list(&args), ExitCode::FAILURE);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn metadata_list_mode_reads_only_the_metadata_region() {
+        let dir = temp_dir("metadata-list");
+        let source = dir.join("source");
+        std::fs::create_dir_all(source.join("static/assets")).unwrap();
+        let webserver = source.join("landscape-webserver");
+        std::fs::write(&webserver, b"binary").unwrap();
+        std::fs::write(source.join("static/index.html"), b"<h1>x</h1>").unwrap();
+        std::fs::write(source.join("static.zip"), b"zip").unwrap();
+        std::fs::create_dir_all(source.join("geo_tmp")).unwrap();
+        std::fs::write(source.join("geo_tmp/geo.dat"), b"geo").unwrap();
+        let backups = dir.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+        let backup = crate::backup::lkb::create_backup(
+            &backups,
+            &semver::Version::new(1, 2, 3),
+            "x86_64",
+            &webserver,
+            "version = \"1.2.3\"\n",
+            &source.join("static"),
+            &source.join("static.zip"),
+            &source.join("geo_tmp"),
+            "",
+            true,
+            None,
+        )
+        .unwrap();
+        let path = backups.join(format!("{}.lkb", backup.backup_id));
+        let root = crate::deployment::root::InstallRoot {
+            install_root: dir.clone(),
+            canonical: dir.clone(),
+        };
+
+        let rows = list_backups_with(&root, BackupListCheck::Full).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].0.is_some());
+
+        // 归档体被篡改但 header/metadata 完好：Full 标记 invalid，
+        // Metadata 快速模式仍能展示（V 键与 restore 做完整校验）。
+        let bytes = std::fs::read(&path).unwrap();
+        let mut bad = bytes.clone();
+        let end = bad.len();
+        bad[end - 1] ^= 0xFF;
+        std::fs::write(&path, &bad).unwrap();
+        let rows = list_backups_with(&root, BackupListCheck::Full).unwrap();
+        assert!(rows[0].0.is_none());
+        let rows = list_backups_with(&root, BackupListCheck::Metadata).unwrap();
+        assert!(rows[0].0.is_some());
+
+        // 结构性损坏（magic 被改）：两种模式都标记 invalid。
+        let mut bad = bytes.clone();
+        bad[0] = b'X';
+        std::fs::write(&path, &bad).unwrap();
+        for check in [BackupListCheck::Full, BackupListCheck::Metadata] {
+            let rows = list_backups_with(&root, check).unwrap();
+            assert!(rows[0].0.is_none(), "{check:?} must reject a bad header");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deletes_a_valid_backup_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("delete-ok");
+        let backups = dir.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+        let path = backups.join("20260807-131500-ab12cd34.lkb");
+        std::fs::write(&path, b"lkb bytes").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let root = crate::deployment::root::InstallRoot {
+            install_root: dir.clone(),
+            canonical: dir.clone(),
+        };
+        delete_backup(&root, "20260807-131500-ab12cd34").unwrap();
+        assert!(!path.exists(), "the backup file must be removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_unsafe_or_missing_backups_on_delete() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("delete-refuse");
+        let backups = dir.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+        let root = crate::deployment::root::InstallRoot {
+            install_root: dir.clone(),
+            canonical: dir.clone(),
+        };
+
+        assert!(delete_backup(&root, "20260807-131500-ab12cd34").is_err());
+
+        let loose = backups.join("20260807-131500-ab12cd34.lkb");
+        std::fs::write(&loose, b"lkb bytes").unwrap();
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            delete_backup(&root, "20260807-131500-ab12cd34").is_err(),
+            "permission-unsafe backups must not be deleted"
+        );
+        assert!(loose.exists());
+
+        std::fs::remove_file(&loose).unwrap();
+        std::os::unix::fs::symlink(dir.join("outside"), &loose).unwrap();
+        assert!(
+            delete_backup(&root, "20260807-131500-ab12cd34").is_err(),
+            "symbolic links must not be deleted"
+        );
+        assert!(std::fs::symlink_metadata(&loose).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_requires_yes_in_non_interactive_mode() {
+        crate::interaction::interactive::configure(true);
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::interaction::interactive::configure(false);
+            }
+        }
+        let _reset = Reset;
+        let dir = temp_dir("delete-noyes");
+        let args = BackupDelete {
+            backup: "20260807-131500-ab12cd34".into(),
+            yes: false,
+            install_dir: Some(dir.clone()),
+        };
+        assert_eq!(run_delete(&args), ExitCode::from(2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_rejects_malformed_ids_and_missing_files() {
+        crate::interaction::interactive::configure(true);
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::interaction::interactive::configure(false);
+            }
+        }
+        let _reset = Reset;
+        let dir = temp_dir("delete-bad");
+        let args = BackupDelete {
+            backup: "../escape".into(),
+            yes: true,
+            install_dir: Some(dir.clone()),
+        };
+        assert_eq!(run_delete(&args), ExitCode::from(2));
+        let args = BackupDelete {
+            backup: "20260807-131500-ab12cd34".into(),
+            yes: true,
+            install_dir: Some(dir.clone()),
+        };
+        assert_eq!(run_delete(&args), ExitCode::FAILURE);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
