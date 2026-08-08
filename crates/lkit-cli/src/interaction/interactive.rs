@@ -11,6 +11,16 @@ const TTY_PATH: &str = "/dev/tty";
 pub(crate) const SYSTEMD_WORKER_TTY_ENV: &str = "LKIT_INTERNAL_SYSTEMD_WORKER_TTY";
 static NON_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
+#[cfg(test)]
+static TEST_INTERACTIVE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_INTERACTIVE_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub(crate) fn configure(non_interactive: bool) {
     NON_INTERACTIVE.store(non_interactive, Ordering::SeqCst);
 }

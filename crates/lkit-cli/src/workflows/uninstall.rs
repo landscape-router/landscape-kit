@@ -550,10 +550,8 @@ esac
     static YES: fn(&str) -> Result<bool, InstallError> = |_| Ok(true);
     static TOKEN: fn() -> Result<String, InstallError> = || Ok("tok".into());
 
-    static INTERACTIVE_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    async fn interactive_guard() -> tokio::sync::MutexGuard<'static, ()> {
-        INTERACTIVE_MUTEX.lock().await
+    async fn interactive_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::interaction::interactive::test_guard()
     }
 
     fn export_server(version: String) -> TestServer {

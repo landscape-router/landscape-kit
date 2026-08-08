@@ -916,10 +916,8 @@ mod tests {
 
     /// `is_non_interactive()` 是进程级全局状态,并发 tokio 测试会互相干扰;
     /// 涉及交互模式的测试必须串行执行。
-    static INTERACTIVE_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    async fn interactive_guard() -> tokio::sync::MutexGuard<'static, ()> {
-        INTERACTIVE_MUTEX.lock().await
+    async fn interactive_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::interaction::interactive::test_guard()
     }
 
     fn export_server(version: String) -> TestServer {

@@ -800,6 +800,7 @@ mod tests {
             resolve_remark(&Some("two\nlines".into())),
             Err(plan::InstallError::ParameterUsage(_))
         ));
+        let _interactive_guard = crate::interaction::interactive::test_guard();
         crate::interaction::interactive::configure(true);
         struct Reset;
         impl Drop for Reset {
@@ -1163,6 +1164,7 @@ mod tests {
 
     #[test]
     fn delete_requires_yes_in_non_interactive_mode() {
+        let _interactive_guard = crate::interaction::interactive::test_guard();
         crate::interaction::interactive::configure(true);
         struct Reset;
         impl Drop for Reset {
@@ -1183,6 +1185,7 @@ mod tests {
 
     #[test]
     fn delete_rejects_malformed_ids_and_missing_files() {
+        let _interactive_guard = crate::interaction::interactive::test_guard();
         crate::interaction::interactive::configure(true);
         struct Reset;
         impl Drop for Reset {
