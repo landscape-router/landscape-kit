@@ -18,15 +18,10 @@ lkit --non-interactive install ... # 严格非交互命令模式
 
 - Overview：读取默认或 `LKIT_INSTALL_DIR` 指定根目录的安装状态；
 - Install：首次安装表单；
-- Backup：备份列表、创建与恢复；
-- Versions；
-- Configuration；
-- Services；
-- Network；
-- Diagnostics。
+- Backup：备份列表、创建与恢复。
 
-除 Overview、Install 和 Backup 外的面板在对应管理能力实现前明确显示不可用，不执行隐式
-操作。后续功能继续加入相同侧栏外壳，不改变 CLI 子命令契约。
+检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
+Up/Down 导航会跳过它；面板仍可显示“已安装”提示。
 
 Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认、service
 manager 和网络接管选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。

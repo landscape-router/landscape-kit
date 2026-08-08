@@ -121,35 +121,16 @@ enum Menu {
     Overview,
     Install,
     Backup,
-    Versions,
-    Configuration,
-    Services,
-    Network,
-    Diagnostics,
 }
 
 impl Menu {
-    const ALL: [Self; 8] = [
-        Self::Overview,
-        Self::Install,
-        Self::Backup,
-        Self::Versions,
-        Self::Configuration,
-        Self::Services,
-        Self::Network,
-        Self::Diagnostics,
-    ];
+    const ALL: [Self; 3] = [Self::Overview, Self::Install, Self::Backup];
 
     fn label(self) -> String {
         match self {
             Self::Overview => crate::tr!(crate::keys::CONSOLE_OVERVIEW),
             Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
             Self::Backup => crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
-            Self::Versions => crate::tr!(crate::keys::CONSOLE_VERSIONS),
-            Self::Configuration => crate::tr!(crate::keys::CONSOLE_CONFIGURATION),
-            Self::Services => crate::tr!(crate::keys::CONSOLE_SERVICES),
-            Self::Network => crate::tr!(crate::keys::CONSOLE_NETWORK),
-            Self::Diagnostics => crate::tr!(crate::keys::CONSOLE_DIAGNOSTICS),
         }
     }
 }
@@ -551,8 +532,38 @@ impl ConsoleApp {
         Menu::ALL[self.menu_index]
     }
 
+    /// 已安装时首次安装表单不可用，Install 菜单不可选中。
+    fn install_available(&self) -> bool {
+        !matches!(self.snapshot, Snapshot::Installed { .. })
+    }
+
+    fn menu_available(&self, menu: Menu) -> bool {
+        menu != Menu::Install || self.install_available()
+    }
+
+    fn select_next_menu(&mut self) {
+        for index in (self.menu_index + 1)..Menu::ALL.len() {
+            if self.menu_available(Menu::ALL[index]) {
+                self.menu_index = index;
+                return;
+            }
+        }
+    }
+
+    fn select_previous_menu(&mut self) {
+        for index in (0..self.menu_index).rev() {
+            if self.menu_available(Menu::ALL[index]) {
+                self.menu_index = index;
+                return;
+            }
+        }
+    }
+
     fn update(&mut self) {
-        if self.menu() == Menu::Install && matches!(&self.preflight.state, PreflightState::NotRun) {
+        if self.menu() == Menu::Install
+            && self.install_available()
+            && matches!(&self.preflight.state, PreflightState::NotRun)
+        {
             self.preflight.start();
         }
         self.preflight.poll();
@@ -677,18 +688,14 @@ impl ConsoleApp {
                 };
             }
             KeyCode::Up => match self.focus {
-                Focus::Navigation => {
-                    self.menu_index = self.menu_index.saturating_sub(1);
-                }
+                Focus::Navigation => self.select_previous_menu(),
                 Focus::Panel if self.menu() == Menu::Install => {
                     self.install.select_previous();
                 }
                 Focus::Panel => {}
             },
             KeyCode::Down => match self.focus {
-                Focus::Navigation => {
-                    self.menu_index = (self.menu_index + 1).min(Menu::ALL.len() - 1);
-                }
+                Focus::Navigation => self.select_next_menu(),
                 Focus::Panel if self.menu() == Menu::Install && self.install.checks_selected => {
                     match self.preflight_gate() {
                         GateState::None => self.install.select_next(),
@@ -701,7 +708,11 @@ impl ConsoleApp {
                 }
                 Focus::Panel => {}
             },
-            KeyCode::Right if self.focus == Focus::Navigation => self.focus = Focus::Panel,
+            KeyCode::Right
+                if self.focus == Focus::Navigation && self.menu_available(self.menu()) =>
+            {
+                self.focus = Focus::Panel;
+            }
             KeyCode::Left if self.focus == Focus::Panel => self.focus = Focus::Navigation,
             KeyCode::Right
                 if self.focus == Focus::Panel
@@ -757,7 +768,11 @@ impl ConsoleApp {
                     }
                 }
             }
-            KeyCode::Enter if self.focus == Focus::Navigation => self.focus = Focus::Panel,
+            KeyCode::Enter
+                if self.focus == Focus::Navigation && self.menu_available(self.menu()) =>
+            {
+                self.focus = Focus::Panel;
+            }
             _ => {}
         }
         None
@@ -768,7 +783,11 @@ impl ConsoleApp {
         self.exit_state = ExitState::Idle;
         self.notice = "Ready".into();
         self.snapshot = Snapshot::load(&self.install.install_dir);
-        if !matches!(&self.preflight.state, PreflightState::NotRun) {
+        if !self.menu_available(self.menu()) {
+            self.menu_index = 0;
+            self.focus = Focus::Navigation;
+        }
+        if self.install_available() && !matches!(&self.preflight.state, PreflightState::NotRun) {
             self.preflight.restart();
         }
     }
@@ -2416,7 +2435,14 @@ fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 fn render_navigation(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let items: Vec<ListItem<'_>> = Menu::ALL
         .iter()
-        .map(|menu| ListItem::new(menu.label()))
+        .map(|menu| {
+            let style = if app.menu_available(*menu) {
+                Style::default()
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            ListItem::new(Span::styled(menu.label(), style))
+        })
         .collect();
     let mut state = ListState::default().with_selected(Some(app.menu_index));
     let highlight = if app.focus == Focus::Navigation {
@@ -2438,23 +2464,29 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     match app.menu() {
         Menu::Overview => render_overview(frame, app, area),
-        Menu::Install => render_install(frame, app, area),
-        Menu::Backup => render_backup(frame, app, area),
-        menu => {
+        Menu::Install if app.install_available() => render_install(frame, app, area),
+        Menu::Install => {
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::styled(menu.label(), Style::default().add_modifier(Modifier::BOLD)),
+                    Line::styled(
+                        crate::tr!(crate::keys::CONSOLE_LANDSCAPE_IS_INSTALLED),
+                        Style::default().fg(Color::Green),
+                    ),
                     Line::raw(""),
                     Line::styled(
-                        crate::tr!(crate::keys::CONSOLE_NOT_AVAILABLE_IN_THIS_RELEASE),
+                        crate::tr!(crate::keys::CONSOLE_INSTALL_UNAVAILABLE),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ])
-                .block(panel_block(menu.label().as_str(), focused))
+                .block(panel_block(
+                    &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
+                    focused,
+                ))
                 .wrap(Wrap { trim: true }),
                 area,
             );
         }
+        Menu::Backup => render_backup(frame, app, area),
     }
 }
 
@@ -3529,9 +3561,78 @@ mod tests {
 
         assert!(terminal_content(&terminal).contains("> Overview"));
 
-        app.menu_index = 3;
+        app.menu_index = 2;
         terminal.draw(|frame| render(frame, &app)).unwrap();
-        assert!(terminal_content(&terminal).contains("> Versions"));
+        assert!(terminal_content(&terminal).contains("> Backup"));
+    }
+
+    #[test]
+    fn install_menu_is_skipped_when_landscape_is_installed() {
+        let mut app = ConsoleApp::new();
+        app.snapshot = installed_snapshot();
+        assert_eq!(app.menu(), Menu::Overview);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Backup);
+
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Overview);
+    }
+
+    #[test]
+    fn install_menu_stays_selectable_when_not_installed() {
+        let mut app = ConsoleApp::new();
+        app.snapshot = Snapshot::NotInstalled;
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Install);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Backup);
+    }
+
+    #[test]
+    fn installed_snapshot_renders_install_menu_disabled() {
+        let _language = LanguageGuard::set(Language::En);
+        let backend = TestBackend::new(100, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = ConsoleApp::new();
+        app.snapshot = installed_snapshot();
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        let mut found = false;
+        for index in 0..buffer.content.len().saturating_sub(7) {
+            if index % width >= 24 {
+                continue;
+            }
+            let text: String = buffer.content[index..index + 7]
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            if text == "Install" && buffer.content[index + 7].symbol() != "e" {
+                assert_eq!(buffer.content[index].fg, Color::DarkGray);
+                found = true;
+            }
+        }
+        assert!(found, "Install label rendered in sidebar");
+    }
+
+    #[test]
+    fn installed_snapshot_renders_install_panel_unavailable() {
+        let _language = LanguageGuard::set(Language::En);
+        let backend = TestBackend::new(100, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.snapshot = installed_snapshot();
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Landscape is installed"));
+        assert!(content.contains("unavailable"));
     }
 
     #[test]
