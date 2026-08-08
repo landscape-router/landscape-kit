@@ -189,3 +189,21 @@ pub(crate) const CONSOLE_BACKUP_DELETE_PRESS_ENTER: &str = "console.backup_delet
 pub(crate) const CONSOLE_BACKUP_DELETED: &str = "console.backup_deleted";
 pub(crate) const CONSOLE_BACKUP_HINT_DELETE_CONFIRM: &str = "console.backup_hint_delete_confirm";
 pub(crate) const CONSOLE_BACKUP_SELECT_TO_DELETE: &str = "console.backup_select_to_delete";
+pub(crate) const CONSOLE_UPDATE_MENU: &str = "console.update_menu";
+pub(crate) const CONSOLE_UPDATE_UNAVAILABLE: &str = "console.update_unavailable";
+pub(crate) const CONSOLE_UPDATE_CURRENT_VERSION_LABEL: &str =
+    "console.update_current_version_label";
+pub(crate) const CONSOLE_UPDATE_BUTTON: &str = "console.update_button";
+pub(crate) const CONSOLE_UPDATE_RESOLVING: &str = "console.update_resolving";
+pub(crate) const CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED: &str =
+    "console.update_resolve_worker_stopped";
+pub(crate) const CONSOLE_UPDATE_REPOSITORY_UNAVAILABLE: &str =
+    "console.update_repository_unavailable";
+pub(crate) const CONSOLE_UPDATE_CONFIRM_TITLE: &str = "console.update_confirm_title";
+pub(crate) const CONSOLE_UPDATE_CONFIRM_QUESTION: &str = "console.update_confirm_question";
+pub(crate) const CONSOLE_UPDATE_CONFIRM_PLAN: &str = "console.update_confirm_plan";
+pub(crate) const CONSOLE_UPDATE_CONFIRM_NOTE: &str = "console.update_confirm_note";
+pub(crate) const CONSOLE_UPDATE_CONFIRM_PRESS_ENTER: &str = "console.update_confirm_press_enter";
+pub(crate) const CONSOLE_UPDATE_HINT_PANEL: &str = "console.update_hint_panel";
+pub(crate) const CONSOLE_UPDATE_HINT_CONFIRM: &str = "console.update_hint_confirm";
+pub(crate) const CONSOLE_UPDATE_HINT_RESOLVING: &str = "console.update_hint_resolving";

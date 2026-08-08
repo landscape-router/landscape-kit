@@ -74,3 +74,14 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 - 状态：`部分覆盖`
 - 证据：[失败切换与自动回滚](../rollback.md)、[S2/S3 扩展场景](../extended.md)
 - 缺口：现有回滚证据针对 `lkit switch`，update 委托同一流水线，无独立回滚路径。
+
+## UP-08
+
+**控制台 Update 面板分发时跳过 tty 交互**
+
+- 测试层：Rust workflow/CLI
+- 状态：`已覆盖`
+- 证据：[`lkit update`](../../../commands/update.md)、[交互控制台](../../../interaction/console.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：控制台把渠道选择与升级确认在 TUI 内完成（见 [UI-12](console.md#ui-12)），分发时
+  标记 `--console-confirmed`：命令不再打开 `/dev/tty`，未显式 `--repository` 时按 switch
+  规则解析来源，switch 流水线内部的交互确认同样视为已确认；目标解析、比较与执行不变。

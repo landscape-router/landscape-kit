@@ -23,7 +23,9 @@ use crate::check;
 use crate::check::model::{CheckReport, Status};
 use crate::commands::backup::{architecture_key, scope_key};
 use crate::commands::install::Install;
+use crate::commands::update::{ResolvedUpdate, resolve_update_target};
 use crate::commands::{Commands, ServiceManagerArg};
+use crate::deployment::config::{RepositorySource, RepositorySourceKind};
 use crate::deployment::{lock, plan, root, state};
 use crate::i18n::Language;
 use crate::interaction::credentials;
@@ -121,16 +123,18 @@ enum Menu {
     Overview,
     Install,
     Backup,
+    Update,
 }
 
 impl Menu {
-    const ALL: [Self; 3] = [Self::Overview, Self::Install, Self::Backup];
+    const ALL: [Self; 4] = [Self::Overview, Self::Install, Self::Backup, Self::Update];
 
     fn label(self) -> String {
         match self {
             Self::Overview => crate::tr!(crate::keys::CONSOLE_OVERVIEW),
             Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
             Self::Backup => crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
+            Self::Update => crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
         }
     }
 }
@@ -474,6 +478,33 @@ fn delete_backup_via_console(install_dir: &str, backup_id: &str) -> Result<(), S
     crate::commands::backup::delete_backup(&root, backup_id).map_err(|error| error.to_string())
 }
 
+/// Update 面板后台解析：与命令模式 `lkit update` 相同的根目录解析、状态读取、
+/// 来源解析与目标版本解析/比较（复用 `resolve_update_target`），网络只读，零副作用。
+fn resolve_update_from_console(
+    install_dir: &str,
+    repository: &plan::RepositoryChoice,
+    version: &str,
+) -> Result<ResolvedUpdate, String> {
+    let requested = PathBuf::from(install_dir);
+    let selected = plan::select_install_root(
+        Some(&requested),
+        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    let root = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+    let state = state::load_state(&root)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| crate::tr!(crate::keys::MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION))?;
+    let target = plan::TargetVersion::parse(version).map_err(|error| error.to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("build update resolve runtime: {error}"))?;
+    runtime
+        .block_on(resolve_update_target(&state, repository, &target))
+        .map_err(|error| error.to_string())
+}
+
 /// 环境检查门禁：Pass 和 warning 放行；NotRun/Running 静默等待；
 /// Error、unknown 和 worker 失败通过居中弹窗阻断。
 enum GateState {
@@ -507,6 +538,8 @@ struct ConsoleApp {
     network_wizard: Option<NetworkWizard>,
     backup: BackupPanel,
     backup_menu_active: bool,
+    update: UpdatePanel,
+    update_menu_active: bool,
 }
 
 impl ConsoleApp {
@@ -525,6 +558,8 @@ impl ConsoleApp {
             network_wizard: None,
             backup: BackupPanel::default(),
             backup_menu_active: false,
+            update: UpdatePanel::default(),
+            update_menu_active: false,
         }
     }
 
@@ -538,7 +573,11 @@ impl ConsoleApp {
     }
 
     fn menu_available(&self, menu: Menu) -> bool {
-        menu != Menu::Install || self.install_available()
+        match menu {
+            Menu::Install => self.install_available(),
+            Menu::Update => matches!(self.snapshot, Snapshot::Installed { .. }),
+            _ => true,
+        }
     }
 
     fn select_next_menu(&mut self) {
@@ -581,6 +620,15 @@ impl ConsoleApp {
             self.backup_menu_active = false;
         }
         self.backup.poll(&mut self.notice);
+        if self.menu() == Menu::Update {
+            if !self.update_menu_active {
+                self.update_menu_active = true;
+                self.update.load_config(&self.install.install_dir);
+            }
+        } else {
+            self.update_menu_active = false;
+        }
+        self.update.poll(&mut self.notice);
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
@@ -616,6 +664,12 @@ impl ConsoleApp {
                 Some(action) => return action,
                 None => {}
             }
+        }
+        if self.menu() == Menu::Update
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_update_key(key)
+        {
+            return action;
         }
         if self.exit_state == ExitState::Confirming {
             match key.code {
@@ -860,6 +914,16 @@ impl ConsoleApp {
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
+        } else if self.menu() == Menu::Update && self.focus == Focus::Panel {
+            if self.update.confirming.is_some() {
+                crate::tr!(crate::keys::CONSOLE_UPDATE_HINT_CONFIRM)
+            } else if self.update.resolving.is_some() {
+                crate::tr!(crate::keys::CONSOLE_UPDATE_HINT_RESOLVING)
+            } else if self.update.editing {
+                crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_UPDATE_HINT_PANEL)
+            }
         } else if self.menu() == Menu::Backup && self.focus == Focus::Panel {
             if self.backup.delete_confirming {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_DELETE_CONFIRM)
@@ -1177,6 +1241,166 @@ impl ConsoleApp {
             _ => return None,
         }
         Some(None)
+    }
+
+    /// Update 面板按键：确认层、解析中、编辑与表单导航。返回 `None` 表示按键
+    /// 未消费（如 Left 返回侧栏、Esc 进入退出确认），回落到主处理流程。
+    fn handle_update_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
+        if self.update.confirming.is_some() {
+            match key.code {
+                KeyCode::Enter => {
+                    let action = self.update_action();
+                    self.update.confirming = None;
+                    return Some(Some(action));
+                }
+                KeyCode::Esc => {
+                    self.update.confirming = None;
+                    return Some(None);
+                }
+                _ => return Some(None),
+            }
+        }
+        if self.update.resolving.is_some() {
+            return Some(None);
+        }
+        if self.update.editing {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => self.update.editing = false,
+                KeyCode::Backspace => {
+                    self.update.editable_value_mut().map(String::pop);
+                }
+                KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(value) = self.update.editable_value_mut()
+                        && value.chars().count() < 1024
+                    {
+                        value.push(character);
+                    }
+                }
+                _ => {}
+            }
+            return Some(None);
+        }
+        match key.code {
+            KeyCode::Up => {
+                self.update.selected = match self.update.selected {
+                    0 => 0,
+                    1 => 0,
+                    2 => 1,
+                    _ if self.update.repository == UpdateRepositoryMode::Custom => 2,
+                    _ => 1,
+                };
+            }
+            KeyCode::Down => {
+                self.update.selected = match self.update.selected {
+                    0 => 1,
+                    1 if self.update.repository == UpdateRepositoryMode::Custom => 2,
+                    _ => 3,
+                };
+            }
+            KeyCode::Right if self.update.selected == 1 => self.update.change(true),
+            KeyCode::Enter | KeyCode::Char(' ') => match self.update.selected {
+                0 | 2 => self.update.editing = true,
+                1 => self.update.change(true),
+                3 => {
+                    if let Err(error) = self.start_update_resolution() {
+                        self.notice = error;
+                    }
+                }
+                _ => {}
+            },
+            _ => return None,
+        }
+        Some(None)
+    }
+
+    /// 校验表单并启动后台目标解析（与命令模式相同的版本、来源与 URL 校验）。
+    fn start_update_resolution(&mut self) -> Result<(), String> {
+        if self.update.resolving.is_some() {
+            return Ok(());
+        }
+        plan::TargetVersion::parse(self.update.version.trim())
+            .map_err(|error| error.to_string())?;
+        if self.update.repository == UpdateRepositoryMode::Custom {
+            plan::RepositoryChoice::Http(self.update.repository_url.trim().to_string())
+                .resolve()
+                .map_err(|error| error.to_string())?;
+        }
+        if self.update.repository == UpdateRepositoryMode::Current
+            && self.update.current_source.is_none()
+        {
+            return Err(crate::tr!(
+                crate::keys::CONSOLE_UPDATE_REPOSITORY_UNAVAILABLE
+            ));
+        }
+        let (sender, receiver) = mpsc::channel();
+        let install_dir = self.install.install_dir.clone();
+        let repository = match self.update.repository {
+            UpdateRepositoryMode::Current => self
+                .update
+                .current_source
+                .as_ref()
+                .expect("the current source is selected without a config source")
+                .to_choice(),
+            UpdateRepositoryMode::Github => plan::RepositoryChoice::Github(
+                crate::release::repository::github::DEFAULT_REPOSITORY.into(),
+            ),
+            UpdateRepositoryMode::Mirror => plan::RepositoryChoice::Mirror,
+            UpdateRepositoryMode::Custom => {
+                plan::RepositoryChoice::Http(self.update.repository_url.trim().to_string())
+            }
+        };
+        let version = self.update.version.trim().to_string();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                resolve_update_from_console(&install_dir, &repository, &version)
+            });
+            let _ = sender.send(result);
+        });
+        self.update.resolving = Some(receiver);
+        Ok(())
+    }
+
+    /// 确认层 Enter：构建带 `--console-confirmed` 的结构化 `Update` 请求。
+    /// Current 来源不传 `--repository`，由命令按 `config.toml` > 官方 GitHub 解析。
+    fn update_action(&self) -> ConsoleAction {
+        let install_dir = PathBuf::from(&self.install.install_dir);
+        let repository = match self.update.repository {
+            UpdateRepositoryMode::Current => None,
+            UpdateRepositoryMode::Github => Some(Some("github".into())),
+            UpdateRepositoryMode::Mirror => Some(None),
+            UpdateRepositoryMode::Custom => {
+                Some(Some(self.update.repository_url.trim().to_string()))
+            }
+        };
+        let version = self.update.version.trim().to_string();
+        let command = Commands::Update(crate::commands::update::Update {
+            version: Some(version.clone()),
+            repository: repository.clone(),
+            install_dir: Some(install_dir.clone()),
+            accept_service_change: false,
+            allow_no_backup: false,
+            console_confirmed: true,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        });
+        let mut args = vec![
+            "update".into(),
+            "--console-confirmed".into(),
+            "--version".into(),
+            version,
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+        ];
+        match &repository {
+            None => {}
+            Some(Some(value)) if value == "github" => {
+                args.extend(["--repository".into(), "github".into()])
+            }
+            Some(None) => args.push("--repository".into()),
+            Some(Some(url)) => args.extend(["--repository".into(), url.clone()]),
+        }
+        ConsoleAction::Command { command, args }
     }
 
     /// 同步删除备份（与 CLI 相同的根目录解析、安装锁与文件校验）并刷新列表。
@@ -1568,6 +1792,197 @@ impl InstallForm {
             command: Commands::Install(install),
             args,
         })
+    }
+}
+
+/// Update 面板的仓库来源选择,选项顺序与命令模式 `lkit update` 的渠道列表一致。
+/// Current 只在 `config.toml` 存在且有效时提供。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpdateRepositoryMode {
+    Current,
+    Github,
+    Mirror,
+    Custom,
+}
+
+impl UpdateRepositoryMode {
+    fn label(self, source: Option<&RepositorySource>) -> String {
+        match self {
+            Self::Current => {
+                let source =
+                    source.expect("the current source is selected without a config source");
+                crate::tr!(
+                    crate::keys::UPDATE_REPOSITORY_CURRENT,
+                    kind = match source.kind {
+                        RepositorySourceKind::Github => "github",
+                        RepositorySourceKind::Http => "http",
+                    },
+                    location = source.location
+                )
+            }
+            Self::Github => crate::tr!(crate::keys::UPDATE_REPOSITORY_GITHUB),
+            Self::Mirror => crate::tr!(crate::keys::UPDATE_REPOSITORY_MIRROR),
+            Self::Custom => crate::tr!(crate::keys::UPDATE_REPOSITORY_CUSTOM),
+        }
+    }
+}
+
+/// Update 面板：当前版本 + 目标版本/仓库来源表单、后台目标解析与确认层。
+/// 解析与比较规则与命令模式 `lkit update` 一致（共享 `resolve_update_target`），
+/// 已是最新与降级在面板内提示,只有升级才打开确认层。
+struct UpdatePanel {
+    version: String,
+    repository: UpdateRepositoryMode,
+    repository_url: String,
+    selected: usize,
+    editing: bool,
+    current_source: Option<RepositorySource>,
+    config_error: Option<String>,
+    resolving: Option<Receiver<Result<ResolvedUpdate, String>>>,
+    confirming: Option<ResolvedUpdate>,
+}
+
+impl Default for UpdatePanel {
+    fn default() -> Self {
+        Self {
+            version: "latest".into(),
+            repository: UpdateRepositoryMode::Github,
+            repository_url: plan::DEFAULT_HTTP_MIRROR.into(),
+            selected: 0,
+            editing: false,
+            current_source: None,
+            config_error: None,
+            resolving: None,
+            confirming: None,
+        }
+    }
+}
+
+impl UpdatePanel {
+    /// 读取 `config.toml`（与 `lkit update` 相同的解析与校验）：有效时提供
+    /// “当前来源”选项并默认选中,文件缺失时只留显式选项,损坏时显示错误提示。
+    /// 每次进入 Update 菜单时重新读取,不缓存旧配置。
+    fn load_config(&mut self, install_dir: &str) {
+        let requested = PathBuf::from(install_dir);
+        let loaded = (|| -> Result<Option<RepositorySource>, String> {
+            let selected = plan::select_install_root(
+                Some(&requested),
+                std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+            )
+            .map_err(|error| error.to_string())?;
+            let root =
+                root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+            crate::deployment::config::load_repository(&root).map_err(|error| error.to_string())
+        })();
+        match loaded {
+            Ok(Some(source)) => {
+                if self.current_source.is_none() {
+                    self.repository = UpdateRepositoryMode::Current;
+                }
+                self.current_source = Some(source);
+                self.config_error = None;
+            }
+            Ok(None) => {
+                if self.repository == UpdateRepositoryMode::Current {
+                    self.repository = UpdateRepositoryMode::Github;
+                }
+                self.current_source = None;
+                self.config_error = None;
+            }
+            Err(error) => {
+                if self.repository == UpdateRepositoryMode::Current {
+                    self.repository = UpdateRepositoryMode::Github;
+                }
+                self.current_source = None;
+                self.config_error = Some(error);
+            }
+        }
+    }
+
+    fn repository_options(&self) -> Vec<UpdateRepositoryMode> {
+        let mut options = Vec::new();
+        if self.current_source.is_some() {
+            options.push(UpdateRepositoryMode::Current);
+        }
+        options.extend([
+            UpdateRepositoryMode::Github,
+            UpdateRepositoryMode::Mirror,
+            UpdateRepositoryMode::Custom,
+        ]);
+        options
+    }
+
+    fn change(&mut self, forward: bool) {
+        let options = self.repository_options();
+        let position = options.iter().position(|mode| *mode == self.repository);
+        let next = match position {
+            // 当前选项不可用时(如配置来源失效),按它曾经排在最前的语义处理。
+            None => {
+                if forward {
+                    0
+                } else {
+                    options.len() - 1
+                }
+            }
+            Some(position) => {
+                if forward {
+                    (position + 1) % options.len()
+                } else {
+                    (position + options.len() - 1) % options.len()
+                }
+            }
+        };
+        self.repository = options[next];
+    }
+
+    fn editable_value_mut(&mut self) -> Option<&mut String> {
+        match self.selected {
+            0 => Some(&mut self.version),
+            2 if self.repository == UpdateRepositoryMode::Custom => Some(&mut self.repository_url),
+            _ => None,
+        }
+    }
+
+    /// 消费后台解析结果,按与命令模式相同的规则分支。
+    fn apply_resolution(&mut self, notice: &mut String, resolved: ResolvedUpdate) {
+        match resolved.current.cmp(&resolved.target) {
+            std::cmp::Ordering::Equal => {
+                *notice = crate::tr!(
+                    crate::keys::UPDATE_ALREADY_UP_TO_DATE,
+                    version = resolved.current
+                );
+            }
+            std::cmp::Ordering::Greater => {
+                *notice = crate::tr!(
+                    crate::keys::SWITCH_DOWNGRADE_NOT_SUPPORTED,
+                    from_version = resolved.current,
+                    version = resolved.target
+                );
+            }
+            std::cmp::Ordering::Less => self.confirming = Some(resolved),
+        }
+    }
+
+    fn poll(&mut self, notice: &mut String) {
+        let result = match &self.resolving {
+            Some(receiver) => receiver.try_recv(),
+            None => return,
+        };
+        match result {
+            Ok(Ok(resolved)) => {
+                self.resolving = None;
+                self.apply_resolution(notice, resolved);
+            }
+            Ok(Err(error)) => {
+                self.resolving = None;
+                *notice = error;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.resolving = None;
+                *notice = crate::tr!(crate::keys::CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED);
+            }
+        }
     }
 }
 
@@ -1965,6 +2380,9 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     }
     if app.menu() == Menu::Backup && app.backup.create.is_some() {
         render_backup_create_progress(frame, app);
+    }
+    if app.menu() == Menu::Update && app.update.confirming.is_some() {
+        render_update_confirmation(frame, app);
     }
 }
 
@@ -2487,6 +2905,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             );
         }
         Menu::Backup => render_backup(frame, app, area),
+        Menu::Update => render_update(frame, app, area),
     }
 }
 
@@ -2558,6 +2977,171 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
                 app.focus == Focus::Panel,
             ))
             .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_update(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+    let focused = app.focus == Focus::Panel;
+    if !matches!(app.snapshot, Snapshot::Installed { .. }) {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_LANDSCAPE_NOT_INSTALLED),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Line::raw(""),
+                Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_UPDATE_UNAVAILABLE),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
+                focused,
+            ))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    let mut lines = Vec::new();
+    if let Snapshot::Installed { version, .. } = &app.snapshot {
+        lines.push(Line::styled(
+            format!(
+                "{}  {}",
+                crate::tr!(crate::keys::CONSOLE_UPDATE_CURRENT_VERSION_LABEL),
+                version
+            ),
+            Style::default().fg(Color::Green),
+        ));
+        lines.push(Line::raw(""));
+    }
+    if let Some(error) = &app.update.config_error {
+        lines.push(Line::styled(error.clone(), Style::default().fg(Color::Red)));
+        lines.push(Line::raw(""));
+    }
+    let rows: [(String, String, bool); 4] = [
+        (
+            crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
+            app.update.version.clone(),
+            true,
+        ),
+        (
+            crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
+            app.update
+                .repository
+                .label(app.update.current_source.as_ref()),
+            false,
+        ),
+        (
+            crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
+            app.update.repository_url.clone(),
+            true,
+        ),
+        (
+            String::new(),
+            crate::tr!(crate::keys::CONSOLE_UPDATE_BUTTON),
+            false,
+        ),
+    ];
+    for (index, (label, value, editable)) in rows.iter().enumerate() {
+        if index == 2 && app.update.repository != UpdateRepositoryMode::Custom {
+            continue;
+        }
+        let selected = focused && app.update.selected == index;
+        let selected_style = if selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let value_style = if selected {
+            selected_style
+        } else if index == 3 {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let marker = if selected && app.update.editing && *editable {
+            "_"
+        } else {
+            ""
+        };
+        let line = Line::from(vec![
+            Span::styled(if selected { "> " } else { "  " }, selected_style),
+            Span::styled(
+                display_pad(label, 17),
+                if selected {
+                    selected_style
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            ),
+            Span::styled(format!("{value}{marker}"), value_style),
+        ]);
+        if selected {
+            lines.push(line.style(Style::default().bg(Color::Cyan)));
+        } else {
+            lines.push(line);
+        }
+    }
+    if app.update.resolving.is_some() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            crate::tr!(crate::keys::CONSOLE_UPDATE_RESOLVING),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(panel_block(
+            &crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
+            focused,
+        )),
+        area,
+    );
+}
+
+fn render_update_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let Some(resolved) = &app.update.confirming else {
+        return;
+    };
+    let screen = frame.area();
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_QUESTION),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_UPDATE_CONFIRM_PLAN,
+                current = resolved.current,
+                target = resolved.target
+            )),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_NOTE)),
+            Line::raw(""),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_PRESS_ENTER)),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_TITLE))),
         area,
     );
 }
@@ -4576,5 +5160,341 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.backup.details, None);
         assert_eq!(app.exit_state, ExitState::Idle);
+    }
+
+    fn update_ready_app() -> ConsoleApp {
+        let mut app = ConsoleApp::new();
+        app.menu_index = 3;
+        app.focus = Focus::Panel;
+        app.snapshot = installed_snapshot();
+        app.update.current_source = Some(RepositorySource {
+            kind: RepositorySourceKind::Http,
+            location: "https://example.com/releases/".into(),
+        });
+        app.update.repository = UpdateRepositoryMode::Current;
+        app
+    }
+
+    fn resolved(current: &str, target: &str) -> ResolvedUpdate {
+        ResolvedUpdate {
+            current: semver::Version::parse(current).unwrap(),
+            target: semver::Version::parse(target).unwrap(),
+        }
+    }
+
+    #[test]
+    fn update_menu_is_only_available_when_installed() {
+        let mut app = ConsoleApp::new();
+        app.snapshot = Snapshot::NotInstalled;
+        assert_eq!(app.menu(), Menu::Overview);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Install);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Backup);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            app.menu(),
+            Menu::Backup,
+            "Update must be skipped when Landscape is not installed"
+        );
+
+        let mut app = ConsoleApp::new();
+        app.snapshot = installed_snapshot();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Backup);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.menu(), Menu::Update);
+    }
+
+    #[test]
+    fn update_panel_renders_current_version_and_form() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let app = update_ready_app();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Current version"));
+        assert!(content.contains("1.2.3"));
+        assert!(content.contains("latest"));
+        assert!(content.contains("Current source (http: https://example.com/releases/)"));
+        assert!(content.contains("[ Start update ]"));
+    }
+
+    #[test]
+    fn update_menu_without_installation_shows_requirements() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.menu_index = 3;
+        app.focus = Focus::Panel;
+        app.snapshot = Snapshot::NotInstalled;
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Landscape is not installed"));
+        assert!(content.contains("Update requires an existing installation"));
+    }
+
+    #[test]
+    fn update_panel_navigation_edits_version_and_reaches_url_when_custom() {
+        let mut app = update_ready_app();
+        assert_eq!(app.update.selected, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.update.selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            app.update.selected, 3,
+            "the hidden URL row must be skipped for non-custom repositories"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.update.selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.update.selected, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.update.editing);
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.update.version, "latest1.2");
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(app.update.version, "latest1.");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.update.editing);
+
+        app.update.repository = UpdateRepositoryMode::Custom;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.update.selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.update.selected, 2);
+        assert_eq!(app.exit_state, ExitState::Idle);
+    }
+
+    #[test]
+    fn update_repository_cycles_within_available_options() {
+        let mut app = update_ready_app();
+        app.update.selected = 1;
+        app.update.repository = UpdateRepositoryMode::Current;
+
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.update.repository, UpdateRepositoryMode::Github);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.update.repository, UpdateRepositoryMode::Mirror);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.update.repository, UpdateRepositoryMode::Custom);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.update.repository, UpdateRepositoryMode::Current);
+
+        app.update.current_source = None;
+        app.update.repository = UpdateRepositoryMode::Current;
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(
+            app.update.repository,
+            UpdateRepositoryMode::Github,
+            "Current must not be reachable without a config source"
+        );
+    }
+
+    #[test]
+    fn update_resolution_branches_like_the_update_command() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = update_ready_app();
+        let mut notice = String::new();
+
+        app.update
+            .apply_resolution(&mut notice, resolved("1.2.3", "1.2.3"));
+        assert!(notice.contains("already up to date"));
+        assert!(app.update.confirming.is_none());
+
+        notice.clear();
+        app.update
+            .apply_resolution(&mut notice, resolved("1.2.4", "1.2.3"));
+        assert!(notice.contains("downgrading"));
+        assert!(app.update.confirming.is_none());
+
+        notice.clear();
+        app.update
+            .apply_resolution(&mut notice, resolved("1.2.3", "1.2.4"));
+        assert!(notice.is_empty(), "an upgrade must not set the notice");
+        let confirming = app.update.confirming.as_ref().unwrap();
+        assert_eq!(confirming.current.to_string(), "1.2.3");
+        assert_eq!(confirming.target.to_string(), "1.2.4");
+    }
+
+    #[test]
+    fn update_confirmation_builds_console_confirmed_command() {
+        let _language = LanguageGuard::set(Language::En);
+        let mut app = update_ready_app();
+        app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(content.contains("Confirm update"));
+        assert!(content.contains("Update Landscape?"));
+        assert!(content.contains("1.2.3 -> target 1.2.4"));
+        assert!(content.contains("Press Enter to update."));
+
+        let action = app
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        let ConsoleAction::Command { command, args } = action else {
+            panic!("expected update command");
+        };
+        let Commands::Update(update) = command else {
+            panic!("expected update request");
+        };
+        assert_eq!(update.version.as_deref(), Some("latest"));
+        assert!(
+            update.repository.is_none(),
+            "Current source must not forward --repository"
+        );
+        assert!(
+            update.console_confirmed,
+            "the console must mark the update as confirmed so no TTY prompt appears"
+        );
+        assert!(
+            args.iter()
+                .any(|argument| argument == "--console-confirmed")
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--version", "latest"]));
+        assert!(!args.iter().any(|argument| argument == "--repository"));
+    }
+
+    #[test]
+    fn update_repository_modes_map_to_cli_flags() {
+        let mut app = update_ready_app();
+        for (mode, repository, expected) in [
+            (UpdateRepositoryMode::Current, None, Vec::<&str>::new()),
+            (
+                UpdateRepositoryMode::Github,
+                Some(Some("github".into())),
+                vec!["--repository", "github"],
+            ),
+            (
+                UpdateRepositoryMode::Mirror,
+                Some(None),
+                vec!["--repository"],
+            ),
+            (
+                UpdateRepositoryMode::Custom,
+                Some(Some("https://example.com/releases/".into())),
+                vec!["--repository", "https://example.com/releases/"],
+            ),
+        ] {
+            app.update.repository = mode;
+            app.update.repository_url = "https://example.com/releases/".into();
+            let action = app.update_action();
+            let ConsoleAction::Command { command, args } = action else {
+                panic!("{mode:?} must build an update command");
+            };
+            let Commands::Update(update) = command else {
+                panic!("{mode:?} must build an update request");
+            };
+            assert_eq!(update.repository, repository, "{mode:?}");
+            assert!(update.console_confirmed, "{mode:?}");
+            for pair in expected.chunks(2) {
+                if pair.len() == 1 {
+                    assert!(
+                        args.iter().any(|argument| argument == pair[0]),
+                        "{mode:?} must forward {:?}, got {args:?}",
+                        pair[0]
+                    );
+                } else {
+                    assert!(
+                        args.windows(2).any(|window| window == pair),
+                        "{mode:?} must forward {pair:?}, got {args:?}"
+                    );
+                }
+            }
+            if expected.is_empty() {
+                assert!(
+                    !args.iter().any(|argument| argument == "--repository"),
+                    "{mode:?} must not forward --repository, got {args:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn update_confirmation_esc_cancels_and_stays_in_panel() {
+        let mut app = update_ready_app();
+        app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.update.confirming.is_none());
+        assert_eq!(app.exit_state, ExitState::Idle);
+    }
+
+    #[test]
+    fn start_update_validates_before_background_resolution() {
+        let mut app = update_ready_app();
+        app.update.version = "nightly".into();
+        app.update.selected = 3;
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            app.update.resolving.is_none(),
+            "an invalid version must not start the resolver"
+        );
+        assert!(!app.notice.is_empty());
+
+        let mut app = update_ready_app();
+        app.update.repository = UpdateRepositoryMode::Custom;
+        app.update.repository_url = "not a url".into();
+        app.update.selected = 3;
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.update.resolving.is_none());
+        assert!(!app.notice.is_empty());
+
+        let mut app = update_ready_app();
+        app.install.install_dir = std::env::temp_dir()
+            .join(format!("lkit-console-update-{}", std::process::id()))
+            .display()
+            .to_string();
+        app.update.selected = 3;
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            app.update.resolving.is_some(),
+            "a valid form must start the background resolver"
+        );
+        let _ = std::fs::remove_dir_all(&app.install.install_dir);
+    }
+
+    #[test]
+    fn update_load_config_offers_current_source_and_reports_corruption() {
+        let dir = std::env::temp_dir().join(format!("lkit-console-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let install_dir = dir.display().to_string();
+
+        let mut app = update_ready_app();
+        app.install.install_dir = install_dir.clone();
+        app.update.current_source = None;
+
+        app.update.load_config(&install_dir);
+        assert!(app.update.current_source.is_none());
+        assert!(app.update.config_error.is_none());
+        assert_eq!(app.update.repository, UpdateRepositoryMode::Github);
+
+        let preset = "schema_version = 1\n\n[repository]\nkind = \"http\"\nlocation = \"https://example.com/releases/\"\n";
+        std::fs::write(dir.join("config.toml"), preset).unwrap();
+        app.update.load_config(&install_dir);
+        assert_eq!(
+            app.update.repository,
+            UpdateRepositoryMode::Current,
+            "a valid config source must become the default option"
+        );
+        let source = app.update.current_source.as_ref().unwrap();
+        assert_eq!(source.kind, RepositorySourceKind::Http);
+        assert_eq!(source.location, "https://example.com/releases/");
+        assert!(app.update.config_error.is_none());
+
+        std::fs::write(dir.join("config.toml"), "not a config").unwrap();
+        app.update.load_config(&install_dir);
+        assert!(app.update.current_source.is_none());
+        assert!(app.update.config_error.is_some());
+        assert_eq!(app.update.repository, UpdateRepositoryMode::Github);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -120,3 +120,19 @@
   恢复确认层 Enter 提交、Esc 取消，`--yes` 由控制台确认层覆盖。
 - 缺口：真实备份文件的列表加载与损坏条目标记依赖安装现场，测试通过注入 metadata 覆盖
   渲染与按键路径；后台 verify 与恢复委托 worker 的端到端执行未自动化。
+
+## UI-12
+
+**Update 面板：字段、后台解析分支、确认层与结构化请求**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../crates/lkit-cli/src/console.rs)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：已安装时 Update 菜单可选，未安装/非 root/状态不可读时置灰且导航跳过。面板顶部
+  显示当前版本，字段为目标版本（默认 latest，`TargetVersion` 校验）、仓库来源（config.toml
+  有效时首项为“当前来源”，损坏时显示错误且只留显式选项）与自定义 URL。激活“开始更新”后
+  在后台线程解析目标版本：解析中忽略按键；已是最新与降级在面板内提示且不退出；解析失败
+  显示错误；升级才显示确认层（`当前 <X> → 目标 <Y>`，Y 为解析出的真实版本），Enter 构建
+  带 `--console-confirmed` 的结构化 `Update` 请求与显式 `--repository` 参数，Esc 取消。
+- 缺口：真实网络解析与 worker 全屏更新页的执行链路依赖安装现场，控制台单测覆盖状态机、
+  渲染与请求构建；`--console-confirmed` 跳过 tty 由命令层测试覆盖。

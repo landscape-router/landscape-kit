@@ -24,6 +24,11 @@ pub struct Update {
     /// created in this case and automatic rollback cannot restore previous data
     #[arg(long)]
     pub allow_no_backup: bool,
+    /// The interactive console already asked for the repository and the
+    /// upgrade confirmation; skip every /dev/tty prompt (delegated workers
+    /// cannot read TUI keyboard input)
+    #[arg(long, hide = true)]
+    pub console_confirmed: bool,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -32,20 +37,25 @@ pub struct Update {
 /// 交互式版本更新:选择读取渠道、解析目标版本、确认后委托 switch 流水线执行。
 /// 确认发生在创建事务和备份之前,拒绝时零副作用。
 pub async fn run(args: &Update) -> ExitCode {
-    let mut tty = match crate::interaction::interactive::Tty::open() {
-        Ok(tty) => tty,
-        Err(error) => {
-            eprintln!(
-                "install: {}",
-                crate::tr!(
-                    crate::keys::UPDATE_REQUIRES_INTERACTIVE_TERMINAL,
-                    error = error
-                )
-            );
-            return ExitCode::FAILURE;
-        }
+    let result = if args.console_confirmed {
+        run_update(args, None).await
+    } else {
+        let mut tty = match crate::interaction::interactive::Tty::open() {
+            Ok(tty) => tty,
+            Err(error) => {
+                eprintln!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::UPDATE_REQUIRES_INTERACTIVE_TERMINAL,
+                        error = error
+                    )
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        run_update(args, Some(&mut tty)).await
     };
-    match run_update(args, &mut tty).await {
+    match result {
         Ok(code) => code,
         Err(error) => {
             eprintln!("install: {error}");
@@ -56,7 +66,7 @@ pub async fn run(args: &Update) -> ExitCode {
 
 async fn run_update(
     args: &Update,
-    tty: &mut crate::interaction::interactive::Tty,
+    mut tty: Option<&mut crate::interaction::interactive::Tty>,
 ) -> Result<ExitCode, plan::InstallError> {
     let install_root = plan::select_install_root(
         args.install_dir.as_deref(),
@@ -71,55 +81,89 @@ async fn run_update(
 
     let repository = match repository_override(&args.repository) {
         Some(choice) => choice,
-        None => select_repository(tty, &normalized)?,
-    };
-    let spec = repository.clone().resolve()?;
-    let provider = provider_for(spec.kind, spec.location.as_str())?;
-    let architecture = match state.assets.webserver.architecture {
-        state::StateArchitecture::X86_64 => crate::release::repository::Architecture::X86_64,
-        state::StateArchitecture::Aarch64 => crate::release::repository::Architecture::Aarch64,
+        None => match &mut tty {
+            Some(tty) => select_repository(tty, &normalized)?,
+            None => crate::deployment::config::resolve_default_choice(&normalized)?,
+        },
     };
     let target = match &args.version {
         Some(value) => TargetVersion::parse(value)?,
         None => TargetVersion::Latest,
+    };
+    let resolved = resolve_update_target(&state, &repository, &target).await?;
+    match resolved.target.cmp(&resolved.current) {
+        std::cmp::Ordering::Less => {
+            return Err(plan::InstallError::ParameterUsage(crate::tr!(
+                crate::keys::SWITCH_DOWNGRADE_NOT_SUPPORTED,
+                from_version = resolved.current,
+                version = resolved.target
+            )));
+        }
+        std::cmp::Ordering::Equal => {
+            println!(
+                "install: {}",
+                crate::tr!(
+                    crate::keys::UPDATE_ALREADY_UP_TO_DATE,
+                    version = resolved.current
+                )
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        std::cmp::Ordering::Greater => {}
+    }
+    let accepted = match &mut tty {
+        Some(tty) => tty.confirm(&crate::tr!(
+            crate::keys::UPDATE_CONFIRM_UPDATE,
+            current = resolved.current,
+            target = resolved.target
+        ))?,
+        None => true,
+    };
+    if !accepted {
+        println!("install: {}", crate::tr!(crate::keys::UPDATE_CANCELLED));
+        return Ok(ExitCode::FAILURE);
+    }
+    let request = switch_request(args, resolved.target.to_string(), repository);
+    Ok(super::manage::run_request(&request).await)
+}
+
+/// 解析出的当前与目标版本。比较规则与 `lkit update` 命令一致。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResolvedUpdate {
+    pub current: semver::Version,
+    pub target: semver::Version,
+}
+
+/// 解析目标版本并与当前版本比较:只做网络只读解析,不创建事务、不下载资产。
+/// 命令模式与交互控制台的 Update 面板共用,保证两种入口的解析语义一致。
+pub(crate) async fn resolve_update_target(
+    state: &crate::deployment::state::InstallState,
+    repository: &RepositoryChoice,
+    target: &TargetVersion,
+) -> Result<ResolvedUpdate, plan::InstallError> {
+    let spec = repository.clone().resolve()?;
+    let provider = provider_for(spec.kind, spec.location.as_str())?;
+    let architecture = match state.assets.webserver.architecture {
+        crate::deployment::state::StateArchitecture::X86_64 => {
+            crate::release::repository::Architecture::X86_64
+        }
+        crate::deployment::state::StateArchitecture::Aarch64 => {
+            crate::release::repository::Architecture::Aarch64
+        }
     };
     let release = match target {
         TargetVersion::Latest => provider
             .latest(architecture)
             .await?
             .ok_or(plan::InstallError::NoStableVersion)?,
-        TargetVersion::Version(version) => provider.release(&version, architecture).await?,
+        TargetVersion::Version(version) => provider.release(version, architecture).await?,
     };
     let current = lkit_repository::parse_stable_version(&state.active_version)
         .map_err(|_| plan::InstallError::CorruptedState("invalid active version".into()))?;
-    match release.version.cmp(&current) {
-        std::cmp::Ordering::Less => {
-            return Err(plan::InstallError::ParameterUsage(crate::tr!(
-                crate::keys::SWITCH_DOWNGRADE_NOT_SUPPORTED,
-                from_version = current,
-                version = release.version
-            )));
-        }
-        std::cmp::Ordering::Equal => {
-            println!(
-                "install: {}",
-                crate::tr!(crate::keys::UPDATE_ALREADY_UP_TO_DATE, version = current)
-            );
-            return Ok(ExitCode::SUCCESS);
-        }
-        std::cmp::Ordering::Greater => {}
-    }
-    let accepted = tty.confirm(&crate::tr!(
-        crate::keys::UPDATE_CONFIRM_UPDATE,
-        current = current,
-        target = release.version
-    ))?;
-    if !accepted {
-        println!("install: {}", crate::tr!(crate::keys::UPDATE_CANCELLED));
-        return Ok(ExitCode::FAILURE);
-    }
-    let request = switch_request(args, release.version.to_string(), repository);
-    Ok(super::manage::run_request(&request).await)
+    Ok(ResolvedUpdate {
+        current,
+        target: release.version,
+    })
 }
 
 fn switch_request(args: &Update, version: String, repository: RepositoryChoice) -> InstallRequest {
@@ -139,6 +183,7 @@ fn switch_request(args: &Update, version: String, repository: RepositoryChoice) 
         force: false,
         takeover_network: false,
         network_plan: None,
+        console_confirmed: args.console_confirmed,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     }
@@ -206,6 +251,7 @@ mod tests {
             install_dir: Some(PathBuf::from("/tmp/lkit-update-test")),
             accept_service_change: true,
             allow_no_backup: true,
+            console_confirmed: false,
             #[cfg(feature = "test-support")]
             test_runtime: Some(PathBuf::from("/tmp/lkit-update-runtime.json")),
         }
@@ -227,6 +273,15 @@ mod tests {
             );
             assert!(request.accept_service_change);
             assert!(request.allow_no_backup);
+            assert!(!request.console_confirmed);
         }
+    }
+
+    #[test]
+    fn forwards_console_confirmation_to_the_switch_request() {
+        let mut args = args();
+        args.console_confirmed = true;
+        let request = switch_request(&args, "1.2.4".into(), RepositoryChoice::Mirror);
+        assert!(request.console_confirmed);
     }
 }

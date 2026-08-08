@@ -43,6 +43,19 @@ lkit switch --version latest
 显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源（文件缺失时使用官方 GitHub，
 见[配置文件](../deployment/config.md)）。
 
+## 控制台分发
+
+裸 `lkit` 控制台的 Update 面板把渠道选择与升级确认在 TUI 内完成（见
+[交互控制台](../interaction/console.md)），随后以隐藏的 `--console-confirmed` 分发
+结构化 `Update` 请求。该标志下：
+
+- 渠道选择与 `yes` 确认都在 TUI 内完成，命令不再打开 `/dev/tty`——worker 是独立
+  进程，无法读取 TUI 键盘输入，继续交互确认会阻塞；
+- 未显式 `--repository` 时按 switch 规则解析来源（显式 CLI > `config.toml` > 官方
+  GitHub），面板总是显式传递所选来源，因此正常情况下不会走到该回退；
+- switch 流水线内部的交互确认（如无 systemd 环境的“已停止实例”确认）同样视为已确认；
+- 目标解析、比较与执行仍在命令内完成，`--console-confirmed` 只跳过交互步骤。
+
 ## 与 `lkit switch` 的关系
 
 - `lkit update` 是交互式升级入口，switch 是确定性的脚本入口；两者复用同一 switch 流水线。

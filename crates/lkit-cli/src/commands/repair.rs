@@ -47,6 +47,7 @@ pub async fn run(args: &Repair) -> ExitCode {
         force: false,
         takeover_network: false,
         network_plan: None,
+        console_confirmed: false,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     })

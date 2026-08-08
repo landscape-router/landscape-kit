@@ -1045,6 +1045,27 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
         String::from_utf8_lossy(&non_interactive_output.stderr)
             .contains("use `lkit switch --version <VERSION>")
     );
+
+    // 控制台分发路径:--console-confirmed 跳过 /dev/tty,解析与比较照常进行。
+    let console_output = harness
+        .update_command()
+        .arg("--console-confirmed")
+        .arg("--repository")
+        .arg(&harness.repository.base_url)
+        .output()
+        .unwrap();
+    assert_success(&console_output);
+    let console_stderr = String::from_utf8_lossy(&console_output.stderr);
+    assert!(
+        !console_stderr.contains("Select the repository source for the update"),
+        "console-confirmed update must not open the repository prompt: {console_stderr}"
+    );
+    assert!(String::from_utf8_lossy(&console_output.stdout).contains("already up to date"));
+    assert_eq!(
+        std::fs::read(&config_path).unwrap(),
+        preset.as_bytes(),
+        "console-confirmed update must not modify the config file"
+    );
 }
 
 #[test]

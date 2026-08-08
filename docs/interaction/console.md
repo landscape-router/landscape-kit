@@ -14,14 +14,16 @@ lkit --non-interactive install ... # 严格非交互命令模式
 
 ## 控制台布局
 
-首版侧栏固定包含：
+侧栏固定包含：
 
 - Overview：读取默认或 `LKIT_INSTALL_DIR` 指定根目录的安装状态；
 - Install：首次安装表单；
-- Backup：备份列表、创建与恢复。
+- Backup：备份列表、创建与恢复；
+- Update：版本更新表单（仅已安装时可用）。
 
 检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
-Up/Down 导航会跳过它；面板仍可显示“已安装”提示。
+Up/Down 导航会跳过它；面板仍可显示“已安装”提示。反之，未安装、非 root 或安装
+状态不可读时 Update 菜单置灰且被导航跳过，面板显示不可用原因。
 
 Install 面板提供版本、仓库类型、安装根目录、管理员用户名、密码、密码确认、service
 manager 和网络接管选项；自定义仓库 URL 只在仓库类型为 `Custom HTTP` 时显示并接受输入。
@@ -71,6 +73,32 @@ SQLite 数据文件、API token、日志和指标，需从运行中实例导出�
 委托 worker，不解析 CLI 文本输出）；该请求标记为已确认（`--console-confirmed`），命令
 不再请求 `/dev/tty` 二次确认——worker 是独立进程，无法读取 TUI 键盘输入，继续交互确认
 会阻塞。Esc 取消。
+
+Update 面板提供与命令模式 `lkit update` 相同的交互语义：选择本次更新读取的仓库来源、
+解析目标版本、比较当前版本并要求确认，确认后复用 switch 流水线执行。面板只读取
+`config.toml`（与 `lkit update` 相同，从不创建、更新或删除该文件）：文件存在且有效时
+仓库选项的首项是“当前来源（kind: location）”，其余为官方 GitHub、默认 HTTP 镜像和
+自定义 HTTP 仓库；文件不存在时选项从官方 GitHub 开始；文件存在但损坏时面板显示错误
+提示且不提供“当前来源”选项，用户仍可改用显式来源继续。面板顶部显示当前版本，下方为
+目标版本（可编辑，默认 `latest`，与命令模式相同的 `TargetVersion` 校验）、仓库来源
+（Up/Down 或 Right 切换枚举）和自定义仓库 URL（仅自定义 HTTP 时显示），以及“开始
+更新”动作。
+
+激活“开始更新”后，面板在后台线程解析目标版本（与 CLI 相同的 provider、架构与
+`latest`/显式版本解析；网络只读，零副作用），解析期间按键被忽略并显示“正在解析目标
+版本…”。解析完成后按与命令模式相同的规则分支：目标低于当前版本时面板内显示降级错误
+（不退出控制台）；目标与当前相同（已是最新）时面板内显示“已是最新版本 <X>”（不创建
+事务、不下载、不持久化所选来源）；解析失败（网络、版本不存在等）时面板内显示错误并可
+修改字段重试；只有目标高于当前版本时才显示居中确认层：`当前 <X> → 目标 <Y>`（Y 为
+解析出的真实版本），并说明更新复用 switch 流水线（事务、`.lkb` 配置快照、systemd 托管、
+健康检查与自动回滚）。Enter 确认后控制台把结构化 `Update` 请求（标记
+`--console-confirmed`）交给共享命令分发并退出 alternate screen，systemd 模式下委托
+worker，在无侧栏全屏更新页（标题“正在更新 Landscape”）显示下载、配置与服务阶段及
+结果页；Esc 取消确认层并留在面板。`--console-confirmed` 使命令跳过 `/dev/tty` 的渠道
+选择与 `yes` 确认，也不在 switch 流水线内做任何交互确认；面板按所选来源传递显式
+`--repository`（官方 GitHub、默认镜像与自定义 URL 分别映射为 `--repository github`、
+裸 `--repository` 与 `--repository <URL>`），“当前来源”不传该参数，由命令按
+`config.toml` > 官方 GitHub 的规则解析，与命令模式选中“当前来源”的语义一致。
 
 首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
 pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个

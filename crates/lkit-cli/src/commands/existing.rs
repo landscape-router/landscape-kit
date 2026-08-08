@@ -187,7 +187,14 @@ async fn run_installed_inner(
                         runtime.managed_uid,
                     )
                 }),
-                confirm: &|prompt| crate::interaction::interactive::confirm(prompt),
+                confirm: &|prompt| {
+                    if args.console_confirmed {
+                        // 控制台分发路径:确认已在 TUI 内完成,worker 无法读取键盘。
+                        Ok(true)
+                    } else {
+                        crate::interaction::interactive::confirm(prompt)
+                    }
+                },
                 health: &health_options,
             };
             return match pipeline::switch_version(

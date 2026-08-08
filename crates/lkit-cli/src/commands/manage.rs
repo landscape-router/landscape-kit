@@ -56,6 +56,10 @@ pub(crate) struct InstallRequest {
     /// Non-interactively accept a modified managed systemd unit
     pub(crate) accept_service_change: bool,
 
+    /// The interactive console already confirmed the operation; skip every
+    /// /dev/tty prompt (delegated workers cannot read TUI keyboard input)
+    pub(crate) console_confirmed: bool,
+
     /// Prompt the user to manually clean the existing directory before a clean install
     pub(crate) force: bool,
 
@@ -590,6 +594,7 @@ mod tests {
             force: false,
             takeover_network: false,
             network_plan: None,
+            console_confirmed: false,
             #[cfg(feature = "test-support")]
             test_runtime: None,
         }

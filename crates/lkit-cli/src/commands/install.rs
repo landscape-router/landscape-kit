@@ -100,6 +100,7 @@ pub async fn run(args: &Install) -> ExitCode {
         force: args.force,
         takeover_network: args.takeover_network,
         network_plan,
+        console_confirmed: false,
         #[cfg(feature = "test-support")]
         test_runtime: args.test_runtime.clone(),
     })
