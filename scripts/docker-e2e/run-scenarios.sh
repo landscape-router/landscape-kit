@@ -192,8 +192,9 @@ with tarfile.open(fileobj=io.BytesIO(gzip.decompress(archive))) as tar:
     assert "static.zip" in names, "backup must carry the static archive"
     assert "landscape-webserver" in names
     assert "landscape_init.toml" in names
-    assert "static/" in names
-    assert "geo_tmp/" in names
+    members = {member.name: member for member in tar.getmembers()}
+    assert "static" in members and members["static"].isdir(), "backup must carry the static tree"
+    assert "geo_tmp" in members and members["geo_tmp"].isdir(), "backup must carry the geo cache tree"
 PY
 }
 
@@ -286,6 +287,20 @@ run_with_tty_confirm() {
   echo yes | script -qec "$1" /dev/null
   tty_status=$?
   set -e
+}
+
+# 把本次安装使用的仓库来源写入 config.toml(自 0.1.4 起 install 不再持久化来源,
+# repair/switch/update 等需要仓库的命令从该用户可编辑文件解析来源)。
+write_repository_config() {
+  local root=$1
+  cat >"$root/config.toml" <<EOF
+schema_version = 1
+
+[repository]
+kind = "http"
+location = "$public_base"
+EOF
+  chmod 0600 "$root/config.toml"
 }
 
 case $(uname -m) in
@@ -385,6 +400,7 @@ assert_state_version 1.0.0
 [[ $(json_value "$install_root/state/install-state.json" assets.webserver.architecture) == "$state_architecture" ]] \
   || fail "state architecture mismatch"
 assert_service_identity
+write_repository_config "$install_root"
 [[ $(stat -c '%a' "$install_root/data/landscape_api_token") == 400 ]] \
   || fail "fixture API token mode is not 0400"
 
@@ -695,6 +711,7 @@ assert "repository" not in state, state.get("repository")
 PY
 [[ ! -e "$install_root_latest/config.toml" ]] \
   || fail "install must not create config.toml"
+write_repository_config "$install_root_latest"
 assert_service_identity "$install_root_latest"
 
 # ---------------------------------------------------------------- S8 中断事务恢复
@@ -790,6 +807,7 @@ run_install "$install_root_export" \
   --service-manager systemd
 [[ $install_status -eq 0 ]] || fail "export_error install returned $install_status"
 assert_state_version 4.0.0 "$install_root_export"
+write_repository_config "$install_root_export"
 assert_service_identity "$install_root_export"
 lkb_before=$(lkb_count "$install_root_export")
 run_switch "$install_root_export" 4.1.0
@@ -799,5 +817,205 @@ assert_latest_phase "$install_root_export" failed
 [[ $(lkb_count "$install_root_export") -eq "$lkb_before" ]] \
   || fail "failed export must not create a new .lkb"
 assert_service_identity "$install_root_export"
+
+# ---------------------------------------------------------------- S11 restore 激活失败自动回滚
+# RST-03:发布 delayed-ready 版本(启动延迟 2500ms),用默认 4 秒启动超时正常切换并
+# 创建其手工备份;restore 时改用 2000ms 启动超时的运行时,激活必然超时失败,
+# systemd 模式内联自动回滚并返回退出码 5。
+# S7 已把 install_root 迁移到 none,全局 unit 注册属于 S2 的 export 根;
+# 先迁移 export 根到 none 释放注册链接,再把 install_root 恢复为 systemd 托管。
+lkit service-manager none --install-dir "$install_root_export"
+run_with_tty_confirm "/usr/local/bin/lkit service-manager systemd --install-dir $install_root --test-runtime $runtime_config"
+[[ $tty_status -eq 0 ]] || fail "service-manager migration returned $tty_status"
+assert_service_identity
+publish_release 8.0.0 delayed-ready 2500
+run_switch "$install_root" 8.0.0
+[[ $switch_status -eq 0 ]] || fail "delayed_ready switch to 8.0.0 returned $switch_status"
+assert_state_version 8.0.0
+assert_service_identity
+assert_latest_phase "$install_root" committed
+rst03_switch_backup=$(latest_backup)
+assert_backup_metadata "$rst03_switch_backup" 5.0.0 "$state_architecture"
+lkit backup create --remark "rst03 target backup" --install-dir "$install_root"
+rst03_backup=$(latest_backup)
+rst03_id=$(basename "$rst03_backup" .lkb)
+assert_manual_backup_metadata "$rst03_backup" 8.0.0 "$state_architecture" "rst03 target backup"
+# 回滚恢复的是"切换前版本"即 8.0.0 自身(delayed-ready 无法通过 2 秒启动检查);
+# 先用 5.0.0 自动备份降级回健康版本(switch 拒绝降级,restore 允许),
+# 让目标 restore 激活失败后回滚并重启健康旧版本。
+lkit restore --backup "$(basename "$rst03_switch_backup" .lkb)" \
+  --install-dir "$install_root" --non-interactive --yes \
+  || fail "setup restore back to 5.0.0 returned nonzero"
+assert_state_version 5.0.0
+assert_service_identity
+assert_latest_phase "$install_root" committed
+python3 - "$runtime_config" "$work_directory/restore-short-startup.json" <<'PY' || fail "failed to derive restore runtime"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    runtime = json.load(stream)
+runtime["health"]["startup_timeout_ms"] = 2000
+with open(sys.argv[2], "w", encoding="utf-8") as stream:
+    json.dump(runtime, stream, indent=2)
+    stream.write("\n")
+PY
+rst03_lkb_before=$(lkb_count)
+set +e
+command /usr/local/bin/lkit restore --backup "$rst03_id" --install-dir "$install_root" \
+  --non-interactive --yes --test-runtime "$work_directory/restore-short-startup.json"
+restore_status=$?
+set -e
+[[ $restore_status -eq 5 ]] \
+  || fail "restore activation failure expected exit 5, got $restore_status"
+assert_state_version 5.0.0
+assert_service_identity
+assert_latest_phase "$install_root" rolled_back
+[[ $(lkb_count) -eq $((rst03_lkb_before + 1)) ]] \
+  || fail "failed restore must still create a protection backup"
+[[ $(sha256sum "$fixture_resolv_conf" | awk '{print $1}') == "$resolv_sha_before" ]] \
+  || fail "fixture resolv.conf content was not restored after restore rollback"
+transaction=$(latest_transaction)
+python3 - "$transaction" "$rst03_id" <<'PY' || fail "rolled-back restore transaction shape is wrong"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    tx = json.load(stream)
+assert tx["operation"] == "restore"
+assert tx["phase"] == "rolled_back"
+assert tx["restore_backup"]["backup_id"] == sys.argv[2]
+assert tx["backup"] is not None, "failed restore must record the protection backup"
+assert tx["static_backup"] is None
+PY
+
+# ---------------------------------------------------------------- S12 restore 中断后 phase 恢复
+# RST-05:恢复目标激活期间 kill 掉 lkit,事务停在 verifying,data 已移入 previous-data;
+# 下次命令经 phase 恢复入口完成回滚并恢复原 data。
+printf 'rst05-marker\n' >"$install_root/data/rst05-marker"
+set +e
+command /usr/local/bin/lkit restore --backup "$rst03_id" --install-dir "$install_root" \
+  --non-interactive --yes --test-runtime "$work_directory/restore-short-startup.json" &
+restore_pid=$!
+set -e
+python3 - "$install_root" "$restore_pid" <<'PY' || fail "restore did not reach the verifying phase"
+import json
+import os
+import subprocess
+import sys
+import time
+
+root, pid = sys.argv[1], int(sys.argv[2])
+transactions = os.path.join(root, "transactions")
+deadline = time.time() + 30
+while time.time() < deadline:
+    files = subprocess.run(
+        ["find", transactions, "-maxdepth", "1", "-type", "f", "-name", "*.json"],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    active = None
+    for path in files:
+        with open(path, encoding="utf-8") as stream:
+            tx = json.load(stream)
+        if tx["phase"] not in ("committed", "rolled_back", "failed"):
+            if active is None or os.path.getmtime(path) > os.path.getmtime(active):
+                active = path
+    if active is None:
+        time.sleep(0.05)
+        continue
+    with open(active, encoding="utf-8") as stream:
+        tx = json.load(stream)
+    if tx["phase"] == "verifying":
+        # verifying 必然发生在 data 移入 previous-data 之后;确认落盘后杀死 lkit。
+        time.sleep(0.2)
+        os.kill(pid, 9)
+        sys.exit(0)
+    time.sleep(0.05)
+sys.exit(1)
+PY
+wait "$restore_pid" 2>/dev/null || true
+transaction=$(latest_transaction)
+python3 - "$transaction" <<'PY' || fail "killed restore must leave a non-terminal transaction"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    tx = json.load(stream)
+assert tx["operation"] == "restore"
+assert tx["phase"] in ("activating", "verifying", "rolling_back")
+PY
+lkit reconcile --install-dir "$install_root"
+[[ $? -eq 0 ]] || fail "reconcile recovery after interrupted restore returned nonzero"
+assert_state_version 5.0.0
+assert_service_identity
+assert_latest_phase "$install_root" rolled_back
+[[ -f "$install_root/data/rst05-marker" ]] \
+  || fail "previous data was not restored after interrupted restore recovery"
+assert_no_unfinished "$install_root"
+
+# ---------------------------------------------------------------- S13 systemd 跨版本 restore
+# RST-02:当前 5.0.0,用 S10 创建的 2.0.0 手工备份降级 restore,
+# 不经过仓库下载;保护备份、事务提交、config.toml 来源记录保持不变。
+restore_lkb_before=$(lkb_count)
+config_before="$install_root/config.toml"
+if [[ -f "$config_before" ]]; then
+  config_bytes_before=$(sha256sum "$config_before" | awk '{print $1}')
+else
+  config_bytes_before=
+fi
+lkit restore --backup "$manual_id" --install-dir "$install_root" --non-interactive --yes \
+  || fail "cross-version restore to 2.0.0 returned nonzero"
+assert_state_version 2.0.0
+assert_service_identity
+assert_latest_phase "$install_root" committed
+[[ $(lkb_count) -eq $((restore_lkb_before + 1)) ]] \
+  || fail "cross-version restore must create a protection backup"
+if [[ -n "$config_bytes_before" ]]; then
+  [[ $(sha256sum "$config_before" | awk '{print $1}') == "$config_bytes_before" ]] \
+    || fail "cross-version restore must not modify config.toml"
+else
+  [[ ! -e "$config_before" ]] || fail "cross-version restore must not create config.toml"
+fi
+transaction=$(latest_transaction)
+python3 - "$transaction" "$manual_id" <<'PY' || fail "cross-version restore transaction shape is wrong"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    tx = json.load(stream)
+assert tx["operation"] == "restore"
+assert tx["phase"] == "committed"
+assert tx["from_version"] == "5.0.0"
+assert tx["target_version"] == "2.0.0"
+assert tx["restore_backup"]["backup_id"] == sys.argv[2]
+assert tx["backup"] is not None, "cross-version restore must record the protection backup"
+assert tx["no_backup"] is False
+PY
+python3 - "$manual_backup" "$install_root/state/install-state.json" <<'PY' || fail "cross-version state assets do not match the backup"
+import gzip
+import hashlib
+import io
+import json
+import sys
+import tarfile
+
+backup, state_path = sys.argv[1:]
+with open(backup, "rb") as stream:
+    content = stream.read()
+metadata_length = int.from_bytes(content[6:10], "little")
+metadata = json.loads(content[32:32 + metadata_length])
+archive = content[1024 * 1024:]
+with tarfile.open(fileobj=io.BytesIO(gzip.decompress(archive))) as tar:
+    member = tar.extractfile("landscape-webserver")
+    binary_sha = hashlib.sha256(member.read()).hexdigest()
+    member = tar.extractfile("static.zip")
+    static_sha = hashlib.sha256(member.read()).hexdigest()
+with open(state_path, encoding="utf-8") as stream:
+    state = json.load(stream)
+assert state["active_version"] == metadata["landscape_version"]
+assert state["assets"]["webserver"]["sha256"] == binary_sha
+assert state["assets"]["static_archive"]["sha256"] == static_sha
+PY
 
 echo "PASS: Docker functional E2E completed for $native_architecture"

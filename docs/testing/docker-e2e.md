@@ -62,12 +62,20 @@ ELF 尾部加入版本标记；Linux 可执行加载不受影响，各发布版�
 
 ## 场景
 
-`run-scenarios.sh` 保留 S1-S4 与 S6-S9：
+`run-scenarios.sh` 保留 S1-S4 与 S6-S9，并新增 S10-S13：
 
 - 二进制/static repair；
 - 导出失败、启动即退、稳定期退出、慢启动回滚；
 - 已停止服务的默认拒绝和 `--allow-no-backup`；
-- none/systemd 迁移、latest、事务恢复与 reconcile。
+- none/systemd 迁移、latest、事务恢复与 reconcile；
+- 手工备份与同版本恢复（S10）；
+- restore 激活失败自动回滚（退出码 `5`，S11）；
+- restore 中断后的 phase 恢复（S12）；
+- systemd 跨版本 restore（S13）。
+
+S1-S8、S11-S13 的 repair/switch/update 需要仓库来源。`install` 自 0.1.4 起不再持久化
+来源，场景在各安装根完成首次安装后写入 `config.toml`（`[repository]` HTTP 来源），
+顺带验证配置驱动的来源解析路径。
 
 宿主 `lkit check` 不属于 Docker 功能矩阵；它验证宿主内核和依赖能力，应在实际支持
 主机或完整 VM 验收中执行。

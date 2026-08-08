@@ -717,94 +717,177 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 构造不含 tar checksum 校验的最小 tar 字节流(用于包装成 `.lkb`)。
+    fn raw_tar(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
+        let mut tar = Vec::new();
+        for (name, kind, content) in entries {
+            let mut header = [0u8; 512];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            let size = format!("{:011o}", content.len());
+            header[124..124 + 11].copy_from_slice(size.as_bytes());
+            header[156] = *kind;
+            for byte in &mut header[148..156] {
+                *byte = b' ';
+            }
+            let sum: u32 = header.iter().map(|byte| *byte as u32).sum();
+            let octal = format!("{sum:06o}");
+            header[148..154].copy_from_slice(octal.as_bytes());
+            header[154] = 0;
+            header[155] = b' ';
+            tar.extend_from_slice(&header);
+            tar.extend_from_slice(content);
+            let pad = (512 - content.len() % 512) % 512;
+            tar.extend(std::iter::repeat_n(0, pad));
+        }
+        tar.extend([0u8; 1024]);
+        tar
+    }
+
+    /// 把 tar.gz 包装成 checksum 自洽的 `.lkb` 字节(metadata 的 checksum 与归档一致)。
+    fn wrap(tar_gz: &[u8]) -> Vec<u8> {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(tar_gz);
+        let sha256: String = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let metadata = crate::backup::lkb::BackupMetadata {
+            schema_version: 1,
+            backup_id: format!("20260801-163000-{}", &sha256[..8]),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-08-01T16:30:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            landscape_version: "1.2.3".into(),
+            lkit_version: "0.1.0".into(),
+            architecture: crate::backup::lkb::BackupArchitecture::X86_64,
+            hostname: "test".into(),
+            remark: String::new(),
+            auto: true,
+            scope: crate::backup::lkb::BackupScope::Minimal,
+            contents: crate::backup::lkb::BackupContents {
+                binary: true,
+                static_: true,
+                static_archive: true,
+                init_config: true,
+                geo_cache: true,
+            },
+            checksum: format!("sha256:{sha256}"),
+        };
+        let mut bytes = Vec::new();
+        let mut header = [0u8; crate::backup::lkb::LKB_HEADER_LEN];
+        header[0..4].copy_from_slice(crate::backup::lkb::LKB_MAGIC);
+        header[4..6].copy_from_slice(&1u16.to_le_bytes());
+        header[6..10]
+            .copy_from_slice(&(serde_json::to_vec(&metadata).unwrap().len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&header);
+        bytes.extend_from_slice(&serde_json::to_vec(&metadata).unwrap());
+        bytes.resize(crate::backup::lkb::LKB_METADATA_CAPACITY, 0);
+        bytes.extend_from_slice(tar_gz);
+        bytes
+    }
+
+    /// 写入一个 `root:backups/<id>.lkb` 文件并设为 `0600`。
+    #[cfg(feature = "test-support")]
+    fn write_backup_file(dir: &std::path::Path, bytes: &[u8]) {
+        use std::os::unix::fs::PermissionsExt;
+        let backups = dir.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+        std::fs::write(backups.join("20260801-163000-a1b2c3d4.lkb"), bytes).unwrap();
+        std::fs::set_permissions(
+            backups.join("20260801-163000-a1b2c3d4.lkb"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "test-support")]
+    fn verify_args(dir: &std::path::Path) -> BackupVerify {
+        BackupVerify {
+            backup: Some("20260801-163000-a1b2c3d4".into()),
+            file: None,
+            install_dir: Some(dir.to_path_buf()),
+            test_runtime: None,
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    fn leftover_verify_dirs() -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(std::env::temp_dir())
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with("lkit-backup-verify-"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn verify_cleans_up_temp_dirs_and_rejects_incomplete_archives() {
+        // 完整归档 verify 成功且不留临时解包目录。
+        let dir = temp_dir("verify");
+        write_backup_file(
+            &dir,
+            &wrap(&gzip_tar(&raw_tar(&[
+                ("landscape-webserver", b'0', b"bin"),
+                ("landscape_init.toml", b'0', b"init"),
+                ("static.zip", b'0', b"zip"),
+                ("static", b'5', b""),
+                ("geo_tmp", b'5', b""),
+            ]))),
+        );
+        assert_eq!(run_verify(&verify_args(&dir)), ExitCode::SUCCESS);
+        assert!(
+            leftover_verify_dirs().is_empty(),
+            "verify must clean up its temporary extraction directory"
+        );
+        // 归档缺少必需条目 landscape_init.toml 时,verify 必须失败且不留临时目录。
+        write_backup_file(
+            &dir,
+            &wrap(&gzip_tar(&raw_tar(&[
+                ("landscape-webserver", b'0', b"bin"),
+                ("static.zip", b'0', b"zip"),
+                ("static", b'5', b""),
+                ("geo_tmp", b'5', b""),
+            ]))),
+        );
+        assert_eq!(run_verify(&verify_args(&dir)), ExitCode::FAILURE);
+        assert!(
+            leftover_verify_dirs().is_empty(),
+            "failed verify must not leave temporary extraction directories"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn gzip_tar(mut tar: &[u8]) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        let mut tar_gz = Vec::new();
+        let encoder = GzEncoder::new(&mut tar_gz, Compression::default());
+        let mut gz = encoder;
+        std::io::copy(&mut tar, &mut gz).unwrap();
+        gz.finish().unwrap();
+        tar_gz
+    }
+
     #[test]
     fn list_marks_content_incomplete_backups_invalid() {
         // 构造 checksum 有效、但缺少 landscape_init.toml 的归档:
         // verify_lkb 通过,内容完整性校验必须拒绝。
-        fn raw_tar(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
-            let mut tar = Vec::new();
-            for (name, kind, content) in entries {
-                let mut header = [0u8; 512];
-                header[..name.len()].copy_from_slice(name.as_bytes());
-                let size = format!("{:011o}", content.len());
-                header[124..124 + 11].copy_from_slice(size.as_bytes());
-                header[156] = *kind;
-                for byte in &mut header[148..156] {
-                    *byte = b' ';
-                }
-                let sum: u32 = header.iter().map(|byte| *byte as u32).sum();
-                let octal = format!("{sum:06o}");
-                header[148..154].copy_from_slice(octal.as_bytes());
-                header[154] = 0;
-                header[155] = b' ';
-                tar.extend_from_slice(&header);
-                tar.extend_from_slice(content);
-                let pad = (512 - content.len() % 512) % 512;
-                tar.extend(std::iter::repeat_n(0, pad));
-            }
-            tar.extend([0u8; 1024]);
-            tar
-        }
-        fn wrap(tar_gz: &[u8]) -> Vec<u8> {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(tar_gz);
-            let sha256: String = hasher
-                .finalize()
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            let metadata = crate::backup::lkb::BackupMetadata {
-                schema_version: 1,
-                backup_id: format!("20260801-163000-{}", &sha256[..8]),
-                created_at: chrono::DateTime::parse_from_rfc3339("2026-08-01T16:30:00Z")
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                landscape_version: "1.2.3".into(),
-                lkit_version: "0.1.0".into(),
-                architecture: crate::backup::lkb::BackupArchitecture::X86_64,
-                hostname: "test".into(),
-                remark: String::new(),
-                auto: true,
-                scope: crate::backup::lkb::BackupScope::Minimal,
-                contents: crate::backup::lkb::BackupContents {
-                    binary: true,
-                    static_: true,
-                    static_archive: true,
-                    init_config: true,
-                    geo_cache: true,
-                },
-                checksum: format!("sha256:{sha256}"),
-            };
-            let mut bytes = Vec::new();
-            let mut header = [0u8; crate::backup::lkb::LKB_HEADER_LEN];
-            header[0..4].copy_from_slice(crate::backup::lkb::LKB_MAGIC);
-            header[4..6].copy_from_slice(&1u16.to_le_bytes());
-            header[6..10].copy_from_slice(
-                &(serde_json::to_vec(&metadata).unwrap().len() as u32).to_le_bytes(),
-            );
-            bytes.extend_from_slice(&header);
-            bytes.extend_from_slice(&serde_json::to_vec(&metadata).unwrap());
-            bytes.resize(crate::backup::lkb::LKB_METADATA_CAPACITY, 0);
-            bytes.extend_from_slice(tar_gz);
-            bytes
-        }
-        let tar = raw_tar(&[
+        let tar_gz = gzip_tar(&raw_tar(&[
             ("landscape-webserver", b'0', b"bin"),
             ("static.zip", b'0', b"zip"),
             ("static", b'5', b""),
             ("geo_tmp", b'5', b""),
-        ]);
-        let tar_gz = {
-            use flate2::Compression;
-            use flate2::write::GzEncoder;
-            let mut tar_gz = Vec::new();
-            let encoder = GzEncoder::new(&mut tar_gz, Compression::default());
-            let mut gz = encoder;
-            std::io::copy(&mut tar.as_slice(), &mut gz).unwrap();
-            gz.finish().unwrap();
-            tar_gz
-        };
+        ]));
         let dir = temp_dir("list-incomplete");
         let backups = dir.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
@@ -826,5 +909,226 @@ mod tests {
         };
         assert_eq!(run_list(&args), ExitCode::FAILURE);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "test-support")]
+    use crate::deployment::state::{
+        ArchiveAsset, Assets, InitStatus, InitializationState, InstallState, ServiceState,
+        StateArchitecture, StateServiceManager, WebserverAsset,
+    };
+
+    #[cfg(feature = "test-support")]
+    fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let hex = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        (hex, bytes.len() as u64)
+    }
+
+    /// 构造一个初始化完成、`none` service manager 的假安装现场,
+    /// 与 `backup create` 读取的路径保持一致。
+    #[cfg(feature = "test-support")]
+    fn fake_install(dir: &std::path::Path) -> InstallState {
+        use std::os::unix::fs::symlink;
+        let version = "1.2.3";
+        let release = dir.join("releases").join(version);
+        std::fs::create_dir_all(release.join("static/assets")).unwrap();
+        let payload = b"webserver payload 1.2.3";
+        let zip = b"zip payload 1.2.3";
+        std::fs::write(release.join("landscape-webserver"), payload).unwrap();
+        std::fs::write(release.join("static.zip"), zip).unwrap();
+        std::fs::write(release.join("static/index.html"), "<h1>1.2.3</h1>").unwrap();
+        symlink(format!("releases/{version}"), dir.join("current")).unwrap();
+        std::fs::create_dir_all(dir.join("data/geo_tmp/ip")).unwrap();
+        std::fs::write(dir.join("data/geo_tmp/ip/geo.dat"), b"geo").unwrap();
+        std::fs::write(dir.join("data/landscape_init.lock"), b"").unwrap();
+        std::fs::write(dir.join("data/landscape.toml"), b"").unwrap();
+        let (webserver_sha, webserver_size) = sha256_bytes(payload);
+        let (static_sha, static_size) = sha256_bytes(zip);
+        InstallState {
+            schema_version: 1,
+            layout_version: 1,
+            install_root: dir.display().to_string(),
+            canonical_install_root: dir.display().to_string(),
+            active_version: version.into(),
+            assets: Assets {
+                webserver: WebserverAsset {
+                    architecture: StateArchitecture::X86_64,
+                    sha256: webserver_sha,
+                    size: webserver_size,
+                },
+                static_archive: ArchiveAsset {
+                    sha256: static_sha,
+                    size: static_size,
+                },
+            },
+            initialization: InitializationState {
+                status: InitStatus::Complete,
+                lock_present: true,
+                initialized_at: Some(chrono::Utc::now()),
+            },
+            service: ServiceState {
+                manager: StateServiceManager::None,
+                registered: false,
+                enabled: false,
+                verified: false,
+                definition_path: None,
+                definition_sha256: None,
+            },
+            last_transaction_id: None,
+            committed_at: Some(chrono::Utc::now()),
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    fn runtime_file(dir: &std::path::Path, export_base: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::MetadataExt;
+        let runtime = dir.join("runtime.json");
+        let host = dir.join("host");
+        let content = serde_json::json!({
+            "schema_version": 1,
+            "allow_non_root": true,
+            "preflight": "skip",
+            "execution": "inline",
+            "managed_uid": std::fs::metadata(dir).unwrap().uid(),
+            "os_release_path": "/etc/os-release",
+            "systemd": {
+                "systemctl": "/bin/false",
+                "system_unit_dir": host.join("units"),
+                "run_systemd_dir": host.join("run/systemd/system"),
+                "pid1_is_systemd": false,
+                "resolv_conf": host.join("resolv.conf"),
+            },
+            "health": {
+                "base_url": export_base,
+                "dns_tcp_port": 1053,
+                "dns_udp_port": 1053,
+                "http_port": 6300,
+                "https_port": 6443,
+                "startup_timeout_ms": 1000,
+                "stable_duration_ms": 1000,
+            },
+            "export_base_url": export_base,
+        });
+        std::fs::write(&runtime, serde_json::to_vec_pretty(&content).unwrap()).unwrap();
+        runtime
+    }
+
+    #[cfg(feature = "test-support")]
+    fn export_ok_server(version: &str) -> crate::release::repository::test_server::TestServer {
+        use crate::release::repository::test_server::{TestResponse, TestServer};
+        let version = version.to_string();
+        TestServer::start(move |path| {
+            if path == crate::backup::export::EXPORT_PATH {
+                TestResponse::ok(
+                    format!(
+                        r#"{{"data":{{"filename":"landscape_init_v{version}.toml","version":"{version}","content":"version = \"{version}\"\n"}}}}"#
+                    )
+                    .into_bytes(),
+                )
+            } else {
+                TestResponse::status(404, "Not Found", Vec::new())
+            }
+        })
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn create_writes_manual_backup_without_any_service_manager() {
+        let temp = temp_dir("create-ok");
+        let dir = temp.join("install");
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = fake_install(&dir);
+        crate::deployment::state::write_state(
+            &crate::deployment::root::InstallRoot {
+                install_root: dir.clone(),
+                canonical: dir.clone(),
+            },
+            &state,
+        )
+        .unwrap();
+        std::fs::write(dir.join("data/landscape_api_token"), b"tok\n").unwrap();
+        std::fs::set_permissions(
+            dir.join("data/landscape_api_token"),
+            std::fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        let server = export_ok_server("1.2.3");
+        let runtime = runtime_file(&temp, &server.base);
+        let args = BackupCreate {
+            remark: Some("manual create".into()),
+            output: None,
+            install_dir: Some(dir.clone()),
+            test_runtime: Some(runtime),
+        };
+        assert_eq!(run_create(&args).await, ExitCode::SUCCESS);
+        let backups = dir.join("backups");
+        let mut lkb = std::fs::read_dir(&backups)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"));
+        let lkb_path = lkb.next().expect("backup create must write a .lkb file");
+        assert!(lkb.next().is_none(), "only one .lkb must be created");
+        let bytes = std::fs::read(lkb_path.path()).unwrap();
+        let metadata = crate::backup::lkb::verify_lkb(&bytes).unwrap();
+        assert!(!metadata.auto, "manual backup must record auto: false");
+        assert_eq!(metadata.remark, "manual create");
+        assert_eq!(metadata.landscape_version, "1.2.3");
+        let extracted = temp.join("extracted");
+        crate::backup::lkb::extract_lkb(&bytes, &extracted).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(extracted.join("landscape_init.toml")).unwrap(),
+            "version = \"1.2.3\"\n",
+            "the archive must carry the exported config, not the seed file"
+        );
+        assert_eq!(
+            std::fs::read(extracted.join("landscape-webserver")).unwrap(),
+            b"webserver payload 1.2.3"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn create_export_failure_leaves_no_final_file() {
+        use crate::release::repository::test_server::{TestResponse, TestServer};
+        let temp = temp_dir("create-fail");
+        let dir = temp.join("install");
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = fake_install(&dir);
+        crate::deployment::state::write_state(
+            &crate::deployment::root::InstallRoot {
+                install_root: dir.clone(),
+                canonical: dir.clone(),
+            },
+            &state,
+        )
+        .unwrap();
+        std::fs::write(dir.join("data/landscape_api_token"), b"tok\n").unwrap();
+        std::fs::set_permissions(
+            dir.join("data/landscape_api_token"),
+            std::fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        let server = TestServer::start(|_| TestResponse::status(500, "boom", Vec::new()));
+        let runtime = runtime_file(&temp, &server.base);
+        let args = BackupCreate {
+            remark: None,
+            output: None,
+            install_dir: Some(dir.clone()),
+            test_runtime: Some(runtime),
+        };
+        assert_eq!(run_create(&args).await, ExitCode::FAILURE);
+        let backups = dir.join("backups");
+        assert!(
+            !backups.exists() || std::fs::read_dir(&backups).unwrap().count() == 0,
+            "export failure must not leave any backup files behind"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

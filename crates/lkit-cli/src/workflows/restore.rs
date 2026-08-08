@@ -1173,6 +1173,193 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_continues_with_allow_no_backup_when_protection_fails() {
+        // 保护备份失败时默认阻断;显式 --allow-no-backup 才允许继续,
+        // 事务记录 no_backup: true 且不记录保护 .lkb。
+        let _guard = interactive_guard().await;
+        crate::interaction::interactive::configure(true);
+        let _reset = NonInteractiveGuard;
+        let root = temp_root("protection-allow");
+        let install_root = InstallRoot {
+            install_root: root.clone(),
+            canonical: root.clone(),
+        };
+        activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
+        setup_current(&install_root);
+        let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
+        super::super::state::write_state(&install_root, &state).unwrap();
+        let (backup_ref, _) = create_target_backup(&install_root);
+        let server = TestServer::start(|_| TestResponse::status(500, "boom", Vec::new()));
+        let options = RestoreOptions {
+            export_base_url: server.base.clone(),
+            token: &TOKEN,
+            confirm: &YES,
+            health: &none_health(),
+        };
+        let args = RestoreArgs {
+            backup_id: Some(backup_ref.backup_id),
+            file_path: None,
+            allow_no_backup: true,
+            yes: true,
+        };
+        assert!(matches!(
+            restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
+            Ok(RestoreOutcome::Committed { .. })
+        ));
+        let transaction = super::super::transaction::find_unfinished(&install_root).unwrap();
+        assert!(
+            transaction.is_none(),
+            "the restore must commit successfully"
+        );
+        let tx_id = super::super::state::load_state(&install_root)
+            .unwrap()
+            .unwrap()
+            .last_transaction_id
+            .unwrap();
+        let path = install_root
+            .canonical
+            .join("transactions")
+            .join(format!("{tx_id}.json"));
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["no_backup"], true);
+        assert!(value["backup"].is_null());
+        assert!(value["restore_backup"].is_object());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn none_mode_activation_failure_is_recovered_by_next_command() {
+        // none 模式激活后失败不内联回滚,返回普通失败;previous-data 与事务现场
+        // 保留在事务目录,由下次命令的 phase 恢复入口恢复原 data、current 与 state。
+        let _guard = interactive_guard().await;
+        crate::interaction::interactive::configure(true);
+        let _reset = NonInteractiveGuard;
+        let root = temp_root("none-activation-fail");
+        let install_root = InstallRoot {
+            install_root: root.clone(),
+            canonical: root.clone(),
+        };
+        activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
+        setup_current(&install_root);
+        std::fs::write(
+            install_root.canonical.join("data/landscape_db.sqlite"),
+            b"db",
+        )
+        .unwrap();
+        let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
+        super::super::state::write_state(&install_root, &state).unwrap();
+        let (backup_ref, _) = create_target_backup(&install_root);
+        let server = export_server("1.3.0".into());
+        let options = RestoreOptions {
+            export_base_url: server.base.clone(),
+            token: &TOKEN,
+            confirm: &YES,
+            health: &none_health(),
+        };
+        // current 被替换为普通目录(内含 static 副本与额外条目):保护备份仍能读取
+        // current/static,但激活阶段 restore_current 的 rename 必然失败,失败发生在
+        // data 移入 previous-data 之后、提交 state 之前。
+        let current = install_root.canonical.join("current");
+        std::fs::remove_file(&current).unwrap();
+        std::fs::create_dir_all(current.join("static")).unwrap();
+        std::fs::write(
+            current.join("static/index.html"),
+            std::fs::read(
+                install_root
+                    .canonical
+                    .join("releases/1.3.0/static/index.html"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(current.join("occupied")).unwrap();
+        let args = RestoreArgs {
+            backup_id: Some(backup_ref.backup_id),
+            file_path: None,
+            allow_no_backup: false,
+            yes: true,
+        };
+        let restore_error = restore_version(
+            &install_root,
+            &state,
+            &Systemd::host(),
+            &args,
+            &options,
+        )
+        .await
+        .expect_err(
+            "none-mode activation failure must return a plain error, not an inline rollback",
+        );
+        assert!(
+            !matches!(
+                restore_error,
+                InstallError::InvalidBackup(_) | InstallError::ExportFailed(_)
+            ),
+            "the failure must come from the activation phase, got {restore_error:?}"
+        );
+        let unfinished = super::super::transaction::find_unfinished(&install_root)
+            .unwrap()
+            .expect("failed none-mode restore must leave an unfinished transaction");
+        assert_eq!(
+            unfinished.phase,
+            super::super::transaction::Phase::Activating
+        );
+        let tx_dir = install_root
+            .canonical
+            .join("transactions")
+            .join(&unfinished.transaction_id);
+        assert_eq!(
+            std::fs::read(tx_dir.join("previous-data/landscape_db.sqlite")).unwrap(),
+            b"db",
+            "the original data must be preserved in the transaction directory"
+        );
+
+        // 现场修复后(操作员处理),下次命令经恢复入口完成回滚。
+        std::fs::remove_dir_all(&current).unwrap();
+        std::os::unix::fs::symlink("releases/1.3.0", &current).unwrap();
+        super::super::transaction::recovery::recover_interrupted(
+            &install_root,
+            &unfinished,
+            &Systemd::host(),
+            &none_health(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read(install_root.canonical.join("data/landscape_db.sqlite")).unwrap(),
+            b"db",
+            "recovery must restore the original data"
+        );
+        assert_eq!(
+            std::fs::read_link(install_root.canonical.join("current")).unwrap(),
+            std::path::PathBuf::from("releases/1.3.0")
+        );
+        let restored = super::super::state::load_state(&install_root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.active_version, "1.3.0");
+        assert_eq!(
+            restored.last_transaction_id.as_deref(),
+            Some(unfinished.transaction_id.as_str())
+        );
+        assert!(
+            super::super::transaction::find_unfinished(&install_root)
+                .unwrap()
+                .is_none()
+        );
+        let path = install_root
+            .canonical
+            .join("transactions")
+            .join(format!("{}.json", unfinished.transaction_id));
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["phase"], "rolled_back");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
     async fn rollback_restores_previous_data_from_transaction_dir() {
         let root = temp_root("rollback");
         let install_root = InstallRoot {
