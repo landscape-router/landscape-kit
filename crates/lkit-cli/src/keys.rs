@@ -51,6 +51,9 @@ pub(crate) const BACKUP_NONE_FOUND: &str = "backup.none_found";
 pub(crate) const BACKUP_LIST_INVALID: &str = "backup.list_invalid";
 pub(crate) const BACKUP_VERIFIED: &str = "backup.verified";
 pub(crate) const BACKUP_REMARK_PROMPT: &str = "backup.remark_prompt";
+pub(crate) const BACKUP_AUTO_REMARK_SWITCH: &str = "backup.auto_remark_switch";
+pub(crate) const BACKUP_AUTO_REMARK_REPAIR: &str = "backup.auto_remark_repair";
+pub(crate) const BACKUP_AUTO_REMARK_RESTORE: &str = "backup.auto_remark_restore";
 pub(crate) const RESTORE_REQUIRES_EXISTING_INSTALLATION: &str =
     "restore.requires_existing_installation";
 pub(crate) const RESTORE_CONFIRM_PLAN: &str = "restore.confirm_plan";
@@ -325,6 +328,17 @@ pub(crate) const PRESENTATION_STOP_DOWNLOAD_CONFIRM: &str = "presentation.stop_d
 pub(crate) const PRESENTATION_CONFIRM_STOP: &str = "presentation.confirm_stop";
 pub(crate) const PRESENTATION_INSTALLATION_IS_APPLYING: &str =
     "presentation.installation_is_applying";
+pub(crate) const PRESENTATION_PREPARING: &str = "presentation.preparing";
+pub(crate) const PRESENTATION_STOPPING: &str = "presentation.stopping";
+pub(crate) const PRESENTATION_ACTIVATING: &str = "presentation.activating";
+pub(crate) const PRESENTATION_VERIFYING: &str = "presentation.verifying";
+pub(crate) const PRESENTATION_OPERATION_INSTALL: &str = "presentation.operation_install";
+pub(crate) const PRESENTATION_OPERATION_SWITCH: &str = "presentation.operation_switch";
+pub(crate) const PRESENTATION_OPERATION_UPDATE: &str = "presentation.operation_update";
+pub(crate) const PRESENTATION_OPERATION_REPAIR: &str = "presentation.operation_repair";
+pub(crate) const PRESENTATION_OPERATION_RESTORE: &str = "presentation.operation_restore";
+pub(crate) const PRESENTATION_OPERATION_SERVICE_MIGRATION: &str =
+    "presentation.operation_service_migration";
 pub(crate) const INTERACTIVE_SELECT_ONE_OPTION: &str = "interactive.select_one_option";
 pub(crate) const INTERACTIVE_SELECT_ONE_OPTION_DEFAULT: &str =
     "interactive.select_one_option_default";
@@ -644,7 +658,13 @@ pub(crate) const CONSOLE_BACKUP_RESTORE_TITLE: &str = "console.backup_restore_ti
 pub(crate) const CONSOLE_BACKUP_RESTORE_QUESTION: &str = "console.backup_restore_question";
 pub(crate) const CONSOLE_BACKUP_RESTORE_PLAN: &str = "console.backup_restore_plan";
 pub(crate) const CONSOLE_BACKUP_RESTORE_PRESS_ENTER: &str = "console.backup_restore_press_enter";
+pub(crate) const CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE: &str =
+    "console.backup_restore_minimal_scope";
+pub(crate) const CONSOLE_BACKUP_CREATE_TITLE: &str = "console.backup_create_title";
+pub(crate) const CONSOLE_BACKUP_CREATE_SCOPE: &str = "console.backup_create_scope";
+pub(crate) const CONSOLE_BACKUP_CREATE_HINT: &str = "console.backup_create_hint";
 pub(crate) const CONSOLE_BACKUP_DETAILS_RESTORE_HINT: &str = "console.backup_details_restore_hint";
 pub(crate) const CONSOLE_BACKUP_HINT_LIST: &str = "console.backup_hint_list";
 pub(crate) const CONSOLE_BACKUP_HINT_DETAILS: &str = "console.backup_hint_details";
 pub(crate) const CONSOLE_BACKUP_HINT_RESTORE_CONFIRM: &str = "console.backup_hint_restore_confirm";
+pub(crate) const CONSOLE_BACKUP_HINT_CREATE: &str = "console.backup_hint_create";

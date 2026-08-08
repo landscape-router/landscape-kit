@@ -86,8 +86,16 @@ enum DownloadStatus {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum PresentationEvent {
-    Download { state: DownloadState },
-    Phase { phase: OperationPhase },
+    Download {
+        state: DownloadState,
+    },
+    Phase {
+        phase: OperationPhase,
+        #[serde(default)]
+        step: Option<u8>,
+        #[serde(default)]
+        total: Option<u8>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,6 +104,9 @@ pub(crate) enum OperationPhase {
     Preparing,
     Downloading,
     Applying,
+    Stopping,
+    Activating,
+    Verifying,
 }
 
 enum ProgressOutput {
@@ -224,10 +235,22 @@ fn write_event(file: &mut File, event: &PresentationEvent) {
 }
 
 pub(crate) fn operation_phase(phase: OperationPhase) {
+    operation_progress(phase, None);
+}
+
+/// 带步骤进度的阶段事件:step/total 供全屏页渲染步骤 Gauge(restore 等无字节下载的操作)。
+pub(crate) fn operation_progress(phase: OperationPhase, progress: Option<(u8, u8)>) {
     let Some(mut file) = event_file() else {
         return;
     };
-    write_event(&mut file, &PresentationEvent::Phase { phase });
+    write_event(
+        &mut file,
+        &PresentationEvent::Phase {
+            phase,
+            step: progress.map(|(step, _)| step),
+            total: progress.map(|(_, total)| total),
+        },
+    );
 }
 
 struct InteractiveDownload {
@@ -432,9 +455,25 @@ fn render_download(frame: &mut Frame<'_>, state: &DownloadState) {
     frame.render_widget(gauge, gauge_area);
 }
 
+/// 步骤进度条使用的阶段文案(与下载字节进度无关的操作,如 restore)。
+fn step_phase_text(phase: OperationPhase) -> String {
+    match phase {
+        OperationPhase::Preparing => crate::tr!(crate::keys::PRESENTATION_PREPARING),
+        OperationPhase::Stopping => crate::tr!(crate::keys::PRESENTATION_STOPPING),
+        OperationPhase::Activating => crate::tr!(crate::keys::PRESENTATION_ACTIVATING),
+        OperationPhase::Verifying => crate::tr!(crate::keys::PRESENTATION_VERIFYING),
+        OperationPhase::Downloading | OperationPhase::Applying => {
+            crate::tr!(crate::keys::PRESENTATION_APPLYING_CONFIGURATION)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_operation(
     frame: &mut Frame<'_>,
+    title: &str,
     phase: OperationPhase,
+    step_progress: Option<(u8, u8)>,
     current: Option<&DownloadState>,
     logs: &[String],
     notice: &str,
@@ -447,7 +486,7 @@ fn render_operation(
         Constraint::Length(3),
     ])
     .areas(frame.area());
-    let title = match result {
+    let header_text = match result {
         Some(OperationResult::Success) => {
             crate::tr!(crate::keys::PRESENTATION_INSTALLATION_COMPLETE)
         }
@@ -455,10 +494,11 @@ fn render_operation(
         Some(OperationResult::Cancelled) => {
             crate::tr!(crate::keys::PRESENTATION_INSTALLATION_CANCELLED)
         }
+        None if !title.is_empty() => title.to_string(),
         None => crate::tr!(crate::keys::PRESENTATION_INSTALLING_LANDSCAPE),
     };
     frame.render_widget(
-        Paragraph::new(title)
+        Paragraph::new(header_text)
             .style(Style::default().add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::BOTTOM)),
         header,
@@ -487,6 +527,22 @@ fn render_operation(
                 .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_DOWNLOAD))),
             progress,
         );
+    } else if let Some((step, total)) = step_progress {
+        let ratio = if total == 0 {
+            0.0
+        } else {
+            f64::from(step) / f64::from(total)
+        };
+        let label = format!("{}  {step}/{total}", step_phase_text(phase));
+        frame.render_widget(
+            Gauge::default()
+                .ratio(ratio.clamp(0.0, 1.0))
+                .label(label)
+                .gauge_style(Style::default().fg(Color::Cyan))
+                .use_unicode(false)
+                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_STATUS))),
+            progress,
+        );
     } else {
         let status = match result {
             Some(OperationResult::Success) => {
@@ -507,6 +563,15 @@ fn render_operation(
                 }
                 OperationPhase::Applying => {
                     crate::tr!(crate::keys::PRESENTATION_APPLYING_CONFIGURATION)
+                }
+                OperationPhase::Stopping => {
+                    crate::tr!(crate::keys::PRESENTATION_STOPPING)
+                }
+                OperationPhase::Activating => {
+                    crate::tr!(crate::keys::PRESENTATION_ACTIVATING)
+                }
+                OperationPhase::Verifying => {
+                    crate::tr!(crate::keys::PRESENTATION_VERIFYING)
                 }
             },
         };
@@ -641,7 +706,9 @@ pub(crate) struct WorkerPresentation {
     current: Option<DownloadState>,
     renderer: Option<InteractiveDownload>,
     screen: Option<FullScreenOperation>,
+    title: String,
     phase: OperationPhase,
+    progress: Option<(u8, u8)>,
     logs: Vec<String>,
     notice: String,
     confirming_stop: bool,
@@ -662,7 +729,7 @@ enum OperationResult {
 }
 
 impl WorkerPresentation {
-    pub(crate) fn new(full_screen: bool) -> Self {
+    pub(crate) fn new(full_screen: bool, title: String) -> Self {
         Self {
             events: None,
             pending: String::new(),
@@ -671,7 +738,9 @@ impl WorkerPresentation {
             screen: full_screen
                 .then(FullScreenOperation::start)
                 .and_then(Result::ok),
+            title,
             phase: OperationPhase::Preparing,
+            progress: None,
             logs: Vec::new(),
             notice: String::new(),
             confirming_stop: false,
@@ -848,8 +917,12 @@ impl WorkerPresentation {
                     self.current = None;
                 }
             }
-            PresentationEvent::Phase { phase } => {
+            PresentationEvent::Phase { phase, step, total } => {
                 self.phase = phase;
+                self.progress = match (step, total) {
+                    (Some(step), Some(total)) if total > 0 => Some((step, total)),
+                    _ => None,
+                };
                 self.confirming_stop = false;
                 self.notice.clear();
             }
@@ -861,20 +934,32 @@ impl WorkerPresentation {
         let Some(screen) = self.screen.as_mut() else {
             return;
         };
+        let title = &self.title;
         let phase = self.phase;
+        let progress = self.progress;
         let current = self.current.as_ref();
         let logs = &self.logs;
         let notice = &self.notice;
         let confirming_stop = self.confirming_stop;
         let result = self.result;
         let _ = screen.terminal.draw(|frame| {
-            render_operation(frame, phase, current, logs, notice, confirming_stop, result)
+            render_operation(
+                frame,
+                title,
+                phase,
+                progress,
+                current,
+                logs,
+                notice,
+                confirming_stop,
+                result,
+            )
         });
     }
 }
 
 pub(crate) fn show_cancelled_screen(interrupt: &InterruptGuard) -> Result<(), String> {
-    let mut presentation = WorkerPresentation::new(true);
+    let mut presentation = WorkerPresentation::new(true, String::new());
     presentation.result = Some(OperationResult::Cancelled);
     presentation.render_screen();
     presentation.wait_for_close(interrupt)?;
@@ -978,7 +1063,9 @@ mod tests {
             .draw(|frame| {
                 render_operation(
                     frame,
+                    "",
                     OperationPhase::Downloading,
+                    None,
                     Some(&state),
                     &[],
                     "",
@@ -1008,7 +1095,9 @@ mod tests {
             .draw(|frame| {
                 render_operation(
                     frame,
+                    "",
                     OperationPhase::Applying,
+                    None,
                     None,
                     &[],
                     "",
@@ -1046,7 +1135,9 @@ mod tests {
             .draw(|frame| {
                 render_operation(
                     frame,
+                    "",
                     OperationPhase::Applying,
+                    None,
                     None,
                     &[
                         "install: systemd unit landscape-router.service is registered".into(),
@@ -1087,16 +1178,50 @@ mod tests {
 
     #[test]
     fn only_download_phase_is_cancellable() {
-        let mut presentation = WorkerPresentation::new(false);
+        let mut presentation = WorkerPresentation::new(false, String::new());
         assert!(!presentation.is_cancellable());
         presentation.apply(PresentationEvent::Phase {
             phase: OperationPhase::Downloading,
+            step: None,
+            total: None,
         });
         assert!(presentation.is_cancellable());
         presentation.apply(PresentationEvent::Phase {
             phase: OperationPhase::Applying,
+            step: None,
+            total: None,
         });
         assert!(!presentation.is_cancellable());
+    }
+
+    #[test]
+    fn renders_step_progress_gauge_for_stepped_operations() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_operation(
+                    frame,
+                    "Restoring Landscape",
+                    OperationPhase::Stopping,
+                    Some((2, 4)),
+                    None,
+                    &["install: stopping landscape-router.service".into()],
+                    "",
+                    false,
+                    None,
+                )
+            })
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("Restoring Landscape"));
+        assert!(content.contains("2/4"));
     }
 
     #[test]

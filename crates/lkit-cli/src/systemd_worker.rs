@@ -147,6 +147,7 @@ pub(crate) fn delegate(
     network_plan: Option<NetworkPlan>,
     full_screen: bool,
 ) -> Result<ExitCode, String> {
+    let title = operation_title(&args);
     let systemd = Systemd::host();
     if !matches!(systemd.probe(), Availability::Available { .. }) {
         return Err("the systemd manager is not available".into());
@@ -280,6 +281,7 @@ pub(crate) fn delegate(
         &presentation_path,
         interrupt,
         full_screen,
+        &title,
     );
     if matches!(result, Ok(WaitOutcome::Interrupted)) {
         return interrupt_worker(
@@ -437,6 +439,20 @@ fn run_worker_inner(request_path: &Path) -> Result<i32, String> {
         .stderr(Stdio::null())
         .status();
     Ok(exit_code)
+}
+
+/// 根据委托参数中的子命令名生成全屏页标题,缺省回落到"正在安装 Landscape"。
+fn operation_title(args: &[String]) -> String {
+    let key = match args.first().map(String::as_str) {
+        Some("install") => crate::keys::PRESENTATION_OPERATION_INSTALL,
+        Some("switch") => crate::keys::PRESENTATION_OPERATION_SWITCH,
+        Some("update") => crate::keys::PRESENTATION_OPERATION_UPDATE,
+        Some("repair") => crate::keys::PRESENTATION_OPERATION_REPAIR,
+        Some("restore") => crate::keys::PRESENTATION_OPERATION_RESTORE,
+        Some("service-manager") => crate::keys::PRESENTATION_OPERATION_SERVICE_MIGRATION,
+        _ => crate::keys::PRESENTATION_OPERATION_INSTALL,
+    };
+    crate::tr!(key)
 }
 
 pub(crate) fn string_args() -> Result<Vec<String>, String> {
@@ -652,6 +668,7 @@ fn systemctl(path: &Path, args: &[&str]) -> Result<(), String> {
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wait_for_result(
     systemctl_path: &Path,
     unit_name: &str,
@@ -661,10 +678,11 @@ fn wait_for_result(
     presentation_path: &Path,
     interrupt: &InterruptGuard,
     full_screen: bool,
+    title: &str,
 ) -> Result<WaitOutcome, String> {
     let mut stdout = None;
     let mut stderr = None;
-    let mut presentation = WorkerPresentation::new(full_screen);
+    let mut presentation = WorkerPresentation::new(full_screen, title.to_string());
     let mut inactive_polls = 0_u8;
     loop {
         presentation.drain(presentation_path)?;

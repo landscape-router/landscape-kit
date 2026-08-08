@@ -47,7 +47,8 @@
 - `.lkb` Header、Metadata、零填充、tar.gz 和 checksum 均按 v1 校验；归档中的
   `landscape_init.toml` 必须保留并参与完整性校验。
 - minimal 归档包含当前二进制、当前静态页面、API 导出配置和 `geo_tmp`。
-- 数据库、API token、日志、metric 和 socket 不进入归档。
+- 数据库、API token、日志、metric 和 socket 不进入归档（数据库记录在恢复时按备份的
+  `landscape_init.toml` 重建）。
 - 需要备份的路径只有在 `.lkb` 完整自校验成功后才允许停止当前服务。
 - 有 `.lkb` 时，目标版本失败后用它创建空 data 并重新初始化旧版本。
 - 无备份切换失败时仍恢复 `current`、服务状态和 `/etc/resolv.conf`，但不执行 data
@@ -57,8 +58,9 @@
   或较高，不经过仓库下载。
 - restore 默认在停止服务前创建当前实例保护 `.lkb`；`--allow-no-backup` 才能跳过该保护，
   且必须由用户确认承担风险。
-- restore 的目标 `.lkb` 不包含 SQLite；恢复会创建空 data、重新初始化配置，并保留恢复前
-  data 的事务现场，不得声称恢复数据库。
+- restore 的目标 `.lkb` 不包含 SQLite 数据文件；恢复会创建空 data、重新初始化配置并
+  保留恢复前 data 的事务现场。数据库以备份的 `landscape_init.toml` 重建（版本锁定），
+  不得声称字节级数据库恢复。
 - systemd restore 必须恢复服务并通过完整健康检查后提交；none restore 必须保持停止并提交
   `initialization.status: pending`、`verified: false`。
 - restore 目标失败但原状态恢复成功返回 `5`；恢复失败返回 `6`，保留目标 release、旧

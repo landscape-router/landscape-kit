@@ -14,6 +14,10 @@ lkit restore (--backup <ID> | --file <PATH>)
 `--yes` 覆盖全部确认：在非交互模式下同时表示确认恢复计划、minimal scope 数据损失以及
 （none 模式）外部实例已由用户自己的进程管理器停止。
 
+从交互控制台（TUI）发起的 restore 由 TUI 恢复确认层完成全部确认，命令内部标记
+`--console-confirmed`，不再请求 `/dev/tty` 二次确认；这在 systemd worker 路径下是必需
+的——worker 是独立进程且无法读取 TUI 的键盘输入，继续交互确认会阻塞在输出提示上。
+
 确认发生在事务创建之前：用户拒绝或缺少 `--yes` 时不创建事务、不写任何文件（`--file`
 也不产生暂存拷贝），服务与现场保持不变，分别返回 `1` 和 `2`。`--backup <ID>` 只接受
 备份 ID 格式 `YYYYMMDD-HHMMSS-<8位小写hex>`，其他取值视为参数错误（`2`）。
@@ -32,11 +36,16 @@ lkit restore (--backup <ID> | --file <PATH>)
    目录，解包目录与文件分别保持 `0700`/`0600`。
 
 目标备份损坏、架构不匹配、归档缺少必要内容或保护备份创建失败时，保持当前服务和现场
-不变。`--allow-no-backup` 只允许在保护备份无法创建时继续，明确表示不产生可移植的当前
+不变。保护备份带固定备注（`restore 前自动保护备份`，auto 标记为 true）。
+`--allow-no-backup` 只允许在保护备份无法创建时继续，明确表示不产生可移植的当前
 配置快照；它不跳过目标备份校验或用户确认。
 
 解包在停止服务前完成，解包结果供激活阶段直接使用；解包过程不修改运行态，也不会在
 `/tmp` 或任何可预测路径留下中间产物。
+
+systemd 模式委托 worker 执行时，全屏操作页显示步骤进度条：准备（`1/4`）、停止服务
+（`2/4`）、激活（`3/4`）、初始化与健康检查（`4/4`）；none 模式为两步（准备、激活）。
+restore 不下载仓库资产，进度条表示阶段进度而非字节进度。
 
 ## 激活与提交
 
@@ -52,8 +61,11 @@ restore 使用与 switch 相同的事务锁和 systemd operation worker。system
 lkit 不启动、不探测外部进程，恢复后提交 `initialization.status: pending`、
 `service.verified: false`，并输出参考启动命令。
 
-恢复成功后，事务目录中的旧 data 现场保留用于诊断和中断恢复，不代表 lkit 提供数据库
-恢复保证。`.lkb` 本身仍不包含 SQLite、API token、日志或指标。
+恢复成功后，事务目录中的旧 data 现场保留用于诊断和中断恢复。`.lkb` 不包含 SQLite
+数据文件，但包含 `landscape_init.toml`：恢复后首次启动时 Landscape 会清空并重建
+数据库（init 文件只能被同版本二进制消费；restore 的二进制与 init 文件来自同一备份，
+版本恒等），详见 [`.lkb` 备份与回滚](../backup/lkb-and-rollback.md#landscape_inittoml-与数据库重建)。
+API token、日志和指标不包含，备份之后新增的数据会丢失。
 
 ## 失败与恢复
 

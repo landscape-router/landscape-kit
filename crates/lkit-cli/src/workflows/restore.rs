@@ -16,6 +16,7 @@ use super::state::{
 };
 use super::systemd::Systemd;
 use super::transaction::{BackupRef, Phase, TransactionFile};
+use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 /// restore 运行参数。
 pub(crate) struct RestoreArgs {
@@ -27,6 +28,8 @@ pub(crate) struct RestoreArgs {
     pub allow_no_backup: bool,
     /// 非交互模式必须显式 `--yes`,否则返回参数错误。
     pub yes: bool,
+    /// 交互控制台已确认恢复计划,跳过 `/dev/tty` 二次确认(worker 进程无法读取 TUI 输入)。
+    pub console_confirmed: bool,
 }
 
 #[derive(Debug)]
@@ -163,17 +166,21 @@ pub(crate) async fn restore_version<P: DocsProbe>(
         return Err(error);
     }
     super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
+    let steps = if is_systemd { 4 } else { 2 };
+    operation_progress(OperationPhase::Preparing, Some((1, steps)));
 
     let mut activated = false;
     let result: Result<(), InstallError> = async {
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
+            operation_progress(OperationPhase::Stopping, Some((2, steps)));
             super::systemd::stop_and_wait(systemd, || {
                 super::systemd::active_state(systemd)
                     .map(|value| value != "active")
                     .unwrap_or(true)
             })?;
-        } else if !crate::interaction::interactive::is_non_interactive() {
+        } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
+        {
             // 非交互模式的「外部实例已停止」确认由 `--yes` 覆盖(见 confirm_restore)。
             let accepted = (options.confirm)(&crate::tr!(
                 crate::keys::RESTORE_CONFIRM_STOP_WITH_OWN_MANAGER
@@ -185,6 +192,10 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             }
         }
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
+        operation_progress(
+            OperationPhase::Activating,
+            Some((if is_systemd { 3 } else { 2 }, steps)),
+        );
         activated = true;
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         rollback::move_data_aside(&root.canonical.join("data"), &tx_dir.join("previous-data"))?;
@@ -211,6 +222,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             super::systemd::enable(systemd)?;
             super::systemd::start(systemd)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
+            operation_progress(OperationPhase::Verifying, Some((4, steps)));
             let pid = super::systemd::main_pid(systemd)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(
@@ -409,6 +421,11 @@ fn confirm_restore<P: DocsProbe>(
 ) -> Result<(), InstallError> {
     let current = state.active_version.clone();
     let target = metadata.landscape_version.clone();
+    // 交互控制台的分发路径在 TUI 确认层已完成确认;worker 进程无法读取 TUI 输入,
+    // 继续请求 `/dev/tty` 会死锁,因此直接跳过。
+    if args.console_confirmed {
+        return Ok(());
+    }
     if crate::interaction::interactive::is_non_interactive() {
         if !args.yes {
             return Err(InstallError::ParameterUsage(
@@ -481,7 +498,7 @@ async fn create_protection_backup<P: DocsProbe>(
         &static_dir,
         &static_archive,
         &geo_tmp,
-        "",
+        &crate::tr!(crate::keys::BACKUP_AUTO_REMARK_RESTORE),
         true,
     )?;
     transaction.backup = Some(backup_ref);
@@ -948,6 +965,7 @@ mod tests {
             file_path: None,
             allow_no_backup: false,
             yes: false,
+            console_confirmed: false,
         };
         let outcome = restore_version(&install_root, &state, &Systemd::host(), &args, &options)
             .await
@@ -1050,6 +1068,7 @@ mod tests {
             file_path: None,
             allow_no_backup: false,
             yes: false,
+            console_confirmed: false,
         };
         assert!(matches!(
             restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
@@ -1109,6 +1128,7 @@ mod tests {
                 file_path: None,
                 allow_no_backup: false,
                 yes: true,
+                console_confirmed: false,
             };
             assert!(
                 matches!(
@@ -1152,6 +1172,7 @@ mod tests {
             file_path: None,
             allow_no_backup: false,
             yes: false,
+            console_confirmed: false,
         };
         assert!(
             restore_version(&install_root, &state, &Systemd::host(), &args, &options)
@@ -1201,6 +1222,7 @@ mod tests {
             file_path: None,
             allow_no_backup: true,
             yes: true,
+            console_confirmed: false,
         };
         assert!(matches!(
             restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
@@ -1279,6 +1301,7 @@ mod tests {
             file_path: None,
             allow_no_backup: false,
             yes: true,
+            console_confirmed: false,
         };
         let restore_error = restore_version(
             &install_root,
@@ -1695,6 +1718,51 @@ mod tests {
             file_path: None,
             allow_no_backup: false,
             yes: true,
+            console_confirmed: false,
+        };
+        assert!(matches!(
+            restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
+            Ok(RestoreOutcome::Committed { .. })
+        ));
+        assert_eq!(
+            super::super::state::load_state(&install_root)
+                .unwrap()
+                .unwrap()
+                .active_version,
+            "1.2.3"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn console_confirmed_skips_interactive_confirmations() {
+        // 控制台分发路径:交互模式下 console_confirmed 使确认闭包不被调用
+        // (worker 进程无法读取 TUI 输入,tty 确认会死锁),恢复正常提交。
+        let _guard = interactive_guard().await;
+        crate::interaction::interactive::configure(false);
+        let root = temp_root("console-confirmed");
+        let install_root = InstallRoot {
+            install_root: root.clone(),
+            canonical: root.clone(),
+        };
+        activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
+        setup_current(&install_root);
+        let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
+        super::super::state::write_state(&install_root, &state).unwrap();
+        let (backup_ref, _) = create_target_backup(&install_root);
+        let server = export_server("1.3.0".into());
+        let options = RestoreOptions {
+            export_base_url: server.base.clone(),
+            token: &TOKEN,
+            confirm: &|_| panic!("console-confirmed restore must not open a TTY confirmation"),
+            health: &none_health(),
+        };
+        let args = RestoreArgs {
+            backup_id: Some(backup_ref.backup_id),
+            file_path: None,
+            allow_no_backup: false,
+            yes: true,
+            console_confirmed: true,
         };
         assert!(matches!(
             restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,

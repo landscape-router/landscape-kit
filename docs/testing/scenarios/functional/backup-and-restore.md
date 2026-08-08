@@ -171,3 +171,42 @@
 - 状态：`已覆盖`
 - 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`same_version_rollback_restores_the_original_release`（crates/lkit-cli/src/workflows/restore.rs）
 - 说明：同版本 restore 激活失败时，被移入事务目录 `replaced-release` 的原 release 被移回；回滚后磁盘二进制/静态资源与回滚前一致，`verify_current_backend` 通过。
+
+## RST-13
+
+**控制台发起的 restore 以 TUI 确认为唯一确认，不再出现 `/dev/tty` 二次确认**
+
+- 测试层：Rust workflow、Rust 单元（console）
+- 状态：`已覆盖`
+- 证据：[交互控制台](../../../interaction/console.md)、`console_confirmed_skips_interactive_confirmations`（crates/lkit-cli/src/workflows/restore.rs）、`backup_restore_flow_builds_restore_command`（crates/lkit-cli/src/console.rs，断言 `console_confirmed` 与 `--console-confirmed` 参数）
+- 说明：交互模式下 `console_confirmed` 使恢复工作流跳过恢复计划与 minimal scope 的 tty 确认（worker 是独立进程，无法读取 TUI 输入，继续交互确认会阻塞），恢复正常提交；控制台覆盖层同时展示 minimal scope 数据损失警告，`--backup`/`--yes`/`--console-confirmed` 均传入分发参数。
+- 缺口：真实 systemd worker 内的无 tty 阻塞路径未单独做 E2E 断言（Docker E2E 恢复用例均带 `--non-interactive`）。
+
+## BKP-08
+
+**控制台创建备份对话框：备注输入、校验与分发**
+
+- 测试层：Rust 单元（console）
+- 状态：`已覆盖`
+- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_action_builds_cli_and_domain_request`（crates/lkit-cli/src/console.rs，断言创建对话框渲染、备注逐字符输入、`--remark` 与结构化请求一致）
+- 说明：Enter 打开创建对话框（标题、minimal scope 说明、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、Enter 提交走与 CLI 相同的备注校验，空备注直接创建不带 `--remark`。
+
+## BKP-09
+
+**switch、repair 与 restore 的保护快照带固定备注**
+
+- 测试层：Rust workflow、Docker E2E
+- 状态：`已覆盖`
+- 证据：[`.lkb` 备份与回滚](../../../backup/lkb-and-rollback.md)、`restores_cross_version_without_systemd`（断言恢复后保护备份存在，crates/lkit-cli/src/workflows/restore.rs）、Docker E2E S10/S11/S13（断言 restore 创建保护备份并记录在事务中）
+- 说明：保护快照 `auto: true` 且备注为固定本地化文案（`switch 前自动备份`、`repair 前自动备份`、`restore 前自动保护备份`）；Docker E2E 已断言保护备份存在，备注值由 Rust 工作流直接构造时以 `tr!` 生成。
+- 缺口：Docker E2E 未断言保护备份的 remark 具体值（仅断言存在）。
+
+## RST-14
+
+**委托 restore 全屏页显示操作标题与步骤进度条**
+
+- 测试层：Rust 单元（presentation）、Rust workflow
+- 状态：`已覆盖`
+- 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`（crates/lkit-cli/src/interaction/presentation.rs，断言操作标题与 `2/4` 步骤 Gauge）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（crates/lkit-cli/src/workflows/restore.rs）、`operation_title` 按子命令生成标题（crates/lkit-cli/src/systemd_worker.rs）
+- 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；install 的字节进度条不受影响。
+- 缺口：真实 worker 进程到全屏页的事件链路未单独 E2E 断言（Docker E2E 在无控制台终端下运行）。

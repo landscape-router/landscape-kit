@@ -21,6 +21,9 @@ pub struct Restore {
     /// 非交互模式确认恢复
     #[arg(long)]
     pub yes: bool,
+    /// 控制台已确认恢复计划（内部参数，交互模式也跳过 tty 确认）
+    #[arg(long, hide = true)]
+    pub console_confirmed: bool,
     #[arg(long, value_name = "PATH")]
     pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
@@ -120,6 +123,7 @@ pub async fn run(args: &Restore) -> ExitCode {
         file_path: args.file.clone(),
         allow_no_backup: args.allow_no_backup,
         yes: args.yes,
+        console_confirmed: args.console_confirmed,
     };
     match crate::workflows::restore::restore_version(
         &normalized,

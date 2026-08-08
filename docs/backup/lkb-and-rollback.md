@@ -11,20 +11,40 @@
 
 `.lkb` 恢复是配置级重建，不是数据库字节级回滚：
 
-- 不复制 `landscape_db.sqlite`；
+- 不复制 `landscape_db.sqlite` 字节文件；
 - 恢复时创建新的空 data 目录；
-- 使用导出的 `landscape_init.toml` 重新初始化同版本 Landscape；
+- 使用导出的 `landscape_init.toml` 重新初始化同版本 Landscape：首次启动时清空并重建
+  数据库，配置记录等价恢复；
 - 保证核心配置一致，不保证恢复日志、指标、缓存状态或 API token。
 
 公开的 `lkit backup` 使用同一 v1 容器和 minimal scope。手工备份将 `auto` 设为 `false`，
 并可写入用户提供的单行 `remark`；switch、后端 repair 和 restore 创建的保护快照仍将
-`auto` 设为 `true`。`backup create` 不停止或重启服务，但必须在取得安装锁后从当前运行
-实例成功导出配置。
+`auto` 设为 `true`，并带固定本地化备注（`switch 前自动备份`、`repair 前自动备份`、
+`restore 前自动保护备份`），使备份列表能区分保护快照的用途。`backup create` 不停止或
+重启服务，但必须在取得安装锁后从当前运行实例成功导出配置。
 
 每个 v1 备份固定携带该版本官方静态压缩包 `static.zip`，与归档内 `static/` 解压树同源。
 restore 从备份内压缩包现场计算 `static_archive` 身份，state 因此始终如实描述恢复内容，
 metadata 不需要记录仓库来源：仓库来源是安装机器的持续分发通道，独立记录在
 `config.toml` 中，restore 不读取也不修改它，不属于备份内容。
+
+### `landscape_init.toml` 与数据库重建
+
+`.lkb` 不包含 `landscape_db.sqlite` 字节文件，但包含 `landscape_init.toml`，它可以恢复
+数据库：`InitConfig` 承载全部配置实体（接口、NAT、DNS 规则、DHCP、已登记设备、证书、
+DDNS 任务等），这些实体就是数据库中的配置记录。恢复或回滚后首次启动时，Landscape
+检测到初始化 lock 缺失，读取 `landscape_init.toml`，清空现有数据库并重建全部配置记录，
+然后写入 `config.toml` 和初始化 lock。因此配置数据以"重建数据库"的方式等价恢复，
+但不是字节级恢复。
+
+该恢复受版本锁定约束：`landscape_init.toml` 的 `version` 必须与消费它的二进制
+`VERSION` 完全一致，启动时严格校验，不一致直接拒绝启动，不做隐式迁移。因此一个
+版本的 init 文件只能恢复同版本的数据库。`lkit restore` 从同一个 `.lkb` 恢复二进制与
+init 文件，两者版本恒等，该约束必然满足，不存在跨版本组合的情况。
+
+不随 init 文件恢复的内容：SQLite 原始字节、未包含在 `InitConfig` 中的运行态数据、
+API token、日志、指标历史、Unix socket 和缓存状态。备份之后新增的数据（含数据库记录）
+在恢复后丢失。
 
 ### 配置导出
 
@@ -237,7 +257,8 @@ Landscape。
 
 `lkit restore` 只接受已有且 state/current 一致的安装，目标可以是同版本、较低版本或较高
 版本，不经过仓库下载。命令先完整验证目标备份与架构，交互模式确认当前版本、目标版本、
-backup ID 以及 minimal scope 不包含数据库；确认先于事务创建完成：拒绝或非交互模式
+backup ID 以及 minimal scope 不包含 SQLite 数据文件（数据库在恢复后按 init 配置重建）；
+确认先于事务创建完成：拒绝或非交互模式
 缺少 `--yes` 时不创建事务、不写任何文件（`--file` 不产生暂存拷贝），返回 `1`/`2`。
 `--backup <ID>` 只接受 `YYYYMMDD-HHMMSS-<8位小写hex>` 格式，其他取值视为参数错误。
 归档内容校验在确认与保护备份之后、停止服务之前完成。
@@ -254,8 +275,10 @@ release。systemd 模式必须启动并通过完整健康检查后提交；none 
 已停止（非交互模式以 `--yes` 代替），提交 pending 初始化和 `verified: false`，不自行
 启动或探测外部实例。
 
-恢复成功后旧 data 事务现场保留用于中断恢复和人工诊断。它不是 portable 数据库备份，
-也不能改变 minimal `.lkb` 不恢复 SQLite、API token、日志和指标的声明。
+恢复成功后旧 data 事务现场保留用于中断恢复和人工诊断。它不是 portable 数据库备份：
+数据库以初始化方式重建（见 [landscape_init.toml 与数据库重建](#landscape_inittoml-与数据库重建)，
+受版本锁定约束），不提供字节级恢复；`.lkb` 不包含 SQLite 数据文件、API token、日志
+和指标。
 
 失败语义按 service manager 区分：systemd 模式目标激活或健康检查失败但恢复前状态自动
 恢复成功时返回 `5`，自动恢复失败时返回 `6`；none 模式激活后的失败不内联自动回滚，
@@ -302,7 +325,7 @@ systemd 环境中目标版本启动或健康检查失败时：
 
 回滚不会恢复：
 
-- 原 SQLite 文件和非导出数据库状态；
+- 原 SQLite 文件和非导出数据库状态（数据库以备份内 init 配置重建，版本锁定）；
 - API token；
 - 日志；
 - 指标历史；

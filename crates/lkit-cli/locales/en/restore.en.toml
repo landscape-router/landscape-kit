@@ -1,6 +1,6 @@
 restore.requires_existing_installation = "restore requires an existing installation with a valid install-state.json"
 restore.confirm_plan = "restore backup %{backup_id} to version %{target} from current version %{current}? (type yes to continue)"
-restore.confirm_minimal_scope = "the backup is a minimal configuration-level snapshot; it does not contain the database, API token, logs, or metrics. Any data created since the backup will be lost. Continue?"
+restore.confirm_minimal_scope = "the backup is a minimal configuration-level snapshot: it does not contain the SQLite data file (the database will be re-initialized from the backup config on restore); API token, logs, and metrics are not included. Any data created since the backup will be lost. Continue?"
 restore.confirm_stop_with_own_manager = "stop your Landscape instance with your own process manager, then confirm"
 restore.warning_no_protection_backup = "warning: could not create a protection backup of the current instance; continuing without it: %{error}"
 restore.rollback_failed = "automatic rollback failed: %{rollback_error}"

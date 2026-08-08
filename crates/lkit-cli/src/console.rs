@@ -729,7 +729,7 @@ impl ConsoleApp {
             if self.backup.restore_confirming {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_RESTORE_CONFIRM)
             } else if self.backup.editing {
-                crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
+                crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CREATE)
             } else if self.backup.details.is_some() {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_DETAILS)
             } else {
@@ -1074,6 +1074,7 @@ impl ConsoleApp {
             file: None,
             allow_no_backup: false,
             yes: true,
+            console_confirmed: true,
             install_dir: Some(install_dir.clone()),
             #[cfg(feature = "test-support")]
             test_runtime: None,
@@ -1083,6 +1084,7 @@ impl ConsoleApp {
             "--backup".into(),
             backup_id.to_string(),
             "--yes".into(),
+            "--console-confirmed".into(),
             "--install-dir".into(),
             install_dir.display().to_string(),
         ];
@@ -1787,6 +1789,9 @@ fn render(frame: &mut Frame<'_>, app: &ConsoleApp) {
     }
     if app.menu() == Menu::Backup && app.backup.restore_confirming {
         render_backup_restore_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Backup && app.backup.editing {
+        render_backup_create_dialog(frame, app);
     }
 }
 
@@ -2617,6 +2622,46 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
     );
 }
 
+fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
+    let screen = frame.area();
+    let width = 68.min(screen.width.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let remark = app.backup.remark.clone();
+    let remark_display = if remark.is_empty() {
+        "_".to_string()
+    } else {
+        format!("{remark}_")
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_SCOPE)),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled(
+                    format!("{}: ", crate::tr!(crate::keys::CONSOLE_BACKUP_REMARK_LABEL)),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    remark_display,
+                    Style::default().add_modifier(Modifier::UNDERLINED),
+                ),
+            ]),
+            Line::raw(""),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_HINT)),
+        ])
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_TITLE))),
+        area,
+    );
+}
+
 fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let Some(metadata) = app
         .backup
@@ -2626,8 +2671,8 @@ fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         return;
     };
     let screen = frame.area();
-    let width = 64.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -2646,6 +2691,9 @@ fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
                 crate::keys::CONSOLE_BACKUP_RESTORE_PLAN,
                 id = metadata.backup_id,
                 version = metadata.landscape_version
+            )),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE
             )),
             Line::raw(""),
             Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_PRESS_ENTER)),
@@ -3984,6 +4032,15 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.backup.editing);
 
+        let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let content = terminal_content(&terminal);
+        assert!(
+            content.contains("Create backup"),
+            "the backup create dialog must be visible while editing"
+        );
+        assert!(content.contains("Remark: _"));
+
         for character in "my-backup".chars() {
             app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
         }
@@ -4026,6 +4083,10 @@ mod tests {
         assert!(content.contains("Restore this backup?"));
         assert!(content.contains("version 1.2.3"));
         assert!(content.contains("Press Enter to restore."));
+        assert!(
+            content.contains("SQLite data file"),
+            "the restore confirmation must warn about the minimal scope"
+        );
 
         let action = app
             .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
@@ -4039,10 +4100,18 @@ mod tests {
         assert_eq!(restore.backup.as_deref(), Some("20260807-131500-ab12cd34"));
         assert!(restore.yes);
         assert!(
+            restore.console_confirmed,
+            "the console must mark the restore as confirmed so no TTY prompt appears"
+        );
+        assert!(
             args.windows(2)
                 .any(|pair| pair == ["--backup", "20260807-131500-ab12cd34"])
         );
         assert!(args.iter().any(|argument| argument == "--yes"));
+        assert!(
+            args.iter()
+                .any(|argument| argument == "--console-confirmed")
+        );
     }
 
     #[test]
