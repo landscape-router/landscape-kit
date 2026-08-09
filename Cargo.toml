@@ -9,7 +9,7 @@ default-members = ["crates/lkit-cli"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.4-rc.3"
+version = "0.1.4-rc.4"
 edition = "2024"
 
 [workspace.dependencies]

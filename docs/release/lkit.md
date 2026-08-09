@@ -5,7 +5,7 @@
 根 `Cargo.toml` 的 `[workspace.package] version` 是所有 workspace crate（包括 `lkit`）的
 唯一版本来源。成员 crate 通过 `version.workspace = true` 继承该版本。
 版本必须是 SemVer；候选版可以带 prerelease 后缀，发布 tag 固定为
-`v<workspace.package.version>`。当前候选版本为 `0.1.4-rc.3`。
+`v<workspace.package.version>`。当前候选版本为 `0.1.4-rc.4`。
 
 发布前执行：
 
@@ -19,8 +19,8 @@ scripts/test-install-lkit.sh
 提交候选版本变更后创建并推送 prerelease tag：
 
 ```sh
-git tag v0.1.4-rc.3
-git push origin v0.1.4-rc.3
+git tag v0.1.4-rc.4
+git push origin v0.1.4-rc.4
 ```
 
 候选版本验证通过后，将 workspace 版本改为 `0.1.4`，再创建并推送正式 tag
