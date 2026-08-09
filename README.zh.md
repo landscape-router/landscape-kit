@@ -41,6 +41,9 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landsc
 wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
 ```
 
+安装器自身会自动选择下载工具：优先使用 `curl`，缺失时回退 `wget`，主机上只需二者之一
+即可完成安装。
+
 然后启动交互式安装：
 
 ```sh

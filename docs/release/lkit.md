@@ -89,7 +89,9 @@ sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 ```
 
 `install` 后面的参数原样传给 `lkit install`。安装器只支持 Linux `x86_64` 和
-`aarch64` 的 glibc 发布产物；识别到 musl 时给出明确错误。安装器强制使用 HTTPS，
+`aarch64` 的 glibc 发布产物；识别到 musl 时给出明确错误。安装器自动选择下载工具：
+优先使用 `curl`，缺失时回退 `wget`，两者都不可用时明确报错。下载工具不存在时，
+`wget -qO- … | sudo sh` 拉取安装脚本的用法仍然无效。安装器强制使用 HTTPS，
 下载对应二进制和 `SHA256SUMS`，校验成功并执行
 `lkit --version` 自检后才原子替换目标文件。下载、校验、自检或替换失败时保留原有
 二进制。

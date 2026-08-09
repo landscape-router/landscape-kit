@@ -55,9 +55,18 @@ case "$(uname -m)" in
         ;;
 esac
 
-for command_name in awk curl dirname id install mktemp mv rm sha256sum uname; do
+for command_name in awk dirname id install mktemp mv rm sha256sum uname; do
     command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
 done
+
+downloader=
+if command -v curl >/dev/null 2>&1; then
+    downloader=curl
+elif command -v wget >/dev/null 2>&1; then
+    downloader=wget
+else
+    die "curl or wget is required"
+fi
 
 case "$install_path" in
     /*) ;;
@@ -73,16 +82,29 @@ work_directory=$(mktemp -d "${TMPDIR:-/tmp}/lkit-install.XXXXXX")
 download() {
     asset=$1
     output=$2
-    curl \
-        --proto '=https' \
-        --proto-redir '=https' \
-        --tlsv1.2 \
-        --fail \
-        --silent \
-        --show-error \
-        --location \
-        --output "$output" \
-        "$RELEASE_BASE_URL/$asset"
+    url="$RELEASE_BASE_URL/$asset"
+    case "$downloader" in
+        curl)
+            curl \
+                --proto '=https' \
+                --proto-redir '=https' \
+                --tlsv1.2 \
+                --fail \
+                --silent \
+                --show-error \
+                --location \
+                --output "$output" \
+                "$url"
+            ;;
+        wget)
+            wget \
+                --https-only \
+                --secure-protocol=TLSv1_2 \
+                --no-verbose \
+                --output-document "$output" \
+                "$url"
+            ;;
+    esac
 }
 
 download "$asset_name" "$work_directory/$asset_name"

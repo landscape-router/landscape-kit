@@ -41,6 +41,9 @@ Or with `wget`:
 wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
 ```
 
+The installer itself auto-selects `curl` (preferred) or `wget` to download the release assets, so
+either tool on the host is sufficient.
+
 Then start the interactive installer:
 
 ```sh
