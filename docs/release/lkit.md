@@ -5,7 +5,7 @@
 根 `Cargo.toml` 的 `[workspace.package] version` 是所有 workspace crate（包括 `lkit`）的
 唯一版本来源。成员 crate 通过 `version.workspace = true` 继承该版本。
 版本必须是 SemVer；候选版可以带 prerelease 后缀，发布 tag 固定为
-`v<workspace.package.version>`。当前候选版本为 `0.1.4-rc.5`。
+`v<workspace.package.version>`。当前候选版本为 `0.2.0-rc.1`。
 
 发布前执行：
 
@@ -19,12 +19,12 @@ scripts/test-install-lkit.sh
 提交候选版本变更后创建并推送 prerelease tag：
 
 ```sh
-git tag v0.1.4-rc.5
-git push origin v0.1.4-rc.5
+git tag v0.2.0-rc.1
+git push origin v0.2.0-rc.1
 ```
 
-候选版本验证通过后，将 workspace 版本改为 `0.1.4`，再创建并推送正式 tag
-`v0.1.4`。候选版和正式版必须使用两个独立的版本提交，tag、Cargo 版本与
+候选版本验证通过后，将 workspace 版本改为 `0.2.0`，再创建并推送正式 tag
+`v0.2.0`。候选版和正式版必须使用两个独立的版本提交，tag、Cargo 版本与
 `lkit --version` 必须完全一致。
 
 `.github/workflows/release-lkit.yml` 会重新校验 tag、Cargo 版本和测试结果。任一架构构建
@@ -80,7 +80,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landsc
 `releases/latest` 不会指向它，安装候选版必须使用带 tag 的地址：
 
 ```sh
-wget -qO- https://github.com/landscape-router/landscape-kit/releases/download/v0.1.4-rc.5/install.sh | sudo sh
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/download/v0.2.0-rc.1/install.sh | sudo sh
 ```
 
 交互式安装推荐分两步执行，确保 `lkit` 直接连接当前终端的 `/dev/tty`：
