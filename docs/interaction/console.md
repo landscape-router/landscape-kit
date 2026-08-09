@@ -20,6 +20,7 @@ lkit --non-interactive install ... # 严格非交互命令模式
 - Install：首次安装表单；
 - Backup：备份列表、创建与恢复；
 - Update：版本更新表单（仅已安装时可用）；
+- Mirror：主机软件源换源面板（见[`lkit set-mirror`](../commands/mirror.md)）；
 - Reinit：重新初始化面板（仅已安装、systemd 且宿主网络服务已被接管时可用）。
 
 检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
@@ -110,8 +111,8 @@ worker，在无侧栏全屏更新页（标题“正在更新 Landscape”）显�
 裸 `--repository` 与 `--repository <URL>`），“当前来源”不传该参数，由命令按
 `config.toml` > 官方 GitHub 的规则解析，与命令模式选中“当前来源”的语义一致。
 
-Uninstall 面板（侧栏第 5 项）暂未在 TUI 中启用：侧栏只显示 Overview、Install、Backup
-与 Update 四项，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板渲染、键处理与确认层
+Uninstall 面板暂未在 TUI 中启用：侧栏只显示 Overview、Install、Backup、Update、Mirror
+与 Reinit，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板渲染、键处理与确认层
 代码完整保留供重新启用（`TODO(uninstall-console)`）。卸载当前只能通过命令模式
 `lkit uninstall` 使用；本段描述的是面板重新启用后的行为：面板在已安装、root 且安装
 状态可读时可用。进入面板后展示当前版本、服务 manager 与运行状态摘要，并列出卸载数据
@@ -123,6 +124,14 @@ Uninstall 面板（侧栏第 5 项）暂未在 TUI 中启用：侧栏只显示 O
 委托 worker，在无侧栏全屏卸载页显示准备、停止服务、注销与清理阶段及结果页，成功时展示
 保护备份 ID 与保留物清单；Esc 取消确认层并留在面板。卸载确认层与 restore 一样承担
 全部确认，命令不再请求 `/dev/tty` 二次确认。
+
+Mirror 面板（换源）不依赖 Landscape 安装状态，未安装或已安装均可使用。进入面板时在
+后台检测当前发行版并显示主机摘要（发行版家族与软件包管理器），下方列出四个镜像选项
+（清华 TUNA、阿里云、中科大 USTC、官方源）与“恢复备份的原软件源”动作行，Up/Down
+移动焦点。Enter 打开居中确认层：换源确认层说明将切换的家族与镜像、当前源会先备份且
+可在此恢复；恢复确认层说明备份内容将替换当前镜像源文件。确认后在控制台内同步执行
+与 CLI 相同的备份、重写或恢复流程（非 root 时底栏显示权限错误，不 panic），结果写入
+底栏；Esc 关闭确认层。面板不退出 alternate screen，也不委托 systemd worker。
 
 Reinit 面板只对已安装、`service.manager == systemd` 且宿主网络服务已被接管
 （NetworkManager、`networking.service`、firewalld、systemd-resolved 被 stop/disable/mask）

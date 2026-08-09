@@ -33,5 +33,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Build workspace
         run: cargo build --locked --workspace --features test-support
-      - name: Run unit and fixture tests
-        run: cargo test --locked --workspace --features test-support
+      - name: Run unit tests
+        run: cargo test --locked --workspace --features test-support --lib
+      - name: Run CLI i18n tests
+        run: cargo test --locked -p lkit-cli --features test-support --test i18n_cli

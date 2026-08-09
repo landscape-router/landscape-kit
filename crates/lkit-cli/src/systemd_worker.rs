@@ -54,7 +54,7 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         return false;
     }
     match command {
-        Commands::Check(_) | Commands::Reconcile(_) => false,
+        Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Backup(_) => false,
         Commands::Network(args) => {
             matches!(args.action, NetworkAction::Rollback { automatic: false })
@@ -106,6 +106,7 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
 fn test_runtime_is_inline(command: &Commands) -> bool {
     let path = match command {
         Commands::Check(_) => return false,
+        Commands::SetMirror(_) => None,
         Commands::Install(args) => args.test_runtime.as_deref(),
         Commands::Switch(args) => args.test_runtime.as_deref(),
         Commands::Update(args) => args.test_runtime.as_deref(),

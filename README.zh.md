@@ -21,6 +21,7 @@
 - `repair` — 修复静态页面或后端二进制。
 - `reconcile` — 接受并记录初始化文件、service unit 或仓库来源变化。
 - `service-manager` — 在 systemd 与外部进程管理之间迁移。
+- `set-mirror` — 将主机软件包源切换到镜像（apt/dnf/pacman）。
 
 ## 文档
 

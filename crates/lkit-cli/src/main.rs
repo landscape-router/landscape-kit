@@ -6,6 +6,7 @@ mod deployment;
 mod i18n;
 mod interaction;
 mod keys;
+mod mirror;
 mod network;
 mod release;
 mod report;
@@ -373,6 +374,30 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_ALLOW_NO_BACKUP_HELP))
                 })
         })
+        .mut_subcommand("set-mirror", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_SET_MIRROR_ABOUT))
+                .mut_arg("mirror", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_MIRROR_HELP))
+                })
+                .mut_arg("list", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_LIST_HELP))
+                })
+                .mut_arg("show", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_SHOW_HELP))
+                })
+                .mut_arg("restore", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_RESTORE_HELP))
+                })
+                .mut_arg("replace_security", |arg| {
+                    arg.help(crate::tr_static!(
+                        keys::MAIN_SET_MIRROR_REPLACE_SECURITY_HELP
+                    ))
+                })
+                .mut_arg("yes", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_YES_HELP))
+                })
+        })
         .mut_subcommand("repair", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_REPAIR_ABOUT))
@@ -499,6 +524,7 @@ async fn run_command(
         Commands::Backup(args) => commands::backup::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,
+        Commands::SetMirror(args) => commands::set_mirror::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
     }
 }

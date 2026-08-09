@@ -1,5 +1,6 @@
 mod backup;
 mod install_form;
+mod mirror;
 mod network_wizard;
 mod preflight;
 mod reinit;
@@ -7,6 +8,7 @@ mod render;
 mod update;
 mod widgets;
 
+use self::mirror::MirrorPanel;
 use self::render::render;
 use backup::{BackupListState, BackupPanel};
 use install_form::InstallForm;
@@ -153,6 +155,7 @@ struct ConsoleApp {
     backup_menu_active: bool,
     update: UpdatePanel,
     update_menu_active: bool,
+    mirror: MirrorPanel,
     reinit: ReinitPanel,
     uninstall: UninstallPanel,
     takeover_choice: usize,
@@ -177,6 +180,7 @@ impl ConsoleApp {
             backup_menu_active: false,
             update: UpdatePanel::default(),
             update_menu_active: false,
+            mirror: MirrorPanel::default(),
             reinit: ReinitPanel::default(),
             uninstall: UninstallPanel::default(),
             takeover_choice: 0,
@@ -288,6 +292,9 @@ impl ConsoleApp {
             self.update_menu_active = false;
         }
         self.update.poll(&mut self.notice);
+        if self.menu() == Menu::Mirror {
+            self.mirror.ensure_detected();
+        }
     }
 
     /// 阻塞屏键处理：↑/↓ 或 Tab 选择，Enter 执行，Esc/Ctrl+C 等同"稍后"退出。
@@ -377,6 +384,12 @@ impl ConsoleApp {
         if self.menu() == Menu::Uninstall
             && self.focus == Focus::Panel
             && let Some(action) = self.handle_uninstall_key(key)
+        {
+            return action;
+        }
+        if self.menu() == Menu::Mirror
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_mirror_key(key)
         {
             return action;
         }
@@ -671,6 +684,19 @@ impl ConsoleApp {
                 self.update.selected = index;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
+            Hit::MirrorField(index) => {
+                self.focus = Focus::Panel;
+                self.mirror.selected = index;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::MirrorRestore => {
+                self.focus = Focus::Panel;
+                self.mirror.selected = 4;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::MirrorSecurityToggle => {
+                self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            }
             Hit::UninstallAction => {
                 self.focus = Focus::Panel;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
@@ -819,6 +845,12 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_CONFIRM)
             } else {
                 crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_PANEL)
+            }
+        } else if self.menu() == Menu::Mirror && self.focus == Focus::Panel {
+            if self.mirror.confirming.is_some() {
+                crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_CONFIRM)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_PANEL)
             }
         } else if self.menu() == Menu::Reinit && self.focus == Focus::Panel {
             if self.reinit.confirming {

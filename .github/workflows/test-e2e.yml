@@ -1,0 +1,30 @@
+name: Test e2e fixture
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - .github/workflows/test-e2e.yml
+      - .github/workflows/test-rust.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Install fixture e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build workspace
+        run: cargo build --locked --workspace --features test-support
+      - name: Run fixture e2e tests
+        run: cargo test --locked -p lkit-cli --features test-support --test install_fixture_e2e

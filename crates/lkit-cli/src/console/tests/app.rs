@@ -327,7 +327,7 @@ fn update_menu_is_only_available_when_installed() {
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(
         app.menu(),
-        Menu::Backup,
+        Menu::Mirror,
         "Update must be skipped when Landscape is not installed"
     );
 

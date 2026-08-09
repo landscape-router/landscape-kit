@@ -21,6 +21,7 @@ The repository is a Cargo workspace made up of four crates:
 - `repair` — repair static pages or the backend binary.
 - `reconcile` — accept and record changes to init files, service units, or repository sources.
 - `service-manager` — migrate between systemd and external process management.
+- `set-mirror` — switch the host package sources to a mirror (apt/dnf/pacman).
 
 ## Documentation
 

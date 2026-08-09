@@ -10,6 +10,7 @@ pub(crate) enum Menu {
     Install,
     Backup,
     Update,
+    Mirror,
     Reinit,
     /// 卸载面板：暂时从 TUI 侧栏隐藏（功能经 `lkit uninstall` CLI 提供），
     /// 面板渲染、键处理与确认层代码保留；重新启用时把 `Self::Uninstall`
@@ -19,11 +20,12 @@ pub(crate) enum Menu {
 }
 
 impl Menu {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Overview,
         Self::Install,
         Self::Backup,
         Self::Update,
+        Self::Mirror,
         Self::Reinit,
         // Self::Uninstall, // TODO(uninstall-console): 暂隐藏,CLI `lkit uninstall` 保留
     ];
@@ -34,6 +36,7 @@ impl Menu {
             Self::Install => crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
             Self::Backup => crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
             Self::Update => crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
+            Self::Mirror => crate::tr!(crate::keys::CONSOLE_MIRROR_MENU),
             Self::Reinit => crate::tr!(crate::keys::CONSOLE_REINIT_MENU),
             Self::Uninstall => crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
         }
@@ -68,6 +71,12 @@ pub(crate) enum Hit {
     InstallField(usize),
     /// 更新面板表单行。
     UpdateField(usize),
+    /// 换源面板镜像行（0..4）。
+    MirrorField(usize),
+    /// 换源面板“恢复备份”动作行。
+    MirrorRestore,
+    /// 换源确认层：security 替换开关行。
+    MirrorSecurityToggle,
     /// 卸载面板“执行卸载”动作行。
     UninstallAction,
     /// reinit 面板:可编辑凭据行(0=admin 用户,1=密码)。

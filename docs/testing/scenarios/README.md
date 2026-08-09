@@ -35,6 +35,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
 | 网络接管 | `NET-01` 至 `NET-11` | [network-takeover.md](functional/network-takeover.md) |
 | 宿主网络适配 | `HNET-01` 至 `HNET-08` | [hostnet.md](functional/hostnet.md) |
+| 主机换源 | `MIR-01` 至 `MIR-07` | [mirror.md](functional/mirror.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

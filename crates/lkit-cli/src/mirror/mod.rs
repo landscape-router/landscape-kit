@@ -1,0 +1,296 @@
+pub(crate) mod apt;
+pub(crate) mod detect;
+pub(crate) mod dnf;
+pub(crate) mod pacman;
+
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+use clap::ValueEnum;
+use thiserror::Error;
+
+/// 生产环境的系统文件根路径。
+pub(crate) const BACKUP_ROOT: &str = "/var/lib/lkit/mirror-backup";
+pub(crate) const OS_RELEASE_PATH: &str = "/etc/os-release";
+pub(crate) const APT_SOURCES_LIST: &str = "/etc/apt/sources.list";
+pub(crate) const APT_SOURCES_LIST_D: &str = "/etc/apt/sources.list.d";
+pub(crate) const DNF_REPOS_DIR: &str = "/etc/yum.repos.d";
+pub(crate) const PACMAN_MIRRORLIST: &str = "/etc/pacman.d/mirrorlist";
+
+/// mirror 模块读写的主机路径与权限策略。生产环境恒为 [`MirrorPaths::production`]；
+/// `test-support` 构建下测试可以覆盖为临时目录，隔离真实系统文件。
+#[derive(Clone, Debug)]
+pub(crate) struct MirrorPaths {
+    pub(crate) os_release: PathBuf,
+    pub(crate) backup_root: PathBuf,
+    pub(crate) apt_sources_list: PathBuf,
+    pub(crate) apt_sources_list_d: PathBuf,
+    pub(crate) dnf_repos_dir: PathBuf,
+    pub(crate) pacman_mirrorlist: PathBuf,
+    /// 恢复时把备份中的相对路径写回的根目录（生产为 `/`）。
+    pub(crate) restore_root: PathBuf,
+    /// 测试注入：允许非 root 执行换源/恢复（生产恒为 false）。
+    #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
+    pub(crate) allow_non_root: bool,
+}
+
+impl MirrorPaths {
+    pub(crate) fn production() -> Self {
+        Self {
+            os_release: PathBuf::from(OS_RELEASE_PATH),
+            backup_root: PathBuf::from(BACKUP_ROOT),
+            apt_sources_list: PathBuf::from(APT_SOURCES_LIST),
+            apt_sources_list_d: PathBuf::from(APT_SOURCES_LIST_D),
+            dnf_repos_dir: PathBuf::from(DNF_REPOS_DIR),
+            pacman_mirrorlist: PathBuf::from(PACMAN_MIRRORLIST),
+            restore_root: PathBuf::from("/"),
+            allow_non_root: false,
+        }
+    }
+}
+
+/// 进程级路径配置。测试通过 [`test_support::TestPathsGuard`]（test-support）覆盖。
+pub(crate) fn paths() -> &'static MirrorPaths {
+    static PATHS: OnceLock<MirrorPaths> = OnceLock::new();
+    #[cfg(all(test, feature = "test-support"))]
+    {
+        if let Some(overridden) = *test_support::TEST_PATHS
+            .lock()
+            .expect("mirror test paths lock poisoned")
+        {
+            return overridden;
+        }
+    }
+    PATHS.get_or_init(MirrorPaths::production)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn root_allowed() -> bool {
+    paths().allow_non_root || unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(feature = "test-support"))]
+pub(crate) fn root_allowed() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    use super::MirrorPaths;
+
+    pub(crate) static TEST_PATHS: Mutex<Option<&'static MirrorPaths>> = Mutex::new(None);
+    /// 所有 `TestPathsGuard` 使用者共享的串行锁：全局路径覆盖必须互斥，
+    /// 否则并发测试会互相覆盖 `TEST_PATHS`。
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// 在测试作用域内覆盖 mirror 模块的路径与权限策略；Drop 时恢复生产配置。
+    pub(crate) struct TestPathsGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl TestPathsGuard {
+        pub(crate) fn set(paths: MirrorPaths) -> Self {
+            let lock = TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let overridden: &'static MirrorPaths = Box::leak(Box::new(paths));
+            *TEST_PATHS.lock().expect("mirror test paths lock poisoned") = Some(overridden);
+            TestPathsGuard { _lock: lock }
+        }
+    }
+
+    impl Drop for TestPathsGuard {
+        fn drop(&mut self) {
+            *TEST_PATHS.lock().expect("mirror test paths lock poisoned") = None;
+        }
+    }
+}
+
+/// 已识别的公共镜像主机。换源时除官方 URL 外，这些主机之间的 URL 也会互相转换；
+/// 自定义内网镜像等未识别主机保持原样。
+pub(crate) const RECOGNIZED_MIRROR_HOSTS: [&str; 3] = [
+    "mirrors.tuna.tsinghua.edu.cn",
+    "mirrors.aliyun.com",
+    "mirrors.ustc.edu.cn",
+];
+
+/// 返回镜像主机；`Official` 没有镜像主机（反向映射回官方）。
+pub(crate) fn mirror_host(mirror: MirrorName) -> Option<&'static str> {
+    match mirror {
+        MirrorName::Tuna => Some("mirrors.tuna.tsinghua.edu.cn"),
+        MirrorName::Aliyun => Some("mirrors.aliyun.com"),
+        MirrorName::Ustc => Some("mirrors.ustc.edu.cn"),
+        MirrorName::Official => None,
+    }
+}
+
+/// 可切换的软件源镜像。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum MirrorName {
+    Tuna,
+    Aliyun,
+    Ustc,
+    Official,
+}
+
+impl MirrorName {
+    pub(crate) fn all() -> [Self; 4] {
+        [Self::Tuna, Self::Aliyun, Self::Ustc, Self::Official]
+    }
+
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Tuna => "tuna",
+            Self::Aliyun => "aliyun",
+            Self::Ustc => "ustc",
+            Self::Official => "official",
+        }
+    }
+
+    pub(crate) fn label(self) -> String {
+        match self {
+            Self::Tuna => crate::tr!(crate::keys::mirror::MIRROR_TUNA),
+            Self::Aliyun => crate::tr!(crate::keys::mirror::MIRROR_ALIYUN),
+            Self::Ustc => crate::tr!(crate::keys::mirror::MIRROR_USTC),
+            Self::Official => crate::tr!(crate::keys::mirror::MIRROR_OFFICIAL),
+        }
+    }
+}
+
+/// 发行版家族。决定软件源文件布局与 URL 重写规则。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Family {
+    Debian,
+    Ubuntu,
+    Fedora,
+    Centos7,
+    CentosStream,
+    Rocky,
+    Alma,
+    Arch,
+}
+
+impl Family {
+    pub(crate) fn label(self) -> String {
+        match self {
+            Self::Debian => crate::tr!(crate::keys::mirror::FAMILY_DEBIAN),
+            Self::Ubuntu => crate::tr!(crate::keys::mirror::FAMILY_UBUNTU),
+            Self::Fedora => crate::tr!(crate::keys::mirror::FAMILY_FEDORA),
+            Self::Centos7 => crate::tr!(crate::keys::mirror::FAMILY_CENTOS7),
+            Self::CentosStream => crate::tr!(crate::keys::mirror::FAMILY_CENTOS_STREAM),
+            Self::Rocky => crate::tr!(crate::keys::mirror::FAMILY_ROCKY),
+            Self::Alma => crate::tr!(crate::keys::mirror::FAMILY_ALMA),
+            Self::Arch => crate::tr!(crate::keys::mirror::FAMILY_ARCH),
+        }
+    }
+
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Debian => "debian",
+            Self::Ubuntu => "ubuntu",
+            Self::Fedora => "fedora",
+            Self::Centos7 => "centos7",
+            Self::CentosStream => "centos-stream",
+            Self::Rocky => "rocky",
+            Self::Alma => "alma",
+            Self::Arch => "arch",
+        }
+    }
+
+    pub(crate) fn package_manager(self) -> &'static str {
+        match self {
+            Self::Debian | Self::Ubuntu => "apt",
+            Self::Fedora | Self::Centos7 | Self::CentosStream | Self::Rocky | Self::Alma => "dnf",
+            Self::Arch => "pacman",
+        }
+    }
+}
+
+/// 当前主机的发行版身份与版本代号（仅 apt 家族需要）。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Host {
+    pub family: Family,
+    pub codename: Option<String>,
+}
+
+impl Host {
+    /// 展示用摘要：`Debian (bookworm)` 或 `Fedora`。
+    pub(crate) fn summary(&self) -> String {
+        match &self.codename {
+            Some(codename) => format!("{} ({codename})", self.family.label()),
+            None => self.family.label(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum MirrorError {
+    #[error("{0}")]
+    Message(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+/// 读取并检测当前主机的发行版家族。
+pub(crate) fn detect_host() -> Result<Host, MirrorError> {
+    detect::detect_from(&paths().os_release)
+}
+
+/// 列出当前主机可切换的镜像（固定四项：清华 TUNA、阿里云、中科大 USTC、官方源）。
+pub(crate) fn list_mirrors() -> [MirrorName; 4] {
+    MirrorName::all()
+}
+
+/// 显示当前软件源文件内容。仅支持当前发行版家族对应的源文件。
+pub(crate) fn show_sources(host: &Host) -> Result<String, MirrorError> {
+    match host.family {
+        Family::Debian | Family::Ubuntu => apt::show(),
+        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
+            dnf::show()
+        }
+        Family::Arch => pacman::show(),
+    }
+}
+
+/// 把软件源切换到指定镜像。修改前备份原文件，备份目录见 [`BACKUP_ROOT`]。
+/// `replace_security` 控制 Debian 独立 security 仓库是否一并替换（默认不替换）。
+/// 返回本次修改与跳过的文件统计。
+pub(crate) fn apply(
+    host: &Host,
+    mirror: MirrorName,
+    replace_security: bool,
+) -> Result<ApplyReport, MirrorError> {
+    match host.family {
+        Family::Debian | Family::Ubuntu => apt::apply(host, mirror, replace_security),
+        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
+            dnf::apply(host, mirror)
+        }
+        Family::Arch => pacman::apply(mirror),
+    }
+}
+
+/// 从 [`BACKUP_ROOT`] 恢复原软件源，成功后删除备份。
+pub(crate) fn restore(host: &Host) -> Result<(), MirrorError> {
+    match host.family {
+        Family::Debian | Family::Ubuntu => apt::restore(host),
+        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
+            dnf::restore(host)
+        }
+        Family::Arch => pacman::restore(),
+    }
+}
+
+/// 一次换源操作的统计结果。
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ApplyReport {
+    pub changed_files: usize,
+    pub skipped_repositories: usize,
+    pub backup_path: Option<PathBuf>,
+}
+
+/// 备份目录：`<backup_root>/<family-id>/`。
+pub(crate) fn backup_dir(family: Family) -> PathBuf {
+    paths().backup_root.join(family.id())
+}

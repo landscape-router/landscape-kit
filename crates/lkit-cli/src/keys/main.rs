@@ -23,6 +23,14 @@ pub(crate) const MAIN_NETWORK_CONFIRM_ABOUT: &str = "main.network_confirm_about"
 pub(crate) const MAIN_NETWORK_ROLLBACK_ABOUT: &str = "main.network_rollback_about";
 pub(crate) const MAIN_SWITCH_ABOUT: &str = "main.switch_about";
 pub(crate) const MAIN_SWITCH_VERSION_HELP: &str = "main.switch_version_help";
+pub(crate) const MAIN_SET_MIRROR_ABOUT: &str = "main.set_mirror_about";
+pub(crate) const MAIN_SET_MIRROR_MIRROR_HELP: &str = "main.set_mirror_mirror_help";
+pub(crate) const MAIN_SET_MIRROR_LIST_HELP: &str = "main.set_mirror_list_help";
+pub(crate) const MAIN_SET_MIRROR_SHOW_HELP: &str = "main.set_mirror_show_help";
+pub(crate) const MAIN_SET_MIRROR_RESTORE_HELP: &str = "main.set_mirror_restore_help";
+pub(crate) const MAIN_SET_MIRROR_REPLACE_SECURITY_HELP: &str =
+    "main.set_mirror_replace_security_help";
+pub(crate) const MAIN_SET_MIRROR_YES_HELP: &str = "main.set_mirror_yes_help";
 pub(crate) const MAIN_UPDATE_ABOUT: &str = "main.update_about";
 pub(crate) const MAIN_UPDATE_VERSION_HELP: &str = "main.update_version_help";
 pub(crate) const MAIN_REPOSITORY_OVERRIDE_HELP: &str = "main.repository_override_help";
