@@ -8,8 +8,8 @@ NetworkManager、firewalld、systemd-resolved、OpenSSH 与两个 virtio 网卡�
 第一台虚拟机完成网络接管后从 `192.168.10.1` 建立 SSH，随后在未确认时重启。测试等待
 boot rollback 恢复 WAN SSH 和三个宿主服务，并断言事务为 `rolled_back`、未提交的安装状态
 和整个 `data/` 已删除。第二台虚拟机再次接管网络，从新 LAN 地址运行 `lkit network
-confirm`，断言事务和安装状态提交且恢复 unit 已清理。测试同时验证确认前保留原 WAN
-IPv4，确认后才清除该地址。
+confirm`，断言事务和安装状态提交且恢复 unit 已清理。测试同时验证确认前保留 WAN
+地址，确认后按事务中的 Static 或 DHCP 计划验证 WAN IPv4 配置。
 
 测试要求 `/dev/kvm` 可读写并明确拒绝 TCG fallback。本地执行：
 

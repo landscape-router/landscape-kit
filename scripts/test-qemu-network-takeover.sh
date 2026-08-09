@@ -257,6 +257,50 @@ assert_lan() {
   return 1
 }
 
+assert_confirmed_wan_plan() {
+  local scenario=$1
+  local wan
+  local wan_mode
+  if ! wan=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json"); then
+    collect_guest_diagnostics "$scenario"
+    echo "$scenario could not read the confirmed WAN interface" >&2
+    return 1
+  fi
+  if ! wan_mode=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.mode // \"none\"' /var/lib/landscape/transactions/*.json"); then
+    collect_guest_diagnostics "$scenario"
+    echo "$scenario could not read the confirmed WAN IPv4 mode" >&2
+    return 1
+  fi
+
+  case "$wan_mode" in
+    static)
+      local address
+      local prefix
+      address=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.address' /var/lib/landscape/transactions/*.json") || {
+        collect_guest_diagnostics "$scenario"
+        echo "$scenario could not read the confirmed static WAN address" >&2
+        return 1
+      }
+      prefix=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.prefix' /var/lib/landscape/transactions/*.json") || {
+        collect_guest_diagnostics "$scenario"
+        echo "$scenario could not read the confirmed static WAN prefix" >&2
+        return 1
+      }
+      assert_lan "$scenario" "confirmed WAN keeps its planned static IPv4 address" \
+        "ip -4 -o address show dev '$wan' | grep -Fq ' inet ${address}/${prefix} '"
+      ;;
+    dhcp)
+      assert_lan "$scenario" "confirmed WAN has a DHCP IPv4 lease" \
+        "ip -4 -o address show dev '$wan' | grep -q ' inet '"
+      ;;
+    *)
+      collect_guest_diagnostics "$scenario"
+      echo "$scenario has unsupported confirmed WAN IPv4 mode: $wan_mode" >&2
+      return 1
+      ;;
+  esac
+}
+
 boot_vm() {
   local scenario=$1
   local disk=$test_root/$scenario.ext4
@@ -387,8 +431,7 @@ boot_vm confirm
 start_takeover confirm
 lan_ssh '/usr/local/bin/lkit network confirm --install-dir /var/lib/landscape' \
   >"$artifact_dir/confirm-command.log" 2>&1
-assert_lan confirm "confirmed WAN has no inherited IPv4 address" \
-  "! ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
+assert_confirmed_wan_plan confirm
 lan_ssh "jq -e '.phase == \"committed\"' /var/lib/landscape/transactions/*.json" >/dev/null
 lan_ssh "jq -e '.active_version != null' /var/lib/landscape/state/install-state.json" >/dev/null
 lan_ssh "! find /etc/systemd/system -maxdepth 1 -name 'lkit-network-*' | grep -q ."

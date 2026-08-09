@@ -213,7 +213,7 @@ Header：
 字段规则：
 
 - `schema_version` 固定为整数 `1`；
-- `backup_id` 格式为 `{YYYYMMDD-HHMMSS}-{tar.gz SHA-256 前 8 位}`，其中时间部分固定使用 UTC，不使用主机本地时区；
+- `backup_id` 格式为 `{YYYYMMDD-HHMMSS}-{8 位小写十六进制}`，其中时间部分固定使用 UTC，不使用主机本地时区；后缀由 UUID v7 的随机部分生成，不承担内容完整性校验；
 - `created_at` 为 UTC RFC 3339，并与 `backup_id` 的 UTC 时间表示同一次创建操作；
 - `landscape_version` 为规范化 SemVer；
 - `architecture` 只允许 `x86_64` 或 `aarch64`；
@@ -241,7 +241,7 @@ Header：
 
 1. 在 `backups/.tmp/` 下新建 `0600` 临时文件，tar 与 gzip 边读边写（流式压缩，归档不
    整体保存在内存），同一写路径同步计算 tar.gz 的 SHA-256 与字节数；
-2. 生成 `backup_id` 和 Metadata；
+2. 生成 `backup_id` 和 Metadata；同名目标存在时重新生成后缀，绝不覆盖已有备份；
 3. 把 Header、metadata JSON、零填充与归档依次流式写入临时 `.lkb`，边写边计算整文件
    SHA-256（不复制完整备份到内存）；
 4. 将临时 `.lkb` 完整重新读取并验证；

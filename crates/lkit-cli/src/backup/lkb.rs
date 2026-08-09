@@ -19,6 +19,7 @@ pub(crate) const LKB_MAGIC: &[u8; 4] = b"LKB1";
 pub(crate) const LKB_HEADER_LEN: usize = 32;
 pub(crate) const LKB_METADATA_CAPACITY: usize = 1024 * 1024;
 pub(crate) const LKB_MIN_LEN: u64 = 1024 * 1024 + 1;
+const BACKUP_ID_ATTEMPTS: usize = 8;
 
 /// 备份创建过程的进度事件。`total` 是归档条目的文件数（目录不算）。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,61 +138,67 @@ pub(crate) fn create_backup(
         &mut progress,
     )?;
     let now = Utc::now();
-    let backup_id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), &tar_sha256[..8]);
-    let metadata = BackupMetadata {
-        schema_version: 1,
-        backup_id: backup_id.clone(),
-        created_at: now,
-        landscape_version: landscape_version.to_string(),
-        lkit_version: env!("CARGO_PKG_VERSION").into(),
-        architecture: parse_architecture(architecture)?,
-        hostname: hostname(),
-        remark: remark.to_string(),
-        auto,
-        scope: BackupScope::Minimal,
-        contents: BackupContents {
-            binary: true,
-            static_: true,
-            static_archive: true,
-            init_config: true,
-            geo_cache: true,
-        },
-        checksum: format!("sha256:{tar_sha256}"),
-    };
-    let metadata_json = serde_json::to_vec(&metadata).map_err(InstallError::StateWrite)?;
-    if metadata_json.len() > LKB_METADATA_CAPACITY - LKB_HEADER_LEN {
-        return Err(invalid_backup(
-            "backup metadata exceeds the 1 MiB capacity".into(),
-        ));
-    }
+    let architecture = parse_architecture(architecture)?;
     if let Some(callback) = progress.as_mut() {
         callback(BackupProgress::Finalizing);
     }
-    let tmp = tmp_dir.join(format!("{backup_id}.tmp"));
-    let tmp_cleanup = TmpCleanup(tmp.clone());
-    let (file_sha256, _) = write_lkb_container(&tmp, &metadata_json, &archive_tmp)?;
-    let written = std::fs::read(&tmp).map_err(InstallError::Io)?;
-    verify_lkb(&written)?;
-    let final_path = backups_dir.join(format!("{backup_id}.lkb"));
-    if final_path.exists() {
-        return Err(invalid_backup(format!("backup {backup_id} already exists")));
-    }
-    publish_no_replace(&tmp, &final_path).map_err(|error| {
-        if matches!(
-            &error,
-            InstallError::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists
-        ) {
-            invalid_backup(format!("backup {backup_id} already exists"))
-        } else {
-            error
+
+    for _ in 0..BACKUP_ID_ATTEMPTS {
+        let backup_id = new_backup_id(now);
+        let metadata = BackupMetadata {
+            schema_version: 1,
+            backup_id: backup_id.clone(),
+            created_at: now,
+            landscape_version: landscape_version.to_string(),
+            lkit_version: env!("CARGO_PKG_VERSION").into(),
+            architecture,
+            hostname: hostname(),
+            remark: remark.to_string(),
+            auto,
+            scope: BackupScope::Minimal,
+            contents: BackupContents {
+                binary: true,
+                static_: true,
+                static_archive: true,
+                init_config: true,
+                geo_cache: true,
+            },
+            checksum: format!("sha256:{tar_sha256}"),
+        };
+        let metadata_json = serde_json::to_vec(&metadata).map_err(InstallError::StateWrite)?;
+        if metadata_json.len() > LKB_METADATA_CAPACITY - LKB_HEADER_LEN {
+            return Err(invalid_backup(
+                "backup metadata exceeds the 1 MiB capacity".into(),
+            ));
         }
-    })?;
-    drop(tmp_cleanup);
-    Ok(BackupRef {
-        path: format!("backups/{backup_id}.lkb"),
-        backup_id,
-        sha256: file_sha256,
-    })
+        let tmp = tmp_dir.join(format!("{backup_id}.tmp"));
+        let tmp_cleanup = TmpCleanup(tmp.clone());
+        let (file_sha256, _) = write_lkb_container(&tmp, &metadata_json, &archive_tmp)?;
+        let written = std::fs::read(&tmp).map_err(InstallError::Io)?;
+        verify_lkb(&written)?;
+        let final_path = backups_dir.join(format!("{backup_id}.lkb"));
+        match publish_no_replace(&tmp, &final_path) {
+            Ok(()) => {
+                drop(tmp_cleanup);
+                return Ok(BackupRef {
+                    path: format!("backups/{backup_id}.lkb"),
+                    backup_id,
+                    sha256: file_sha256,
+                });
+            }
+            Err(InstallError::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(invalid_backup(
+        "could not allocate a unique backup ID after multiple attempts".into(),
+    ))
+}
+
+fn new_backup_id(created_at: DateTime<Utc>) -> String {
+    let suffix = Uuid::now_v7().as_u128() as u32;
+    format!("{}-{suffix:08x}", created_at.format("%Y%m%d-%H%M%S"))
 }
 
 /// 把 tar.gz 流式写入 `archive_tmp`（`0600` 新建），压缩过程同步计算 SHA-256；
@@ -894,6 +901,50 @@ mod tests {
             0o600,
             "extracted binary must be 0600"
         );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn identical_archives_created_back_to_back_get_distinct_ids() {
+        let temp = temp_dir("distinct-ids");
+        let source = temp.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let (webserver, static_dir, static_zip, geo_tmp) = backup_source(&source);
+        let backups = temp.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+
+        let first = create_backup(
+            &backups,
+            &semver::Version::new(1, 2, 3),
+            "x86_64",
+            &webserver,
+            "version = \"1.2.3\"",
+            &static_dir,
+            &static_zip,
+            &geo_tmp,
+            "first",
+            false,
+            None,
+        )
+        .unwrap();
+        let second = create_backup(
+            &backups,
+            &semver::Version::new(1, 2, 3),
+            "x86_64",
+            &webserver,
+            "version = \"1.2.3\"",
+            &static_dir,
+            &static_zip,
+            &geo_tmp,
+            "second",
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_ne!(first.backup_id, second.backup_id);
+        assert!(backups.join(format!("{}.lkb", first.backup_id)).is_file());
+        assert!(backups.join(format!("{}.lkb", second.backup_id)).is_file());
         let _ = std::fs::remove_dir_all(&temp);
     }
 
