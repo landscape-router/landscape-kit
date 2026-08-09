@@ -142,8 +142,11 @@ jobs:
           merge-multiple: true
 
       - name: Prepare release assets
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           install -m 0755 scripts/install-lkit.sh dist/install.sh
+          sed -i "s|releases/latest/download$|releases/download/${TAG}|" dist/install.sh
           cd dist
           sha256sum lkit-aarch64 lkit-x86_64 install.sh >SHA256SUMS
 
