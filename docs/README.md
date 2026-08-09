@@ -33,6 +33,7 @@
 - [初始化与凭据](interaction/initialization-and-credentials.md)
 - [服务、进程与健康检查](service/runtime-and-health.md)
 - [网络接管](network/takeover.md)
+- [宿主网络适配（hostnet）](network/hostnet.md)
 - [网络重配置(reinit)](network/reinit.md)
 - [`.lkb` 备份与回滚](backup/lkb-and-rollback.md)
 - [发布仓库协议](repository.md)

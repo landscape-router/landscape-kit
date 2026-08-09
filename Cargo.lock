@@ -2233,6 +2233,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lkit-hostnet"
+version = "0.1.4-rc.5"
+dependencies = [
+ "glob",
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "lkit-publish"
 version = "0.1.4-rc.5"
 dependencies = [

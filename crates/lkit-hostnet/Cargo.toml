@@ -1,0 +1,12 @@
+[package]
+name = "lkit-hostnet"
+version.workspace = true
+edition.workspace = true
+description = "host network manager adaptation: unmanage and restore selected interfaces"
+
+[dependencies]
+glob = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

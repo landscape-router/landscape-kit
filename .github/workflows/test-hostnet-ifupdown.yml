@@ -1,0 +1,51 @@
+name: Test hostnet with Debian ifupdown
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-hostnet/**
+      - docs/network/hostnet.md
+      - docs/testing/scenarios/functional/hostnet.md
+      - .github/workflows/test-hostnet-ifupdown.yml
+  push:
+    branches: [dev, main]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-hostnet/**
+      - docs/network/hostnet.md
+      - docs/testing/scenarios/functional/hostnet.md
+      - .github/workflows/test-hostnet-ifupdown.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hostnet-ifupdown-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ifupdown:
+    name: Debian ifupdown compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Install ifupdown
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ifupdown
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Run real ifupdown compatibility test
+        env:
+          LKIT_REAL_IFUP: /usr/sbin/ifup
+          LKIT_REAL_IFQUERY: /usr/sbin/ifquery
+        run: cargo test --locked -p lkit-hostnet --test ifupdown_real -- --ignored --nocapture

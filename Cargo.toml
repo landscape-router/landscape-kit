@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/lkit-cli",
+    "crates/lkit-hostnet",
     "crates/lkit-publish",
     "crates/lkit-repository",
     "crates/lkit-test-fixture",
@@ -24,6 +25,7 @@ crossterm = "0.29"
 dotenvy = "0.15.7"
 flate2 = "1"
 futures-util = "0.3"
+glob = "0.3.4"
 libc = "0.2"
 lkit-repository = { path = "crates/lkit-repository" }
 lkit-test-fixture = { path = "crates/lkit-test-fixture" }
