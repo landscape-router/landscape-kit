@@ -31,7 +31,8 @@
 - 凭据:用户重新输入的 admin 用户与密码;
 - 网络实体:WAN 物理接口与静态 IPv4/prefix/网关或 DHCP client、WAN route、Landscape
   firewall,静态 WAN 下 TCP 22 和 6443 到 `Local` 的静态映射;RoutedLan 额外创建
-  `br_lan`、LAN DHCP 与 LAN route;
+  `br_lan`、LAN DHCP 与 LAN route;只有 `br_lan` 的 zone type 为 `lan`,所选 LAN 物理
+  接口的 zone type 为 `undefined`,仅通过 controller(上游)关联到 `br_lan`;
 - 除以上实体外的全部配置清空,由 Landscape 重建数据库;自签名证书等派生资产由
   Landscape 重新生成。
 

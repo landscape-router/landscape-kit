@@ -447,7 +447,7 @@ impl<'a> LandscapeInit<'a> {
                     update_at: 0.0,
                 });
                 for iface in lan {
-                    ifaces.push(physical_iface(iface, Some(MANAGEMENT_BRIDGE), "lan"));
+                    ifaces.push(physical_iface(iface, Some(MANAGEMENT_BRIDGE), "undefined"));
                 }
                 dhcpv4_services.push(DhcpService {
                     iface_name: MANAGEMENT_BRIDGE,
@@ -707,6 +707,19 @@ mod tests {
         assert!(value.get("ipconfigs").is_none());
         assert!(value.get("static_nat_mappings_v4").is_none());
         assert_eq!(value["ifaces"].as_array().unwrap().len(), 4);
+        assert_eq!(value["ifaces"][1]["name"].as_str(), Some("br_lan"));
+        assert_eq!(value["ifaces"][1]["zone_type"].as_str(), Some("lan"));
+        assert!(value["ifaces"][1].get("controller_name").is_none());
+        for index in 2..4 {
+            assert_eq!(
+                value["ifaces"][index]["zone_type"].as_str(),
+                Some("undefined")
+            );
+            assert_eq!(
+                value["ifaces"][index]["controller_name"].as_str(),
+                Some("br_lan")
+            );
+        }
         assert_eq!(
             value["dhcpv4_services"][0]["config"]["server_ip_addr"].as_str(),
             Some("192.168.10.1")
