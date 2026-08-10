@@ -1,7 +1,7 @@
 use std::fs::File;
-use std::os::unix::fs::OpenOptionsExt;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 
 use super::screens::{InstallScreen, OperationResult};
