@@ -140,7 +140,7 @@ fn metadata_bytes_len(bytes: &[u8]) -> Option<usize> {
     Some(u32::from_le_bytes(bytes[6..10].try_into().ok()?) as usize)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -227,7 +227,6 @@ mod tests {
     }
 
     /// 写入一个 `root:backups/<id>.lkb` 文件并设为 `0600`。
-    #[cfg(feature = "test-support")]
     fn write_backup_file(dir: &std::path::Path, bytes: &[u8]) {
         let backups = dir.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
@@ -239,7 +238,6 @@ mod tests {
         .unwrap();
     }
 
-    #[cfg(feature = "test-support")]
     fn verify_args(dir: &std::path::Path) -> BackupVerify {
         BackupVerify {
             backup: Some("20260801-163000-a1b2c3d4".into()),
@@ -249,7 +247,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "test-support")]
     fn leftover_verify_dirs() -> Vec<std::path::PathBuf> {
         std::fs::read_dir(std::env::temp_dir())
             .map(|entries| {
@@ -266,7 +263,6 @@ mod tests {
             .unwrap_or_default()
     }
 
-    #[cfg(feature = "test-support")]
     #[test]
     fn verify_cleans_up_temp_dirs_and_rejects_incomplete_archives() {
         // 完整归档 verify 成功且不留临时解包目录。

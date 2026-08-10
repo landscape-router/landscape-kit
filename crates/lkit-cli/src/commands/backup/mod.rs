@@ -146,7 +146,7 @@ fn exit_code(error: &plan::InstallError) -> ExitCode {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -161,13 +161,11 @@ mod tests {
         root
     }
 
-    #[cfg(feature = "test-support")]
     use crate::deployment::state::{
         ArchiveAsset, Assets, InitStatus, InitializationState, InstallState, ServiceState,
         StateArchitecture, StateServiceManager, WebserverAsset,
     };
 
-    #[cfg(feature = "test-support")]
     fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -182,7 +180,6 @@ mod tests {
 
     /// 构造一个初始化完成、`none` service manager 的假安装现场,
     /// 与 `backup create` 读取的路径保持一致。
-    #[cfg(feature = "test-support")]
     fn fake_install(dir: &std::path::Path) -> InstallState {
         use std::os::unix::fs::symlink;
         let version = "1.2.3";
@@ -235,7 +232,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "test-support")]
     fn runtime_file(dir: &std::path::Path, export_base: &str) -> std::path::PathBuf {
         use std::os::unix::fs::MetadataExt;
         let runtime = dir.join("runtime.json");
@@ -269,7 +265,6 @@ mod tests {
         runtime
     }
 
-    #[cfg(feature = "test-support")]
     fn export_ok_server(version: &str) -> crate::release::repository::test_server::TestServer {
         use crate::release::repository::test_server::{TestResponse, TestServer};
         let version = version.to_string();
@@ -287,7 +282,6 @@ mod tests {
         })
     }
 
-    #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn create_writes_manual_backup_without_any_service_manager() {
         let temp = temp_dir("create-ok");
@@ -343,7 +337,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp);
     }
 
-    #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn create_export_failure_leaves_no_final_file() {
         use crate::release::repository::test_server::{TestResponse, TestServer};
