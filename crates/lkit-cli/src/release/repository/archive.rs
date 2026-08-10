@@ -191,3 +191,277 @@ pub(crate) fn extract_static_archive(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Write};
+
+    use semver::Version;
+
+    use super::*;
+
+    #[test]
+    fn decompresses_zstd_and_rejects_trailing_data() {
+        let version = Version::parse("0.19.2").unwrap();
+        let compressed = std::env::temp_dir().join("lkit-decompress-test.zst");
+        let output = std::env::temp_dir().join("lkit-decompress-test.bin");
+        let data = b"landscape-webserver".repeat(1024);
+        let mut encoded = zstd::stream::encode_all(Cursor::new(&data), 1).unwrap();
+        std::fs::write(&compressed, &encoded).unwrap();
+        let written = decompress_zstd(&version, &compressed, &output, 1 << 30).unwrap();
+        assert_eq!(written as usize, data.len());
+        assert_eq!(std::fs::read(&output).unwrap(), data);
+
+        encoded.extend_from_slice(b"trailing garbage");
+        std::fs::write(&compressed, &encoded).unwrap();
+        let error = decompress_zstd(&version, &compressed, &output, 1 << 30).unwrap_err();
+        assert!(matches!(error, RepositoryError::Decompress { .. }));
+        let _ = std::fs::remove_file(&compressed);
+        let _ = std::fs::remove_file(&output);
+    }
+
+    #[test]
+    fn rejects_decompress_bomb() {
+        let version = Version::parse("0.19.2").unwrap();
+        let compressed = std::env::temp_dir().join("lkit-decompress-bomb.zst");
+        let output = std::env::temp_dir().join("lkit-decompress-bomb.bin");
+        let data = vec![0xABu8; 1024 * 1024];
+        let encoded = zstd::stream::encode_all(Cursor::new(&data), 1).unwrap();
+        std::fs::write(&compressed, &encoded).unwrap();
+        let error = decompress_zstd(&version, &compressed, &output, 4096).unwrap_err();
+        assert!(matches!(error, RepositoryError::Decompress { .. }));
+        let _ = std::fs::remove_file(&compressed);
+        let _ = std::fs::remove_file(&output);
+    }
+
+    fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, content) in entries {
+            if content.is_empty() {
+                writer
+                    .add_directory(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+            } else {
+                writer
+                    .start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(content).unwrap();
+            }
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn extracts_static_archive() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-test.zip");
+        let target = std::env::temp_dir().join("lkit-static-test-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = make_zip(&[
+            ("static/", b""),
+            ("static/index.html", b"<html></html>"),
+            ("static/assets/app.js", b"console.log(1)"),
+        ]);
+        std::fs::write(&archive, &zip).unwrap();
+        extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap();
+        assert_eq!(
+            std::fs::read(target.join("index.html")).unwrap(),
+            b"<html></html>"
+        );
+        assert_eq!(
+            std::fs::read(target.join("assets/app.js")).unwrap(),
+            b"console.log(1)"
+        );
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_zip_path_traversal() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-evil.zip");
+        let target = std::env::temp_dir().join("lkit-static-evil-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = make_zip(&[
+            ("static/", b""),
+            ("static/../evil", b"evil"),
+            ("static/index.html", b"<html></html>"),
+        ]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        assert!(!target.join("evil").exists());
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_zip_without_static_prefix() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-prefix.zip");
+        let target = std::env::temp_dir().join("lkit-static-prefix-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = make_zip(&[("index.html", b"<html></html>")]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_zip_without_index_html() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-noindex.zip");
+        let target = std::env::temp_dir().join("lkit-static-noindex-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = make_zip(&[("static/", b""), ("static/assets/app.js", b"x")]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_existing_target_directory() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-existing.zip");
+        let target = std::env::temp_dir().join("lkit-static-existing-out");
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir(&target).unwrap();
+        let zip = make_zip(&[("static/index.html", b"<html></html>")]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_duplicate_normalized_zip_paths() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-duplicate.zip");
+        let target = std::env::temp_dir().join("lkit-static-duplicate-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = make_zip(&[("static/assets/", b""), ("static/assets", b"second")]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_dot_zip_path_component() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-dot.zip");
+        let target = std::env::temp_dir().join("lkit-static-dot-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = make_zip(&[("static/./index.html", b"<html></html>")]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    #[test]
+    fn rejects_zip_symlink() {
+        let version = Version::parse("0.19.2").unwrap();
+        let archive = std::env::temp_dir().join("lkit-static-symlink.zip");
+        let target = std::env::temp_dir().join("lkit-static-symlink-out");
+        let _ = std::fs::remove_dir_all(&target);
+        let zip = build_raw_zip(&[
+            ("static/", b"", 0o040755u32 << 16),
+            ("static/index.html", b"<html></html>", 0o100644u32 << 16),
+            ("static/link", b"index.html", 0o120777u32 << 16),
+        ]);
+        std::fs::write(&archive, &zip).unwrap();
+        let error =
+            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
+        assert!(matches!(error, RepositoryError::Extract { .. }));
+        assert!(!target.join("link").exists());
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&archive);
+    }
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc: u32 = 0xFFFF_FFFF;
+        for byte in data {
+            crc ^= *byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// 手工构造 Store 模式 zip，允许写入带 Unix 文件类型位的条目。
+    fn build_raw_zip(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+        let mut locals = Vec::new();
+        let mut central = Vec::new();
+        let mut offset = 0u32;
+        for (name, data, external) in entries {
+            let crc = crc32(data);
+            locals.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            locals.extend_from_slice(&20u16.to_le_bytes());
+            locals.extend_from_slice(&0u16.to_le_bytes());
+            locals.extend_from_slice(&0u16.to_le_bytes());
+            locals.extend_from_slice(&0u16.to_le_bytes());
+            locals.extend_from_slice(&0x21u16.to_le_bytes());
+            locals.extend_from_slice(&crc.to_le_bytes());
+            locals.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            locals.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            locals.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            locals.extend_from_slice(&0u16.to_le_bytes());
+            locals.extend_from_slice(name.as_bytes());
+            locals.extend_from_slice(data);
+
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&(20u16 | (3u16 << 8)).to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0x21u16.to_le_bytes());
+            central.extend_from_slice(&crc.to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&external.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name.as_bytes());
+
+            offset += 30 + name.len() as u32 + data.len() as u32;
+        }
+        let central_offset = offset;
+        let central_len = central.len() as u32;
+        let count = entries.len() as u16;
+        let mut out = locals;
+        out.append(&mut central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&central_len.to_le_bytes());
+        out.extend_from_slice(&central_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+}

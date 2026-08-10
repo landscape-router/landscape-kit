@@ -1,14 +1,13 @@
-use std::error::Error;
-use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+mod body;
+mod retry;
 
-use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, RETRY_AFTER};
+use std::path::Path;
+use std::time::Duration;
+
+use reqwest::header::HeaderMap;
 use reqwest::redirect::Policy;
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use semver::Version;
-use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 use url::Url;
 
 #[cfg(test)]
@@ -17,6 +16,10 @@ pub(crate) use super::archive::{MAX_DECOMPRESSED_BYTES, decompress_zstd, extract
 use super::{Asset, RepositoryError};
 use crate::interaction::presentation::DownloadProgress;
 
+use self::body::{read_body_limited, write_asset_response};
+pub(crate) use self::retry::is_retryable_request_error;
+use self::retry::{RETRY_AFTER_LIMIT, jitter_seed, rate_limit_wait, retryable_status};
+
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const ASSET_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -24,7 +27,6 @@ pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const METADATA_BODY_LIMIT: u64 = 10 * 1024 * 1024;
 pub(crate) const MAX_ATTEMPTS: usize = 3;
 pub(crate) const MAX_REDIRECTS: usize = 5;
-const RETRY_AFTER_LIMIT: u64 = 60;
 
 #[derive(Debug)]
 pub(crate) struct DownloadClient {
@@ -222,150 +224,6 @@ impl DownloadClient {
     }
 }
 
-async fn write_asset_response(
-    version: &Version,
-    asset: &Asset,
-    temp_path: &Path,
-    response: Response,
-    progress: &mut DownloadProgress,
-) -> Result<(), RepositoryError> {
-    let mut file = tokio::fs::File::create(temp_path)
-        .await
-        .map_err(RepositoryError::Io)?;
-    let mut hasher = Sha256::new();
-    let mut written: u64 = 0;
-    let mut stream = response.bytes_stream();
-    loop {
-        let chunk = tokio::time::timeout(IDLE_TIMEOUT, stream.next())
-            .await
-            .map_err(|_| {
-                RepositoryError::Timeout(
-                    "no data received for 30 seconds while downloading asset".into(),
-                )
-            })?
-            .transpose()
-            .map_err(RepositoryError::Request)?;
-        let Some(chunk) = chunk else { break };
-        written = written.saturating_add(chunk.len() as u64);
-        if written > asset.size {
-            return Err(RepositoryError::AssetSizeMismatch {
-                version: version.clone(),
-                expected: asset.size,
-                actual: written,
-            });
-        }
-        hasher.update(&chunk);
-        file.write_all(&chunk).await.map_err(RepositoryError::Io)?;
-        progress.set_position(written);
-    }
-    if written != asset.size {
-        return Err(RepositoryError::AssetSizeMismatch {
-            version: version.clone(),
-            expected: asset.size,
-            actual: written,
-        });
-    }
-    let actual = hex(&hasher.finalize());
-    if actual != asset.sha256 {
-        return Err(RepositoryError::AssetSha256Mismatch {
-            version: version.clone(),
-            expected: asset.sha256.clone(),
-            actual,
-        });
-    }
-    file.sync_all().await.map_err(RepositoryError::Io)?;
-    Ok(())
-}
-
-async fn read_body_limited(response: Response, limit: u64) -> Result<Vec<u8>, RepositoryError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit)
-    {
-        return Err(RepositoryError::MetadataTooLarge);
-    }
-    let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(RepositoryError::Request)?;
-        let new_length = body.len().saturating_add(chunk.len());
-        if new_length as u64 > limit {
-            return Err(RepositoryError::MetadataTooLarge);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-fn retryable_status(status: StatusCode) -> bool {
-    status == StatusCode::REQUEST_TIMEOUT
-        || status == StatusCode::TOO_MANY_REQUESTS
-        || status.is_server_error()
-}
-
-/// 返回限速建议等待秒数。优先读取 `Retry-After`（整数秒），
-/// 其次在 `403`/`429` 时读取 `X-RateLimit-Reset`（Unix 时间戳）。
-fn rate_limit_wait(status: StatusCode, headers: &HeaderMap) -> Option<u64> {
-    if let Some(value) = headers.get(RETRY_AFTER)
-        && let Ok(text) = value.to_str()
-        && let Ok(seconds) = text.trim().parse::<u64>()
-    {
-        return Some(seconds);
-    }
-    if (status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN)
-        && let Some(reset) = headers
-            .get("x-ratelimit-reset")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|text| text.trim().parse::<u64>().ok())
-    {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0);
-        return Some(reset.saturating_sub(now));
-    }
-    None
-}
-
-pub(crate) fn is_retryable_request_error(error: &reqwest::Error) -> bool {
-    if error.is_timeout() || error.is_connect() {
-        return true;
-    }
-    let mut source = error.source();
-    while let Some(cause) = source {
-        if let Some(io_error) = cause.downcast_ref::<std::io::Error>()
-            && retryable_io_kind(io_error.kind())
-        {
-            return true;
-        }
-        source = cause.source();
-    }
-    false
-}
-
-fn retryable_io_kind(kind: std::io::ErrorKind) -> bool {
-    matches!(
-        kind,
-        std::io::ErrorKind::ConnectionReset
-            | std::io::ErrorKind::ConnectionAborted
-            | std::io::ErrorKind::ConnectionRefused
-            | std::io::ErrorKind::BrokenPipe
-            | std::io::ErrorKind::TimedOut
-            | std::io::ErrorKind::UnexpectedEof
-            | std::io::ErrorKind::AddrNotAvailable
-            | std::io::ErrorKind::NetworkUnreachable
-            | std::io::ErrorKind::HostUnreachable
-    )
-}
-
-fn jitter_seed() -> u64 {
-    let base = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    (base as u64) ^ ((base >> 32) as u64) ^ 0x9e37_79b9_7f4a_7c15
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -395,13 +253,18 @@ fn is_loopback_host(host: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Read, Write};
-
-    use semver::Version;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
+    use reqwest::header::HeaderMap;
+    use semver::Version;
+    use sha2::{Digest, Sha256};
+    use url::Url;
+
+    use super::super::AssetEncoding;
     use super::*;
 
     fn head(status: u16, reason: &str, body_len: usize) -> String {
@@ -637,270 +500,5 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, RepositoryError::AssetSha256Mismatch { .. }));
         assert!(!temp.exists());
-    }
-
-    #[test]
-    fn decompresses_zstd_and_rejects_trailing_data() {
-        let version = Version::parse("0.19.2").unwrap();
-        let compressed = std::env::temp_dir().join("lkit-decompress-test.zst");
-        let output = std::env::temp_dir().join("lkit-decompress-test.bin");
-        let data = b"landscape-webserver".repeat(1024);
-        let mut encoded = zstd::stream::encode_all(Cursor::new(&data), 1).unwrap();
-        std::fs::write(&compressed, &encoded).unwrap();
-        let written = decompress_zstd(&version, &compressed, &output, 1 << 30).unwrap();
-        assert_eq!(written as usize, data.len());
-        assert_eq!(std::fs::read(&output).unwrap(), data);
-
-        encoded.extend_from_slice(b"trailing garbage");
-        std::fs::write(&compressed, &encoded).unwrap();
-        let error = decompress_zstd(&version, &compressed, &output, 1 << 30).unwrap_err();
-        assert!(matches!(error, RepositoryError::Decompress { .. }));
-        let _ = std::fs::remove_file(&compressed);
-        let _ = std::fs::remove_file(&output);
-    }
-
-    #[test]
-    fn rejects_decompress_bomb() {
-        let version = Version::parse("0.19.2").unwrap();
-        let compressed = std::env::temp_dir().join("lkit-decompress-bomb.zst");
-        let output = std::env::temp_dir().join("lkit-decompress-bomb.bin");
-        let data = vec![0xABu8; 1024 * 1024];
-        let encoded = zstd::stream::encode_all(Cursor::new(&data), 1).unwrap();
-        std::fs::write(&compressed, &encoded).unwrap();
-        let error = decompress_zstd(&version, &compressed, &output, 4096).unwrap_err();
-        assert!(matches!(error, RepositoryError::Decompress { .. }));
-        let _ = std::fs::remove_file(&compressed);
-        let _ = std::fs::remove_file(&output);
-    }
-
-    fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        for (name, content) in entries {
-            if content.is_empty() {
-                writer
-                    .add_directory(*name, zip::write::SimpleFileOptions::default())
-                    .unwrap();
-            } else {
-                writer
-                    .start_file(*name, zip::write::SimpleFileOptions::default())
-                    .unwrap();
-                writer.write_all(content).unwrap();
-            }
-        }
-        writer.finish().unwrap().into_inner()
-    }
-
-    #[test]
-    fn extracts_static_archive() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-test.zip");
-        let target = std::env::temp_dir().join("lkit-static-test-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = make_zip(&[
-            ("static/", b""),
-            ("static/index.html", b"<html></html>"),
-            ("static/assets/app.js", b"console.log(1)"),
-        ]);
-        std::fs::write(&archive, &zip).unwrap();
-        extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap();
-        assert_eq!(
-            std::fs::read(target.join("index.html")).unwrap(),
-            b"<html></html>"
-        );
-        assert_eq!(
-            std::fs::read(target.join("assets/app.js")).unwrap(),
-            b"console.log(1)"
-        );
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_zip_path_traversal() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-evil.zip");
-        let target = std::env::temp_dir().join("lkit-static-evil-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = make_zip(&[
-            ("static/", b""),
-            ("static/../evil", b"evil"),
-            ("static/index.html", b"<html></html>"),
-        ]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        assert!(!target.join("evil").exists());
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_zip_without_static_prefix() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-prefix.zip");
-        let target = std::env::temp_dir().join("lkit-static-prefix-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = make_zip(&[("index.html", b"<html></html>")]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_zip_without_index_html() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-noindex.zip");
-        let target = std::env::temp_dir().join("lkit-static-noindex-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = make_zip(&[("static/", b""), ("static/assets/app.js", b"x")]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_existing_target_directory() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-existing.zip");
-        let target = std::env::temp_dir().join("lkit-static-existing-out");
-        let _ = std::fs::remove_dir_all(&target);
-        std::fs::create_dir(&target).unwrap();
-        let zip = make_zip(&[("static/index.html", b"<html></html>")]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_duplicate_normalized_zip_paths() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-duplicate.zip");
-        let target = std::env::temp_dir().join("lkit-static-duplicate-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = make_zip(&[("static/assets/", b""), ("static/assets", b"second")]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_dot_zip_path_component() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-dot.zip");
-        let target = std::env::temp_dir().join("lkit-static-dot-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = make_zip(&[("static/./index.html", b"<html></html>")]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    #[test]
-    fn rejects_zip_symlink() {
-        let version = Version::parse("0.19.2").unwrap();
-        let archive = std::env::temp_dir().join("lkit-static-symlink.zip");
-        let target = std::env::temp_dir().join("lkit-static-symlink-out");
-        let _ = std::fs::remove_dir_all(&target);
-        let zip = build_raw_zip(&[
-            ("static/", b"", 0o040755u32 << 16),
-            ("static/index.html", b"<html></html>", 0o100644u32 << 16),
-            ("static/link", b"index.html", 0o120777u32 << 16),
-        ]);
-        std::fs::write(&archive, &zip).unwrap();
-        let error =
-            extract_static_archive(&version, &archive, zip.len() as u64, &target).unwrap_err();
-        assert!(matches!(error, RepositoryError::Extract { .. }));
-        assert!(!target.join("link").exists());
-        let _ = std::fs::remove_dir_all(&target);
-        let _ = std::fs::remove_file(&archive);
-    }
-
-    fn crc32(data: &[u8]) -> u32 {
-        let mut crc: u32 = 0xFFFF_FFFF;
-        for byte in data {
-            crc ^= *byte as u32;
-            for _ in 0..8 {
-                crc = if crc & 1 != 0 {
-                    (crc >> 1) ^ 0xEDB8_8320
-                } else {
-                    crc >> 1
-                };
-            }
-        }
-        !crc
-    }
-
-    /// 手工构造 Store 模式 zip，允许写入带 Unix 文件类型位的条目。
-    fn build_raw_zip(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
-        let mut locals = Vec::new();
-        let mut central = Vec::new();
-        let mut offset = 0u32;
-        for (name, data, external) in entries {
-            let crc = crc32(data);
-            locals.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
-            locals.extend_from_slice(&20u16.to_le_bytes());
-            locals.extend_from_slice(&0u16.to_le_bytes());
-            locals.extend_from_slice(&0u16.to_le_bytes());
-            locals.extend_from_slice(&0u16.to_le_bytes());
-            locals.extend_from_slice(&0x21u16.to_le_bytes());
-            locals.extend_from_slice(&crc.to_le_bytes());
-            locals.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            locals.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            locals.extend_from_slice(&(name.len() as u16).to_le_bytes());
-            locals.extend_from_slice(&0u16.to_le_bytes());
-            locals.extend_from_slice(name.as_bytes());
-            locals.extend_from_slice(data);
-
-            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
-            central.extend_from_slice(&(20u16 | (3u16 << 8)).to_le_bytes());
-            central.extend_from_slice(&20u16.to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&0x21u16.to_le_bytes());
-            central.extend_from_slice(&crc.to_le_bytes());
-            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            central.extend_from_slice(&(name.len() as u16).to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&external.to_le_bytes());
-            central.extend_from_slice(&offset.to_le_bytes());
-            central.extend_from_slice(name.as_bytes());
-
-            offset += 30 + name.len() as u32 + data.len() as u32;
-        }
-        let central_offset = offset;
-        let central_len = central.len() as u32;
-        let count = entries.len() as u16;
-        let mut out = locals;
-        out.append(&mut central);
-        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&count.to_le_bytes());
-        out.extend_from_slice(&count.to_le_bytes());
-        out.extend_from_slice(&central_len.to_le_bytes());
-        out.extend_from_slice(&central_offset.to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes());
-        out
     }
 }
