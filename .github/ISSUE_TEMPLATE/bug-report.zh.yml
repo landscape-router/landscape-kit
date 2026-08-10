@@ -1,0 +1,81 @@
+name: 缺陷报告
+description: 报告 lkit 的缺陷
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告缺陷。继续之前请先阅读
+        [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)：先搜索现有 issue 避免重复，
+        再开始修复。
+  - type: dropdown
+    id: command
+    attributes:
+      label: 受影响命令
+      description: 缺陷出现在哪个 lkit 命令或领域？
+      options:
+        - general / other
+        - check
+        - install
+        - update
+        - switch
+        - backup
+        - restore
+        - uninstall
+        - reinit
+        - repair
+        - reconcile
+        - service-manager
+        - set-mirror
+        - network
+        - lkit-publish
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么？请包含错误消息或异常输出。
+      placeholder: "例如：`lkit reconcile` 以退出码 1 退出并输出 ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 应该发生什么？如有可能请引用 docs/ 中相关规格。
+      placeholder: "例如：`lkit reconcile` 应检测到该变化并记录（docs/commands/reconcile.md）"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 触发缺陷所需的完整命令和输入。
+      placeholder: |
+        1. 运行 `lkit ...`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: 操作系统/发行版、架构、lkit 版本、服务管理器。
+      placeholder: "例如：Ubuntu 24.04、x86_64、lkit 0.8.1、systemd"
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: 受影响的文档
+      description: 如有，docs/ 下哪些文件描述了该错误行为？
+      placeholder: docs/commands/install.md
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: 自检
+      options:
+        - label: "我已阅读 CONTRIBUTING.zh.md、扫描项目并搜索现有 issue；本报告不是重复项。"
+          required: true

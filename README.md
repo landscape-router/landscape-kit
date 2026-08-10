@@ -27,6 +27,12 @@ The repository is a Cargo workspace made up of four crates:
 
 Specifications and design documents live in [`docs/`](docs/README.md). A Chinese-language version of this readme is available at [README.zh.md](README.zh.md).
 
+## Contributing
+
+This project uses an issue-driven workflow: open an issue with the issue form template, then
+implement. See [CONTRIBUTING.md](CONTRIBUTING.md) (and
+[CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)) for details.
+
 ## Installing Landscape
 
 On a glibc-based Linux x86_64 or aarch64 host, install `lkit` first and then start the interactive

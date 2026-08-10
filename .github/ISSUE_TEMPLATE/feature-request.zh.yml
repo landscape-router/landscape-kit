@@ -1,0 +1,72 @@
+name: 功能请求
+description: 提出 lkit 的新功能或改进
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提出功能建议。继续之前请先阅读
+        [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)：扫描 `docs/`、搜索现有 issue
+        避免重复，再开始写代码。
+  - type: dropdown
+    id: command
+    attributes:
+      label: 受影响命令
+      description: 该请求涉及哪个 lkit 命令或领域？
+      options:
+        - general / other
+        - check
+        - install
+        - update
+        - switch
+        - backup
+        - restore
+        - uninstall
+        - reinit
+        - repair
+        - reconcile
+        - service-manager
+        - set-mirror
+        - network
+        - lkit-publish
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 动机
+      description: 这个功能解决什么问题？描述当前行为及其不足。
+      placeholder: "例如：`reconcile` 无法检测 ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望行为
+      description: 实现该功能后应该表现出的行为。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 如何验证功能已完成？列出具体、可测试的条目。
+      placeholder: |
+        - [ ] 新增 `lkit ...` 选项并有文档说明
+        - [ ] 单元测试覆盖新行为
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: 受影响的文档
+      description: 如有，docs/ 下哪些文件描述了当前行为、需要同步更新？
+      placeholder: docs/commands/install.md
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: 自检
+      options:
+        - label: "我已阅读 CONTRIBUTING.zh.md、扫描项目（README、docs/、AGENTS.md）并搜索现有 issue；本请求不是重复项。"
+          required: true

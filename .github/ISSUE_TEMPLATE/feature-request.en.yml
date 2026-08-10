@@ -1,0 +1,72 @@
+name: Feature Request
+description: Propose a new feature or improvement for lkit
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. Before you continue, read
+        [CONTRIBUTING.md](CONTRIBUTING.md): scan `docs/`, search existing
+        issues for duplicates before writing code.
+  - type: dropdown
+    id: command
+    attributes:
+      label: Affected command
+      description: Which lkit command or area does this request concern?
+      options:
+        - general / other
+        - check
+        - install
+        - update
+        - switch
+        - backup
+        - restore
+        - uninstall
+        - reinit
+        - repair
+        - reconcile
+        - service-manager
+        - set-mirror
+        - network
+        - lkit-publish
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve? Describe the current behavior and why it is insufficient.
+      placeholder: "e.g. `reconcile` does not detect ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the expected behavior after this feature is implemented.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How can we verify the feature is complete? List concrete, testable items.
+      placeholder: |
+        - [ ] New `lkit ...` flag exists and is documented
+        - [ ] Unit tests cover the new behavior
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Affected documentation
+      description: Which file(s) under docs/ describe the current behavior and need updating?
+      placeholder: docs/commands/install.md
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: Self-check
+      options:
+        - label: "I read CONTRIBUTING.md, scanned the project (README, docs/, AGENTS.md), and searched existing issues; this is not a duplicate."
+          required: true

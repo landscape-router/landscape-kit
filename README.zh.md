@@ -27,6 +27,11 @@
 
 规格与设计文档见 [`docs/`](docs/README.md)。本说明的英文版见 [README.md](README.md)。
 
+## 贡献
+
+本项目采用 issue 驱动的工作流：先用 issue 表单模板创建 issue，再实现。
+详见 [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)（英文版见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+
 ## 安装 Landscape
 
 当前支持使用 glibc 的 Linux `x86_64` 和 `aarch64` 主机。先安装最新版 `lkit`，再从终端

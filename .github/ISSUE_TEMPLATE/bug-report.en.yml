@@ -1,0 +1,81 @@
+name: Bug Report
+description: Report a bug in lkit
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Before you continue, read
+        [CONTRIBUTING.md](CONTRIBUTING.md): search existing issues for
+        duplicates before fixing.
+  - type: dropdown
+    id: command
+    attributes:
+      label: Affected command
+      description: Which lkit command or area shows the bug?
+      options:
+        - general / other
+        - check
+        - install
+        - update
+        - switch
+        - backup
+        - restore
+        - uninstall
+        - reinit
+        - repair
+        - reconcile
+        - service-manager
+        - set-mirror
+        - network
+        - lkit-publish
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Actual behavior
+      description: What happened? Include error messages or unexpected output.
+      placeholder: "e.g. `lkit reconcile` exits with code 1 and prints ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened? Refer to the relevant spec in docs/ if possible.
+      placeholder: "e.g. `lkit reconcile` should detect the change and record it (docs/commands/reconcile.md)"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands and inputs needed to trigger the bug.
+      placeholder: |
+        1. Run `lkit ...`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS/distribution, architecture, lkit version, service manager.
+      placeholder: "e.g. Ubuntu 24.04, x86_64, lkit 0.8.1, systemd"
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Affected documentation
+      description: Which file(s) under docs/ describe the buggy behavior, if any?
+      placeholder: docs/commands/install.md
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: Self-check
+      options:
+        - label: "I read CONTRIBUTING.md, scanned the project, and searched existing issues; this is not a duplicate."
+          required: true
