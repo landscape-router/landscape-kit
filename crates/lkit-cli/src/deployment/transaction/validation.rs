@@ -403,3 +403,276 @@ fn is_safe_unit_name(value: &str) -> bool {
             byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-' | b'.' | b'@')
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use super::super::{
+        BackupRef, Registration, StaticBackupRef, SystemdBefore, TransactionServiceManager,
+        find_unfinished,
+    };
+    use crate::deployment::root::InstallRoot;
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("lkit-tx-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn new_root(path: &std::path::Path) -> InstallRoot {
+        InstallRoot {
+            install_root: path.to_path_buf(),
+            canonical: path.to_path_buf(),
+        }
+    }
+
+    fn install_transaction(root: &InstallRoot) -> TransactionFile {
+        TransactionFile::new_install(root, &semver::Version::new(1, 2, 3)).unwrap()
+    }
+
+    #[test]
+    fn accepts_v1_transactions_and_names_stopping_phase() {
+        let temp = temp_root("schema-compatibility");
+        let root = new_root(&temp);
+        let mut transaction = install_transaction(&root);
+        transaction.schema_version = 1;
+        assert!(validate_transaction(&transaction).is_ok());
+        assert_eq!(Phase::Stopping.key(), "stopping");
+        transaction.phase = Phase::Stopping;
+        assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn rejects_corrupted_transactions() {
+        let temp = temp_root("corrupt");
+        let root = new_root(&temp);
+        std::fs::create_dir_all(temp.join("transactions")).unwrap();
+        std::fs::write(temp.join("transactions/bad.json"), b"not json").unwrap();
+        assert!(matches!(
+            find_unfinished(&root),
+            Err(InstallError::CorruptedTransaction(_))
+        ));
+
+        let mut transaction = install_transaction(&root);
+        transaction.schema_version = 5;
+        assert!(validate_transaction(&transaction).is_err());
+
+        let mut transaction = install_transaction(&root);
+        transaction.log_path = "../escape.log".into();
+        assert!(validate_transaction(&transaction).is_err());
+
+        let mut transaction = install_transaction(&root);
+        transaction.target_release = Some("../escape".into());
+        assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_operation_specific_rules() {
+        let temp = temp_root("ops");
+        let root = new_root(&temp);
+        let mut transaction = install_transaction(&root);
+
+        transaction.operation = Operation::Switch;
+        transaction.from_version = Some("1.1.0".into());
+        transaction.previous_current = Some("releases/1.1.0".into());
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.phase = Phase::Failed;
+        assert!(validate_transaction(&transaction).is_ok());
+
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+
+        transaction.operation = Operation::ServiceMigration;
+        transaction.backup = None;
+        transaction.from_version = None;
+        transaction.previous_current = None;
+        transaction.target_version = None;
+        transaction.target_release = None;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.from_service_manager = Some(TransactionServiceManager::Systemd);
+        transaction.target_service_manager = Some(TransactionServiceManager::None);
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.systemd_before = Some(SystemdBefore {
+            registration: Registration {
+                kind: RegistrationKind::Missing,
+                target: None,
+            },
+            enabled: false,
+            active: false,
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_restore_transaction_rules() {
+        let temp = temp_root("restore");
+        let root = new_root(&temp);
+        let from = semver::Version::new(1, 1, 0);
+        let target = semver::Version::new(1, 2, 3);
+        let mut transaction = TransactionFile::new_restore(&root, &from, &target).unwrap();
+        assert_eq!(transaction.operation, Operation::Restore);
+        assert_eq!(transaction.schema_version, 4);
+        assert!(validate_transaction(&transaction).is_ok());
+
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.restore_backup = Some(BackupRef {
+            backup_id: "rb".into(),
+            path: "transactions/tx/target-backup.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+
+        transaction.static_backup = Some(StaticBackupRef {
+            path: "backups/static".into(),
+            target: "current/static".into(),
+        });
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.static_backup = None;
+
+        transaction.no_backup = true;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.backup = Some(BackupRef {
+            backup_id: "p".into(),
+            path: "backups/p.lkb".into(),
+            sha256: "b".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_reinit_transaction_rules() {
+        let temp = temp_root("reinit");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        assert_eq!(transaction.operation, Operation::Reinit);
+        assert_eq!(transaction.phase, Phase::Preparing);
+        assert_eq!(transaction.from_version.as_deref(), Some("1.2.3"));
+        assert!(transaction.target_version.is_none());
+        assert!(transaction.target_release.is_none());
+        assert!(transaction.previous_current.is_none());
+        assert!(validate_transaction(&transaction).is_ok());
+
+        // 保护备份记录后(仍在 preparing)合法;进入 prepared 后必须有备份或 no_backup。
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.backup = None;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.no_backup = true;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.no_backup = false;
+        transaction.phase = Phase::Failed;
+        assert!(validate_transaction(&transaction).is_ok());
+
+        // 非法组合:版本变化、release、previous_current、restore_backup、managers。
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_version = Some("1.3.0".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_release = Some("releases/1.2.3".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.previous_current = Some("releases/1.2.3".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.restore_backup = Some(BackupRef {
+            backup_id: "r".into(),
+            path: "transactions/tx/target-backup.lkb".into(),
+            sha256: "b".repeat(64),
+        });
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.from_version = None;
+        assert!(validate_transaction(&invalid).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn rejects_reinit_network_confirmation_below_schema_three() {
+        let temp = temp_root("reinit-network");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        transaction.schema_version = 1;
+        transaction.phase = Phase::AwaitingNetworkConfirmation;
+        assert!(validate_transaction(&transaction).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn validates_uninstall_transaction_rules() {
+        let temp = temp_root("uninstall");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        assert_eq!(transaction.operation, Operation::Uninstall);
+        assert_eq!(transaction.phase, Phase::Preparing);
+        assert_eq!(transaction.from_version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            transaction.previous_current.as_deref(),
+            Some("releases/1.2.3")
+        );
+        assert!(transaction.target_version.is_none());
+        assert!(transaction.target_release.is_none());
+        assert!(validate_transaction(&transaction).is_ok());
+
+        // 保护备份记录后(仍在 preparing)合法。
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        assert!(validate_transaction(&transaction).is_ok());
+        // 进入 prepared 后必须有备份或 no_backup。
+        transaction.phase = Phase::Prepared;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.backup = None;
+        assert!(validate_transaction(&transaction).is_err());
+        transaction.no_backup = true;
+        assert!(validate_transaction(&transaction).is_ok());
+        transaction.no_backup = false;
+
+        // 非法组合:restore_backup、static_backup、managers、目标版本。
+        let mut invalid =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.restore_backup = Some(BackupRef {
+            backup_id: "r".into(),
+            path: "transactions/tx/target-backup.lkb".into(),
+            sha256: "b".repeat(64),
+        });
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_version = Some("1.3.0".into());
+        assert!(validate_transaction(&invalid).is_err());
+        let mut invalid =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        invalid.target_service_manager = Some(TransactionServiceManager::Systemd);
+        assert!(validate_transaction(&invalid).is_err());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+}

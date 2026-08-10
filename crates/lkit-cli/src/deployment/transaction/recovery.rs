@@ -446,3 +446,376 @@ fn restore_pre_activation_systemd(
 fn corrupted(reason: String) -> InstallError {
     InstallError::CorruptedTransaction(reason)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use super::super::{
+        BackupRef, NetworkTakeoverTransaction, Registration, RegistrationKind, SystemdBefore,
+        TransactionServiceManager, begin, find_unfinished, load_transaction_file, mark_phase,
+    };
+    use chrono::Utc;
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("lkit-tx-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn new_root(path: &std::path::Path) -> InstallRoot {
+        InstallRoot {
+            install_root: path.to_path_buf(),
+            canonical: path.to_path_buf(),
+        }
+    }
+    struct FakeDocs;
+
+    impl super::super::super::health::DocsProbe for FakeDocs {
+        async fn docs_ok(&self) -> bool {
+            true
+        }
+    }
+
+    fn test_health() -> super::super::super::health::HealthOptions<FakeDocs> {
+        super::super::super::health::HealthOptions {
+            docs: FakeDocs,
+            ports: Vec::new(),
+            startup_timeout: std::time::Duration::from_secs(5),
+            stable_duration: std::time::Duration::from_millis(100),
+        }
+    }
+
+    fn install_transaction(root: &InstallRoot) -> TransactionFile {
+        TransactionFile::new_install(root, &semver::Version::new(1, 2, 3)).unwrap()
+    }
+
+    #[test]
+    fn recovers_interrupted_reinit_in_preparing() {
+        let temp = temp_root("reinit-recover");
+        let root = new_root(&temp);
+        let transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        begin(&root, &transaction).unwrap();
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Failed);
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn blocks_reinit_awaiting_confirmation_on_recovery() {
+        let temp = temp_root("reinit-blocked");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        transaction.network_takeover = Some(NetworkTakeoverTransaction {
+            plan: crate::network::config::NetworkPlan {
+                mode: crate::network::config::NetworkMode::WanDhcp { wan: "ens3".into() },
+                selected_macs: vec![crate::network::config::SelectedInterface {
+                    name: "ens3".into(),
+                    mac: "02:00:00:00:00:03".into(),
+                }],
+            },
+            host_services: Vec::new(),
+            confirmation_deadline: Utc::now(),
+            rollback_service: "lkit-network-tx-rollback.service".into(),
+            rollback_timer: "lkit-network-tx-rollback.timer".into(),
+            boot_rollback_service: "lkit-network-tx-boot-rollback.service".into(),
+            recovery_binary: "service/lkit-network-recovery".into(),
+            pending_state: "transactions/tx/pending-install-state.json".into(),
+        });
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::AwaitingNetworkConfirmation).unwrap();
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(async { recover_interrupted(&root, &tx, &Systemd::host(), &health).await });
+        assert!(matches!(error, Err(InstallError::BlockedByTransaction(_))));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn recovers_interrupted_uninstall_by_forward_completion() {
+        let temp = temp_root("uninstall-recover");
+        let root = new_root(&temp);
+        let mut transaction =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        transaction.backup = Some(BackupRef {
+            backup_id: "b".into(),
+            path: "backups/b.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        transaction.no_backup = false;
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::Activating).unwrap();
+
+        std::fs::create_dir_all(temp.join("releases/1.2.3")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
+        std::fs::create_dir_all(temp.join("data")).unwrap();
+        std::fs::create_dir_all(temp.join("state")).unwrap();
+        std::fs::write(temp.join("state/install-state.json"), b"{}").unwrap();
+        std::fs::create_dir_all(temp.join("service")).unwrap();
+        std::fs::create_dir_all(temp.join("backups")).unwrap();
+        std::fs::write(temp.join("config.toml"), b"[repository]\n").unwrap();
+
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        assert!(!temp.join("releases").exists());
+        assert!(!temp.join("current").exists());
+        assert!(!temp.join("data").exists());
+        assert!(!temp.join("state").exists());
+        assert!(!temp.join("service").exists());
+        assert!(!temp.join("logs").exists());
+        assert!(!temp.join("run").exists());
+        assert_eq!(
+            std::fs::read_to_string(temp.join("config.toml")).unwrap(),
+            "[repository]\n"
+        );
+        assert!(temp.join("backups").is_dir());
+        assert!(temp.join("transactions").is_dir());
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Committed);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn keeps_uninstall_in_preparing_on_recovery() {
+        let temp = temp_root("uninstall-preparing");
+        let root = new_root(&temp);
+        let transaction =
+            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+        begin(&root, &transaction).unwrap();
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Failed);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn recovers_interrupted_install() {
+        let temp = temp_root("recover");
+        let root = new_root(&temp);
+        let transaction = install_transaction(&root);
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::Activating).unwrap();
+
+        std::fs::create_dir_all(temp.join("releases/1.2.3/static")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
+        std::fs::create_dir_all(temp.join("data")).unwrap();
+        std::fs::write(
+            temp.join("data/landscape_init.toml"),
+            b"version = \"1.2.3\"",
+        )
+        .unwrap();
+        std::fs::create_dir_all(temp.join("state")).unwrap();
+        std::fs::write(temp.join("state/install-state.json"), b"{}").unwrap();
+
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        assert!(!temp.join("releases/1.2.3").exists());
+        assert!(!temp.join("current").exists());
+        assert!(!temp.join("data/landscape_init.toml").exists());
+        assert!(!temp.join("state/install-state.json").exists());
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn keeps_completed_install_on_recovery() {
+        let temp = temp_root("keep");
+        let root = new_root(&temp);
+        let transaction = install_transaction(&root);
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::Activating).unwrap();
+
+        std::fs::create_dir_all(temp.join("releases/1.2.3")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
+        std::fs::create_dir_all(temp.join("state")).unwrap();
+        let state = serde_json::json!({
+            "schema_version": 1,
+            "layout_version": 1,
+            "install_root": temp.display().to_string(),
+            "canonical_install_root": std::fs::canonicalize(&temp).unwrap().display().to_string(),
+            "active_version": "1.2.3",
+            "repository": {"kind": "http", "location": "https://example.com/"},
+            "assets": {
+                "webserver": {"architecture": "x86_64", "sha256": "a".repeat(64), "size": 1},
+                "static_archive": {"sha256": "b".repeat(64), "size": 1}
+            },
+            "initialization": {"status": "pending", "lock_present": false, "initialized_at": null},
+            "service": {"manager": "none", "registered": false, "enabled": false, "verified": false, "definition_path": null, "definition_sha256": null},
+            "last_transaction_id": null,
+            "committed_at": null
+        });
+        std::fs::write(temp.join("state/install-state.json"), state.to_string()).unwrap();
+
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        assert!(temp.join("releases/1.2.3").exists());
+        assert!(temp.join("current").exists());
+        assert!(temp.join("state/install-state.json").exists());
+        let tx = load_finished(&root, &temp);
+        assert_eq!(tx.phase, Phase::Committed);
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    fn load_finished(root: &InstallRoot, temp: &std::path::Path) -> TransactionFile {
+        let entries: Vec<_> = std::fs::read_dir(temp.join("transactions"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(entries.len(), 1);
+        load_transaction_file(root, &entries[0].path()).unwrap()
+    }
+
+    #[test]
+    fn recovers_failed_switch_before_backup_creation() {
+        let temp = temp_root("switch-recover");
+        let root = new_root(&temp);
+        let transaction = TransactionFile::new_switch(
+            &root,
+            &semver::Version::new(1, 1, 0),
+            &semver::Version::new(1, 2, 3),
+        )
+        .unwrap();
+        begin(&root, &transaction).unwrap();
+        mark_phase(&root, &transaction, Phase::Failed).unwrap();
+        assert!(find_unfinished(&root).unwrap().is_none());
+
+        let transaction = TransactionFile::new_switch(
+            &root,
+            &semver::Version::new(1, 1, 0),
+            &semver::Version::new(1, 3, 0),
+        )
+        .unwrap();
+        begin(&root, &transaction).unwrap();
+        std::fs::create_dir_all(temp.join("releases/1.3.0/static")).unwrap();
+
+        let tx = find_unfinished(&root).unwrap().unwrap();
+        let health = test_health();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &health)
+                .await
+                .unwrap()
+        });
+        assert!(!temp.join("releases/1.3.0").exists());
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn recovers_repair_transaction_in_preparing() {
+        let temp = temp_root("repair-recover");
+        let root = new_root(&temp);
+        let tx = TransactionFile::new_repair_binary(&root, &semver::Version::new(1, 1, 0)).unwrap();
+        begin(&root, &tx).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &test_health())
+                .await
+                .unwrap()
+        });
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn recovers_service_migration_transaction_in_preparing() {
+        let temp = temp_root("migration-recover");
+        let root = new_root(&temp);
+        let before = SystemdBefore {
+            registration: Registration {
+                kind: RegistrationKind::Missing,
+                target: None,
+            },
+            enabled: false,
+            active: false,
+        };
+        let tx = TransactionFile::new_service_migration(
+            &root,
+            TransactionServiceManager::None,
+            TransactionServiceManager::Systemd,
+            before,
+        )
+        .unwrap();
+        begin(&root, &tx).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            recover_interrupted(&root, &tx, &Systemd::host(), &test_health())
+                .await
+                .unwrap()
+        });
+        assert!(find_unfinished(&root).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+}
