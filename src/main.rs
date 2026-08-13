@@ -43,7 +43,8 @@ enum Cmd {
 #[cfg(target_os = "linux")]
 #[derive(Args)]
 struct ServeArgs {
-    /// Shared secret used for challenge-response authentication
+    /// Shared secret used for challenge-response authentication; when
+    /// omitted, the LNDP_PSK environment variable is used
     #[arg(long, value_name = "SECRET")]
     psk: Option<String>,
 
@@ -120,19 +121,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "linux")]
 async fn run_serve(args: &ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let psk = args.psk.as_deref().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "--psk is required to run as server",
-        )
-    })?;
+    let psk = match &args.psk {
+        Some(p) => p.clone(),
+        None => std::env::var("LNDP_PSK").map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--psk or the LNDP_PSK environment variable is required",
+            )
+        })?,
+    };
     let devs = parse_devs(&args.dev)?;
     let forward_ports = parse_port_list(&args.forward_ports)?;
     let cfg = ServerConfig {
         devs: &devs,
         ethertype: args.ethertype,
         mac: args.mac,
-        psk,
+        psk: &psk,
         device_name: &args.device_name,
         forward_ports: &forward_ports,
         discover_token: args.token.as_deref().unwrap_or(""),

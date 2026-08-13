@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use landscape_proto::ipstack::{
     IpStack, SocketHandle, StackMsg, INTERNAL_PORT, SERVER_ADDR,
 };
-use landscape_proto::protocol::crypto::{Dir, SessionCrypto};
+use landscape_proto::protocol::crypto::{Dir, SessionCrypto, HS_AUTH_ACK};
 use landscape_proto::protocol::frame;
 use landscape_proto::protocol::session::{ServerSession, VerifyResult};
 use landscape_proto::protocol::{
@@ -275,13 +275,15 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             continue;
                         }
                         let ifindex = peer.ifindex;
-                        let Ok(req) = frame::decode_auth_req(&l.payload) else {
-                            println!("malformed AUTH_REQ from {}", fmt_mac(&mac));
-                            continue;
-                        };
                         let mut drop_peer = false;
-                        match peer.sess.verify_auth(&req, cfg.psk.as_bytes()) {
-                            VerifyResult::Accepted { sid, keys, server_proof } => {
+                        match peer.sess.verify_auth(&l, cfg.psk.as_bytes()) {
+                            VerifyResult::Accepted {
+                                sid,
+                                keys,
+                                server_proof,
+                                hkey,
+                                user,
+                            } => {
                                 guards.entry(mac).or_default().record_success();
                                 teardown_peer(peer);
                                 let mut stack = IpStack::new(SERVER_ADDR);
@@ -290,11 +292,19 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 peer.listener = Some(listener);
                                 peer.crypto = Some(SessionCrypto::new(keys, Dir::S2C));
                                 peer.last_seen = Instant::now();
-                                tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_auth_ack(sid, &server_proof))?;
+                                // The AUTH_ACK is sealed with the handshake
+                                // keys, so only a psk-holder can open it.
+                                let ack = hkey.seal_frame(
+                                    frame::TYPE_AUTH_ACK,
+                                    sid,
+                                    HS_AUTH_ACK,
+                                    &frame::encode_auth_ack_payload(&server_proof),
+                                );
+                                tx.send_on(ifindex, &mac, cfg.ethertype, &ack)?;
                                 println!(
                                     "client {} '{}' authenticated, session {sid}",
                                     fmt_mac(&mac),
-                                    req.user
+                                    user
                                 );
                             }
                             VerifyResult::Rejected(reason) => {
