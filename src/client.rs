@@ -4,11 +4,14 @@ use std::time::Duration;
 use landscape_proto::ipstack::{
     IpStack, SocketHandle, StackMsg, CLIENT_ADDR, INTERNAL_PORT, SERVER_ADDR,
 };
+use landscape_proto::protocol::crypto::{Dir, SessionCrypto, SessionKeys};
 use landscape_proto::protocol::frame::{self, Frame as LndpFrame};
 use landscape_proto::protocol::session::{
-    ClientSession, HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, MAX_RETRIES,
+    ClientPhase, ClientSession, HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, MAX_RETRIES,
 };
-use landscape_proto::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_KEEPALIVE, TYPE_RESP};
+use landscape_proto::protocol::{
+    TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_KEEPALIVE, TYPE_RESP, TYPE_TEARDOWN,
+};
 use landscape_proto::transport::{fmt_mac, Frame, Link};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -40,6 +43,16 @@ struct Conn {
     from_tx: mpsc::Sender<Vec<u8>>,
 }
 
+/// Why a session loop ended.
+enum SessionEnd {
+    /// Keepalives went unanswered: the link is gone.
+    LinkLost,
+    /// The server sent a teardown.
+    PeerClosed,
+    /// SIGINT/SIGTERM: graceful shutdown (TEARDOWN is sent first).
+    Shutdown,
+}
+
 pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
     println!(
@@ -57,13 +70,35 @@ pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error
             continue;
         };
         let sid = sess.session_id().expect("session id after handshake");
-        println!("session {sid} established with {}", fmt_mac(&server_mac));
+        let keys = sess.keys().expect("session keys after handshake").clone();
+        println!(
+            "session {sid} established with {} (encrypted)",
+            fmt_mac(&server_mac)
+        );
 
-        match session_loop(&mut tx, &server_mac, sid, cfg).await {
-            Ok(true) => println!("  link lost, restarting handshake"),
-            Ok(false) => println!("  session closed by peer"),
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let sig = tokio::spawn(async move {
+            wait_for_shutdown().await;
+            let _ = shutdown_tx.send(());
+        });
+        let end = session_loop(&mut tx, &server_mac, sid, keys, cfg, shutdown_rx).await;
+        match end {
+            Ok(SessionEnd::Shutdown) => return Ok(()),
+            Ok(SessionEnd::LinkLost) => println!("  link lost, restarting handshake"),
+            Ok(SessionEnd::PeerClosed) => println!("  session closed by peer"),
             Err(e) => eprintln!("  session error: {e}"),
         }
+        sig.abort();
+    }
+}
+
+/// Resolves once SIGINT or SIGTERM arrives (graceful teardown path).
+async fn wait_for_shutdown() {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("installing SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
     }
 }
 
@@ -93,11 +128,21 @@ async fn handshake(
         let resp_lndp = frame::decode(&resp_frame.payload)?;
         let resp = frame::decode_resp(&resp_lndp.payload)?;
         println!(
-            "  discovered '{}' at {} (nonce=0x{:08x})",
+            "  discovered '{}' at {} (nonce=0x{:016x}, forwards: {})",
             resp.device_name,
             fmt_mac(&server_mac),
-            resp.nonce
+            resp.nonce,
+            if resp.ports.is_empty() {
+                "not advertised".to_string()
+            } else {
+                resp.ports
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }
         );
+        warn_unadvertised_ports(&resp.ports, cfg.forwards);
 
         let auth_req = sess.on_resp(&resp, cfg.user, cfg.psk.as_bytes());
         tx.send(&server_mac, cfg.ethertype, &auth_req)?;
@@ -116,15 +161,31 @@ async fn handshake(
             continue;
         };
         let auth_lndp = frame::decode(&auth_frame.payload)?;
-        sess.on_auth_frame(&auth_lndp);
-        if auth_lndp.msg_type == TYPE_AUTH_ACK {
+        sess.on_auth_frame(&auth_lndp, cfg.psk.as_bytes());
+        if sess.session_id().is_some() {
             return Ok(Some(server_mac));
         }
-        let reason = frame::decode_auth_nack(&auth_lndp.payload).unwrap_or_default();
-        eprintln!("  auth rejected: {reason}");
+        if let ClientPhase::Rejected(reason) = &sess.phase {
+            eprintln!("  auth rejected: {reason}");
+        }
         return Ok(None);
     }
     Ok(None)
+}
+
+/// Warn when a `--forward` destination port is not in the server's
+/// advertised list (the server would reject it anyway).
+fn warn_unadvertised_ports(advertised: &[u16], forwards: &[Forward]) {
+    if advertised.is_empty() {
+        return;
+    }
+    for &(_, dst) in forwards {
+        if !advertised.contains(&dst) {
+            eprintln!(
+                "  warning: server does not advertise forwarding to port {dst} (may be rejected)"
+            );
+        }
+    }
 }
 
 /// Block until a frame whose LNDP header satisfies `pred` arrives, or the
@@ -151,14 +212,17 @@ async fn recv_until(
 }
 
 /// Session loop: keepalive, the userspace stack, and the port-forward
-/// listeners. Ok(true) = link lost, Ok(false) = peer said goodbye.
+/// listeners.
 async fn session_loop(
     tx: &mut Link,
     server_mac: &[u8; 6],
     sid: u32,
+    keys: SessionKeys,
     cfg: &ClientConfig<'_>,
-) -> Result<bool, Box<dyn std::error::Error>> {
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SessionEnd, Box<dyn std::error::Error>> {
     let mut stack = IpStack::new(CLIENT_ADDR);
+    let mut crypto = SessionCrypto::new(keys, Dir::C2S);
     let (to_tx, mut to_rx) = mpsc::channel::<(SocketHandle, StackMsg)>(512);
     let (accept_tx, mut accept_rx) = mpsc::channel::<(TcpStream, u16)>(16);
     let mut conns: HashMap<SocketHandle, Conn> = HashMap::new();
@@ -187,10 +251,22 @@ async fn session_loop(
                         continue;
                     }
                     match l.msg_type {
-                        TYPE_KEEPALIVE => missed = 0,
-                        TYPE_DATA => {
-                            stack.push_packet(l.payload);
-                            pump(&mut stack, tx, server_mac, sid, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+                        TYPE_TEARDOWN => {
+                            if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
+                                println!("  teardown from server, closing session");
+                                break SessionEnd::PeerClosed;
+                            }
+                        }
+                        TYPE_KEEPALIVE | TYPE_DATA => {
+                            let Some(plain) = crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload) else {
+                                continue;
+                            };
+                            if l.msg_type == TYPE_KEEPALIVE {
+                                missed = 0;
+                            } else {
+                                stack.push_packet(&plain);
+                                pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+                            }
                         }
                         _ => {}
                     }
@@ -215,24 +291,32 @@ async fn session_loop(
                 }
             }
             _ = poll_timer.tick() => {
-                pump(&mut stack, tx, server_mac, sid, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+                pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
             }
             _ = tokio::time::sleep_until(last_keepalive + KEEPALIVE_INTERVAL) => {
-                tx.send(server_mac, cfg.ethertype, &frame::encode_keepalive(sid))?;
+                let raw = crypto.seal(TYPE_KEEPALIVE, sid, &[]);
+                tx.send(server_mac, cfg.ethertype, &raw)?;
                 last_keepalive = tokio::time::Instant::now();
                 missed += 1;
                 if missed >= MAX_MISSED_KEEPALIVES {
                     println!("  no keepalive echo for {missed} rounds, link assumed lost");
-                    break Ok(true);
+                    break SessionEnd::LinkLost;
                 }
+            }
+            _ = &mut shutdown_rx => {
+                println!("  shutdown requested, sending teardown");
+                break SessionEnd::Shutdown;
             }
         }
     };
 
+    // Best-effort teardown so the server drops us immediately instead of
+    // waiting for the stale timeout.
+    let _ = tx.send(server_mac, cfg.ethertype, &crypto.seal(TYPE_TEARDOWN, sid, &[]));
     for task in accept_tasks {
         task.abort();
     }
-    result
+    Ok(result)
 }
 
 /// Listener for one `--forward` rule: accept local connections and hand them
@@ -311,13 +395,15 @@ fn pump(
     tx: &mut Link,
     server_mac: &[u8; 6],
     sid: u32,
+    crypto: &mut SessionCrypto,
     ethertype: u16,
     conns: &mut HashMap<SocketHandle, Conn>,
     pending_tx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
     pending_rx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for pkt in stack.poll() {
-        tx.send(server_mac, ethertype, &frame::encode_data(sid, &pkt))?;
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        tx.send(server_mac, ethertype, &raw)?;
     }
 
     let handles: Vec<SocketHandle> = conns.keys().copied().collect();
