@@ -54,6 +54,12 @@ enum SessionEnd {
 }
 
 pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    if cfg.psk.len() < 12 {
+        eprintln!(
+            "warning: psk is only {} chars — challenge-response keys are derived with a single sha256 pass, so a short psk can be brute-forced offline; use a long random secret",
+            cfg.psk.len()
+        );
+    }
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
     println!(
         "client '{}' ready on {} (ethertype 0x{:04x})",
