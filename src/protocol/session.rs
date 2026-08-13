@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::protocol::crypto::{auth_proof, SessionKeys, AUTH_LABEL_C2S, AUTH_LABEL_S2C};
+use crate::protocol::crypto::{auth_proof, ct_eq, SessionKeys, AUTH_LABEL_C2S, AUTH_LABEL_S2C};
 use crate::protocol::frame::{self, AuthReq, Frame};
 use crate::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK};
 
@@ -84,7 +84,7 @@ impl ClientSession {
                             client_nonce,
                         },
                         Ok(proof),
-                    ) if proof == auth_proof_s2c(psk, *server_nonce, *client_nonce) => {
+                    ) if ct_eq(&proof, &auth_proof_s2c(psk, *server_nonce, *client_nonce)) => {
                         let keys = SessionKeys::derive(psk, *server_nonce, *client_nonce);
                         self.phase = ClientPhase::Session {
                             session_id: frame.session_id,
@@ -171,7 +171,7 @@ impl ServerSession {
         match self.pending {
             Some(server_nonce) => {
                 let expect = auth_proof_c2s(psk, server_nonce, req.nonce);
-                if req.proof == expect {
+                if ct_eq(&req.proof, &expect) {
                     let sid = self.next_session_id;
                     self.next_session_id += 1;
                     self.pending = None;

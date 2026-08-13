@@ -68,6 +68,16 @@ pub fn auth_proof(label: &[u8], psk: &[u8], server_nonce: u64, client_nonce: u64
     h(label, psk, server_nonce, client_nonce)
 }
 
+/// Constant-time equality for proof comparisons (no early exit on the
+/// first differing byte).
+pub fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Per-session keys derived from the psk and both handshake nonces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionKeys {
