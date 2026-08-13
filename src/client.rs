@@ -1,15 +1,26 @@
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
+use landscape_proto::ipstack::{
+    IpStack, SocketHandle, StackMsg, CLIENT_ADDR, INTERNAL_PORT, SERVER_ADDR,
+};
 use landscape_proto::protocol::frame::{self, Frame as LndpFrame};
 use landscape_proto::protocol::session::{
     ClientSession, HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, MAX_RETRIES,
 };
 use landscape_proto::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_KEEPALIVE, TYPE_RESP};
 use landscape_proto::transport::{fmt_mac, Frame, Link};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 
 pub const BROADCAST: [u8; 6] = [0xff; 6];
 const RETRY_BACKOFF: Duration = Duration::from_secs(3);
 const MAX_MISSED_KEEPALIVES: u32 = 3;
+const POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// One `--forward LOCAL:DST` rule.
+pub type Forward = (u16, u16);
 
 pub struct ClientConfig<'a> {
     pub devs: &'a [String],
@@ -18,6 +29,15 @@ pub struct ClientConfig<'a> {
     pub user: &'a str,
     pub psk: &'a str,
     pub client_name: &'a str,
+    pub forwards: &'a [Forward],
+    /// Discovery token sent in DISCOVER (empty = not sent).
+    pub token: &'a str,
+}
+
+/// Per-connection state on the client side.
+struct Conn {
+    /// Bytes from the stack to the kernel socket.
+    from_tx: mpsc::Sender<Vec<u8>>,
 }
 
 pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
@@ -39,7 +59,7 @@ pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error
         let sid = sess.session_id().expect("session id after handshake");
         println!("session {sid} established with {}", fmt_mac(&server_mac));
 
-        match session_loop(&mut tx, &server_mac, sid, cfg.ethertype).await {
+        match session_loop(&mut tx, &server_mac, sid, cfg).await {
             Ok(true) => println!("  link lost, restarting handshake"),
             Ok(false) => println!("  session closed by peer"),
             Err(e) => eprintln!("  session error: {e}"),
@@ -55,7 +75,12 @@ async fn handshake(
     while sess.retransmit_allowed() {
         sess.bump_retry();
         println!("discover: broadcast (try {}/{MAX_RETRIES})", sess.retries());
-        tx.send(&BROADCAST, cfg.ethertype, &frame::encode_discover(cfg.client_name))?;
+        let token = (!cfg.token.is_empty()).then_some(cfg.token);
+        tx.send(
+            &BROADCAST,
+            cfg.ethertype,
+            &frame::encode_discover(cfg.client_name, token),
+        )?;
 
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
         let Some(resp_frame) =
@@ -125,44 +150,229 @@ async fn recv_until(
     }
 }
 
-/// Session loop: keepalive every KEEPALIVE_INTERVAL; Ok(true) = link lost,
-/// Ok(false) = peer said goodbye.
+/// Session loop: keepalive, the userspace stack, and the port-forward
+/// listeners. Ok(true) = link lost, Ok(false) = peer said goodbye.
 async fn session_loop(
     tx: &mut Link,
     server_mac: &[u8; 6],
     sid: u32,
-    ethertype: u16,
+    cfg: &ClientConfig<'_>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut stack = IpStack::new(CLIENT_ADDR);
+    let (to_tx, mut to_rx) = mpsc::channel::<(SocketHandle, StackMsg)>(512);
+    let (accept_tx, mut accept_rx) = mpsc::channel::<(TcpStream, u16)>(16);
+    let mut conns: HashMap<SocketHandle, Conn> = HashMap::new();
+    let mut pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>> = HashMap::new();
+    let mut pending_rx: HashMap<SocketHandle, VecDeque<Vec<u8>>> = HashMap::new();
+
+    let mut accept_tasks = Vec::new();
+    for &(listen_port, dst_port) in cfg.forwards {
+        let atx = accept_tx.clone();
+        accept_tasks.push(tokio::spawn(async move {
+            run_listener(listen_port, dst_port, atx).await
+        }));
+    }
+
+    let mut poll_timer = tokio::time::interval(POLL_INTERVAL);
     let mut last_keepalive = tokio::time::Instant::now();
     let mut missed = 0u32;
-    loop {
+    let mut next_local_port: u16 = 40000;
+
+    let result = loop {
         tokio::select! {
-            r = tx.recv(ethertype) => {
+            r = tx.recv(cfg.ethertype) => {
                 let f = r?;
                 if let Ok(l) = frame::decode(&f.payload) {
                     if l.session_id != sid {
-                        println!("  [client] foreign frame from {}", fmt_mac(&f.src));
                         continue;
                     }
                     match l.msg_type {
                         TYPE_KEEPALIVE => missed = 0,
-                        TYPE_DATA => println!(
-                            "  [client] DATA {}B (tunnel not implemented yet)",
-                            l.payload.len()
-                        ),
-                        t => println!("  [client] {} from {}", frame::type_name(t), fmt_mac(&f.src)),
+                        TYPE_DATA => {
+                            stack.push_packet(l.payload);
+                            pump(&mut stack, tx, server_mac, sid, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+                        }
+                        _ => {}
                     }
                 }
             }
+            Some((stream, dst_port)) = accept_rx.recv() => {
+                let local_port = next_local_port;
+                next_local_port = next_local_port.wrapping_add(1).max(40000);
+                let h = stack.connect(SERVER_ADDR, INTERNAL_PORT, local_port);
+                let (from_tx, from_rx) = mpsc::channel(512);
+                conns.insert(h, Conn { from_tx });
+                tokio::spawn(bridge_task(stream, h, to_tx.clone(), from_rx));
+                pending_tx.entry(h).or_default().push_back(dst_port.to_be_bytes().to_vec());
+            }
+            Some((h, msg)) = to_rx.recv() => {
+                if !conns.contains_key(&h) {
+                    continue;
+                }
+                match msg {
+                    StackMsg::Data(b) => pending_tx.entry(h).or_default().push_back(b),
+                    StackMsg::Close => stack.close_socket(h),
+                }
+            }
+            _ = poll_timer.tick() => {
+                pump(&mut stack, tx, server_mac, sid, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+            }
             _ = tokio::time::sleep_until(last_keepalive + KEEPALIVE_INTERVAL) => {
-                tx.send(server_mac, ethertype, &frame::encode_keepalive(sid))?;
+                tx.send(server_mac, cfg.ethertype, &frame::encode_keepalive(sid))?;
                 last_keepalive = tokio::time::Instant::now();
                 missed += 1;
                 if missed >= MAX_MISSED_KEEPALIVES {
                     println!("  no keepalive echo for {missed} rounds, link assumed lost");
-                    return Ok(true);
+                    break Ok(true);
+                }
+            }
+        }
+    };
+
+    for task in accept_tasks {
+        task.abort();
+    }
+    result
+}
+
+/// Listener for one `--forward` rule: accept local connections and hand them
+/// to the session loop, which opens the internal connection.
+async fn run_listener(
+    listen_port: u16,
+    dst_port: u16,
+    accept_tx: mpsc::Sender<(TcpStream, u16)>,
+) {
+    let listener = match TcpListener::bind(("127.0.0.1", listen_port)).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("  cannot listen on 127.0.0.1:{listen_port}: {e}");
+            return;
+        }
+    };
+    println!("  forward: 127.0.0.1:{listen_port} -> router 127.0.0.1:{dst_port}");
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                if accept_tx.send((stream, dst_port)).await.is_err() {
+                    return;
+                }
+            }
+            Err(e) => eprintln!("  accept error on {listen_port}: {e}"),
+        }
+    }
+}
+
+/// Bridge one kernel TCP socket to the userspace stack: bytes from the
+/// kernel socket go into `to_tx` (relayed into the stack), bytes from the
+/// stack arrive on `from_rx` and are written to the kernel socket.
+async fn bridge_task(
+    mut stream: TcpStream,
+    handle: SocketHandle,
+    to_tx: mpsc::Sender<(SocketHandle, StackMsg)>,
+    mut from_rx: mpsc::Receiver<Vec<u8>>,
+) {
+    let mut buf = vec![0u8; 8192];
+    loop {
+        tokio::select! {
+            r = stream.read(&mut buf) => {
+                match r {
+                    Ok(0) => {
+                        let _ = to_tx.send((handle, StackMsg::Close)).await;
+                        return;
+                    }
+                    Ok(n) => {
+                        if to_tx.send((handle, StackMsg::Data(buf[..n].to_vec()))).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(_) => return,
+                }
+            }
+            msg = from_rx.recv() => {
+                match msg {
+                    Some(b) => {
+                        if stream.write_all(&b).await.is_err() {
+                            return;
+                        }
+                    }
+                    None => return,
                 }
             }
         }
     }
+}
+
+/// Pump the stack: send outbound IP packets over the link, move bytes
+/// between the kernel sockets and the stack's TCP sockets, and reap closed
+/// connections.
+#[allow(clippy::too_many_arguments)]
+fn pump(
+    stack: &mut IpStack,
+    tx: &mut Link,
+    server_mac: &[u8; 6],
+    sid: u32,
+    ethertype: u16,
+    conns: &mut HashMap<SocketHandle, Conn>,
+    pending_tx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
+    pending_rx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for pkt in stack.poll() {
+        tx.send(server_mac, ethertype, &frame::encode_data(sid, &pkt))?;
+    }
+
+    let handles: Vec<SocketHandle> = conns.keys().copied().collect();
+    let mut reap: Vec<SocketHandle> = Vec::new();
+    for h in handles {
+        if let Some(q) = pending_tx.get_mut(&h) {
+            while let Some(front) = q.front_mut() {
+                let n = stack.send_bytes(h, front);
+                if n == 0 {
+                    break;
+                }
+                front.drain(..n);
+                if front.is_empty() {
+                    q.pop_front();
+                }
+            }
+            if q.is_empty() {
+                pending_tx.remove(&h);
+            }
+        }
+
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = stack.recv_bytes(h, &mut buf);
+            if n == 0 {
+                break;
+            }
+            pending_rx.entry(h).or_default().push_back(buf[..n].to_vec());
+        }
+        if let Some(q) = pending_rx.get_mut(&h) {
+            while let Some(b) = q.front() {
+                let b = b.clone();
+                match conns[&h].from_tx.try_send(b) {
+                    Ok(()) => {
+                        q.pop_front();
+                    }
+                    Err(_) => break,
+                }
+            }
+            if q.is_empty() {
+                pending_rx.remove(&h);
+            }
+        }
+
+        if stack.socket_closed(h) {
+            reap.push(h);
+        } else if stack.peer_eof(h) {
+            stack.close_socket(h);
+        }
+    }
+    for h in reap {
+        stack.remove_socket(h);
+        pending_tx.remove(&h);
+        pending_rx.remove(&h);
+        conns.remove(&h);
+    }
+    Ok(())
 }

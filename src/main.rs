@@ -1,8 +1,8 @@
 mod client;
 
 use clap::Parser;
-use client::ClientConfig;
-use landscape_proto::cli::{parse_devs, parse_ethertype, parse_mac};
+use client::{ClientConfig, Forward};
+use landscape_proto::cli::{parse_devs, parse_ethertype, parse_forward, parse_mac};
 
 #[derive(Parser)]
 #[command(name = "lndp-client", about = "Connect to a Landscape Router over layer-2")]
@@ -30,6 +30,17 @@ struct Cli {
     /// The ethertype value configured in Landscape (must be 0x88B5-0x88B7)
     #[arg(long, value_name = "ETHERTYPE", value_parser = parse_ethertype, default_value = "0x88b6")]
     ethertype: u16,
+
+    /// Forward a local port to the router's 127.0.0.1, repeatable:
+    /// --forward 2222:22 listens on 127.0.0.1:2222 and connects to the
+    /// router's 127.0.0.1:22
+    #[arg(long, value_name = "LOCAL:DST", value_parser = parse_forward)]
+    forward: Vec<Forward>,
+
+    /// Discovery token carried in DISCOVER; the server stays silent
+    /// without it (must match the server's --token)
+    #[arg(long, value_name = "TOKEN")]
+    token: Option<String>,
 }
 
 #[tokio::main]
@@ -53,6 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         user: &cli.user,
         psk: &cli.psk,
         client_name: &cli.client_name,
+        forwards: &cli.forward,
+        token: cli.token.as_deref().unwrap_or(""),
     };
     client::run(&cfg).await
 }
