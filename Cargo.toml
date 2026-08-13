@@ -1,0 +1,16 @@
+[package]
+name = "landscape-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rand = "0.10.2"
+sha2 = "0.11.0"
+tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+mac_address = "1.1.8"
+pcap = "2.4.0"
