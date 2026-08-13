@@ -94,16 +94,26 @@ fn get_str(data: &[u8], off: &mut usize) -> Result<String, FrameError> {
     Ok(s.to_string())
 }
 
-/// DISCOVER payload: client name
-pub fn encode_discover(client_name: &str) -> Vec<u8> {
+/// DISCOVER payload: client name + optional discovery token (anti-scanning).
+/// The server stays silent when a token is configured and not carried.
+pub fn encode_discover(client_name: &str, token: Option<&str>) -> Vec<u8> {
     let mut p = Vec::new();
     put_str(&mut p, client_name);
+    if let Some(t) = token.filter(|t| !t.is_empty()) {
+        put_str(&mut p, t);
+    }
     encode(TYPE_DISCOVER, 0, &p)
 }
 
-pub fn decode_discover(payload: &[u8]) -> Result<String, FrameError> {
+pub fn decode_discover(payload: &[u8]) -> Result<(String, Option<String>), FrameError> {
     let mut off = 0;
-    get_str(payload, &mut off)
+    let name = get_str(payload, &mut off)?;
+    let token = if off < payload.len() {
+        Some(get_str(payload, &mut off)?)
+    } else {
+        None
+    };
+    Ok((name, token))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +185,8 @@ pub fn encode_keepalive(session_id: u32) -> Vec<u8> {
     encode(TYPE_KEEPALIVE, session_id, &[])
 }
 
-/// DATA payload: one complete IP packet
+/// DATA payload: one IP packet from the userspace smoltcp stack (the
+/// reliability/ordering of the inner TCP connections is handled by smoltcp).
 #[allow(dead_code)]
 pub fn encode_data(session_id: u32, ip_packet: &[u8]) -> Vec<u8> {
     encode(TYPE_DATA, session_id, ip_packet)
@@ -188,7 +199,8 @@ mod tests {
     #[test]
     fn roundtrip_all_messages() {
         let frames = [
-            encode_discover("pc-a"),
+            encode_discover("pc-a", None),
+            encode_discover("pc-b", Some("landscape-token")),
             encode_resp("landscape-router", 0xDEADBEEF),
             encode_auth_req("admin", &[7u8; 32]),
             encode_auth_ack(42),
@@ -205,7 +217,18 @@ mod tests {
 
     #[test]
     fn decodes_payloads() {
-        assert_eq!(decode_discover(&encode_discover("pc")[HEADER_LEN..]).unwrap(), "pc");
+        assert_eq!(
+            decode_discover(&encode_discover("pc", None)[HEADER_LEN..]).unwrap(),
+            ("pc".to_string(), None)
+        );
+        assert_eq!(
+            decode_discover(&encode_discover("pc", Some("tok"))[HEADER_LEN..]).unwrap(),
+            ("pc".to_string(), Some("tok".to_string()))
+        );
+        assert_eq!(
+            decode_discover(&encode_discover("pc", Some(""))[HEADER_LEN..]).unwrap(),
+            ("pc".to_string(), None)
+        );
         let r = decode_resp(&encode_resp("router", 1)[HEADER_LEN..]).unwrap();
         assert_eq!(r, Resp { device_name: "router".into(), nonce: 1 });
         let a = decode_auth_req(&encode_auth_req("u", &[9u8; 32])[HEADER_LEN..]).unwrap();

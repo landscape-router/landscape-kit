@@ -8,5 +8,6 @@
 //!   `landscape-server` binaries.
 
 pub mod cli;
+pub mod ipstack;
 pub mod protocol;
 pub mod transport;
