@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
 landscape-proto = { path = "../proto" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "net", "io-util"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pcap = "2.4.0"

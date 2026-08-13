@@ -88,14 +88,16 @@ pub fn parse_and_print(f: &Frame, dev: Option<&str>) {
             l.payload.len(),
             if matches!(
                 l.msg_type,
-                protocol::TYPE_DATA
+                protocol::TYPE_DISCOVER
+                    | protocol::TYPE_RESP
+                    | protocol::TYPE_DATA
                     | protocol::TYPE_KEEPALIVE
                     | protocol::TYPE_TEARDOWN
                     | protocol::TYPE_AUTH_REQ
                     | protocol::TYPE_AUTH_ACK
                     | protocol::TYPE_AUTH_NACK
             ) {
-                " (encrypted)"
+                " (sealed)"
             } else {
                 ""
             }

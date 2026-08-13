@@ -7,7 +7,7 @@ use landscape_proto::ipstack::{
 };
 use landscape_proto::protocol::crypto::{Dir, SessionCrypto, HS_AUTH_ACK};
 use landscape_proto::protocol::frame;
-use landscape_proto::protocol::session::{ServerSession, VerifyResult};
+use landscape_proto::protocol::session::{self, ServerSession, VerifyResult};
 use landscape_proto::protocol::{
     TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN,
 };
@@ -149,9 +149,23 @@ impl AuthGuard {
         }
     }
 
+    /// Remaining lockout duration, if any (used for the user-facing NACK).
+    fn remaining(&self) -> Option<Duration> {
+        self.locked_until
+            .map(|t| t.saturating_duration_since(Instant::now()))
+    }
+
     fn record_failure(&mut self) {
         self.last_seen = Instant::now();
         let now = Instant::now();
+        if let Some(t) = self.locked_until {
+            if now < t {
+                // Already locked out: further failures must not extend the
+                // lockout forever (a retrying client would never recover).
+                return;
+            }
+            self.locked_until = None;
+        }
         match self.window_start {
             Some(start) if now.duration_since(start) <= AUTH_WINDOW => {
                 self.fails += 1;
@@ -228,7 +242,13 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             println!("discover from {} rate-limited", fmt_mac(&mac));
                             continue;
                         }
-                        let Ok((name, token)) = frame::decode_discover(&l.payload) else {
+                        // Sealed with the psk-derived pre-discovery key:
+                        // only a psk-holder is even heard, and the client
+                        // name/token stay hidden.
+                        let Some((discover_id, name, token)) =
+                            session::open_discover(&l, cfg.psk.as_bytes())
+                        else {
+                            println!("discover from {} ignored (cannot open)", fmt_mac(&mac));
                             continue;
                         };
                         if !cfg.discover_token.is_empty()
@@ -249,7 +269,12 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                         // Never disturb an active session: only a completed
                         // AUTH_REQ replaces it, so a forged DISCOVER cannot
                         // kick a live client.
-                        let resp = peer.sess.on_discover(cfg.device_name, cfg.forward_ports);
+                        let resp = peer.sess.begin_discover(
+                            discover_id,
+                            cfg.device_name,
+                            cfg.forward_ports,
+                            cfg.psk.as_bytes(),
+                        );
                         tx.send_on(ifindex, &mac, cfg.ethertype, &resp)?;
                         println!("discover from {} '{}'", fmt_mac(&mac), name);
                     }
@@ -262,19 +287,32 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             println!("auth attempt from unknown peer {}, ignored", fmt_mac(&mac));
                             continue;
                         };
-                        let guard = guards.entry(mac).or_default();
-                        // MACs with an active session are never locked out:
-                        // an unauthenticated attacker could otherwise spoof
-                        // the victim's MAC to freeze their re-authentication.
-                        if guard.blocked() && peer.sess.session_id().is_none() {
-                            println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
-                            continue;
-                        }
                         if !rate_allow(&mut rate, &mac) {
                             println!("auth attempt from {} rate-limited", fmt_mac(&mac));
                             continue;
                         }
                         let ifindex = peer.ifindex;
+                        let guard = guards.entry(mac).or_default();
+                        // MACs with an active session are never locked out:
+                        // an unauthenticated attacker could otherwise spoof
+                        // the victim's MAC to freeze their re-authentication.
+                        if guard.blocked() && peer.sess.session_id().is_none() {
+                            if let Some(rem) = guard.remaining() {
+                                // Tell the user why: retried too often.
+                                let reason = format!(
+                                    "too many auth failures, locked out for {}s",
+                                    rem.as_secs()
+                                );
+                                let _ = tx.send_on(
+                                    ifindex,
+                                    &mac,
+                                    cfg.ethertype,
+                                    &frame::encode_auth_nack(&reason),
+                                );
+                            }
+                            println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
+                            continue;
+                        }
                         let mut drop_peer = false;
                         match peer.sess.verify_auth(&l, cfg.psk.as_bytes()) {
                             VerifyResult::Accepted {
@@ -668,5 +706,60 @@ fn devs_display(names: &[String]) -> String {
         "all interfaces".to_string()
     } else {
         names.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_bucket_allows_burst_then_limits() {
+        let mut b = RateBucket::new(RATE_PER_SEC);
+        for _ in 0..10 {
+            assert!(b.allow(), "initial tokens must be spendable");
+        }
+        assert!(!b.allow(), "drained bucket must refuse");
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(b.allow(), "bucket must refill over time");
+    }
+
+    #[test]
+    fn auth_guard_locks_after_threshold() {
+        let mut g = AuthGuard::default();
+        for _ in 0..MAX_AUTH_FAILS {
+            g.record_failure();
+        }
+        assert!(g.blocked());
+        assert!(g.remaining().is_some());
+        // Once unlocked, everything is clean again.
+        g.record_success();
+        assert!(!g.blocked());
+        assert!(g.remaining().is_none());
+    }
+
+    #[test]
+    fn auth_guard_window_resets_stale_failures() {
+        let mut g = AuthGuard::default();
+        // Failures older than the window must not accumulate.
+        g.window_start = Some(Instant::now() - AUTH_WINDOW - Duration::from_secs(1));
+        g.fails = MAX_AUTH_FAILS - 1;
+        g.record_failure();
+        assert_eq!(g.fails, 1);
+        assert!(!g.blocked());
+    }
+
+    #[test]
+    fn auth_guard_does_not_relock_while_locked() {
+        let mut g = AuthGuard::default();
+        for _ in 0..MAX_AUTH_FAILS {
+            g.record_failure();
+        }
+        let first = g.locked_until;
+        // Further failures while locked must not extend the lockout forever.
+        for _ in 0..10 {
+            g.record_failure();
+        }
+        assert_eq!(g.locked_until, first);
     }
 }
