@@ -5,7 +5,7 @@ use landscape_proto::ipstack::{
     IpStack, SocketHandle, StackMsg, CLIENT_ADDR, INTERNAL_PORT, SERVER_ADDR,
 };
 use landscape_proto::protocol::crypto::{Dir, SessionCrypto, SessionKeys};
-use landscape_proto::protocol::frame::{self, Frame as LndpFrame};
+use landscape_proto::protocol::frame;
 use landscape_proto::protocol::session::{
     ClientPhase, ClientSession, HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, MAX_RETRIES,
 };
@@ -35,6 +35,10 @@ pub struct ClientConfig<'a> {
     pub forwards: &'a [Forward],
     /// Discovery token sent in DISCOVER (empty = not sent).
     pub token: &'a str,
+    /// Restrict the server to this MAC: RESP / AUTH frames from any other
+    /// MAC are ignored (anti-spoofing against rogue servers racing the
+    /// broadcast DISCOVER).
+    pub server_mac: Option<[u8; 6]>,
 }
 
 /// Per-connection state on the client side.
@@ -125,6 +129,9 @@ async fn handshake(
     sess: &mut ClientSession,
     cfg: &ClientConfig<'_>,
 ) -> Result<Option<[u8; 6]>, Box<dyn std::error::Error>> {
+    if let Some(m) = cfg.server_mac {
+        println!("pinned to server MAC {}", fmt_mac(&m));
+    }
     while sess.retransmit_allowed() {
         sess.bump_retry();
         println!("discover: broadcast (try {}/{MAX_RETRIES})", sess.retries());
@@ -135,9 +142,19 @@ async fn handshake(
             &frame::encode_discover(cfg.client_name, token),
         )?;
 
+        // When pinned, only the pinned MAC may answer at any handshake step.
+        let pinned = cfg.server_mac;
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
-        let Some(resp_frame) =
-            recv_until(tx, cfg.ethertype, |l| l.msg_type == TYPE_RESP, deadline).await?
+        let Some(resp_frame) = recv_until(
+            tx,
+            cfg.ethertype,
+            |f| {
+                frame::decode(&f.payload)
+                    .is_ok_and(|l| l.msg_type == TYPE_RESP && pinned.is_none_or(|m| f.src == m))
+            },
+            deadline,
+        )
+        .await?
         else {
             println!("  no response within {}s", HANDSHAKE_TIMEOUT.as_secs());
             continue;
@@ -170,7 +187,12 @@ async fn handshake(
         let Some(auth_frame) = recv_until(
             tx,
             cfg.ethertype,
-            |l| l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK,
+            |f| {
+                frame::decode(&f.payload).is_ok_and(|l| {
+                    (l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK)
+                        && pinned.is_none_or(|m| f.src == m)
+                })
+            },
             deadline,
         )
         .await?
@@ -206,21 +228,19 @@ fn warn_unadvertised_ports(advertised: &[u16], forwards: &[Forward]) {
     }
 }
 
-/// Block until a frame whose LNDP header satisfies `pred` arrives, or the
-/// deadline passes.
+/// Block until a frame satisfying `pred` arrives, or the deadline passes.
+/// The predicate sees the full transport frame (src MAC + LNDP header).
 async fn recv_until(
     tx: &mut Link,
     ethertype: u16,
-    pred: impl Fn(&LndpFrame) -> bool,
+    pred: impl Fn(&Frame) -> bool,
     deadline: tokio::time::Instant,
 ) -> Result<Option<Frame>, Box<dyn std::error::Error>> {
     loop {
         match tokio::time::timeout_at(deadline, tx.recv(ethertype)).await {
             Ok(Ok(f)) => {
-                if let Ok(l) = frame::decode(&f.payload) {
-                    if pred(&l) {
-                        return Ok(Some(f));
-                    }
+                if pred(&f) {
+                    return Ok(Some(f));
                 }
             }
             Ok(Err(e)) => return Err(e),

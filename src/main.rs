@@ -7,9 +7,10 @@ use landscape_proto::cli::{parse_devs, parse_ethertype, parse_forward, parse_mac
 #[derive(Parser)]
 #[command(name = "lndp-client", about = "Connect to a Landscape Router over layer-2")]
 struct Cli {
-    /// Shared secret used for challenge-response authentication
+    /// Shared secret used for challenge-response authentication; when
+    /// omitted, the LNDP_PSK environment variable is used
     #[arg(long, value_name = "SECRET")]
-    psk: String,
+    psk: Option<String>,
 
     /// Username sent in AUTH_REQ
     #[arg(long, value_name = "NAME", default_value = "admin")]
@@ -22,6 +23,11 @@ struct Cli {
     /// Local MAC address override (auto-detected when omitted)
     #[arg(long, value_name = "AA:BB:CC:DD:EE:FF", value_parser = parse_mac)]
     mac: Option<[u8; 6]>,
+
+    /// Restrict the server to this MAC address; DISCOVER/AUTH replies from
+    /// any other MAC are ignored (anti-spoofing)
+    #[arg(long, value_name = "AA:BB:CC:DD:EE:FF", value_parser = parse_mac)]
+    server_mac: Option<[u8; 6]>,
 
     /// Device to send and receive on (default: interface with the default route)
     #[arg(long, value_name = "DEVICE")]
@@ -46,6 +52,15 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    let psk = match cli.psk {
+        Some(p) => p,
+        None => std::env::var("LNDP_PSK").map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--psk or the LNDP_PSK environment variable is required",
+            )
+        })?,
+    };
     let devs = match cli.dev {
         Some(ref dev) => parse_devs(dev)?,
         None => Vec::new(),
@@ -62,10 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ethertype: cli.ethertype,
         mac: cli.mac,
         user: &cli.user,
-        psk: &cli.psk,
+        psk: &psk,
         client_name: &cli.client_name,
         forwards: &cli.forward,
         token: cli.token.as_deref().unwrap_or(""),
+        server_mac: cli.server_mac,
     };
     client::run(&cfg).await
 }
