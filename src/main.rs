@@ -24,11 +24,6 @@ struct Cli {
     #[arg(long, value_name = "AA:BB:CC:DD:EE:FF", value_parser = parse_mac)]
     mac: Option<[u8; 6]>,
 
-    /// Restrict the server to this MAC address; DISCOVER/AUTH replies from
-    /// any other MAC are ignored (anti-spoofing)
-    #[arg(long, value_name = "AA:BB:CC:DD:EE:FF", value_parser = parse_mac)]
-    server_mac: Option<[u8; 6]>,
-
     /// Device to send and receive on (default: interface with the default route)
     #[arg(long, value_name = "DEVICE")]
     dev: Option<String>,
@@ -81,7 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client_name: &cli.client_name,
         forwards: &cli.forward,
         token: cli.token.as_deref().unwrap_or(""),
-        server_mac: cli.server_mac,
     };
     client::run(&cfg).await
 }

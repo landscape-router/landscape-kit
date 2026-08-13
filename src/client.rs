@@ -35,10 +35,6 @@ pub struct ClientConfig<'a> {
     pub forwards: &'a [Forward],
     /// Discovery token sent in DISCOVER (empty = not sent).
     pub token: &'a str,
-    /// Restrict the server to this MAC: RESP / AUTH frames from any other
-    /// MAC are ignored (anti-spoofing against rogue servers racing the
-    /// broadcast DISCOVER).
-    pub server_mac: Option<[u8; 6]>,
 }
 
 /// Per-connection state on the client side.
@@ -129,29 +125,19 @@ async fn handshake(
     sess: &mut ClientSession,
     cfg: &ClientConfig<'_>,
 ) -> Result<Option<[u8; 6]>, Box<dyn std::error::Error>> {
-    if let Some(m) = cfg.server_mac {
-        println!("pinned to server MAC {}", fmt_mac(&m));
-    }
+    let mut saw_resp = false;
     while sess.retransmit_allowed() {
         sess.bump_retry();
         println!("discover: broadcast (try {}/{MAX_RETRIES})", sess.retries());
         let token = (!cfg.token.is_empty()).then_some(cfg.token);
-        tx.send(
-            &BROADCAST,
-            cfg.ethertype,
-            &frame::encode_discover(cfg.client_name, token),
-        )?;
+        let discover = sess.discover_frame(cfg.client_name, token, cfg.psk.as_bytes());
+        tx.send(&BROADCAST, cfg.ethertype, &discover)?;
 
-        // When pinned, only the pinned MAC may answer at any handshake step.
-        let pinned = cfg.server_mac;
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
         let Some(resp_frame) = recv_until(
             tx,
             cfg.ethertype,
-            |f| {
-                frame::decode(&f.payload)
-                    .is_ok_and(|l| l.msg_type == TYPE_RESP && pinned.is_none_or(|m| f.src == m))
-            },
+            |f| frame::decode(&f.payload).is_ok_and(|l| l.msg_type == TYPE_RESP),
             deadline,
         )
         .await?
@@ -161,12 +147,18 @@ async fn handshake(
         };
         let server_mac = resp_frame.src;
         let resp_lndp = frame::decode(&resp_frame.payload)?;
-        let resp = frame::decode_resp(&resp_lndp.payload)?;
+        // Opening the RESP proves the server holds the psk, and the echoed
+        // discover_id proves it answers this very attempt: everything else
+        // is a rogue or a replay.
+        let Some((resp, auth_req)) = sess.on_resp(&resp_lndp, cfg.user, cfg.psk.as_bytes()) else {
+            println!("  response failed server authentication, rediscovering");
+            continue;
+        };
+        saw_resp = true;
         println!(
-            "  discovered '{}' at {} (nonce=0x{:016x}, forwards: {})",
+            "  discovered '{}' at {} (forwards: {})",
             resp.device_name,
             fmt_mac(&server_mac),
-            resp.nonce,
             if resp.ports.is_empty() {
                 "not advertised".to_string()
             } else {
@@ -178,10 +170,8 @@ async fn handshake(
             }
         );
         warn_unadvertised_ports(&resp.ports, cfg.forwards);
-
-        let auth_req = sess.on_resp(&resp, cfg.user, cfg.psk.as_bytes());
-        tx.send(&server_mac, cfg.ethertype, &auth_req)?;
         println!("  auth request sent for user '{}'", cfg.user);
+        tx.send(&server_mac, cfg.ethertype, &auth_req)?;
 
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
         let Some(auth_frame) = recv_until(
@@ -189,8 +179,7 @@ async fn handshake(
             cfg.ethertype,
             |f| {
                 frame::decode(&f.payload).is_ok_and(|l| {
-                    (l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK)
-                        && pinned.is_none_or(|m| f.src == m)
+                    l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK
                 })
             },
             deadline,
@@ -209,6 +198,9 @@ async fn handshake(
             eprintln!("  auth rejected: {reason}");
         }
         return Ok(None);
+    }
+    if !saw_resp {
+        eprintln!("  no server response at all — check that psk, token and ethertype match the server");
     }
     Ok(None)
 }
