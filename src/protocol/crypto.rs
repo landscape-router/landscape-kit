@@ -78,6 +78,94 @@ pub fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     diff == 0
 }
 
+/// Fixed counters inside the handshake nonce domain. They are distinct
+/// from the session-frame sequence numbers (which start at 0 under the
+/// session keys), so nonces can never collide across the two phases.
+pub const HS_AUTH_REQ: u32 = 0;
+pub const HS_AUTH_ACK: u32 = 1;
+pub const HS_AUTH_NACK: u32 = 2;
+
+/// Key material for sealing the AUTH_REQ / AUTH_ACK / AUTH_NACK handshake
+/// frames. Derived from the psk and the server nonce — both sides know
+/// these after RESP — so the user name and proofs are never visible on the
+/// wire, and the session keys (which depend on the client nonce too) stay
+/// independent of this key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandshakeKeys {
+    key: [u8; 32],
+    salt: [u8; SALT_LEN],
+}
+
+impl HandshakeKeys {
+    pub fn derive(psk: &[u8], server_nonce: u64) -> Self {
+        let salt = h(b"lndp-hsalt", psk, server_nonce, 0);
+        Self {
+            key: h(b"lndp-hkey", psk, server_nonce, 0),
+            salt: salt[..SALT_LEN].try_into().unwrap(),
+        }
+    }
+
+    fn nonce(&self, counter: u32) -> Nonce {
+        let mut raw = [0u8; NONCE_LEN];
+        raw[..SALT_LEN].copy_from_slice(&self.salt);
+        raw[SALT_LEN..].copy_from_slice(&counter.to_be_bytes());
+        raw.into()
+    }
+
+    fn seal(&self, counter: u32, header: &[u8], plaintext: &[u8]) -> Vec<u8> {
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.key));
+        cipher
+            .encrypt(
+                &self.nonce(counter),
+                Payload {
+                    msg: plaintext,
+                    aad: header,
+                },
+            )
+            .expect("aead seal cannot fail")
+    }
+
+    fn open(&self, counter: u32, header: &[u8], sealed: &[u8]) -> Option<Vec<u8>> {
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.key));
+        cipher
+            .decrypt(
+                &self.nonce(counter),
+                Payload {
+                    msg: sealed,
+                    aad: header,
+                },
+            )
+            .ok()
+    }
+
+    /// Build a complete sealed handshake frame (header + ciphertext + tag).
+    pub fn seal_frame(
+        &self,
+        msg_type: u8,
+        session_id: u32,
+        counter: u32,
+        plaintext: &[u8],
+    ) -> Vec<u8> {
+        let header = frame::encode_header(
+            msg_type,
+            session_id,
+            0,
+            (plaintext.len() + TAG_LEN) as u16,
+        );
+        let body = self.seal(counter, &header, plaintext);
+        let mut raw = Vec::with_capacity(header.len() + body.len());
+        raw.extend_from_slice(&header);
+        raw.extend_from_slice(&body);
+        raw
+    }
+
+    /// Verify and decrypt a sealed handshake frame (already decoded).
+    pub fn open_frame(&self, counter: u32, l: &frame::Frame<'_>) -> Option<Vec<u8>> {
+        let header = frame::encode_header(l.msg_type, l.session_id, l.seq, l.len);
+        self.open(counter, &header, l.payload)
+    }
+}
+
 /// Per-session keys derived from the psk and both handshake nonces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionKeys {
@@ -324,6 +412,28 @@ mod tests {
         // Receiver using the same tx direction would open with the wrong key.
         let mut s = SessionCrypto::new(keys, Dir::C2S);
         assert_eq!(s.open(l.msg_type, l.session_id, l.seq, l.len, l.payload), None);
+    }
+
+    #[test]
+    fn handshake_keys_domain() {
+        // Different server nonces yield different handshake keys.
+        assert_ne!(HandshakeKeys::derive(PSK, 1), HandshakeKeys::derive(PSK, 2));
+        // Handshake keys must not equal the session keys.
+        let hk = HandshakeKeys::derive(PSK, 7);
+        let sk = SessionKeys::derive(PSK, 7, 9);
+        let (c2s, s2c) = sk.keys();
+        assert_ne!(hk.key, c2s);
+        assert_ne!(hk.key, s2c);
+
+        // Sealed frames open with the right counter only.
+        let hk = HandshakeKeys::derive(PSK, 3);
+        let raw = hk.seal_frame(frame::TYPE_AUTH_REQ, 0, HS_AUTH_REQ, b"hello");
+        let l = frame::decode(&raw).unwrap();
+        assert_eq!(
+            hk.open_frame(HS_AUTH_REQ, &l),
+            Some(b"hello".to_vec())
+        );
+        assert_eq!(hk.open_frame(HS_AUTH_ACK, &l), None);
     }
 
     #[test]

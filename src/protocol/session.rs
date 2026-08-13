@@ -1,8 +1,11 @@
 use std::time::Duration;
 
-use crate::protocol::crypto::{auth_proof, ct_eq, SessionKeys, AUTH_LABEL_C2S, AUTH_LABEL_S2C};
-use crate::protocol::frame::{self, AuthReq, Frame};
-use crate::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK};
+use crate::protocol::crypto::{
+    auth_proof, ct_eq, HandshakeKeys, SessionKeys, AUTH_LABEL_C2S, AUTH_LABEL_S2C, HS_AUTH_ACK,
+    HS_AUTH_NACK, HS_AUTH_REQ,
+};
+use crate::protocol::frame::{self, Frame};
+use crate::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_AUTH_REQ};
 
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 pub const MAX_RETRIES: u32 = 5;
@@ -25,6 +28,7 @@ pub enum ClientPhase {
     AwaitAuth {
         server_nonce: u64,
         client_nonce: u64,
+        hkey: HandshakeKeys,
     },
     Session {
         session_id: u32,
@@ -59,46 +63,61 @@ impl ClientSession {
     }
 
     /// Server answered our DISCOVER: mint a client nonce and build the
-    /// AUTH_REQ frame (ready to send).
+    /// sealed AUTH_REQ frame (ready to send). The payload is encrypted with
+    /// handshake keys derived from the psk and the server nonce.
     pub fn on_resp(&mut self, resp: &frame::Resp, user: &str, psk: &[u8]) -> Vec<u8> {
         let client_nonce: u64 = rand::random();
         let proof = auth_proof_c2s(psk, resp.nonce, client_nonce);
+        let hkey = HandshakeKeys::derive(psk, resp.nonce);
         self.phase = ClientPhase::AwaitAuth {
             server_nonce: resp.nonce,
             client_nonce,
+            hkey: hkey.clone(),
         };
-        frame::encode_auth_req(user, client_nonce, &proof)
+        let payload = frame::encode_auth_req_payload(user, client_nonce, &proof);
+        hkey.seal_frame(TYPE_AUTH_REQ, 0, HS_AUTH_REQ, &payload)
     }
 
-    /// Handle an AUTH_ACK / AUTH_NACK frame. For AUTH_ACK the server's proof
-    /// must match the psk, otherwise the server is not authenticated and the
-    /// handshake fails.
+    /// Handle an AUTH_ACK / AUTH_NACK frame. The AUTH_ACK payload is sealed
+    /// with the handshake keys; once opened, the server's proof must match
+    /// the psk, otherwise the server is not authenticated and the handshake
+    /// fails. AUTH_NACK may be plaintext (the server cannot assume shared
+    /// handshake keys when rejecting).
     pub fn on_auth_frame(&mut self, frame: &Frame<'_>, psk: &[u8]) {
         match frame.msg_type {
             TYPE_AUTH_ACK => {
-                let server_proof = frame::decode_auth_ack(frame.payload);
-                match (&self.phase, server_proof) {
-                    (
-                        ClientPhase::AwaitAuth {
-                            server_nonce,
-                            client_nonce,
-                        },
-                        Ok(proof),
-                    ) if ct_eq(&proof, &auth_proof_s2c(psk, *server_nonce, *client_nonce)) => {
-                        let keys = SessionKeys::derive(psk, *server_nonce, *client_nonce);
+                let opened = match &self.phase {
+                    ClientPhase::AwaitAuth {
+                        server_nonce,
+                        client_nonce,
+                        hkey,
+                    } => hkey.open_frame(HS_AUTH_ACK, frame).and_then(|plain| {
+                        let server_proof = frame::decode_auth_ack_payload(&plain).ok()?;
+                        (ct_eq(&server_proof, &auth_proof_s2c(psk, *server_nonce, *client_nonce)))
+                            .then_some(SessionKeys::derive(psk, *server_nonce, *client_nonce))
+                    }),
+                    _ => None,
+                };
+                match opened {
+                    Some(keys) => {
                         self.phase = ClientPhase::Session {
                             session_id: frame.session_id,
                             keys,
                         };
                     }
-                    _ => {
+                    None => {
                         self.phase = ClientPhase::Rejected("server authentication failed".into());
                     }
                 }
             }
             TYPE_AUTH_NACK => {
-                let reason =
-                    frame::decode_auth_nack(frame.payload).unwrap_or_else(|_| "unknown".into());
+                let reason = match &self.phase {
+                    ClientPhase::AwaitAuth { hkey, .. } => hkey
+                        .open_frame(HS_AUTH_NACK, frame)
+                        .and_then(|p| frame::decode_auth_nack_payload(&p).ok())
+                        .unwrap_or_else(|| "unknown".into()),
+                    _ => "unknown".into(),
+                };
                 self.phase = ClientPhase::Rejected(reason);
             }
             _ => {}
@@ -131,6 +150,9 @@ pub enum VerifyResult {
         sid: u32,
         keys: SessionKeys,
         server_proof: [u8; 32],
+        /// Handshake keys for sealing the AUTH_ACK back to the client.
+        hkey: HandshakeKeys,
+        user: String,
     },
     Rejected(String),
 }
@@ -166,10 +188,23 @@ impl ServerSession {
         frame::encode_resp(device_name, nonce, ports)
     }
 
-    /// Verify an AUTH_REQ against the pending nonce and the shared psk.
-    pub fn verify_auth(&mut self, req: &AuthReq, psk: &[u8]) -> VerifyResult {
+    /// Verify a sealed AUTH_REQ frame against the pending nonce and the
+    /// shared psk: open it with the handshake keys, then check the proof.
+    pub fn verify_auth(&mut self, frame: &Frame<'_>, psk: &[u8]) -> VerifyResult {
         match self.pending {
             Some(server_nonce) => {
+                let hkey = HandshakeKeys::derive(psk, server_nonce);
+                let plain = match hkey.open_frame(HS_AUTH_REQ, frame) {
+                    Some(p) => p,
+                    None => {
+                        self.pending = None;
+                        return VerifyResult::Rejected("bad handshake frame".into());
+                    }
+                };
+                let Ok(req) = frame::decode_auth_req_payload(&plain) else {
+                    self.pending = None;
+                    return VerifyResult::Rejected("bad handshake frame".into());
+                };
                 let expect = auth_proof_c2s(psk, server_nonce, req.nonce);
                 if ct_eq(&req.proof, &expect) {
                     let sid = self.next_session_id;
@@ -182,6 +217,8 @@ impl ServerSession {
                         sid,
                         keys,
                         server_proof,
+                        hkey,
+                        user: req.user,
                     }
                 } else {
                     self.pending = None;
@@ -212,6 +249,20 @@ mod tests {
 
     const PSK: &[u8] = b"landscape-secret";
 
+    fn sealed_auth_req(user: &str, psk: &[u8], server_nonce: u64, client_nonce: u64) -> Vec<u8> {
+        let hkey = HandshakeKeys::derive(psk, server_nonce);
+        let proof = auth_proof_c2s(psk, server_nonce, client_nonce);
+        let payload = frame::encode_auth_req_payload(user, client_nonce, &proof);
+        hkey.seal_frame(TYPE_AUTH_REQ, 0, HS_AUTH_REQ, &payload)
+    }
+
+    fn sealed_auth_ack(psk: &[u8], server_nonce: u64, client_nonce: u64, sid: u32) -> Vec<u8> {
+        let hkey = HandshakeKeys::derive(psk, server_nonce);
+        let proof = auth_proof_s2c(psk, server_nonce, client_nonce);
+        let payload = frame::encode_auth_ack_payload(&proof);
+        hkey.seal_frame(TYPE_AUTH_ACK, sid, HS_AUTH_ACK, &payload)
+    }
+
     #[test]
     fn client_handshake_flow() {
         let mut client = ClientSession::new();
@@ -226,27 +277,57 @@ mod tests {
         let ClientPhase::AwaitAuth {
             server_nonce,
             client_nonce,
-        } = client.phase
+            hkey,
+        } = &client.phase
         else {
             panic!("expected AwaitAuth");
         };
-        assert_eq!(server_nonce, 1234);
+        assert_eq!(*server_nonce, 1234);
 
-        let req = frame::decode_auth_req(&auth_req_raw[frame::HEADER_LEN..]).unwrap();
-        assert_eq!(req.nonce, client_nonce);
-        assert_eq!(req.proof, auth_proof_c2s(PSK, 1234, client_nonce));
+        // The wire payload must be sealed: opening it yields user + nonce + proof.
+        let l = frame::decode(&auth_req_raw).unwrap();
+        assert_eq!(l.msg_type, TYPE_AUTH_REQ);
+        let plain = hkey.open_frame(HS_AUTH_REQ, &l).unwrap();
+        let req = frame::decode_auth_req_payload(&plain).unwrap();
+        assert_eq!(req.user, "admin");
+        assert_eq!(req.nonce, *client_nonce);
+        assert_eq!(req.proof, auth_proof_c2s(PSK, 1234, *client_nonce));
 
-        let server_proof = auth_proof_s2c(PSK, 1234, client_nonce);
-        let ack_raw = frame::encode_auth_ack(7, &server_proof);
+        // A NACK (encrypted with the same handshake keys) moves to Rejected.
+        let nack_hkey = HandshakeKeys::derive(PSK, 1234);
+        let nack_raw = nack_hkey.seal_frame(
+            TYPE_AUTH_NACK,
+            0,
+            HS_AUTH_NACK,
+            &frame::encode_auth_nack_payload("bad token"),
+        );
+        let nack = frame::decode(&nack_raw).unwrap();
+        client.on_auth_frame(&nack, PSK);
+        assert!(matches!(client.phase, ClientPhase::Rejected(_)));
+    }
+
+    #[test]
+    fn client_accepts_server_ack() {
+        let mut client = ClientSession::new();
+        let resp = frame::Resp {
+            device_name: "router".into(),
+            nonce: 99,
+            ports: vec![],
+        };
+        let _ = client.on_resp(&resp, "admin", PSK);
+        let ClientPhase::AwaitAuth {
+            server_nonce,
+            client_nonce,
+            ..
+        } = &client.phase
+        else {
+            panic!("expected AwaitAuth");
+        };
+        let ack_raw = sealed_auth_ack(PSK, *server_nonce, *client_nonce, 7);
         let ack = frame::decode(&ack_raw).unwrap();
         client.on_auth_frame(&ack, PSK);
         assert_eq!(client.session_id(), Some(7));
         assert!(client.keys().is_some());
-
-        let nack_raw = frame::encode_auth_nack("bad token");
-        let nack = frame::decode(&nack_raw).unwrap();
-        client.on_auth_frame(&nack, PSK);
-        assert!(matches!(client.phase, ClientPhase::Rejected(_)));
     }
 
     #[test]
@@ -258,8 +339,22 @@ mod tests {
             ports: vec![],
         };
         let _ = client.on_resp(&resp, "admin", PSK);
-        // A server that does not know the psk cannot produce a valid proof.
-        let ack_raw = frame::encode_auth_ack(7, &[0u8; 32]);
+        let ClientPhase::AwaitAuth {
+            server_nonce,
+            client_nonce,
+            ..
+        } = &client.phase
+        else {
+            panic!("expected AwaitAuth");
+        };
+        // A server that does not know the psk cannot seal a valid ACK.
+        let hkey = HandshakeKeys::derive(b"other-psk", *server_nonce);
+        let ack_raw = hkey.seal_frame(
+            TYPE_AUTH_ACK,
+            7,
+            HS_AUTH_ACK,
+            &frame::encode_auth_ack_payload(&[0u8; 32]),
+        );
         let ack = frame::decode(&ack_raw).unwrap();
         client.on_auth_frame(&ack, PSK);
         assert!(matches!(client.phase, ClientPhase::Rejected(_)));
@@ -274,18 +369,19 @@ mod tests {
         assert_eq!(resp.ports, [22, 6443]);
 
         let client_nonce: u64 = 0x1020_3040_5060_7080;
-        let req = frame::AuthReq {
-            user: "admin".into(),
-            nonce: client_nonce,
-            proof: auth_proof_c2s(PSK, resp.nonce, client_nonce),
-        };
-        match server.verify_auth(&req, PSK) {
+        let auth_raw = sealed_auth_req("admin", PSK, resp.nonce, client_nonce);
+        let l = frame::decode(&auth_raw).unwrap();
+        match server.verify_auth(&l, PSK) {
             VerifyResult::Accepted {
                 sid,
                 keys,
                 server_proof,
+                hkey,
+                user,
             } => {
                 assert_eq!(sid, 1);
+                assert_eq!(user, "admin");
+                assert_eq!(hkey, HandshakeKeys::derive(PSK, resp.nonce));
                 assert_eq!(server.session_id(), Some(1));
                 assert_eq!(server_proof, auth_proof_s2c(PSK, resp.nonce, client_nonce));
                 assert_eq!(keys, SessionKeys::derive(PSK, resp.nonce, client_nonce));
@@ -300,13 +396,30 @@ mod tests {
         let resp_raw = server.on_discover("router", &[]);
         let resp = frame::decode_resp(&resp_raw[frame::HEADER_LEN..]).unwrap();
 
-        let req = frame::AuthReq {
-            user: "admin".into(),
-            nonce: 42,
-            proof: auth_proof_c2s(b"wrong", resp.nonce, 42),
-        };
-        assert!(matches!(server.verify_auth(&req, PSK), VerifyResult::Rejected(_)));
-        assert!(matches!(server.phase, ServerPhase::Listening));
+        // Sealed with a different psk: cannot be opened.
+        let auth_raw = sealed_auth_req("admin", b"wrong", resp.nonce, 42);
+        let l = frame::decode(&auth_raw).unwrap();
+        assert!(matches!(server.verify_auth(&l, PSK), VerifyResult::Rejected(_)));
+
+        // Sealed with the right psk but a wrong proof: opened, then rejected.
+        let mut server2 = ServerSession::new();
+        let resp_raw2 = server2.on_discover("router", &[]);
+        let resp2 = frame::decode_resp(&resp_raw2[frame::HEADER_LEN..]).unwrap();
+        let hkey = HandshakeKeys::derive(PSK, resp2.nonce);
+        let payload = frame::encode_auth_req_payload("admin", 42, &[0u8; 32]);
+        let auth_raw2 = hkey.seal_frame(TYPE_AUTH_REQ, 0, HS_AUTH_REQ, &payload);
+        let l2 = frame::decode(&auth_raw2).unwrap();
+        assert!(matches!(server2.verify_auth(&l2, PSK), VerifyResult::Rejected(_)));
+        assert!(matches!(server2.phase, ServerPhase::Listening));
+    }
+
+    #[test]
+    fn server_rejects_garbage_handshake() {
+        let mut server = ServerSession::new();
+        server.on_discover("router", &[]);
+        let raw = frame::encode(TYPE_AUTH_REQ, 0, 0, b"not sealed");
+        let l = frame::decode(&raw).unwrap();
+        assert!(matches!(server.verify_auth(&l, PSK), VerifyResult::Rejected(_)));
     }
 
     #[test]
@@ -315,12 +428,9 @@ mod tests {
         let resp_raw = server.on_discover("router", &[]);
         let resp = frame::decode_resp(&resp_raw[frame::HEADER_LEN..]).unwrap();
         let c_nonce = 1u64;
-        let req = frame::AuthReq {
-            user: "admin".into(),
-            nonce: c_nonce,
-            proof: auth_proof_c2s(PSK, resp.nonce, c_nonce),
-        };
-        assert!(matches!(server.verify_auth(&req, PSK), VerifyResult::Accepted { .. }));
+        let auth_raw = sealed_auth_req("admin", PSK, resp.nonce, c_nonce);
+        let l = frame::decode(&auth_raw).unwrap();
+        assert!(matches!(server.verify_auth(&l, PSK), VerifyResult::Accepted { .. }));
         assert_eq!(server.session_id(), Some(1));
 
         // A new DISCOVER starts a handshake but must not kill the session.
@@ -328,11 +438,7 @@ mod tests {
         assert_eq!(server.session_id(), Some(1));
 
         // An old AUTH_REQ can no longer be verified (pending nonce replaced).
-        let stale = frame::AuthReq {
-            user: "admin".into(),
-            nonce: c_nonce,
-            proof: auth_proof_c2s(PSK, resp.nonce, c_nonce),
-        };
+        let stale = frame::decode(&auth_raw).unwrap();
         assert!(matches!(server.verify_auth(&stale, PSK), VerifyResult::Rejected(_)));
         assert_eq!(server.session_id(), Some(1));
     }

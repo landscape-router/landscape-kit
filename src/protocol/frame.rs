@@ -209,15 +209,18 @@ pub struct AuthReq {
     pub proof: [u8; 32],
 }
 
-pub fn encode_auth_req(user: &str, nonce: u64, proof: &[u8; 32]) -> Vec<u8> {
+/// AUTH_REQ plaintext payload: user name + client nonce + proof
+/// (sha256("lndp-auth-c2s" || psk || server_nonce || client_nonce)).
+/// The wire frame is the payload sealed with the handshake keys.
+pub fn encode_auth_req_payload(user: &str, nonce: u64, proof: &[u8; 32]) -> Vec<u8> {
     let mut p = Vec::new();
     put_str(&mut p, user);
     put_u64(&mut p, nonce);
     p.extend_from_slice(proof);
-    encode(TYPE_AUTH_REQ, 0, 0, &p)
+    p
 }
 
-pub fn decode_auth_req(payload: &[u8]) -> Result<AuthReq, FrameError> {
+pub fn decode_auth_req_payload(payload: &[u8]) -> Result<AuthReq, FrameError> {
     let mut off = 0;
     let user = get_str(payload, &mut off)?;
     let nonce = get_u64(payload, &mut off)?;
@@ -229,16 +232,15 @@ pub fn decode_auth_req(payload: &[u8]) -> Result<AuthReq, FrameError> {
     Ok(AuthReq { user, nonce, proof })
 }
 
-/// AUTH_ACK payload: the server's proof of psk knowledge
+/// AUTH_ACK plaintext payload: the server's proof of psk knowledge
 /// (sha256("lndp-auth-s2c" || psk || server_nonce || client_nonce));
-/// the session id is carried in the frame header.
-pub fn encode_auth_ack(session_id: u32, server_proof: &[u8; 32]) -> Vec<u8> {
-    let mut p = Vec::new();
-    p.extend_from_slice(server_proof);
-    encode(TYPE_AUTH_ACK, session_id, 0, &p)
+/// the session id is carried in the frame header. The wire frame is the
+/// payload sealed with the handshake keys.
+pub fn encode_auth_ack_payload(server_proof: &[u8; 32]) -> Vec<u8> {
+    server_proof.to_vec()
 }
 
-pub fn decode_auth_ack(payload: &[u8]) -> Result<[u8; 32], FrameError> {
+pub fn decode_auth_ack_payload(payload: &[u8]) -> Result<[u8; 32], FrameError> {
     if payload.len() != 32 {
         return Err(FrameError::BadPayload);
     }
@@ -247,13 +249,24 @@ pub fn decode_auth_ack(payload: &[u8]) -> Result<[u8; 32], FrameError> {
     Ok(proof)
 }
 
+/// AUTH_NACK stays in cleartext: the server cannot assume the client shares
+/// the handshake keys (it may have the wrong psk), and the reason is
+/// informational only.
 pub fn encode_auth_nack(reason: &str) -> Vec<u8> {
     let mut p = Vec::new();
     put_str(&mut p, reason);
     encode(TYPE_AUTH_NACK, 0, 0, &p)
 }
 
-pub fn decode_auth_nack(payload: &[u8]) -> Result<String, FrameError> {
+/// Plaintext NACK payload; used when sealing the NACK with the handshake
+/// keys (the client always tries to open it first).
+pub fn encode_auth_nack_payload(reason: &str) -> Vec<u8> {
+    let mut p = Vec::new();
+    put_str(&mut p, reason);
+    p
+}
+
+pub fn decode_auth_nack_payload(payload: &[u8]) -> Result<String, FrameError> {
     let mut off = 0;
     get_str(payload, &mut off)
 }
@@ -268,8 +281,6 @@ mod tests {
             encode_discover("pc-a", None),
             encode_discover("pc-b", Some("landscape-token")),
             encode_resp("landscape-router", 0xDEADBEEF_DEADBEEF, &[22, 6443]),
-            encode_auth_req("admin", 0x0102_0304_0506_0708, &[7u8; 32]),
-            encode_auth_ack(42, &[9u8; 32]),
             encode_auth_nack("bad token"),
         ];
         for raw in frames {
@@ -304,7 +315,7 @@ mod tests {
         );
         let r = decode_resp(&encode_resp("router", 1, &[22, 6443])[HEADER_LEN..]).unwrap();
         assert_eq!(r.ports, [22, 6443]);
-        let a = decode_auth_req(&encode_auth_req("u", 5, &[9u8; 32])[HEADER_LEN..]).unwrap();
+        let a = decode_auth_req_payload(&encode_auth_req_payload("u", 5, &[9u8; 32])).unwrap();
         assert_eq!(
             a,
             AuthReq {
@@ -314,10 +325,13 @@ mod tests {
             }
         );
         assert_eq!(
-            decode_auth_ack(&encode_auth_ack(7, &[3u8; 32])[HEADER_LEN..]).unwrap(),
+            decode_auth_ack_payload(&encode_auth_ack_payload(&[3u8; 32])).unwrap(),
             [3u8; 32]
         );
-        assert_eq!(decode_auth_nack(&encode_auth_nack("no")[HEADER_LEN..]).unwrap(), "no");
+        assert_eq!(
+            decode_auth_nack_payload(&encode_auth_nack_payload("no")).unwrap(),
+            "no"
+        );
     }
 
     #[test]
@@ -333,8 +347,8 @@ mod tests {
     fn rejects_truncated_payloads() {
         let raw = encode_resp("router", 5, &[]);
         assert!(decode_resp(&raw[HEADER_LEN..raw.len() - 1]).is_err());
-        let raw = encode_auth_req("u", 1, &[0u8; 32]);
-        assert!(decode_auth_req(&raw[HEADER_LEN..raw.len() - 1]).is_err());
+        let p = encode_auth_req_payload("u", 1, &[0u8; 32]);
+        assert!(decode_auth_req_payload(&p[..p.len() - 1]).is_err());
     }
 
     #[test]
