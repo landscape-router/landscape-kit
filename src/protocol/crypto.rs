@@ -84,6 +84,71 @@ pub fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
 pub const HS_AUTH_REQ: u32 = 0;
 pub const HS_AUTH_ACK: u32 = 1;
 pub const HS_AUTH_NACK: u32 = 2;
+pub const HS_RESP: u32 = 3;
+
+/// Pre-discovery key, derived from the psk alone (no nonces exist yet).
+/// Seals the DISCOVER frame, so only a psk-holder can even be heard: the
+/// server stays silent for everyone else, and the client name/token are
+/// never visible on the wire. Each frame carries its own random 8-byte
+/// salt as a nonce prefix (the salt is in the clear; only the psk-derived
+/// key is secret).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreSharedKey([u8; 32]);
+
+impl PreSharedKey {
+    pub fn derive(psk: &[u8]) -> Self {
+        Self(h(b"lndp-hkey0", psk, 0, 0))
+    }
+
+    /// Build a sealed DISCOVER frame: salt(8) || ciphertext || tag.
+    pub fn seal_discover(&self, session_id: u32, salt: [u8; 8], plaintext: &[u8]) -> Vec<u8> {
+        let header = frame::encode_header(
+            frame::TYPE_DISCOVER,
+            session_id,
+            0,
+            (SALT_LEN + plaintext.len() + TAG_LEN) as u16,
+        );
+        let mut nonce_raw = [0u8; NONCE_LEN];
+        nonce_raw[..SALT_LEN].copy_from_slice(&salt);
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.0));
+        let body = cipher
+            .encrypt(
+                &nonce_raw.into(),
+                Payload {
+                    msg: plaintext,
+                    aad: &header,
+                },
+            )
+            .expect("aead seal cannot fail");
+        let mut raw = Vec::with_capacity(header.len() + SALT_LEN + body.len());
+        raw.extend_from_slice(&header);
+        raw.extend_from_slice(&salt);
+        raw.extend_from_slice(&body);
+        raw
+    }
+
+    /// Verify and open a sealed DISCOVER frame (already decoded): the salt
+    /// is the 8-byte prefix of the payload, the rest is ciphertext || tag.
+    pub fn open_discover(&self, l: &frame::Frame<'_>) -> Option<Vec<u8>> {
+        if l.payload.len() < SALT_LEN + TAG_LEN {
+            return None;
+        }
+        let salt = l.payload[..SALT_LEN].try_into().unwrap();
+        let mut nonce_raw = [0u8; NONCE_LEN];
+        nonce_raw[..SALT_LEN].copy_from_slice(salt);
+        let header = frame::encode_header(l.msg_type, l.session_id, l.seq, l.len);
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.0));
+        cipher
+            .decrypt(
+                &nonce_raw.into(),
+                Payload {
+                    msg: &l.payload[SALT_LEN..],
+                    aad: &header,
+                },
+            )
+            .ok()
+    }
+}
 
 /// Key material for sealing the AUTH_REQ / AUTH_ACK / AUTH_NACK handshake
 /// frames. Derived from the psk and the server nonce — both sides know
@@ -163,6 +228,46 @@ impl HandshakeKeys {
     pub fn open_frame(&self, counter: u32, l: &frame::Frame<'_>) -> Option<Vec<u8>> {
         let header = frame::encode_header(l.msg_type, l.session_id, l.seq, l.len);
         self.open(counter, &header, l.payload)
+    }
+
+    /// Build a frame with a plaintext prefix before the ciphertext
+    /// (RESP: the server nonce must be readable to derive the handshake
+    /// keys; the rest is sealed).
+    pub fn seal_prefixed(
+        &self,
+        msg_type: u8,
+        session_id: u32,
+        counter: u32,
+        prefix: &[u8],
+        plaintext: &[u8],
+    ) -> Vec<u8> {
+        let header = frame::encode_header(
+            msg_type,
+            session_id,
+            0,
+            (prefix.len() + plaintext.len() + TAG_LEN) as u16,
+        );
+        let body = self.seal(counter, &header, plaintext);
+        let mut raw = Vec::with_capacity(header.len() + prefix.len() + body.len());
+        raw.extend_from_slice(&header);
+        raw.extend_from_slice(prefix);
+        raw.extend_from_slice(&body);
+        raw
+    }
+
+    /// Open a frame that carries a plaintext prefix before the ciphertext
+    /// (RESP). The prefix bytes are part of the AAD via the header.
+    pub fn open_prefixed(
+        &self,
+        counter: u32,
+        l: &frame::Frame<'_>,
+        prefix_len: usize,
+    ) -> Option<Vec<u8>> {
+        if l.payload.len() < prefix_len + TAG_LEN {
+            return None;
+        }
+        let header = frame::encode_header(l.msg_type, l.session_id, l.seq, l.len);
+        self.open(counter, &header, &l.payload[prefix_len..])
     }
 }
 

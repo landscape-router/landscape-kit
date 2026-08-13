@@ -139,52 +139,64 @@ fn get_u64(data: &[u8], off: &mut usize) -> Result<u64, FrameError> {
     Ok(v)
 }
 
-/// DISCOVER payload: client name + optional discovery token (anti-scanning).
-/// The server stays silent when a token is configured and not carried.
-pub fn encode_discover(client_name: &str, token: Option<&str>) -> Vec<u8> {
+/// DISCOVER plaintext payload: random discover_id + client name + optional
+/// discovery token (anti-scanning; the server stays silent when a token is
+/// configured and not carried). The wire frame is the payload sealed with
+/// the pre-discovery key, so only a psk-holder is even heard.
+pub fn encode_discover_payload(
+    discover_id: u64,
+    client_name: &str,
+    token: Option<&str>,
+) -> Vec<u8> {
     let mut p = Vec::new();
+    put_u64(&mut p, discover_id);
     put_str(&mut p, client_name);
     if let Some(t) = token.filter(|t| !t.is_empty()) {
         put_str(&mut p, t);
     }
-    encode(TYPE_DISCOVER, 0, 0, &p)
+    p
 }
 
-pub fn decode_discover(payload: &[u8]) -> Result<(String, Option<String>), FrameError> {
+pub fn decode_discover_payload(
+    payload: &[u8],
+) -> Result<(u64, String, Option<String>), FrameError> {
     let mut off = 0;
+    let discover_id = get_u64(payload, &mut off)?;
     let name = get_str(payload, &mut off)?;
     let token = if off < payload.len() {
         Some(get_str(payload, &mut off)?)
     } else {
         None
     };
-    Ok((name, token))
+    Ok((discover_id, name, token))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resp {
+    /// Echo of the client's DISCOVER id: binds the RESP to the current
+    /// attempt, so replayed or raced responses are dropped.
+    pub discover_id: u64,
     pub device_name: String,
-    pub nonce: u64,
     /// Ports the server allows forwarding to (capability info, optional).
     pub ports: Vec<u16>,
 }
 
-/// RESP payload: device name + server nonce for challenge-response auth,
-/// followed by the advertised forward ports (capability negotiation).
-pub fn encode_resp(device_name: &str, nonce: u64, ports: &[u16]) -> Vec<u8> {
+/// RESP plaintext payload: discover_id echo + device name + advertised
+/// forward ports. The wire frame is `server_nonce(8) || seal(...)`.
+pub fn encode_resp_payload(discover_id: u64, device_name: &str, ports: &[u16]) -> Vec<u8> {
     let mut p = Vec::new();
+    put_u64(&mut p, discover_id);
     put_str(&mut p, device_name);
-    put_u64(&mut p, nonce);
     for port in ports {
         p.extend_from_slice(&port.to_be_bytes());
     }
-    encode(TYPE_RESP, 0, 0, &p)
+    p
 }
 
-pub fn decode_resp(payload: &[u8]) -> Result<Resp, FrameError> {
+pub fn decode_resp_payload(payload: &[u8]) -> Result<Resp, FrameError> {
     let mut off = 0;
+    let discover_id = get_u64(payload, &mut off)?;
     let device_name = get_str(payload, &mut off)?;
-    let nonce = get_u64(payload, &mut off)?;
     let mut ports = Vec::new();
     while off + 2 <= payload.len() {
         ports.push(u16::from_be_bytes([payload[off], payload[off + 1]]));
@@ -194,8 +206,8 @@ pub fn decode_resp(payload: &[u8]) -> Result<Resp, FrameError> {
         return Err(FrameError::BadPayload);
     }
     Ok(Resp {
+        discover_id,
         device_name,
-        nonce,
         ports,
     })
 }
@@ -278,9 +290,9 @@ mod tests {
     #[test]
     fn roundtrip_all_messages() {
         let frames = [
-            encode_discover("pc-a", None),
-            encode_discover("pc-b", Some("landscape-token")),
-            encode_resp("landscape-router", 0xDEADBEEF_DEADBEEF, &[22, 6443]),
+            encode(TYPE_DISCOVER, 0, 0, &encode_discover_payload(7, "pc-a", None)),
+            encode(TYPE_DISCOVER, 0, 0, &encode_discover_payload(8, "pc-b", Some("landscape-token"))),
+            encode(TYPE_RESP, 0, 0, &encode_resp_payload(9, "landscape-router", &[22, 6443])),
             encode_auth_nack("bad token"),
         ];
         for raw in frames {
@@ -293,27 +305,27 @@ mod tests {
     #[test]
     fn decodes_payloads() {
         assert_eq!(
-            decode_discover(&encode_discover("pc", None)[HEADER_LEN..]).unwrap(),
-            ("pc".to_string(), None)
+            decode_discover_payload(&encode_discover_payload(1, "pc", None)).unwrap(),
+            (1, "pc".to_string(), None)
         );
         assert_eq!(
-            decode_discover(&encode_discover("pc", Some("tok"))[HEADER_LEN..]).unwrap(),
-            ("pc".to_string(), Some("tok".to_string()))
+            decode_discover_payload(&encode_discover_payload(2, "pc", Some("tok"))).unwrap(),
+            (2, "pc".to_string(), Some("tok".to_string()))
         );
         assert_eq!(
-            decode_discover(&encode_discover("pc", Some(""))[HEADER_LEN..]).unwrap(),
-            ("pc".to_string(), None)
+            decode_discover_payload(&encode_discover_payload(3, "pc", Some(""))).unwrap(),
+            (3, "pc".to_string(), None)
         );
-        let r = decode_resp(&encode_resp("router", 1, &[])[HEADER_LEN..]).unwrap();
+        let r = decode_resp_payload(&encode_resp_payload(4, "router", &[])).unwrap();
         assert_eq!(
             r,
             Resp {
+                discover_id: 4,
                 device_name: "router".into(),
-                nonce: 1,
                 ports: vec![]
             }
         );
-        let r = decode_resp(&encode_resp("router", 1, &[22, 6443])[HEADER_LEN..]).unwrap();
+        let r = decode_resp_payload(&encode_resp_payload(4, "router", &[22, 6443])).unwrap();
         assert_eq!(r.ports, [22, 6443]);
         let a = decode_auth_req_payload(&encode_auth_req_payload("u", 5, &[9u8; 32])).unwrap();
         assert_eq!(
@@ -345,15 +357,16 @@ mod tests {
 
     #[test]
     fn rejects_truncated_payloads() {
-        let raw = encode_resp("router", 5, &[]);
-        assert!(decode_resp(&raw[HEADER_LEN..raw.len() - 1]).is_err());
+        let p = encode_resp_payload(4, "router", &[]);
+        assert!(decode_resp_payload(&p[..p.len() - 1]).is_err());
         let p = encode_auth_req_payload("u", 1, &[0u8; 32]);
         assert!(decode_auth_req_payload(&p[..p.len() - 1]).is_err());
     }
 
     #[test]
     fn strips_ethernet_padding() {
-        let raw = encode_resp("router", 5, &[]);
+        let payload = encode_resp_payload(4, "router", &[]);
+        let raw = encode(TYPE_RESP, 0, 0, &payload);
         let mut padded = raw.clone();
         padded.extend_from_slice(&[0x00; 40]); // min-frame padding
         let f = decode(&padded).unwrap();
@@ -363,7 +376,8 @@ mod tests {
 
     #[test]
     fn rejects_oversized_len() {
-        let mut bad = encode_resp("router", 5, &[]);
+        let payload = encode_resp_payload(4, "router", &[]);
+        let mut bad = encode(TYPE_RESP, 0, 0, &payload);
         bad[10] = 0xff;
         bad[11] = 0xff;
         assert_eq!(decode(&bad), Err(FrameError::BadPayload));
