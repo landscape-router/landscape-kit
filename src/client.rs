@@ -92,13 +92,25 @@ pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error
     }
 }
 
-/// Resolves once SIGINT or SIGTERM arrives (graceful teardown path).
+/// Resolves once a termination signal arrives (graceful teardown path).
+#[cfg(unix)]
 async fn wait_for_shutdown() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("installing SIGTERM handler");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown() {
+    let mut brk = tokio::signal::windows::ctrl_break().expect("installing Ctrl-Break handler");
+    let mut close = tokio::signal::windows::ctrl_close().expect("installing Ctrl-Close handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = brk.recv() => {}
+        _ = close.recv() => {}
     }
 }
 
