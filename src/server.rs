@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 use landscape_proto::ipstack::{
     IpStack, SocketHandle, StackMsg, INTERNAL_PORT, SERVER_ADDR,
 };
+use landscape_proto::protocol::crypto::{Dir, SessionCrypto};
 use landscape_proto::protocol::frame;
 use landscape_proto::protocol::session::{ServerSession, VerifyResult};
 use landscape_proto::protocol::{
-    TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE,
+    TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN,
 };
 use landscape_proto::transport::{fmt_mac, Link};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,13 +20,24 @@ const POLL_INTERVAL: Duration = Duration::from_millis(25);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const STALE_AFTER: Duration = Duration::from_secs(45);
 
+/// Max DISCOVER/AUTH_REQ frames per second per source MAC (anti-scanning,
+/// brute force and kick attempts). A full token bucket refills at this rate.
+const RATE_PER_SEC: f64 = 10.0;
+
+/// AUTH_REQ failures before the source MAC is locked out, and the lockout
+/// window (brute-force protection).
+const MAX_AUTH_FAILS: u32 = 5;
+const AUTH_WINDOW: Duration = Duration::from_secs(60);
+const AUTH_LOCKOUT: Duration = Duration::from_secs(60);
+
 pub struct ServerConfig<'a> {
     pub devs: &'a [String],
     pub ethertype: u16,
     pub mac: Option<[u8; 6]>,
     pub psk: &'a str,
     pub device_name: &'a str,
-    /// Ports the server is allowed to dial on 127.0.0.1.
+    /// Ports the server is allowed to dial on 127.0.0.1; also advertised in
+    /// RESP so clients know what they may forward to.
     pub forward_ports: &'a [u16],
     /// Discovery token: when non-empty, DISCOVER frames without it are
     /// ignored (anti-scanning; the psk challenge-response is the real
@@ -39,6 +51,7 @@ struct Peer {
     ifindex: i32,
     stack: Option<IpStack>,
     listener: Option<SocketHandle>,
+    crypto: Option<SessionCrypto>,
     conns: HashMap<SocketHandle, ServerConn>,
     pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
     pending_rx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
@@ -53,9 +66,98 @@ struct ServerConn {
     from_tx: mpsc::Sender<Vec<u8>>,
 }
 
+/// Per-MAC token bucket for control frames.
+struct RateBucket {
+    tokens: f64,
+    last_refill: Instant,
+    last_seen: Instant,
+}
+
+impl Default for RateBucket {
+    fn default() -> Self {
+        let now = Instant::now();
+        Self {
+            tokens: RATE_PER_SEC,
+            last_refill: now,
+            last_seen: now,
+        }
+    }
+}
+
+impl RateBucket {
+    fn allow(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.last_refill = now;
+        self.last_seen = now;
+        self.tokens = (self.tokens + elapsed * RATE_PER_SEC).min(RATE_PER_SEC);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Per-MAC auth-failure tracking with lockout.
+struct AuthGuard {
+    fails: u32,
+    window_start: Option<Instant>,
+    locked_until: Option<Instant>,
+    last_seen: Instant,
+}
+
+impl Default for AuthGuard {
+    fn default() -> Self {
+        Self {
+            fails: 0,
+            window_start: None,
+            locked_until: None,
+            last_seen: Instant::now(),
+        }
+    }
+}
+
+impl AuthGuard {
+    fn blocked(&mut self) -> bool {
+        self.last_seen = Instant::now();
+        match self.locked_until {
+            Some(t) => Instant::now() < t,
+            None => false,
+        }
+    }
+
+    fn record_failure(&mut self) {
+        self.last_seen = Instant::now();
+        let now = Instant::now();
+        match self.window_start {
+            Some(start) if now.duration_since(start) <= AUTH_WINDOW => {
+                self.fails += 1;
+                if self.fails >= MAX_AUTH_FAILS {
+                    self.locked_until = Some(now + AUTH_LOCKOUT);
+                }
+            }
+            _ => {
+                self.window_start = Some(now);
+                self.fails = 1;
+            }
+        }
+    }
+
+    fn record_success(&mut self) {
+        self.last_seen = Instant::now();
+        self.fails = 0;
+        self.window_start = None;
+        self.locked_until = None;
+    }
+}
+
 pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
     let mut peers: HashMap<[u8; 6], Peer> = HashMap::new();
+    let mut rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
+    let mut guards: HashMap<[u8; 6], AuthGuard> = HashMap::new();
     let allowed: Arc<[u16]> = Arc::from(cfg.forward_ports);
     let (to_tx, mut to_rx) = mpsc::channel::<(([u8; 6], SocketHandle), StackMsg)>(512);
     println!(
@@ -72,6 +174,11 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
 
     let mut poll_timer = tokio::time::interval(POLL_INTERVAL);
     let mut sweep_timer = tokio::time::interval(SWEEP_INTERVAL);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let sig = tokio::spawn(async move {
+        wait_for_shutdown().await;
+        let _ = shutdown_tx.send(());
+    });
     loop {
         tokio::select! {
             r = tx.recv_with_meta(cfg.ethertype) => {
@@ -82,6 +189,10 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                 let mac = f.src;
                 match l.msg_type {
                     TYPE_DISCOVER => {
+                        if !rate_allow(&mut rate, &mac) {
+                            println!("discover from {} rate-limited", fmt_mac(&mac));
+                            continue;
+                        }
                         let Ok((name, token)) = frame::decode_discover(&l.payload) else {
                             continue;
                         };
@@ -94,13 +205,12 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             );
                             continue;
                         }
-                        if let Some(old) = peers.get_mut(&mac) {
-                            teardown_peer(old);
-                        }
                         let peer = peers.entry(mac).or_insert_with(|| new_peer(to_tx.clone(), allowed.clone()));
-                        peer.sess = ServerSession::new();
-                        let resp = peer.sess.on_discover(cfg.device_name);
                         peer.ifindex = ifindex;
+                        // Never disturb an active session: only a completed
+                        // AUTH_REQ replaces it, so a forged DISCOVER cannot
+                        // kick a live client.
+                        let resp = peer.sess.on_discover(cfg.device_name, cfg.forward_ports);
                         tx.send_on(ifindex, &mac, cfg.ethertype, &resp)?;
                         println!("discover from {} '{}'", fmt_mac(&mac), name);
                     }
@@ -109,19 +219,32 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             println!("auth attempt from unknown peer {}, ignored", fmt_mac(&mac));
                             continue;
                         };
+                        let guard = guards.entry(mac).or_default();
+                        if guard.blocked() {
+                            println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
+                            continue;
+                        }
+                        if !rate_allow(&mut rate, &mac) {
+                            println!("auth attempt from {} rate-limited", fmt_mac(&mac));
+                            continue;
+                        }
                         let ifindex = peer.ifindex;
                         let Ok(req) = frame::decode_auth_req(&l.payload) else {
                             println!("malformed AUTH_REQ from {}", fmt_mac(&mac));
                             continue;
                         };
+                        let mut drop_peer = false;
                         match peer.sess.verify_auth(&req, cfg.psk.as_bytes()) {
-                            VerifyResult::Accepted(sid) => {
+                            VerifyResult::Accepted { sid, keys, server_proof } => {
+                                guards.entry(mac).or_default().record_success();
+                                teardown_peer(peer);
                                 let mut stack = IpStack::new(SERVER_ADDR);
                                 let listener = stack.add_listener(INTERNAL_PORT);
                                 peer.stack = Some(stack);
                                 peer.listener = Some(listener);
+                                peer.crypto = Some(SessionCrypto::new(keys, Dir::S2C));
                                 peer.last_seen = Instant::now();
-                                tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_auth_ack(sid))?;
+                                tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_auth_ack(sid, &server_proof))?;
                                 println!(
                                     "client {} '{}' authenticated, session {sid}",
                                     fmt_mac(&mac),
@@ -129,28 +252,69 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 );
                             }
                             VerifyResult::Rejected(reason) => {
+                                guards.entry(mac).or_default().record_failure();
                                 tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_auth_nack(&reason))?;
-                                peers.remove(&mac);
+                                drop_peer = peer.sess.session_id().is_none();
                                 println!("auth rejected for {}: {reason}", fmt_mac(&mac));
+                            }
+                        }
+                        if drop_peer {
+                            if let Some(mut peer) = peers.remove(&mac) {
+                                teardown_peer(&mut peer);
                             }
                         }
                     }
                     TYPE_KEEPALIVE => {
-                        if let Some(peer) = peers.get_mut(&mac) {
-                            if let Some(sid) = peer.sess.session_id() {
-                                tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_keepalive(sid))?;
-                            }
-                            peer.last_seen = Instant::now();
+                        let Some(peer) = peers.get_mut(&mac) else {
+                            continue;
+                        };
+                        if peer.sess.session_id() != Some(l.session_id) {
+                            continue;
                         }
+                        let Some(crypto) = peer.crypto.as_mut() else {
+                            continue;
+                        };
+                        if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_none() {
+                            continue;
+                        }
+                        peer.last_seen = Instant::now();
+                        let echo = crypto.seal(TYPE_KEEPALIVE, l.session_id, &[]);
+                        tx.send_on(peer.ifindex, &mac, cfg.ethertype, &echo)?;
                     }
                     TYPE_DATA => {
+                        let Some(peer) = peers.get_mut(&mac) else {
+                            continue;
+                        };
+                        if peer.sess.session_id() != Some(l.session_id) {
+                            continue;
+                        }
+                        let Some(crypto) = peer.crypto.as_mut() else {
+                            continue;
+                        };
+                        let Some(plain) = crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload) else {
+                            continue;
+                        };
+                        peer.last_seen = Instant::now();
+                        if let Some(stack) = peer.stack.as_mut() {
+                            stack.push_packet(&plain);
+                            pump_peer(peer, &mac, &mut tx, cfg.ethertype, l.session_id)?;
+                        }
+                    }
+                    TYPE_TEARDOWN => {
+                        let mut drop_peer = false;
                         if let Some(peer) = peers.get_mut(&mac) {
                             if peer.sess.session_id() == Some(l.session_id) {
-                                peer.last_seen = Instant::now();
-                                if let Some(stack) = peer.stack.as_mut() {
-                                    stack.push_packet(l.payload);
-                                    pump_peer(peer, &mac, &mut tx, cfg.ethertype, l.session_id)?;
+                                if let Some(crypto) = peer.crypto.as_mut() {
+                                    if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
+                                        drop_peer = true;
+                                    }
                                 }
+                            }
+                        }
+                        if drop_peer {
+                            println!("client {} sent teardown, dropping session", fmt_mac(&mac));
+                            if let Some(mut peer) = peers.remove(&mac) {
+                                teardown_peer(&mut peer);
                             }
                         }
                     }
@@ -187,20 +351,55 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
             }
             _ = sweep_timer.tick() => {
                 let now = Instant::now();
+                rate.retain(|_, b| now.duration_since(b.last_seen) <= STALE_AFTER);
+                guards.retain(|_, g| now.duration_since(g.last_seen) <= STALE_AFTER);
                 let stale: Vec<[u8; 6]> = peers
                     .iter()
                     .filter(|(_, p)| now.duration_since(p.last_seen) > STALE_AFTER)
                     .map(|(m, _)| *m)
                     .collect();
                 for mac in stale {
+                    if let Some(peer) = peers.get_mut(&mac) {
+                        if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
+                            let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
+                            let _ = tx.send_on(peer.ifindex, &mac, cfg.ethertype, &raw);
+                        }
+                    }
                     if let Some(mut peer) = peers.remove(&mac) {
                         teardown_peer(&mut peer);
                         println!("  peer {} timed out, dropped", fmt_mac(&mac));
                     }
                 }
             }
+            _ = &mut shutdown_rx => break,
         }
     }
+    sig.abort();
+
+    // Graceful shutdown: tell every live peer before we disappear so the
+    // clients can reconnect immediately instead of timing out on keepalives.
+    for (mac, peer) in peers.iter_mut() {
+        if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
+            let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
+            let _ = tx.send_on(peer.ifindex, mac, cfg.ethertype, &raw);
+        }
+    }
+    println!("server shutdown, {} peer(s) notified", peers.len());
+    Ok(())
+}
+
+/// Resolves once SIGINT or SIGTERM arrives.
+async fn wait_for_shutdown() {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("installing SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
+    }
+}
+
+fn rate_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
+    map.entry(*mac).or_default().allow()
 }
 
 fn new_peer(
@@ -212,6 +411,7 @@ fn new_peer(
         ifindex: 0,
         stack: None,
         listener: None,
+        crypto: None,
         conns: HashMap::new(),
         pending_tx: HashMap::new(),
         pending_rx: HashMap::new(),
@@ -221,19 +421,20 @@ fn new_peer(
     }
 }
 
-/// Drop the peer's stack and connections (kernel sockets close via the
-/// channels; their tasks exit).
+/// Drop the peer's stack, session crypto and connections (kernel sockets
+/// close via the channels; their tasks exit).
 fn teardown_peer(peer: &mut Peer) {
     peer.stack = None;
     peer.listener = None;
+    peer.crypto = None;
     peer.conns.clear();
     peer.pending_tx.clear();
     peer.pending_rx.clear();
 }
 
 /// Pump one peer's stack: accept new internal connections, send outbound IP
-/// packets back to the peer, and move bytes between the stack and the dialed
-/// kernel sockets.
+/// packets back to the peer (sealed), and move bytes between the stack and
+/// the dialed kernel sockets.
 fn pump_peer(
     peer: &mut Peer,
     peer_mac: &[u8; 6],
@@ -242,6 +443,9 @@ fn pump_peer(
     sid: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(stack) = peer.stack.as_mut() else {
+        return Ok(());
+    };
+    let Some(crypto) = peer.crypto.as_mut() else {
         return Ok(());
     };
 
@@ -261,7 +465,8 @@ fn pump_peer(
     }
 
     for pkt in stack.poll() {
-        tx.send_on(peer.ifindex, peer_mac, ethertype, &frame::encode_data(sid, &pkt))?;
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        tx.send_on(peer.ifindex, peer_mac, ethertype, &raw)?;
     }
 
     let handles: Vec<SocketHandle> = peer.conns.keys().copied().collect();

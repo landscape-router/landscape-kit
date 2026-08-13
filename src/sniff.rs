@@ -79,12 +79,18 @@ pub fn parse_and_print(f: &Frame, dev: Option<&str>) {
     );
     match protocol::frame::decode(&f.payload) {
         Ok(l) => println!(
-            "{prefix}    LNDP v{} type={}(0x{:02x}) session=0x{:08x} payload={}B",
+            "{prefix}    LNDP v{} type={}(0x{:02x}) session=0x{:08x} seq={} payload={}B{}",
             protocol::VERSION,
             protocol::frame::type_name(l.msg_type),
             l.msg_type,
             l.session_id,
-            l.payload.len()
+            l.seq,
+            l.payload.len(),
+            if matches!(l.msg_type, protocol::TYPE_DATA | protocol::TYPE_KEEPALIVE | protocol::TYPE_TEARDOWN) {
+                " (encrypted)"
+            } else {
+                ""
+            }
         ),
         Err(e) => println!("{prefix}    not an LNDP frame: {e}"),
     }
