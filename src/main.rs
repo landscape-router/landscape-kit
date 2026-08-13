@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use clap::{Args, Parser, Subcommand};
 #[cfg(target_os = "linux")]
-use landscape_proto::cli::{parse_devs, parse_ethertype, parse_mac};
+use landscape_proto::cli::{parse_devs, parse_ethertype, parse_mac, parse_port_list};
 #[cfg(target_os = "linux")]
 use landscape_proto::transport::Link;
 #[cfg(target_os = "linux")]
@@ -62,6 +62,14 @@ struct ServeArgs {
     /// The ethertype value configured in Landscape (must be 0x88B5-0x88B7)
     #[arg(long, value_name = "ETHERTYPE", value_parser = parse_ethertype, default_value = "0x88b6")]
     ethertype: u16,
+
+    /// Local ports the server may be asked to forward to 127.0.0.1
+    #[arg(long, value_name = "P1,P2...", default_value = "22,6443")]
+    forward_ports: String,
+
+    /// Discovery token: only respond to DISCOVER frames carrying it
+    #[arg(long, value_name = "TOKEN")]
+    token: Option<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -73,6 +81,8 @@ impl Default for ServeArgs {
             mac: None,
             dev: "any".to_string(),
             ethertype: 0x88B6,
+            forward_ports: "22,6443".to_string(),
+            token: None,
         }
     }
 }
@@ -117,12 +127,15 @@ async fn run_serve(args: &ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         )
     })?;
     let devs = parse_devs(&args.dev)?;
+    let forward_ports = parse_port_list(&args.forward_ports)?;
     let cfg = ServerConfig {
         devs: &devs,
         ethertype: args.ethertype,
         mac: args.mac,
         psk,
         device_name: &args.device_name,
+        forward_ports: &forward_ports,
+        discover_token: args.token.as_deref().unwrap_or(""),
     };
     server::run(&cfg).await
 }
