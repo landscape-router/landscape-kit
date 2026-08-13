@@ -82,7 +82,7 @@ impl Link {
         }
         let local_mac = match mac_override {
             Some(m) => Some(m),
-            None => mac_address::get_mac_address()?.ok(),
+            None => mac_address::get_mac_address()?.map(|m| m.bytes()),
         };
         let caps = Arc::new(Mutex::new(caps));
         let (frame_tx, frame_rx) = mpsc::channel(1024);
@@ -129,8 +129,8 @@ impl Link {
         ethertype: u16,
         payload: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let caps = self.caps.lock().unwrap();
-        let cap = caps.get(ifindex as usize).ok_or_else(|| {
+        let mut caps = self.caps.lock().unwrap();
+        let cap = caps.get_mut(ifindex as usize).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("unknown interface index {ifindex}"),

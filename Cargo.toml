@@ -13,6 +13,6 @@ tokio = { version = "1", features = ["sync"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.189"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 mac_address = "1.1.8"
 pcap = "2.4.0"
