@@ -24,11 +24,26 @@ const STALE_AFTER: Duration = Duration::from_secs(45);
 /// brute force and kick attempts). A full token bucket refills at this rate.
 const RATE_PER_SEC: f64 = 10.0;
 
+/// Server-wide cap on DISCOVER/AUTH_REQ processing per second. The per-MAC
+/// limiter can be bypassed by forging a fresh MAC per frame, so this global
+/// bucket bounds CPU and peer-table growth regardless of spoofing.
+const GLOBAL_RATE_PER_SEC: f64 = 200.0;
+
+/// Hard cap on the peer table. DISCOVER frames from unknown MACs are
+/// dropped once it is full (spoofed-MAC floods must not grow memory
+/// without bound).
+const MAX_PEERS: usize = 4096;
+
 /// AUTH_REQ failures before the source MAC is locked out, and the lockout
-/// window (brute-force protection).
+/// window (brute-force protection). Failures only count against MACs
+/// WITHOUT an active session, and the server-wide budget bounds how many
+/// MACs a spoofing attacker can lock out at all.
 const MAX_AUTH_FAILS: u32 = 5;
 const AUTH_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_LOCKOUT: Duration = Duration::from_secs(60);
+/// Max auth failures the server counts within AUTH_WINDOW before new
+/// failures stop being recorded for lockout purposes.
+const AUTH_BUDGET: u32 = 25;
 
 pub struct ServerConfig<'a> {
     pub devs: &'a [String],
@@ -66,37 +81,43 @@ struct ServerConn {
     from_tx: mpsc::Sender<Vec<u8>>,
 }
 
-/// Per-MAC token bucket for control frames.
+/// Token bucket for control frames.
 struct RateBucket {
     tokens: f64,
+    rate: f64,
     last_refill: Instant,
     last_seen: Instant,
 }
 
-impl Default for RateBucket {
-    fn default() -> Self {
+impl RateBucket {
+    fn new(rate: f64) -> Self {
         let now = Instant::now();
         Self {
-            tokens: RATE_PER_SEC,
+            tokens: rate,
+            rate,
             last_refill: now,
             last_seen: now,
         }
     }
-}
 
-impl RateBucket {
     fn allow(&mut self) -> bool {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
         self.last_refill = now;
         self.last_seen = now;
-        self.tokens = (self.tokens + elapsed * RATE_PER_SEC).min(RATE_PER_SEC);
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.rate);
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             true
         } else {
             false
         }
+    }
+}
+
+impl Default for RateBucket {
+    fn default() -> Self {
+        Self::new(RATE_PER_SEC)
     }
 }
 
@@ -154,10 +175,18 @@ impl AuthGuard {
 }
 
 pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    if cfg.psk.len() < 12 {
+        eprintln!(
+            "warning: psk is only {} chars — challenge-response keys are derived with a single sha256 pass, so a short psk can be brute-forced offline; use a long random secret",
+            cfg.psk.len()
+        );
+    }
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
     let mut peers: HashMap<[u8; 6], Peer> = HashMap::new();
     let mut rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
     let mut guards: HashMap<[u8; 6], AuthGuard> = HashMap::new();
+    let mut global_rate = RateBucket::new(GLOBAL_RATE_PER_SEC);
+    let mut auth_fail_ts: VecDeque<Instant> = VecDeque::new();
     let allowed: Arc<[u16]> = Arc::from(cfg.forward_ports);
     let (to_tx, mut to_rx) = mpsc::channel::<(([u8; 6], SocketHandle), StackMsg)>(512);
     println!(
@@ -189,6 +218,12 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                 let mac = f.src;
                 match l.msg_type {
                     TYPE_DISCOVER => {
+                        // Global bucket first: a per-MAC limiter is useless
+                        // against per-frame MAC spoofing.
+                        if !global_rate.allow() {
+                            println!("discover from {} dropped (global rate)", fmt_mac(&mac));
+                            continue;
+                        }
                         if !rate_allow(&mut rate, &mac) {
                             println!("discover from {} rate-limited", fmt_mac(&mac));
                             continue;
@@ -205,6 +240,10 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             );
                             continue;
                         }
+                        if !peers.contains_key(&mac) && peers.len() >= MAX_PEERS {
+                            println!("discover from {} dropped (peer table full)", fmt_mac(&mac));
+                            continue;
+                        }
                         let peer = peers.entry(mac).or_insert_with(|| new_peer(to_tx.clone(), allowed.clone()));
                         peer.ifindex = ifindex;
                         // Never disturb an active session: only a completed
@@ -215,12 +254,19 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                         println!("discover from {} '{}'", fmt_mac(&mac), name);
                     }
                     TYPE_AUTH_REQ => {
+                        if !global_rate.allow() {
+                            println!("auth attempt dropped (global rate)");
+                            continue;
+                        }
                         let Some(peer) = peers.get_mut(&mac) else {
                             println!("auth attempt from unknown peer {}, ignored", fmt_mac(&mac));
                             continue;
                         };
                         let guard = guards.entry(mac).or_default();
-                        if guard.blocked() {
+                        // MACs with an active session are never locked out:
+                        // an unauthenticated attacker could otherwise spoof
+                        // the victim's MAC to freeze their re-authentication.
+                        if guard.blocked() && peer.sess.session_id().is_none() {
                             println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
                             continue;
                         }
@@ -252,9 +298,28 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 );
                             }
                             VerifyResult::Rejected(reason) => {
-                                guards.entry(mac).or_default().record_failure();
                                 tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_auth_nack(&reason))?;
-                                drop_peer = peer.sess.session_id().is_none();
+                                let active = peer.sess.session_id().is_some();
+                                if !active {
+                                    // Failures only count against MACs without
+                                    // an active session (a spoofing attacker
+                                    // must not be able to lock out a live
+                                    // client), and the server-wide budget
+                                    // bounds how many victims a flood can
+                                    // lock out.
+                                    let now = Instant::now();
+                                    while auth_fail_ts
+                                        .front()
+                                        .is_some_and(|t| now.duration_since(*t) > AUTH_WINDOW)
+                                    {
+                                        auth_fail_ts.pop_front();
+                                    }
+                                    if (auth_fail_ts.len() as u32) < AUTH_BUDGET {
+                                        guards.entry(mac).or_default().record_failure();
+                                        auth_fail_ts.push_back(now);
+                                    }
+                                }
+                                drop_peer = !active;
                                 println!("auth rejected for {}: {reason}", fmt_mac(&mac));
                             }
                         }
