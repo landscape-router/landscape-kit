@@ -7,7 +7,7 @@
 
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pcap::{Capture, Device};
 use tokio::sync::mpsc;
@@ -76,7 +76,11 @@ impl Link {
                 .timeout(timeout)
                 .immediate_mode(true)
                 .open()?;
-            let mut cap = cap;
+            // Non-blocking captures: `next_packet` never blocks. On Windows a
+            // blocking `pcap_next_ex` in immediate mode can wait forever, and
+            // doing that while holding the capture lock deadlocks the send
+            // path, which needs the same lock.
+            let mut cap = cap.setnonblock()?;
             cap.filter(&format!("ether proto {:#x}", ethertype), true)?;
             caps.push(cap);
         }
@@ -186,31 +190,36 @@ fn spawn_reader(
     ethertype: u16,
     tx: mpsc::Sender<(Frame, i32)>,
 ) {
+    // Non-blocking poll loop (the captures were opened with `setnonblock`).
+    // The lock is held only for the (never-blocking) `next_packet` calls, so
+    // the sender can always acquire it. A short sleep on an empty round
+    // bounds CPU use; `idle` skips the sleep while frames are flowing.
+    const POLL_INTERVAL: Duration = Duration::from_millis(2);
     std::thread::spawn(move || {
         loop {
-            let deadline = Instant::now() + Duration::from_millis(CAPTURE_TIMEOUT_MS as u64);
-            loop {
-                if Instant::now() >= deadline {
-                    break;
-                }
-                let mut caps = caps.lock().unwrap();
-                for (i, cap) in caps.iter_mut().enumerate() {
-                    match cap.next_packet() {
-                        Ok(pkt) => {
-                            if let Some(f) = Frame::from_raw(&pkt.data) {
-                                if f.ethertype == ethertype
-                                    && local_mac.is_none_or(|m| f.src != m)
-                                {
-                                    if tx.blocking_send((f, i as i32)).is_err() {
-                                        return;
-                                    }
+            let mut caps = caps.lock().unwrap();
+            let mut idle = true;
+            for (i, cap) in caps.iter_mut().enumerate() {
+                match cap.next_packet() {
+                    Ok(pkt) => {
+                        idle = false;
+                        if let Some(f) = Frame::from_raw(&pkt.data) {
+                            if f.ethertype == ethertype
+                                && local_mac.is_none_or(|m| f.src != m)
+                            {
+                                if tx.blocking_send((f, i as i32)).is_err() {
+                                    return;
                                 }
                             }
                         }
-                        Err(pcap::Error::TimeoutExpired) => continue,
-                        Err(_) => return,
                     }
+                    Err(pcap::Error::TimeoutExpired) => {}
+                    Err(_) => return,
                 }
+            }
+            drop(caps);
+            if idle {
+                std::thread::sleep(POLL_INTERVAL);
             }
         }
     });
