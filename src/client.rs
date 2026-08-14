@@ -2,9 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use landscape_proto::ipstack::{
-    IpStack, SocketHandle, StackMsg, CLIENT_ADDR, INTERNAL_PORT, SERVER_ADDR,
+    CLIENT_ADDR, INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg,
 };
-use landscape_proto::protocol::crypto::{Dir, SessionCrypto, SessionKeys};
+use landscape_proto::protocol::crypto::{Dir, MasterKey, SessionCrypto, SessionKeys};
 use landscape_proto::protocol::frame;
 use landscape_proto::protocol::session::{
     ClientPhase, ClientSession, HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, MAX_RETRIES,
@@ -12,7 +12,7 @@ use landscape_proto::protocol::session::{
 use landscape_proto::protocol::{
     TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_KEEPALIVE, TYPE_RESP, TYPE_TEARDOWN,
 };
-use landscape_proto::transport::{fmt_mac, Frame, Link};
+use landscape_proto::transport::{Frame, Link, fmt_mac};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -56,11 +56,15 @@ enum SessionEnd {
 pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
     if cfg.psk.len() < 12 {
         eprintln!(
-            "warning: psk is only {} chars — challenge-response keys are derived with a single sha256 pass, so a short psk can be brute-forced offline; use a long random secret",
+            "warning: psk is only {} chars — it is stretched with scrypt at startup, but prefer a long random secret over a passphrase",
             cfg.psk.len()
         );
     }
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
+    // The psk is stretched into a master key once at startup (scrypt); all
+    // derivations below feed on it, so a weak psk costs an offline attacker
+    // ~32 MiB and ~100 ms per guess instead of a single sha256.
+    let master = MasterKey::derive(cfg.psk.as_bytes());
     println!(
         "client '{}' ready on {} (ethertype 0x{:04x})",
         cfg.client_name,
@@ -70,7 +74,7 @@ pub async fn run(cfg: &ClientConfig<'_>) -> Result<(), Box<dyn std::error::Error
 
     loop {
         let mut sess = ClientSession::new();
-        let Some(server_mac) = handshake(&mut tx, &mut sess, cfg).await? else {
+        let Some(server_mac) = handshake(&mut tx, &mut sess, cfg, &master).await? else {
             println!("handshake failed, retrying in {}s", RETRY_BACKOFF.as_secs());
             tokio::time::sleep(RETRY_BACKOFF).await;
             continue;
@@ -124,13 +128,14 @@ async fn handshake(
     tx: &mut Link,
     sess: &mut ClientSession,
     cfg: &ClientConfig<'_>,
+    master: &MasterKey,
 ) -> Result<Option<[u8; 6]>, Box<dyn std::error::Error>> {
     let mut saw_resp = false;
     while sess.retransmit_allowed() {
         sess.bump_retry();
         println!("discover: broadcast (try {}/{MAX_RETRIES})", sess.retries());
         let token = (!cfg.token.is_empty()).then_some(cfg.token);
-        let discover = sess.discover_frame(cfg.client_name, token, cfg.psk.as_bytes());
+        let discover = sess.discover_frame(cfg.client_name, token, master);
         tx.send(&BROADCAST, cfg.ethertype, &discover)?;
 
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
@@ -150,7 +155,7 @@ async fn handshake(
         // Opening the RESP proves the server holds the psk, and the echoed
         // discover_id proves it answers this very attempt: everything else
         // is a rogue or a replay.
-        let Some((resp, auth_req)) = sess.on_resp(&resp_lndp, cfg.user, cfg.psk.as_bytes()) else {
+        let Some((resp, auth_req)) = sess.on_resp(&resp_lndp, cfg.user, master) else {
             println!("  response failed server authentication, rediscovering");
             continue;
         };
@@ -174,13 +179,15 @@ async fn handshake(
         tx.send(&server_mac, cfg.ethertype, &auth_req)?;
 
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
+        // Auth frames must come from the MAC that answered the RESP: a
+        // spoofed lockout NACK from anywhere else is ignored.
         let Some(auth_frame) = recv_until(
             tx,
             cfg.ethertype,
             |f| {
-                frame::decode(&f.payload).is_ok_and(|l| {
-                    l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK
-                })
+                f.src == server_mac
+                    && frame::decode(&f.payload)
+                        .is_ok_and(|l| l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK)
             },
             deadline,
         )
@@ -190,7 +197,7 @@ async fn handshake(
             continue;
         };
         let auth_lndp = frame::decode(&auth_frame.payload)?;
-        sess.on_auth_frame(&auth_lndp, cfg.psk.as_bytes());
+        sess.on_auth_frame(&auth_lndp, master);
         if sess.session_id().is_some() {
             return Ok(Some(server_mac));
         }
@@ -200,7 +207,9 @@ async fn handshake(
         return Ok(None);
     }
     if !saw_resp {
-        eprintln!("  no server response at all — check that psk, token and ethertype match the server");
+        eprintln!(
+            "  no server response at all — check that psk, token and ethertype match the server"
+        );
     }
     Ok(None)
 }
@@ -342,7 +351,11 @@ async fn session_loop(
 
     // Best-effort teardown so the server drops us immediately instead of
     // waiting for the stale timeout.
-    let _ = tx.send(server_mac, cfg.ethertype, &crypto.seal(TYPE_TEARDOWN, sid, &[]));
+    let _ = tx.send(
+        server_mac,
+        cfg.ethertype,
+        &crypto.seal(TYPE_TEARDOWN, sid, &[]),
+    );
     for task in accept_tasks {
         task.abort();
     }
@@ -351,11 +364,7 @@ async fn session_loop(
 
 /// Listener for one `--forward` rule: accept local connections and hand them
 /// to the session loop, which opens the internal connection.
-async fn run_listener(
-    listen_port: u16,
-    dst_port: u16,
-    accept_tx: mpsc::Sender<(TcpStream, u16)>,
-) {
+async fn run_listener(listen_port: u16, dst_port: u16, accept_tx: mpsc::Sender<(TcpStream, u16)>) {
     let listener = match TcpListener::bind(("127.0.0.1", listen_port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -461,7 +470,10 @@ fn pump(
             if n == 0 {
                 break;
             }
-            pending_rx.entry(h).or_default().push_back(buf[..n].to_vec());
+            pending_rx
+                .entry(h)
+                .or_default()
+                .push_back(buf[..n].to_vec());
         }
         if let Some(q) = pending_rx.get_mut(&h) {
             while let Some(b) = q.front() {
