@@ -21,6 +21,40 @@ pub const BROADCAST: [u8; 6] = [0xff; 6];
 const RETRY_BACKOFF: Duration = Duration::from_secs(3);
 const MAX_MISSED_KEEPALIVES: u32 = 3;
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// Max failed session-frame opens per second (bad tag or replay). Bounds
+/// the decrypt work a spoofed-frame flood can force on the session loop; a
+/// legitimate session never fails opens.
+const MAX_FAILED_OPENS_PER_SEC: u32 = 200;
+
+/// Windowed counter that drops session frames once the failed-open budget
+/// for the current second is spent.
+struct FailBudget {
+    window_start: std::time::Instant,
+    fails: u32,
+}
+
+impl Default for FailBudget {
+    fn default() -> Self {
+        Self {
+            window_start: std::time::Instant::now(),
+            fails: 0,
+        }
+    }
+}
+
+impl FailBudget {
+    /// Spend one failed-open token; false once the budget for this second
+    /// is drained (until the window rolls over).
+    fn allow(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if now.duration_since(self.window_start) >= Duration::from_secs(1) {
+            self.window_start = now;
+            self.fails = 0;
+        }
+        self.fails += 1;
+        self.fails <= MAX_FAILED_OPENS_PER_SEC
+    }
+}
 
 /// One `--forward LOCAL:DST` rule.
 pub type Forward = (u16, u16);
@@ -280,6 +314,7 @@ async fn session_loop(
     let mut last_keepalive = tokio::time::Instant::now();
     let mut missed = 0u32;
     let mut next_local_port: u16 = 40000;
+    let mut fail_budget = FailBudget::default();
 
     let result = loop {
         tokio::select! {
@@ -294,10 +329,15 @@ async fn session_loop(
                             if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
                                 println!("  teardown from server, closing session");
                                 break SessionEnd::PeerClosed;
+                            } else if !fail_budget.allow() {
+                                continue;
                             }
                         }
                         TYPE_KEEPALIVE | TYPE_DATA => {
                             let Some(plain) = crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload) else {
+                                if !fail_budget.allow() {
+                                    continue;
+                                }
                                 continue;
                             };
                             if l.msg_type == TYPE_KEEPALIVE {
