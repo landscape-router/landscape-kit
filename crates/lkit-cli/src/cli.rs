@@ -299,6 +299,9 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 .mut_arg("restore", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_RESTORE_HELP))
                 })
+                .mut_arg("check", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_CHECK_HELP))
+                })
                 .mut_arg("replace_security", |arg| {
                     arg.help(crate::tr_static!(
                         keys::MAIN_SET_MIRROR_REPLACE_SECURITY_HELP

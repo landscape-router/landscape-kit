@@ -28,6 +28,7 @@ pub(crate) const MAIN_SET_MIRROR_MIRROR_HELP: &str = "main.set_mirror_mirror_hel
 pub(crate) const MAIN_SET_MIRROR_LIST_HELP: &str = "main.set_mirror_list_help";
 pub(crate) const MAIN_SET_MIRROR_SHOW_HELP: &str = "main.set_mirror_show_help";
 pub(crate) const MAIN_SET_MIRROR_RESTORE_HELP: &str = "main.set_mirror_restore_help";
+pub(crate) const MAIN_SET_MIRROR_CHECK_HELP: &str = "main.set_mirror_check_help";
 pub(crate) const MAIN_SET_MIRROR_REPLACE_SECURITY_HELP: &str =
     "main.set_mirror_replace_security_help";
 pub(crate) const MAIN_SET_MIRROR_YES_HELP: &str = "main.set_mirror_yes_help";

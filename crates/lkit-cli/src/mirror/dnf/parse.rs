@@ -1,30 +1,7 @@
-use std::fs;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+//! dnf/yum `.repo` 文件的块级解析与重写。
 
-use super::{ApplyReport, Family, Host, MirrorError, MirrorName, backup_dir, paths};
-
-/// 受管 dnf/yum 仓库文件：`/etc/yum.repos.d/*.repo`。
-pub(crate) fn managed_files() -> Result<Vec<PathBuf>, MirrorError> {
-    let entries = fs::read_dir(&paths().dnf_repos_dir).map_err(|_| {
-        MirrorError::Message(crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into())
-    })?;
-    let mut files: Vec<_> = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry.file_type().is_ok_and(|kind| kind.is_file())
-                && entry.file_name().to_string_lossy().ends_with(".repo")
-        })
-        .map(|entry| entry.path())
-        .collect();
-    if files.is_empty() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
-        ));
-    }
-    files.sort();
-    Ok(files)
-}
+use super::super::common;
+use super::super::{Family, MirrorName, mirror_host};
 
 /// 各家族官方主机到镜像路径的映射。`from` 是官方 URL 中主机+路径的起始，
 fn dnf_paths(family: Family) -> &'static [(&'static str, &'static str)] {
@@ -48,7 +25,7 @@ fn dnf_paths(family: Family) -> &'static [(&'static str, &'static str)] {
 ///   实现 TUNA/阿里云/USTC 之间互转；
 /// - `Official` 走 [`official_pairs`]，把所有已识别镜像映射回官方主机。
 fn replacement_pairs(family: Family, mirror: MirrorName) -> Vec<(String, String)> {
-    let Some(target) = super::mirror_host(mirror) else {
+    let Some(target) = mirror_host(mirror) else {
         return official_pairs(family);
     };
     let paths = dnf_paths(family);
@@ -56,7 +33,7 @@ fn replacement_pairs(family: Family, mirror: MirrorName) -> Vec<(String, String)
         .iter()
         .map(|(from, path)| ((*from).to_string(), format!("{target}/{path}")))
         .collect();
-    for other in super::RECOGNIZED_MIRROR_HOSTS {
+    for other in super::super::RECOGNIZED_MIRROR_HOSTS {
         if other == target {
             continue;
         }
@@ -71,7 +48,7 @@ fn replacement_pairs(family: Family, mirror: MirrorName) -> Vec<(String, String)
 
 fn official_pairs(family: Family) -> Vec<(String, String)> {
     let targets = dnf_paths(family);
-    super::RECOGNIZED_MIRROR_HOSTS
+    super::super::RECOGNIZED_MIRROR_HOSTS
         .iter()
         .flat_map(|mirror| {
             targets
@@ -82,21 +59,21 @@ fn official_pairs(family: Family) -> Vec<(String, String)> {
 }
 
 /// 内容是否已处于目标状态：目标镜像（或官方）主机路径已存在。
-fn already_target(content: &str, family: Family, mirror: MirrorName) -> bool {
-    let Some(target) = super::mirror_host(mirror) else {
+pub(crate) fn already_target(content: &str, family: Family, mirror: MirrorName) -> bool {
+    let Some(target) = mirror_host(mirror) else {
         // Official：内容中已有官方主机即视为已处于官方源。
         return dnf_paths(family)
             .iter()
-            .any(|(from, _)| super::apt::contains_host(content, from));
+            .any(|(from, _)| common::contains_host(content, from));
     };
     dnf_paths(family)
         .iter()
-        .any(|(_, path)| super::apt::contains_host(content, &format!("{target}/{path}")))
+        .any(|(_, path)| common::contains_host(content, &format!("{target}/{path}")))
 }
 
 /// 一个仓库块的摘要。`has_baseurl` 决定该块是否可安全转换。
 #[derive(Debug)]
-struct Block {
+pub(crate) struct Block {
     has_baseurl: bool,
 }
 
@@ -207,111 +184,10 @@ fn replace_host(url: &str, pairs: &[(String, String)]) -> String {
     let mut rewritten = url.to_string();
     for (from, to) in pairs {
         if rewritten.contains(from.as_str()) {
-            rewritten = super::apt::replace_host(&rewritten, from, to);
+            rewritten = common::replace_host(&rewritten, from, to);
         }
     }
     rewritten
-}
-
-/// 备份当前全部受管 repo 文件。
-fn backup(host: &Host) -> Result<PathBuf, MirrorError> {
-    let dir = backup_dir(host.family);
-    if dir.exists() {
-        fs::remove_dir_all(&dir)?;
-    }
-    fs::create_dir_all(&dir)?;
-    for file in managed_files()? {
-        // 相对 `restore_root` 保存，恢复时原样写回（生产 root 为 `/`）。
-        let relative = file.strip_prefix(&paths().restore_root).unwrap_or(&file);
-        let target = dir.join(relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(&file, &target)?;
-    }
-    Ok(dir)
-}
-
-/// 把 dnf/yum 仓库切换到指定镜像。失败时从刚创建的备份回滚已修改的文件。
-pub(crate) fn apply(host: &Host, mirror: MirrorName) -> Result<ApplyReport, MirrorError> {
-    let backup_path = backup(host)?;
-    let files = managed_files()?;
-    let mut report = ApplyReport::default();
-    let mut already_matched = false;
-    for file in files {
-        let original = match fs::read_to_string(&file) {
-            Ok(content) => content,
-            Err(error) => {
-                let _ = super::apt::rollback(&backup_path);
-                return Err(error.into());
-            }
-        };
-        let Some(rewritten) = rewrite(&original, host.family, mirror) else {
-            already_matched |= already_target(&original, host.family, mirror);
-            continue;
-        };
-        if let Err(error) = write_atomic(&file, &rewritten.content) {
-            let _ = super::apt::rollback(&backup_path);
-            return Err(error);
-        }
-        report.changed_files += 1;
-        report.skipped_repositories += rewritten.skipped_repositories;
-    }
-    if report.changed_files == 0 {
-        let _ = fs::remove_dir_all(&backup_path);
-        if already_matched {
-            return Ok(report);
-        }
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_OFFICIAL_SOURCE).into(),
-        ));
-    }
-    report.backup_path = Some(backup_path);
-    Ok(report)
-}
-
-/// 原子写入：同目录临时文件 + rename，保留原文件权限位。
-fn write_atomic(path: &Path, content: &str) -> Result<(), MirrorError> {
-    let mode = fs::metadata(path)
-        .map(|metadata| metadata.permissions().mode())
-        .unwrap_or(0o644);
-    let parent = path.parent().ok_or_else(|| {
-        MirrorError::Message(format!("no parent directory for {}", path.display()))
-    })?;
-    let temp = parent.join(format!(".lkit-mirror-{}.tmp", std::process::id()));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true).mode(mode);
-    let mut file = options.open(&temp)?;
-    use std::io::Write;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&temp, path)?;
-    Ok(())
-}
-
-/// 显示受管 repo 文件内容。
-pub(crate) fn show() -> Result<String, MirrorError> {
-    let mut out = String::new();
-    for file in managed_files()? {
-        out.push_str(&format!("# {}\n", file.display()));
-        out.push_str(&fs::read_to_string(&file)?);
-        out.push('\n');
-    }
-    Ok(out)
-}
-
-/// 从备份恢复原 repo 文件，成功后删除备份目录。
-pub(crate) fn restore(host: &Host) -> Result<(), MirrorError> {
-    let dir = backup_dir(host.family);
-    if !dir.exists() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_BACKUP).into(),
-        ));
-    }
-    super::apt::restore_files(&dir, &paths().restore_root)?;
-    fs::remove_dir_all(&dir)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -528,85 +404,23 @@ mod tests {
         );
     }
 
-    #[cfg(all(test, feature = "test-support"))]
-    mod apply_tests {
-        use super::*;
-        use crate::mirror::test_support::TestPathsGuard;
-
-        fn temp_root(tag: &str) -> PathBuf {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let temp = std::env::temp_dir().join(format!(
-                "lkit-mirror-{tag}-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            let _ = fs::remove_dir_all(&temp);
-            temp
-        }
-
-        fn paths_guard(temp: &Path, repos_dir: &Path) -> TestPathsGuard {
-            TestPathsGuard::set(crate::mirror::MirrorPaths {
-                os_release: temp.join("etc/os-release"),
-                backup_root: temp.join("var/lib/lkit/mirror-backup"),
-                apt_sources_list: temp.join("etc/apt/sources.list"),
-                apt_sources_list_d: temp.join("etc/apt/sources.list.d"),
-                dnf_repos_dir: repos_dir.to_path_buf(),
-                pacman_mirrorlist: temp.join("etc/pacman.d/mirrorlist"),
-                restore_root: temp.to_path_buf(),
-                allow_non_root: true,
-            })
-        }
-
-        fn rocky_host() -> Host {
-            Host {
-                family: Family::Rocky,
-                codename: None,
-            }
-        }
-
-        fn repo_file(temp: &Path, content: &str) -> PathBuf {
-            let repo = temp.join("etc/yum.repos.d/rocky.repo");
-            fs::create_dir_all(repo.parent().unwrap()).unwrap();
-            fs::write(&repo, content).unwrap();
-            repo
-        }
-
-        #[test]
-        fn apply_on_same_mirror_is_a_successful_noop() {
-            let temp = temp_root("dnf-mirror-noop");
-            let content = concat!(
-                "[baseos]\n",
-                "baseurl=https://mirrors.tuna.tsinghua.edu.cn/rockylinux/$releasever/BaseOS/$basearch/os/\n",
-            );
-            let repo = repo_file(&temp, content);
-            let _guard = paths_guard(&temp, repo.parent().unwrap());
-            let report = apply(&rocky_host(), MirrorName::Tuna).unwrap();
-            assert_eq!(report.changed_files, 0);
-            assert!(report.backup_path.is_none());
-            assert_eq!(fs::read_to_string(&repo).unwrap(), content);
-            assert!(
-                !temp.join("var/lib/lkit/mirror-backup/rocky").exists(),
-                "a no-op must not keep a backup"
-            );
-            let _ = fs::remove_dir_all(&temp);
-        }
-
-        #[test]
-        fn apply_without_recognized_urls_is_an_error() {
-            let temp = temp_root("dnf-unknown-only");
-            let content = concat!(
-                "[custom]\n",
-                "baseurl=https://repo.internal.example.com/rockylinux/$releasever/BaseOS/$basearch/os/\n",
-            );
-            let repo = repo_file(&temp, content);
-            let _guard = paths_guard(&temp, repo.parent().unwrap());
-            assert!(apply(&rocky_host(), MirrorName::Tuna).is_err());
-            assert_eq!(fs::read_to_string(&repo).unwrap(), content);
-            assert!(!temp.join("var/lib/lkit/mirror-backup/rocky").exists());
-            let _ = fs::remove_dir_all(&temp);
-        }
+    #[test]
+    fn already_target_detects_current_state() {
+        let mirror = concat!(
+            "[baseos]\n",
+            "baseurl=https://mirrors.tuna.tsinghua.edu.cn/rockylinux/$releasever/BaseOS/$basearch/os/\n",
+        );
+        assert!(already_target(mirror, Family::Rocky, MirrorName::Tuna));
+        assert!(!already_target(mirror, Family::Rocky, MirrorName::Official));
+        let official = concat!(
+            "[baseos]\n",
+            "baseurl=https://dl.rockylinux.org/$contentdir/$releasever/BaseOS/$basearch/os/\n",
+        );
+        assert!(already_target(
+            official,
+            Family::Rocky,
+            MirrorName::Official
+        ));
+        assert!(!already_target(official, Family::Rocky, MirrorName::Tuna));
     }
 }

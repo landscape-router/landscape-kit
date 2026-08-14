@@ -1,4 +1,6 @@
 pub(crate) mod apt;
+pub(crate) mod backend;
+pub(crate) mod common;
 pub(crate) mod detect;
 pub(crate) mod dnf;
 pub(crate) mod pacman;
@@ -245,13 +247,7 @@ pub(crate) fn list_mirrors() -> [MirrorName; 4] {
 
 /// 显示当前软件源文件内容。仅支持当前发行版家族对应的源文件。
 pub(crate) fn show_sources(host: &Host) -> Result<String, MirrorError> {
-    match host.family {
-        Family::Debian | Family::Ubuntu => apt::show(),
-        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
-            dnf::show()
-        }
-        Family::Arch => pacman::show(),
-    }
+    backend::backend(host).show()
 }
 
 /// 把软件源切换到指定镜像。修改前备份原文件，备份目录见 [`BACKUP_ROOT`]。
@@ -262,23 +258,22 @@ pub(crate) fn apply(
     mirror: MirrorName,
     replace_security: bool,
 ) -> Result<ApplyReport, MirrorError> {
-    match host.family {
-        Family::Debian | Family::Ubuntu => apt::apply(host, mirror, replace_security),
-        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
-            dnf::apply(host, mirror)
-        }
-        Family::Arch => pacman::apply(mirror),
-    }
+    backend::backend(host).apply(mirror, replace_security)
 }
 
 /// 从 [`BACKUP_ROOT`] 恢复原软件源，成功后删除备份。
 pub(crate) fn restore(host: &Host) -> Result<(), MirrorError> {
+    backend::backend(host).restore()
+}
+
+/// 只读检查当前软件源文件的格式（仅 apt 家族有诊断；其余家族返回空）。
+/// 返回每个含问题的文件与其异常行列表。
+pub(crate) fn check_format(
+    host: &Host,
+) -> Result<Vec<(PathBuf, Vec<apt::parse::ParseIssue>)>, MirrorError> {
     match host.family {
-        Family::Debian | Family::Ubuntu => apt::restore(host),
-        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
-            dnf::restore(host)
-        }
-        Family::Arch => pacman::restore(),
+        Family::Debian | Family::Ubuntu => apt::check_format(),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -288,6 +283,19 @@ pub(crate) struct ApplyReport {
     pub changed_files: usize,
     pub skipped_repositories: usize,
     pub backup_path: Option<PathBuf>,
+    /// 常规 URL 重写之外的兜底路径（仅 apt 家族可能产生）。
+    pub fallback: Option<Fallback>,
+    /// apt：格式检查发现的无法识别行数（仅诊断，这些行已原样保留）。
+    pub unrecognized_lines: usize,
+}
+
+/// apt 换源的兜底方式：源文件中没有任何可识别 URL 时采用。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Fallback {
+    /// 把现有的 `deb cdrom:` 条目转换为所选镜像（保留其 suites/components）。
+    CdromConverted,
+    /// 用检测到的代号合成新源条目并追加。
+    SourceAdded,
 }
 
 /// 备份目录：`<backup_root>/<family-id>/`。

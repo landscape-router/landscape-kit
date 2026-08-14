@@ -87,6 +87,26 @@ impl ConsoleApp {
                         files = report.changed_files
                     )
                     .into();
+                    match report.fallback {
+                        Some(crate::mirror::Fallback::CdromConverted) => {
+                            self.notice = format!(
+                                "{}\n{}",
+                                self.notice,
+                                crate::tr!(crate::keys::SET_MIRROR_CDROM_CONVERTED)
+                            );
+                        }
+                        Some(crate::mirror::Fallback::SourceAdded) => {
+                            self.notice = format!(
+                                "{}\n{}",
+                                self.notice,
+                                crate::tr!(
+                                    crate::keys::SET_MIRROR_SOURCE_ADDED,
+                                    family = host.family.label()
+                                )
+                            );
+                        }
+                        None => {}
+                    }
                     if report.skipped_repositories > 0 {
                         self.notice = format!(
                             "{}\n{}",
@@ -94,6 +114,16 @@ impl ConsoleApp {
                             crate::tr!(
                                 crate::keys::SET_MIRROR_SKIPPED,
                                 count = report.skipped_repositories
+                            )
+                        );
+                    }
+                    if report.unrecognized_lines > 0 {
+                        self.notice = format!(
+                            "{}\n{}",
+                            self.notice,
+                            crate::tr!(
+                                crate::keys::SET_MIRROR_UNRECOGNIZED_LINES,
+                                count = report.unrecognized_lines
                             )
                         );
                     }

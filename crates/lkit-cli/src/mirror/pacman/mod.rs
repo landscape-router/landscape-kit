@@ -1,8 +1,12 @@
 use std::fs;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use super::backend::SourcesBackend;
+use super::common;
 use super::{ApplyReport, Family, MirrorError, MirrorName, backup_dir, paths};
+
+/// Arch Linux（pacman）软件源后端。
+pub(crate) struct PacmanBackend;
 
 fn mirror_host(mirror: MirrorName) -> &'static str {
     match mirror {
@@ -10,6 +14,24 @@ fn mirror_host(mirror: MirrorName) -> &'static str {
         MirrorName::Aliyun => "mirrors.aliyun.com",
         MirrorName::Ustc => "mirrors.ustc.edu.cn",
         MirrorName::Official => "geo.mirror.pkgbuild.com",
+    }
+}
+
+impl SourcesBackend for PacmanBackend {
+    fn show(&self) -> Result<String, MirrorError> {
+        show()
+    }
+
+    fn apply(
+        &self,
+        mirror: MirrorName,
+        _replace_security: bool,
+    ) -> Result<ApplyReport, MirrorError> {
+        apply(mirror)
+    }
+
+    fn restore(&self) -> Result<(), MirrorError> {
+        restore()
     }
 }
 
@@ -34,26 +56,30 @@ fn backup() -> Result<PathBuf, MirrorError> {
 }
 
 /// 把 pacman mirrorlist 切换到指定镜像。写入失败时从备份回滚。
-pub(crate) fn apply(mirror: MirrorName) -> Result<ApplyReport, MirrorError> {
+fn apply(mirror: MirrorName) -> Result<ApplyReport, MirrorError> {
     if !paths().pacman_mirrorlist.is_file() {
         return Err(MirrorError::Message(
             crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
         ));
     }
     let backup_path = backup()?;
-    if let Err(error) = write_atomic(&paths().pacman_mirrorlist, &mirrorlist_content(mirror)) {
-        let _ = super::apt::rollback(&backup_path);
+    if let Err(error) =
+        common::write_atomic(&paths().pacman_mirrorlist, &mirrorlist_content(mirror))
+    {
+        let _ = common::rollback(&backup_path);
         return Err(error);
     }
     Ok(ApplyReport {
         changed_files: 1,
         skipped_repositories: 0,
         backup_path: Some(backup_path),
+        fallback: None,
+        unrecognized_lines: 0,
     })
 }
 
 /// 显示当前 mirrorlist 内容。
-pub(crate) fn show() -> Result<String, MirrorError> {
+fn show() -> Result<String, MirrorError> {
     if !paths().pacman_mirrorlist.is_file() {
         return Err(MirrorError::Message(
             crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
@@ -67,35 +93,15 @@ pub(crate) fn show() -> Result<String, MirrorError> {
 }
 
 /// 从备份恢复原 mirrorlist，成功后删除备份目录。
-pub(crate) fn restore() -> Result<(), MirrorError> {
+fn restore() -> Result<(), MirrorError> {
     let dir = backup_dir(Family::Arch);
     if !dir.exists() {
         return Err(MirrorError::Message(
             crate::tr!(crate::keys::mirror::MIRROR_NO_BACKUP).into(),
         ));
     }
-    super::apt::restore_files(&dir, &paths().restore_root)?;
+    common::restore_files(&dir, &paths().restore_root)?;
     fs::remove_dir_all(&dir)?;
-    Ok(())
-}
-
-/// 原子写入：同目录临时文件 + rename，保留原文件权限位。
-fn write_atomic(path: &Path, content: &str) -> Result<(), MirrorError> {
-    let mode = fs::metadata(path)
-        .map(|metadata| metadata.permissions().mode())
-        .unwrap_or(0o644);
-    let parent = path.parent().ok_or_else(|| {
-        MirrorError::Message(format!("no parent directory for {}", path.display()))
-    })?;
-    let temp = parent.join(format!(".lkit-mirror-{}.tmp", std::process::id()));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true).mode(mode);
-    let mut file = options.open(&temp)?;
-    use std::io::Write;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&temp, path)?;
     Ok(())
 }
 

@@ -30,5 +30,17 @@ pub(crate) const SET_MIRROR_RESTORED: &str = "set_mirror.restored";
 pub(crate) const SET_MIRROR_BACKUP_AT: &str = "set_mirror.backup_at";
 pub(crate) const SET_MIRROR_SKIPPED: &str = "set_mirror.skipped";
 pub(crate) const SET_MIRROR_CANCELLED: &str = "set_mirror.cancelled";
+pub(crate) const SET_MIRROR_CDROM_CONVERTED: &str = "set_mirror.cdrom_converted";
+pub(crate) const SET_MIRROR_SOURCE_ADDED: &str = "set_mirror.source_added";
+pub(crate) const SET_MIRROR_UNRECOGNIZED_LINES: &str = "set_mirror.unrecognized_lines";
+pub(crate) const SET_MIRROR_CHECK_CLEAN: &str = "set_mirror.check_clean";
+pub(crate) const SET_MIRROR_CHECK_NOT_APT: &str = "set_mirror.check_not_apt";
+pub(crate) const SET_MIRROR_CHECK_ISSUE: &str = "set_mirror.check_issue";
+pub(crate) const SET_MIRROR_CHECK_SUMMARY: &str = "set_mirror.check_summary";
+pub(crate) const SET_MIRROR_ISSUE_NOT_A_DEB_LINE: &str = "set_mirror.issue_not_a_deb_line";
+pub(crate) const SET_MIRROR_ISSUE_MISSING_URI: &str = "set_mirror.issue_missing_uri";
+pub(crate) const SET_MIRROR_ISSUE_NOT_A_FIELD: &str = "set_mirror.issue_not_a_field";
+pub(crate) const SET_MIRROR_ISSUE_STANZA_WITHOUT_URIS: &str =
+    "set_mirror.issue_stanza_without_uris";
 pub(crate) const SET_MIRROR_LIST_HEADER: &str = "set_mirror.list_header";
 pub(crate) const SET_MIRROR_SHOW_HEADER: &str = "set_mirror.show_header";

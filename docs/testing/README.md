@@ -9,6 +9,7 @@ systemd 只承担协议与进程托管的薄集成验证。
 | lkit 安装器 | `scripts/test-install-lkit.sh` | 普通用户、命令替身 | 提交前、正式 tag | 架构选择、校验、原子替换、参数透传 |
 | RustFS 发布集成 | `scripts/test-publish-http-repository.sh` | Docker | `dev`、`main`、手动 | S3 发布、manifest、stable pointer、失败原子性 |
 | Docker 功能 E2E | `scripts/test-docker-lifecycle.sh` | 普通 Docker 容器、fake systemctl | `dev`、`main`、手动 | S1-S4、S6-S10 安装、切换、备份、恢复、回滚、迁移、reconcile 和卸载 |
+| Docker 换源 E2E | `scripts/test-docker-mirrors.sh` | Debian/Ubuntu/Fedora/Arch 官方镜像容器 | 相关 PR、`dev`、`main`、手动 | `set-mirror` 切换、备份、恢复与 CD 源兜底 |
 | systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、systemd worker、前端断连 |
 | QEMU 网络接管 | `scripts/test-qemu-network-takeover.sh` | GitHub-hosted x86_64 KVM、双 virtio 网卡 | 相关 PR、main、每周、手动 | 真实宿主网络服务、br_lan SSH 确认、未确认重启回滚 |
 

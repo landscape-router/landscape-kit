@@ -4,6 +4,7 @@ use clap::Args;
 
 use crate::interaction::interactive::Tty;
 use crate::interaction::plan;
+use crate::mirror::apt::parse::ParseIssueKind;
 use crate::mirror::{self, Family, Host, MirrorError, MirrorName};
 
 #[derive(Debug, Args)]
@@ -12,14 +13,17 @@ pub struct SetMirror {
     #[arg(value_enum, value_name = "MIRROR")]
     pub mirror: Option<MirrorName>,
     /// List available mirrors for this host
-    #[arg(long, conflicts_with_all = ["mirror", "show", "restore"])]
+    #[arg(long, conflicts_with_all = ["mirror", "show", "restore", "check"])]
     pub list: bool,
     /// Show the current package sources
-    #[arg(long, conflicts_with_all = ["mirror", "list", "restore"])]
+    #[arg(long, conflicts_with_all = ["mirror", "list", "restore", "check"])]
     pub show: bool,
     /// Restore the backed-up original package sources
-    #[arg(long, conflicts_with_all = ["mirror", "list", "show"])]
+    #[arg(long, conflicts_with_all = ["mirror", "list", "show", "check"])]
     pub restore: bool,
+    /// Check the source file format (read-only; apt only)
+    #[arg(long, conflicts_with_all = ["mirror", "list", "show", "restore"])]
+    pub check: bool,
     /// Also replace the Debian security repository (kept official by default)
     #[arg(long)]
     pub replace_security: bool,
@@ -36,6 +40,9 @@ pub fn run(args: &SetMirror) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if args.check {
+        return run_check(&host);
+    }
     if args.list {
         return list_mirrors(&host);
     }
@@ -129,6 +136,33 @@ fn run_apply(host: &Host, mirror: MirrorName, yes: bool, replace_security: bool)
                     files = report.changed_files
                 )
             );
+            match report.fallback {
+                Some(crate::mirror::Fallback::CdromConverted) => {
+                    println!(
+                        "set-mirror: {}",
+                        crate::tr!(crate::keys::SET_MIRROR_CDROM_CONVERTED)
+                    );
+                }
+                Some(crate::mirror::Fallback::SourceAdded) => {
+                    println!(
+                        "set-mirror: {}",
+                        crate::tr!(
+                            crate::keys::SET_MIRROR_SOURCE_ADDED,
+                            family = host.family.label()
+                        )
+                    );
+                }
+                None => {}
+            }
+            if report.unrecognized_lines > 0 {
+                println!(
+                    "set-mirror: {}",
+                    crate::tr!(
+                        crate::keys::SET_MIRROR_UNRECOGNIZED_LINES,
+                        count = report.unrecognized_lines
+                    )
+                );
+            }
             if let Some(path) = &report.backup_path {
                 println!(
                     "set-mirror: {}",
@@ -183,6 +217,66 @@ fn run_restore(host: &Host, yes: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),
+    }
+}
+
+/// 只读格式检查：逐文件列出无法识别的行，存在问题时返回退出码 `1`。
+fn run_check(host: &Host) -> ExitCode {
+    if !matches!(host.family, Family::Debian | Family::Ubuntu) {
+        println!(
+            "set-mirror: {}",
+            crate::tr!(crate::keys::SET_MIRROR_CHECK_NOT_APT)
+        );
+        return ExitCode::SUCCESS;
+    }
+    match mirror::check_format(host) {
+        Ok(report) if report.is_empty() => {
+            println!(
+                "set-mirror: {}",
+                crate::tr!(crate::keys::SET_MIRROR_CHECK_CLEAN)
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(report) => {
+            let mut count = 0usize;
+            for (path, issues) in &report {
+                for issue in issues {
+                    println!(
+                        "set-mirror: {}: {}",
+                        path.display(),
+                        crate::tr!(
+                            crate::keys::SET_MIRROR_CHECK_ISSUE,
+                            line = issue.line,
+                            detail = issue_label(issue.kind)
+                        )
+                    );
+                    count += 1;
+                }
+            }
+            eprintln!(
+                "set-mirror: {}",
+                crate::tr!(
+                    crate::keys::SET_MIRROR_CHECK_SUMMARY,
+                    count = count,
+                    files = report.len()
+                )
+            );
+            ExitCode::from(1)
+        }
+        Err(error) => fail(error),
+    }
+}
+
+fn issue_label(kind: ParseIssueKind) -> String {
+    match kind {
+        ParseIssueKind::NotADebLine => {
+            crate::tr!(crate::keys::SET_MIRROR_ISSUE_NOT_A_DEB_LINE)
+        }
+        ParseIssueKind::MissingUri => crate::tr!(crate::keys::SET_MIRROR_ISSUE_MISSING_URI),
+        ParseIssueKind::NotAField => crate::tr!(crate::keys::SET_MIRROR_ISSUE_NOT_A_FIELD),
+        ParseIssueKind::StanzaWithoutUris => {
+            crate::tr!(crate::keys::SET_MIRROR_ISSUE_STANZA_WITHOUT_URIS)
+        }
     }
 }
 
