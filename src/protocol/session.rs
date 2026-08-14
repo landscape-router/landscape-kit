@@ -202,6 +202,7 @@ impl Default for ClientSession {
     }
 }
 
+#[derive(Debug)]
 pub enum VerifyResult {
     Accepted {
         sid: u32,
@@ -211,7 +212,19 @@ pub enum VerifyResult {
         hkey: HandshakeKeys,
         user: String,
     },
-    Rejected(String),
+    /// A tag-valid AUTH_REQ whose proof did not match: a genuine (failed)
+    /// auth attempt, so it counts toward the per-MAC lockout. Carries the
+    /// handshake keys so the caller can seal the AUTH_NACK (the sender
+    /// necessarily holds them too).
+    Rejected {
+        reason: String,
+        hkey: HandshakeKeys,
+    },
+    /// A frame that failed to even open (wrong tag) or was malformed: not
+    /// an auth attempt at all. It does not count toward lockout and the
+    /// pending nonce is preserved, so a MAC-spoofed garbage frame can
+    /// neither interrupt a real handshake nor lock out a connecting client.
+    Unauthentic(String),
 }
 
 pub enum ServerPhase {
@@ -278,16 +291,15 @@ impl ServerSession {
         match self.pending {
             Some(server_nonce) => {
                 let hkey = HandshakeKeys::derive(master, server_nonce);
-                let plain = match hkey.open_frame(Dir::C2S, HS_AUTH_REQ, frame) {
-                    Some(p) => p,
-                    None => {
-                        self.pending = None;
-                        return VerifyResult::Rejected("bad handshake frame".into());
-                    }
+                // A frame that cannot be opened is not an auth attempt at
+                // all: keep the pending nonce, so a spoofed garbage frame
+                // can neither interrupt a real handshake nor lock out a
+                // connecting client.
+                let Some(plain) = hkey.open_frame(Dir::C2S, HS_AUTH_REQ, frame) else {
+                    return VerifyResult::Unauthentic("bad handshake frame".into());
                 };
                 let Ok(req) = frame::decode_auth_req_payload(&plain) else {
-                    self.pending = None;
-                    return VerifyResult::Rejected("bad handshake frame".into());
+                    return VerifyResult::Unauthentic("malformed auth request".into());
                 };
                 let expect = auth_proof_c2s(master, server_nonce, req.nonce);
                 if ct_eq(&req.proof, &expect) {
@@ -306,10 +318,13 @@ impl ServerSession {
                     }
                 } else {
                     self.pending = None;
-                    VerifyResult::Rejected("authentication failed".into())
+                    VerifyResult::Rejected {
+                        reason: "authentication failed".into(),
+                        hkey,
+                    }
                 }
             }
-            None => VerifyResult::Rejected("no pending discovery".into()),
+            None => VerifyResult::Unauthentic("no pending discovery".into()),
         }
     }
 
@@ -544,28 +559,77 @@ mod tests {
 
     #[test]
     fn server_rejects_garbage_and_wrong_proof() {
-        // Garbage AUTH_REQ against a valid pending: rejected.
+        // Garbage AUTH_REQ against a valid pending: unauthentic, and the
+        // pending nonce survives (a spoofed garbage frame must not be able
+        // to interrupt the handshake).
         let mut server = ServerSession::new();
-        server.begin_discover(1, "router", &[], master());
+        let (s_nonce, _) = server_resp(&mut server, 1, master());
         let raw = frame::encode(TYPE_AUTH_REQ, 0, 0, b"not sealed");
         let l = frame::decode(&raw).unwrap();
         assert!(matches!(
             server.verify_auth(&l, master()),
-            VerifyResult::Rejected(_)
+            VerifyResult::Unauthentic(_)
         ));
+        assert_eq!(server.take_server_nonce(), Some(s_nonce));
 
-        // Valid seal, wrong proof: opened, then rejected.
+        // Valid seal, wrong proof: opened, then rejected (counts toward
+        // lockout), carrying the handshake keys to seal the NACK.
         let mut server2 = ServerSession::new();
-        let (s_nonce, _) = server_resp(&mut server2, 1, master());
-        let hkey = HandshakeKeys::derive(master(), s_nonce);
+        let (s_nonce2, _) = server_resp(&mut server2, 1, master());
+        let hkey = HandshakeKeys::derive(master(), s_nonce2);
         let payload = frame::encode_auth_req_payload("admin", 42, &[0u8; 32]);
         let auth_raw2 = hkey.seal_frame(Dir::C2S, TYPE_AUTH_REQ, 0, HS_AUTH_REQ, &payload);
         let l2 = frame::decode(&auth_raw2).unwrap();
-        assert!(matches!(
-            server2.verify_auth(&l2, master()),
-            VerifyResult::Rejected(_)
-        ));
+        match server2.verify_auth(&l2, master()) {
+            VerifyResult::Rejected { reason, hkey } => {
+                assert_eq!(reason, "authentication failed");
+                // The client holds the same handshake keys, so the sealed
+                // NACK opens on its side.
+                let nack = hkey.seal_frame(
+                    Dir::S2C,
+                    TYPE_AUTH_NACK,
+                    0,
+                    HS_AUTH_NACK,
+                    &frame::encode_auth_nack_payload(&reason),
+                );
+                let n = frame::decode(&nack).unwrap();
+                assert_eq!(
+                    hkey.open_frame(Dir::S2C, HS_AUTH_NACK, &n),
+                    Some(frame::encode_auth_nack_payload("authentication failed"))
+                );
+            }
+            r => panic!("expected Rejected, got {r:?}"),
+        }
         assert!(matches!(server2.phase, ServerPhase::Listening));
+        // The nonce is gone: a repeated attempt is unauthentic, not a
+        // lockout-relevant failure.
+        assert_eq!(server2.take_server_nonce(), None);
+    }
+
+    #[test]
+    fn garbage_auth_req_does_not_consume_pending() {
+        // A MAC-spoofed garbage AUTH_REQ must not break the victim's
+        // handshake: the pending nonce survives, so the real AUTH_REQ
+        // (sealed under the same nonce) still verifies afterwards.
+        let mut server = ServerSession::new();
+        let (s_nonce, _) = server_resp(&mut server, 7, master());
+        for i in 0..5 {
+            let garbage = frame::encode(TYPE_AUTH_REQ, 0, i, b"garbage");
+            let g = frame::decode(&garbage).unwrap();
+            assert!(matches!(
+                server.verify_auth(&g, master()),
+                VerifyResult::Unauthentic(_)
+            ));
+        }
+        // The real AUTH_REQ (sealed under the same nonce) still verifies.
+        let auth_raw = sealed_auth_req("admin", master(), s_nonce, 42);
+        let a = frame::decode(&auth_raw).unwrap();
+        assert!(matches!(
+            server.verify_auth(&a, master()),
+            VerifyResult::Accepted { .. }
+        ));
+        // ...and the successful verify consumed the nonce exactly once.
+        assert_eq!(server.take_server_nonce(), None);
     }
 
     #[test]
@@ -585,11 +649,12 @@ mod tests {
         server.begin_discover(2, "router", &[], master());
         assert_eq!(server.session_id(), Some(1));
 
-        // An old AUTH_REQ can no longer be verified (pending nonce replaced).
+        // An old AUTH_REQ under the replaced nonce no longer opens: it is
+        // unauthentic, and the fresh pending nonce survives untouched.
         let stale = frame::decode(&auth_raw).unwrap();
         assert!(matches!(
             server.verify_auth(&stale, master()),
-            VerifyResult::Rejected(_)
+            VerifyResult::Unauthentic(_)
         ));
         assert_eq!(server.session_id(), Some(1));
     }
