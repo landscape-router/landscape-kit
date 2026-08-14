@@ -85,3 +85,17 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 - 说明：控制台把渠道选择与升级确认在 TUI 内完成（见 [UI-12](console.md#ui-12)），分发时
   标记 `--console-confirmed`：命令不再打开 `/dev/tty`，未显式 `--repository` 时按 switch
   规则解析来源，switch 流水线内部的交互确认同样视为已确认；目标解析、比较与执行不变。
+
+## UP-09
+
+**目标版本目录已存在且可信时更新复用已有目录**
+
+- 测试层：Rust workflow、Docker E2E
+- 状态：`已覆盖`
+- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../crates/lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
+- 说明：`releases/<目标版本>` 残留（如上次升级失败自动回滚后）时，升级不再重复下载：
+  已有目录通过可信校验（真实目录非符号链接、后端二进制与 `static/index.html` 齐全、
+  `static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致）后直接复用并跳过下载；
+  不可信或残缺目录仍以 `ReleaseExists` 阻断且不修改。复用规则与首次安装
+  [INS-11](install.md#ins-11) 相同，switch 复用用例见 [SW-11](switch.md#sw-11)。
+- 缺口：控制台 Update 面板分发入口的复用路径未单独做 E2E 断言（面板与命令共享同一 switch 流水线）。

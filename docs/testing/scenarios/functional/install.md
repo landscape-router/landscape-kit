@@ -90,9 +90,10 @@
 
 **可复用的可信 release 不重复下载或覆盖**
 
-- 测试层：Rust workflow
-- 状态：`部分覆盖`
-- 说明：可信目录和冲突规则已有低层测试，缺少完整 CLI 场景；见 [下载与发布目录](../../../repository.md#下载与发布目录)。
+- 测试层：Rust workflow、Docker E2E
+- 状态：`已覆盖`
+- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`release/artifacts.rs`](../../../../crates/lkit-cli/src/release/artifacts.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
+- 说明：`build_release` 在下载前校验已有 `releases/<version>` 目录（真实目录非符号链接、后端二进制与 `static/index.html` 齐全、`static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致），可信则直接复用并跳过下载；不可信或残缺目录阻断且不修改。单元测试覆盖复用、摘要漂移、符号链接与残缺目录阻断，switch 集成测试覆盖回滚残留目录复用后不再请求目标资产，Docker E2E S14 覆盖失败切换回滚后残留目录复用的完整 CLI 落盘路径。
 
 ## INS-12
 

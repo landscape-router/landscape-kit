@@ -135,6 +135,82 @@ async fn switches_version_without_systemd() {
 }
 
 #[tokio::test]
+async fn reuses_existing_target_release_directory_without_redownloading() {
+    let (server, root, provider) = start_switch_repository(
+        "e2e-switch-reuse-existing",
+        "1.2.3",
+        "1.3.0",
+        b"webserver 1.3.0 payload",
+    );
+    first_install(
+        &root,
+        &provider,
+        &TargetVersion::Version(version()),
+        &credentials(),
+        ManagerChoice::None,
+        &Systemd::host(),
+        &none_options(),
+    )
+    .await
+    .unwrap();
+    let state = super::super::state::load_state(&root).unwrap().unwrap();
+    assert_eq!(state.active_version, "1.2.3");
+
+    // 模拟上次切换回滚后残留的目标版本目录:内容与 manifest 一致。
+    let target = provider
+        .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
+        .await
+        .unwrap();
+    let final_dir = root.canonical.join("releases/1.3.0");
+    std::fs::create_dir_all(&final_dir).unwrap();
+    fetch_webserver_asset(&target, &final_dir).await.unwrap();
+    fetch_static_asset(&target, &final_dir).await.unwrap();
+    let asset_requests_before = server
+        .request_paths()
+        .iter()
+        .filter(|path| path.starts_with("/releases/1.3.0/"))
+        .count();
+
+    let health = test_options();
+    let outcome = switch_version(
+        &root,
+        &state,
+        target,
+        &SwitchArgs {
+            allow_no_backup: false,
+        },
+        &Systemd::host(),
+        &switch_options(&server.base, &health, true),
+    )
+    .await
+    .unwrap();
+    let SwitchOutcome::Committed { version, .. } = outcome else {
+        panic!("expected committed switch, got {outcome:?}");
+    };
+    assert_eq!(version.to_string(), "1.3.0");
+    let asset_requests_after = server
+        .request_paths()
+        .iter()
+        .filter(|path| path.starts_with("/releases/1.3.0/"))
+        .count();
+    assert_eq!(
+        asset_requests_after, asset_requests_before,
+        "the existing trusted release must be reused without re-downloading its assets"
+    );
+    assert_eq!(
+        std::fs::read_link(root.canonical.join("current")).unwrap(),
+        std::path::PathBuf::from("releases/1.3.0")
+    );
+    let state = super::super::state::load_state(&root).unwrap().unwrap();
+    assert_eq!(state.active_version, "1.3.0");
+    assert_eq!(
+        std::fs::read(final_dir.join("landscape-webserver")).unwrap(),
+        b"webserver 1.3.0 payload"
+    );
+    let _ = std::fs::remove_dir_all(&root.install_root);
+}
+
+#[tokio::test]
 async fn rejects_version_downgrade_before_transaction_or_asset_download() {
     let (server, root, provider) = start_switch_repository(
         "e2e-switch-downgrade",

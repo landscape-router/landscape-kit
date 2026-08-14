@@ -71,7 +71,8 @@ ELF 尾部加入版本标记；Linux 可执行加载不受影响，各发布版�
 - 手工备份与同版本恢复（S10）；
 - restore 激活失败自动回滚（退出码 `5`，S11）；
 - restore 中断后的 phase 恢复（S12）；
-- systemd 跨版本 restore（S13）。
+- systemd 跨版本 restore（S13）；
+- 失败切换回滚后残留 release 目录的可信复用（S14）。
 
 S1-S8、S11-S13 的 repair/switch/update 需要仓库来源。`install` 自 0.1.4 起不再持久化
 来源，场景在各安装根完成首次安装后写入 `config.toml`（`[repository]` HTTP 来源），

@@ -1018,4 +1018,45 @@ assert state["assets"]["webserver"]["sha256"] == binary_sha
 assert state["assets"]["static_archive"]["sha256"] == static_sha
 PY
 
+# ---------------------------------------------------------------- S14 可信残留 release 复用
+# INS-11/SW-11/UP-09:失败切换回滚后残留的 releases/<target> 目录在再次切换时被
+# 直接复用(可信校验通过),不重复下载、不覆盖。delayed-ready 2500 在默认 4 秒启动
+# 超时下成功、在 2 秒超时下失败回滚,恰好制造"下载完成但激活失败"的残留目录。
+publish_release 9.0.0 delayed-ready 2500
+python3 - "$runtime_config" "$work_directory/switch-short-startup.json" <<'PY' || fail "failed to derive switch runtime"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    runtime = json.load(stream)
+runtime["health"]["startup_timeout_ms"] = 2000
+with open(sys.argv[2], "w", encoding="utf-8") as stream:
+    json.dump(runtime, stream, indent=2)
+    stream.write("\n")
+PY
+set +e
+command /usr/local/bin/lkit switch --version 9.0.0 --install-dir "$install_root" \
+  --test-runtime "$work_directory/switch-short-startup.json"
+reuse_first_status=$?
+set -e
+[[ $reuse_first_status -eq 5 ]] \
+  || fail "short-timeout switch to 9.0.0 expected exit 5, got $reuse_first_status"
+assert_state_version 2.0.0
+assert_service_identity
+assert_latest_phase "$install_root" rolled_back
+[[ -d "$install_root/releases/9.0.0" ]] \
+  || fail "9.0.0 release directory is missing after rollback"
+reuse_sha_before=$(sha256sum "$install_root/releases/9.0.0/landscape-webserver" | awk '{print $1}')
+reuse_files_before=$(find "$install_root/releases/9.0.0" -type f | wc -l)
+
+run_switch "$install_root" 9.0.0
+[[ $switch_status -eq 0 ]] || fail "reused switch to 9.0.0 returned $switch_status"
+assert_state_version 9.0.0
+assert_service_identity
+assert_latest_phase "$install_root" committed
+[[ $(sha256sum "$install_root/releases/9.0.0/landscape-webserver" | awk '{print $1}') == "$reuse_sha_before" ]] \
+  || fail "reused release directory was rewritten"
+[[ $(find "$install_root/releases/9.0.0" -type f | wc -l) == "$reuse_files_before" ]] \
+  || fail "reused release directory file set changed"
+
 echo "PASS: Docker functional E2E completed for $native_architecture"
