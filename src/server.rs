@@ -2,16 +2,16 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use landscape_proto::ipstack::{
-    IpStack, SocketHandle, StackMsg, INTERNAL_PORT, SERVER_ADDR,
+use landscape_proto::ipstack::{INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg};
+use landscape_proto::protocol::crypto::{
+    Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SessionCrypto,
 };
-use landscape_proto::protocol::crypto::{Dir, SessionCrypto, HS_AUTH_ACK};
 use landscape_proto::protocol::frame;
 use landscape_proto::protocol::session::{self, ServerSession, VerifyResult};
 use landscape_proto::protocol::{
     TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN,
 };
-use landscape_proto::transport::{fmt_mac, Link};
+use landscape_proto::transport::{Link, fmt_mac};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -191,11 +191,15 @@ impl AuthGuard {
 pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
     if cfg.psk.len() < 12 {
         eprintln!(
-            "warning: psk is only {} chars — challenge-response keys are derived with a single sha256 pass, so a short psk can be brute-forced offline; use a long random secret",
+            "warning: psk is only {} chars — it is stretched with scrypt at startup, but prefer a long random secret over a passphrase",
             cfg.psk.len()
         );
     }
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
+    // The psk is stretched into a master key once at startup (scrypt); all
+    // derivations below feed on it, so a weak psk costs an offline attacker
+    // ~32 MiB and ~100 ms per guess instead of a single sha256.
+    let master = MasterKey::derive(cfg.psk.as_bytes());
     let mut peers: HashMap<[u8; 6], Peer> = HashMap::new();
     let mut rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
     let mut guards: HashMap<[u8; 6], AuthGuard> = HashMap::new();
@@ -246,7 +250,7 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                         // only a psk-holder is even heard, and the client
                         // name/token stay hidden.
                         let Some((discover_id, name, token)) =
-                            session::open_discover(&l, cfg.psk.as_bytes())
+                            session::open_discover(&l, &master)
                         else {
                             println!("discover from {} ignored (cannot open)", fmt_mac(&mac));
                             continue;
@@ -273,7 +277,7 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             discover_id,
                             cfg.device_name,
                             cfg.forward_ports,
-                            cfg.psk.as_bytes(),
+                            &master,
                         );
                         tx.send_on(ifindex, &mac, cfg.ethertype, &resp)?;
                         println!("discover from {} '{}'", fmt_mac(&mac), name);
@@ -298,23 +302,35 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                         // the victim's MAC to freeze their re-authentication.
                         if guard.blocked() && peer.sess.session_id().is_none() {
                             if let Some(rem) = guard.remaining() {
-                                // Tell the user why: retried too often.
+                                // Tell the user why: retried too often. Sealed
+                                // with the handshake keys when the handshake
+                                // is still pending, so spoofed lockout NACKs
+                                // are rejected; plaintext only when there is
+                                // no pending nonce to seal with.
                                 let reason = format!(
                                     "too many auth failures, locked out for {}s",
                                     rem.as_secs()
                                 );
-                                let _ = tx.send_on(
-                                    ifindex,
-                                    &mac,
-                                    cfg.ethertype,
-                                    &frame::encode_auth_nack(&reason),
-                                );
+                                let nack = match peer.sess.take_server_nonce() {
+                                    Some(s_nonce) => {
+                                        let hkey = HandshakeKeys::derive(&master, s_nonce);
+                                        hkey.seal_frame(
+                                            Dir::S2C,
+                                            frame::TYPE_AUTH_NACK,
+                                            0,
+                                            HS_AUTH_NACK,
+                                            &frame::encode_auth_nack_payload(&reason),
+                                        )
+                                    }
+                                    None => frame::encode_auth_nack(&reason),
+                                };
+                                let _ = tx.send_on(ifindex, &mac, cfg.ethertype, &nack);
                             }
                             println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
                             continue;
                         }
                         let mut drop_peer = false;
-                        match peer.sess.verify_auth(&l, cfg.psk.as_bytes()) {
+                        match peer.sess.verify_auth(&l, &master) {
                             VerifyResult::Accepted {
                                 sid,
                                 keys,
@@ -333,6 +349,7 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 // The AUTH_ACK is sealed with the handshake
                                 // keys, so only a psk-holder can open it.
                                 let ack = hkey.seal_frame(
+                                    Dir::S2C,
                                     frame::TYPE_AUTH_ACK,
                                     sid,
                                     HS_AUTH_ACK,
@@ -515,10 +532,7 @@ fn rate_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
     map.entry(*mac).or_default().allow()
 }
 
-fn new_peer(
-    to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>,
-    allowed: Arc<[u16]>,
-) -> Peer {
+fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: Arc<[u16]>) -> Peer {
     Peer {
         sess: ServerSession::new(),
         ifindex: 0,
@@ -607,7 +621,10 @@ fn pump_peer(
             if n == 0 {
                 break;
             }
-            peer.pending_rx.entry(h).or_default().push_back(buf[..n].to_vec());
+            peer.pending_rx
+                .entry(h)
+                .or_default()
+                .push_back(buf[..n].to_vec());
         }
         if let Some(q) = peer.pending_rx.get_mut(&h) {
             while let Some(b) = q.front() {
