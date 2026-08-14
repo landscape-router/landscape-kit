@@ -29,6 +29,11 @@ const RATE_PER_SEC: f64 = 10.0;
 /// bucket bounds CPU and peer-table growth regardless of spoofing.
 const GLOBAL_RATE_PER_SEC: f64 = 200.0;
 
+/// Max failed session-frame opens per second per MAC (DATA / KEEPALIVE /
+/// TEARDOWN with a bad tag). Bounds the decrypt work a spoofed-frame flood
+/// can force on the event loop; a legitimate session never fails opens.
+const SESSION_FAIL_PER_SEC: f64 = 200.0;
+
 /// Hard cap on the peer table. DISCOVER frames from unknown MACs are
 /// dropped once it is full (spoofed-MAC floods must not grow memory
 /// without bound).
@@ -202,6 +207,7 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
     let master = MasterKey::derive(cfg.psk.as_bytes());
     let mut peers: HashMap<[u8; 6], Peer> = HashMap::new();
     let mut rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
+    let mut fail_rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
     let mut guards: HashMap<[u8; 6], AuthGuard> = HashMap::new();
     let mut global_rate = RateBucket::new(GLOBAL_RATE_PER_SEC);
     let mut auth_fail_ts: VecDeque<Instant> = VecDeque::new();
@@ -362,8 +368,19 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                     user
                                 );
                             }
-                            VerifyResult::Rejected(reason) => {
-                                tx.send_on(ifindex, &mac, cfg.ethertype, &frame::encode_auth_nack(&reason))?;
+                            VerifyResult::Rejected { reason, hkey } => {
+                                // The client necessarily holds the handshake
+                                // keys (its AUTH_REQ opened), so the NACK is
+                                // sealed: a spoofed plaintext NACK cannot end
+                                // the handshake.
+                                let nack = hkey.seal_frame(
+                                    Dir::S2C,
+                                    frame::TYPE_AUTH_NACK,
+                                    0,
+                                    HS_AUTH_NACK,
+                                    &frame::encode_auth_nack_payload(&reason),
+                                );
+                                tx.send_on(ifindex, &mac, cfg.ethertype, &nack)?;
                                 let active = peer.sess.session_id().is_some();
                                 if !active {
                                     // Failures only count against MACs without
@@ -387,6 +404,14 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 drop_peer = !active;
                                 println!("auth rejected for {}: {reason}", fmt_mac(&mac));
                             }
+                            VerifyResult::Unauthentic(reason) => {
+                                // Not an auth attempt at all (could not even
+                                // be opened): no lockout accounting, no peer
+                                // teardown, and the pending nonce survives —
+                                // a MAC-spoofed garbage frame can neither
+                                // lock out nor interrupt a connecting client.
+                                println!("unauthentic auth frame from {} ({reason})", fmt_mac(&mac));
+                            }
                         }
                         if drop_peer {
                             if let Some(mut peer) = peers.remove(&mac) {
@@ -405,6 +430,9 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             continue;
                         };
                         if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_none() {
+                            if !fail_allow(&mut fail_rate, &mac) {
+                                continue;
+                            }
                             continue;
                         }
                         peer.last_seen = Instant::now();
@@ -422,6 +450,9 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             continue;
                         };
                         let Some(plain) = crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload) else {
+                            if !fail_allow(&mut fail_rate, &mac) {
+                                continue;
+                            }
                             continue;
                         };
                         peer.last_seen = Instant::now();
@@ -437,6 +468,8 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 if let Some(crypto) = peer.crypto.as_mut() {
                                     if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
                                         drop_peer = true;
+                                    } else if !fail_allow(&mut fail_rate, &mac) {
+                                        continue;
                                     }
                                 }
                             }
@@ -482,6 +515,7 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
             _ = sweep_timer.tick() => {
                 let now = Instant::now();
                 rate.retain(|_, b| now.duration_since(b.last_seen) <= STALE_AFTER);
+                fail_rate.retain(|_, b| now.duration_since(b.last_seen) <= STALE_AFTER);
                 guards.retain(|_, g| now.duration_since(g.last_seen) <= STALE_AFTER);
                 let stale: Vec<[u8; 6]> = peers
                     .iter()
@@ -530,6 +564,15 @@ async fn wait_for_shutdown() {
 
 fn rate_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
     map.entry(*mac).or_default().allow()
+}
+
+/// Spend one failed-open token for a MAC. Once the per-MAC budget is
+/// drained, session frames from that MAC are dropped before the decrypt
+/// attempt, so a spoofed flood stops costing work on the event loop.
+fn fail_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
+    map.entry(*mac)
+        .or_insert_with(|| RateBucket::new(SESSION_FAIL_PER_SEC))
+        .allow()
 }
 
 fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: Arc<[u16]>) -> Peer {
