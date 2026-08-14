@@ -9,10 +9,6 @@ use super::{ConsoleAction, ConsoleApp, ExitState};
 impl ConsoleApp {
     /// 阻塞屏键处理：↑/↓ 或 Tab 选择，Enter 执行，Esc/Ctrl+C 等同"稍后"退出。
     pub(super) fn handle_takeover_pending_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
-        if !self.install.editing && language_toggle_key(&key) {
-            self.toggle_language();
-            return None;
-        }
         match key.code {
             KeyCode::Up => self.takeover_choice = 0,
             KeyCode::Down => {
@@ -40,6 +36,10 @@ impl ConsoleApp {
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(ConsoleAction::Quit);
+        }
+        if self.language_switch_available() && language_toggle_key(&key) {
+            self.toggle_language();
+            return None;
         }
         if self.takeover_pending() {
             return self.handle_takeover_pending_key(key);
@@ -108,10 +108,6 @@ impl ConsoleApp {
             && let Some(action) = self.handle_reinit_key(key)
         {
             return action;
-        }
-        if !self.install.editing && language_toggle_key(&key) {
-            self.toggle_language();
-            return None;
         }
         if self.preflight.expanded && self.menu() == Menu::Install {
             match key.code {

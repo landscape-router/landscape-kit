@@ -295,7 +295,17 @@ impl ConsoleApp {
         }
     }
 
+    /// 语言切换在所有非文本编辑、非退出确认状态下可用，包括确认层、详情页、
+    /// 部署前检查弹窗与网络向导;编辑字段时 `l` 保持为普通输入字符。
     pub(super) fn language_switch_available(&self) -> bool {
-        self.exit_state != ExitState::Confirming && !self.install.editing
+        self.exit_state != ExitState::Confirming
+            && !self.install.editing
+            && !self.backup.editing
+            && !self.update.editing
+            && !self.reinit.editing
+            && !self
+                .network_wizard
+                .as_ref()
+                .is_some_and(|wizard| wizard.editing)
     }
 }

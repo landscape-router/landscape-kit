@@ -1,5 +1,5 @@
 use super::super::*;
-use super::super::{update::*, widgets::*};
+use super::super::{network_wizard::WizardStep, update::*, widgets::*};
 use super::support::*;
 use crate::i18n::Language;
 use crate::network::config::{NetworkMode, NetworkPlan, SelectedInterface};
@@ -92,6 +92,96 @@ fn language_key_remains_text_while_editing() {
     assert_eq!(crate::i18n::current(), Language::En);
     assert_eq!(app.install.version, "l");
     assert!(!app.language_switch_available());
+}
+
+#[test]
+fn language_key_switches_on_update_confirm_layer() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = update_ready_app();
+    app.update.confirming = Some(resolved("1.2.3", "1.3.0"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::Zh);
+    assert!(
+        app.update.confirming.is_some(),
+        "the confirm layer must stay open after the switch"
+    );
+}
+
+#[test]
+fn language_key_switches_on_backup_details_page() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+    app.backup.details = Some(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::Zh);
+    assert_eq!(
+        app.backup.details,
+        Some(0),
+        "the details page must stay open after the switch"
+    );
+}
+
+#[test]
+fn language_key_switches_inside_network_wizard() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.network_wizard = Some(sample_network_wizard());
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::Zh);
+    assert!(
+        app.network_wizard.is_some(),
+        "the wizard must stay open after the switch"
+    );
+}
+
+#[test]
+fn language_key_remains_text_while_editing_in_network_wizard() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    let mut wizard = routes_armed_wizard();
+    wizard.step = WizardStep::WanConfig;
+    wizard.focus = 1;
+    wizard.editing = true;
+    app.network_wizard = Some(wizard);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::En);
+    assert_eq!(
+        app.network_wizard.as_ref().unwrap().address,
+        "l",
+        "l must be typed into the wizard field instead of switching language"
+    );
+}
+
+#[test]
+fn language_key_switches_on_preflight_dialog() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.preflight_dialog = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::Zh);
+    assert!(app.preflight_dialog, "the dialog must stay open");
+}
+
+#[test]
+fn language_key_stays_disabled_while_exit_confirmation_is_open() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.exit_state = ExitState::Confirming;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::En);
+    assert_eq!(app.exit_state, ExitState::Confirming);
 }
 
 #[test]
