@@ -2,14 +2,9 @@
 
 ## Contribution Workflow
 
-This repository uses an issue-driven workflow (see `CONTRIBUTING.md`):
-
-- Do not write code for a new change before an issue exists. Do not open a PR
-  without a linked issue.
-- Before creating an issue, search existing issues for duplicates
-  (`gh issue list --search ...`); join the discussion instead of opening a new issue.
-- Fill the GitHub issue form template (Bug Report or Feature Request) completely.
-- Reference the issue in the PR description (e.g. `Closes #123`).
+- Issues are optional; code changes and PRs do not require a linked issue.
+- You may ask the user whether they want to create an issue for the change
+  before starting work.
 
 ## Commit Convention
 
