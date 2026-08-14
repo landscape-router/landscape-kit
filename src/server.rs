@@ -234,6 +234,8 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
     });
     loop {
         tokio::select! {
+            biased;
+            _ = &mut shutdown_rx => break,
             r = tx.recv_with_meta(cfg.ethertype) => {
                 let (f, ifindex) = r?;
                 let Ok(l) = frame::decode(&f.payload) else {
@@ -535,20 +537,33 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                     }
                 }
             }
-            _ = &mut shutdown_rx => break,
         }
     }
     sig.abort();
 
     // Graceful shutdown: tell every live peer before we disappear so the
     // clients can reconnect immediately instead of timing out on keepalives.
-    for (mac, peer) in peers.iter_mut() {
-        if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
-            let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
-            let _ = tx.send_on(peer.ifindex, mac, cfg.ethertype, &raw);
-        }
-    }
-    println!("server shutdown, {} peer(s) notified", peers.len());
+    // The loop is synchronous (fast sendto syscalls), but bound it anyway:
+    // a wedged driver must not hold the exit hostage.
+    let peers_left = peers.len();
+    let notified = tokio::time::timeout(
+        Duration::from_secs(2),
+        async {
+            let mut n = 0;
+            for (mac, peer) in peers.iter_mut() {
+                if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
+                    let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
+                    if tx.send_on(peer.ifindex, mac, cfg.ethertype, &raw).is_ok() {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        },
+    )
+    .await
+    .unwrap_or(0);
+    println!("server shutdown, {notified}/{peers_left} peer(s) notified");
     Ok(())
 }
 
