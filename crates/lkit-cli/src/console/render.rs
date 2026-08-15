@@ -14,6 +14,7 @@ use super::mirror::{render_mirror, render_mirror_confirmation};
 use super::network_wizard::{Snapshot, render_network_wizard, render_pending_takeover};
 use super::preflight::render_preflight_dialog;
 use super::reinit::{render_reinit, render_reinit_confirmation};
+use super::software::{render_software, render_software_confirmation, render_software_progress};
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
@@ -80,6 +81,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     if app.menu() == Menu::Mirror && app.mirror.confirming.is_some() {
         render_mirror_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Software && app.software.confirming.is_some() {
+        render_software_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Software && app.software.install.is_some() {
+        render_software_progress(frame, app);
     }
     if app.menu() == Menu::Uninstall && app.uninstall.confirming {
         render_uninstall_confirmation(frame, app);
@@ -262,6 +269,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         Menu::Backup => render_backup(frame, app, area),
         Menu::Update => render_update(frame, app, area),
         Menu::Mirror => render_mirror(frame, app, area),
+        Menu::Software => render_software(frame, app, area),
         Menu::Reinit => render_reinit(frame, app, area),
         Menu::Uninstall => render_uninstall(frame, app, area),
     }

@@ -12,6 +12,7 @@ mod network;
 mod release;
 mod report;
 mod service;
+mod software;
 mod systemd_worker;
 mod workflows;
 
@@ -167,6 +168,7 @@ async fn run_command(
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::ServiceManager(args) => commands::service_manager::run(&args).await,
         Commands::SetMirror(args) => commands::set_mirror::run(&args),
+        Commands::Software(args) => commands::software::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
     }
 }

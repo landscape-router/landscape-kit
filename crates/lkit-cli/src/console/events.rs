@@ -50,6 +50,9 @@ impl ConsoleApp {
         if self.backup.create.is_some() {
             return None;
         }
+        if self.software.install.is_some() {
+            return None;
+        }
         if self.preflight_dialog {
             match key.code {
                 KeyCode::Enter => {
@@ -100,6 +103,12 @@ impl ConsoleApp {
         if self.menu() == Menu::Mirror
             && self.focus == Focus::Panel
             && let Some(action) = self.handle_mirror_key(key)
+        {
+            return action;
+        }
+        if self.menu() == Menu::Software
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_software_key(key)
         {
             return action;
         }
@@ -354,6 +363,14 @@ impl ConsoleApp {
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::MirrorSecurityToggle => {
+                self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            }
+            Hit::SoftwareField(index) => {
+                self.focus = Focus::Panel;
+                self.software.selected = index;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::SoftwareSourceToggle => {
                 self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
             }
             Hit::UninstallAction => {

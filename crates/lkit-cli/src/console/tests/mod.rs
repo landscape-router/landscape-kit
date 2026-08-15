@@ -3,6 +3,7 @@ mod backup;
 mod install;
 mod mirror;
 mod reinit;
+mod software;
 mod support;
 mod update;
 mod wizard;

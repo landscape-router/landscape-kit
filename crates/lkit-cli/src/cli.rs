@@ -347,6 +347,23 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
         })
+        .mut_subcommand("software", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_SOFTWARE_ABOUT))
+                .mut_subcommand("list", |command| {
+                    command.about(crate::tr_static!(keys::MAIN_SOFTWARE_LIST_ABOUT))
+                })
+                .mut_subcommand("install", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_SOFTWARE_INSTALL_ABOUT))
+                        .mut_arg("source", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_SOFTWARE_SOURCE_HELP))
+                        })
+                        .mut_arg("yes", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_SOFTWARE_YES_HELP))
+                        })
+                })
+        })
         .mut_subcommand("uninstall", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_UNINSTALL_ABOUT))

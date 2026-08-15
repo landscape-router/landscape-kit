@@ -21,6 +21,7 @@ lkit --non-interactive install ... # 严格非交互命令模式
 - Backup：备份列表、创建与恢复；
 - Update：版本更新表单（仅已安装时可用）；
 - Mirror：主机软件源换源面板（见[`lkit set-mirror`](../commands/mirror.md)）；
+- Software：常用软件安装面板（见[`lkit software`](../commands/software.md)）；
 - Reinit：重新初始化面板（仅已安装、systemd 且宿主网络服务已被接管时可用）。
 
 检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
@@ -111,8 +112,8 @@ worker，在无侧栏全屏更新页（标题“正在更新 Landscape”）显�
 裸 `--repository` 与 `--repository <URL>`），“当前来源”不传该参数，由命令按
 `config.toml` > 官方 GitHub 的规则解析，与命令模式选中“当前来源”的语义一致。
 
-Uninstall 面板暂未在 TUI 中启用：侧栏只显示 Overview、Install、Backup、Update、Mirror
-与 Reinit，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板渲染、键处理与确认层
+Uninstall 面板暂未在 TUI 中启用：侧栏只显示 Overview、Install、Backup、Update、Mirror、
+Software 与 Reinit，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板渲染、键处理与确认层
 代码完整保留供重新启用（`TODO(uninstall-console)`）。卸载当前只能通过命令模式
 `lkit uninstall` 使用；本段描述的是面板重新启用后的行为：面板在已安装、root 且安装
 状态可读时可用。进入面板后展示当前版本、服务 manager 与运行状态摘要，并列出卸载数据
@@ -132,6 +133,16 @@ Mirror 面板（换源）不依赖 Landscape 安装状态，未安装或已安�
 可在此恢复；恢复确认层说明备份内容将替换当前镜像源文件。确认后在控制台内同步执行
 与 CLI 相同的备份、重写或恢复流程（非 root 时底栏显示权限错误，不 panic），结果写入
 底栏；Esc 关闭确认层。面板不退出 alternate screen，也不委托 systemd worker。
+
+Software 面板（常用软件）与 Mirror 面板一样不依赖 Landscape 安装状态。进入面板时在
+后台检测当前发行版并列出软件及其安装状态（当前为 Docker 一项），Up/Down 移动焦点。
+对未安装的软件按 Enter 打开居中确认层：显示安装来源（官方仓库、阿里云、清华 TUNA、
+中科大 USTC，当前为官方），Space/Left/Right 循环切换来源，Enter 确认、Esc 取消；
+已安装的软件按 Enter 只显示“已安装”提示。确认后安装不退出 alternate screen：后台
+线程执行与 CLI 相同的完整流程（依赖与仓库准备、软件包安装、服务启用与 `docker info`
+验证），居中弹窗按阶段显示“准备软件源 / 安装软件包 / 启动服务”并带 Gauge 进度，完成
+后自动刷新软件状态并把结果写入底栏；安装期间按键忽略（Ctrl+C 仍退出控制台）。
+非 root 或发行版检测失败时确认 Enter 不启动安装，底栏显示权限或检测错误。
 
 Reinit 面板只对已安装、`service.manager == systemd` 且宿主网络服务已被接管
 （NetworkManager、`networking.service`、firewalld、systemd-resolved 被 stop/disable/mask）

@@ -22,6 +22,7 @@
 - [`reconcile`](commands/reconcile.md)：协调初始化完成状态、service unit 或仓库来源变化。
 - [`service-manager`](commands/service-manager.md)：在 systemd 与外部进程管理之间迁移。
 - [`set-mirror`](commands/mirror.md)：切换主机软件包源到国内镜像或官方源。
+- [`software`](commands/software.md)：安装常用软件（Docker 等），可选择官方仓库或国内镜像。
 - [`network`](commands/network.md)：确认或回滚待定的网络接管。
 - [`check`](check.md)：主机环境检查。
 

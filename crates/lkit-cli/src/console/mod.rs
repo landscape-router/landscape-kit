@@ -7,6 +7,7 @@ mod network_wizard;
 mod preflight;
 mod reinit;
 mod render;
+mod software;
 mod terminal;
 mod update;
 mod widgets;

@@ -1,0 +1,46 @@
+name: Test Docker software install
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-cli/**
+      - scripts/docker-software/**
+      - scripts/test-docker-software.sh
+      - .github/workflows/test-docker-software.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  software:
+    name: Docker software install (${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+            allow_arm: "0"
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+            allow_arm: "1"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Verify Docker
+        run: |
+          docker info
+          docker compose version
+
+      - name: Run Docker software E2E
+        env:
+          LKIT_E2E_ALLOW_ARM: ${{ matrix.allow_arm }}
+        run: scripts/test-docker-software.sh

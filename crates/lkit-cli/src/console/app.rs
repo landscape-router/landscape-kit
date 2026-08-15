@@ -8,6 +8,7 @@ use super::network_wizard::{NetworkWizard, Snapshot};
 use super::preflight::{Preflight, PreflightState};
 use super::reinit;
 use super::reinit::ReinitPanel;
+use super::software::SoftwarePanel;
 use super::update::{UninstallPanel, UpdatePanel};
 use super::widgets::{Clicks, Focus, Menu};
 use crate::commands::Commands;
@@ -34,6 +35,7 @@ pub(super) struct ConsoleApp {
     pub(super) update: UpdatePanel,
     pub(super) update_menu_active: bool,
     pub(super) mirror: MirrorPanel,
+    pub(super) software: SoftwarePanel,
     pub(super) reinit: ReinitPanel,
     pub(super) uninstall: UninstallPanel,
     pub(super) takeover_choice: usize,
@@ -59,6 +61,7 @@ impl ConsoleApp {
             update: UpdatePanel::default(),
             update_menu_active: false,
             mirror: MirrorPanel::default(),
+            software: SoftwarePanel::default(),
             reinit: ReinitPanel::default(),
             uninstall: UninstallPanel::default(),
             takeover_choice: 0,
@@ -173,6 +176,10 @@ impl ConsoleApp {
         if self.menu() == Menu::Mirror {
             self.mirror.ensure_detected();
         }
+        if self.menu() == Menu::Software {
+            self.software.ensure_detected();
+        }
+        self.software.poll(&mut self.notice);
     }
 
     pub(super) fn toggle_language(&mut self) {
@@ -260,6 +267,14 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_CONFIRM)
             } else {
                 crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_PANEL)
+            }
+        } else if self.menu() == Menu::Software && self.focus == Focus::Panel {
+            if self.software.install.is_some() {
+                crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_RUNNING)
+            } else if self.software.confirming.is_some() {
+                crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_CONFIRM)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_PANEL)
             }
         } else if self.menu() == Menu::Reinit && self.focus == Focus::Panel {
             if self.reinit.confirming {

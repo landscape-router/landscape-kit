@@ -13,7 +13,7 @@ static ELIGIBLE_LOCK: Mutex<()> = Mutex::new(());
 
 fn reinit_ready_app() -> ConsoleApp {
     let mut app = ConsoleApp::new();
-    app.menu_index = 5;
+    app.menu_index = 6;
     app.focus = Focus::Panel;
     app.snapshot = installed_snapshot();
     app
@@ -50,7 +50,7 @@ fn reinit_panel_shows_unavailable_without_takeover() {
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     let mut app = ConsoleApp::new();
-    app.menu_index = 5;
+    app.menu_index = 6;
     app.focus = Focus::Panel;
     app.snapshot = Snapshot::Installed {
         version: "1.2.3".into(),
