@@ -30,6 +30,21 @@ rootfs=$test_root/rootfs
 machine=lkit-nspawn-$$
 machine_started=false
 
+keyring_deb=$test_root/debian-archive-keyring.deb
+keyring_root=$test_root/debian-keyring
+curl --fail --location --silent --show-error \
+  https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb \
+  --output "$keyring_deb"
+printf '%s  %s\n' \
+  9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac \
+  "$keyring_deb" | sha256sum --check --status
+dpkg-deb --extract "$keyring_deb" "$keyring_root"
+archive_keyring=$keyring_root/usr/share/keyrings/debian-archive-keyring.gpg
+[[ -f $archive_keyring ]] || {
+  echo "verified Debian archive keyring package did not contain its keyring" >&2
+  exit 1
+}
+
 cleanup() {
   if [[ $machine_started == true ]]; then
     machinectl terminate "$machine" >/dev/null 2>&1 || true
@@ -58,6 +73,7 @@ done
 
 mmdebstrap \
   --variant=minbase \
+  --keyring="$archive_keyring" \
   --include=systemd,systemd-sysv,dbus,bash,util-linux,procps,iproute2,ca-certificates,python3 \
   trixie "$rootfs"
 
