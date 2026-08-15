@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TODO(service-manager-rewrite):`lkit service-manager` 命令与 `--service-manager`
-# 参数已在移除 none 部署模式的破坏性重构中删除,本脚本仍引用它们(S6/S7 迁移场景、
-# 安装参数)。等不同发行版的服务管理器后端重写完成后再统一改造:删除迁移场景,
-# S7 改用 uninstall 释放端口与注册链接,S11-S14 改在 export 根或重注册流程上执行。
+# 功能 E2E 验证 lkit 与受支持服务管理器后端的协议。生产二进制不包含
+# `--test-runtime`;这里使用 test-support 构建显式注入 fake systemctl。
+# 多后端重构后 `lkit service-manager` 与 `--service-manager`/`none` 模式已删除:
+# 场景顺序为 主安装根全生命周期 → S7 以 uninstall 释放注册链接与端口后安装
+# latest 根 → S8 在 latest 根上验证中断事务恢复 → S2 再以 uninstall 释放后在
+# export 根上验证导出失败回滚。
 source /usr/local/lib/lkit-e2e/rustfs-test.sh
 
 endpoint=${RUSTFS_ENDPOINT:-http://rustfs:9000}
@@ -16,7 +18,6 @@ region=${AWS_REGION:-us-east-1}
 install_root=/var/lib/lkit-e2e/landscape
 install_root_export=/var/lib/lkit-e2e/landscape-export-error
 install_root_latest=/var/lib/lkit-e2e/landscape-latest
-install_root_migrate=/var/lib/lkit-e2e/landscape-migrate
 work_directory=/var/lib/lkit-e2e/work
 password_file=/var/lib/lkit-e2e/password
 host_root=/var/lib/lkit-e2e/host
@@ -24,7 +25,7 @@ runtime_config=$work_directory/runtime.json
 systemctl_config=$work_directory/systemctl.json
 fixture_resolv_conf=$host_root/resolv.conf
 
-# 功能 E2E 只验证 lkit 与 systemd service-manager 协议。生产二进制不包含
+# 功能 E2E 只验证 lkit 与 systemd 服务管理器后端的协议。生产二进制不包含
 # `--test-runtime`;这里使用 test-support 构建显式注入 fake systemctl。
 export LKIT_TEST_SYSTEMCTL_CONFIG=$systemctl_config
 
@@ -32,7 +33,7 @@ lkit() {
   local subcommand=$1
   shift
   case $subcommand in
-    install|switch|repair|reconcile|service-manager|backup|restore)
+    install|switch|repair|reconcile|backup|restore)
       command /usr/local/bin/lkit "$subcommand" "$@" --test-runtime "$runtime_config"
       ;;
     *) command /usr/local/bin/lkit "$subcommand" "$@" ;;
@@ -285,14 +286,6 @@ run_install() {
   set -e
 }
 
-# 通过 pty 运行需要 /dev/tty 交互确认的命令;stdin 提供一行 yes。
-run_with_tty_confirm() {
-  set +e
-  echo yes | script -qec "$1" /dev/null
-  tty_status=$?
-  set -e
-}
-
 # 把本次安装使用的仓库来源写入 config.toml(自 0.1.4 起 install 不再持久化来源,
 # repair/switch/update 等需要仓库的命令从该用户可编辑文件解析来源)。
 write_repository_config() {
@@ -398,8 +391,7 @@ lkit install \
   --repository "$public_base" \
   --install-dir "$install_root" \
   --admin-user admin \
-  --password-file "$password_file" \
-  --service-manager systemd
+  --password-file "$password_file"
 assert_state_version 1.0.0
 [[ $(json_value "$install_root/state/install-state.json" assets.webserver.architecture) == "$state_architecture" ]] \
   || fail "state architecture mismatch"
@@ -693,144 +685,11 @@ reconcile_status=$?
 set -e
 [[ $reconcile_status -eq 0 ]] || fail "reconcile after restoring current returned $reconcile_status"
 assert_service_identity
-
-# ---------------------------------------------------------------- S7 latest 通道安装
-# 全局 unit 只能属于一个安装根；先正式迁移主安装根到 none，释放注册链接。
-lkit service-manager none --install-dir "$install_root"
-run_install "$install_root_latest" \
-  --repository "$public_base" \
-  --admin-user admin \
-  --password-file "$password_file" \
-  --service-manager systemd
-[[ $install_status -eq 0 ]] || fail "latest-channel install returned $install_status"
-assert_state_version 5.0.0 "$install_root_latest"
-python3 - "$install_root_latest/state/install-state.json" <<'PY' \
-  || fail "install-state.json must not record the repository source"
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    state = json.load(stream)
-assert "repository" not in state, state.get("repository")
-PY
-[[ ! -e "$install_root_latest/config.toml" ]] \
-  || fail "install must not create config.toml"
-write_repository_config "$install_root_latest"
-assert_service_identity "$install_root_latest"
-
-# ---------------------------------------------------------------- S8 中断事务恢复
-# 手工制造 preparing 现场:switch 事务文件 + 半成品目标 release 目录 + current 未动
-tx_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
-fabricated="$install_root_latest/transactions/$tx_id.json"
-mkdir -p "$install_root_latest/transactions" "$install_root_latest/logs"
-python3 - "$fabricated" "$tx_id" "$install_root_latest" <<'PY'
-import json
-import sys
-from datetime import datetime, timezone
-
-path, tx_id, root = sys.argv[1:]
-now = datetime.now(timezone.utc).isoformat()
-transaction = {
-    "schema_version": 1,
-    "transaction_id": tx_id,
-    "operation": "switch",
-    "phase": "preparing",
-    "install_root": root,
-    "canonical_install_root": root,
-    "from_version": "5.0.0",
-    "target_version": "6.0.0",
-    "from_service_manager": None,
-    "target_service_manager": None,
-    "previous_current": "releases/5.0.0",
-    "target_release": "releases/6.0.0",
-    "backup": None,
-    "no_backup": False,
-    "static_backup": None,
-    "systemd_before": None,
-    "resolv_conf_backup": None,
-    "log_path": f"logs/{tx_id}.log",
-    "started_at": now,
-    "updated_at": now,
-}
-with open(path, "w", encoding="utf-8") as stream:
-    json.dump(transaction, stream, indent=2)
-PY
-printf 'phase: preparing\n' >"$install_root_latest/logs/$tx_id.log"
-chmod 0600 "$install_root_latest/logs/$tx_id.log"
-mkdir -p "$install_root_latest/releases/6.0.0"
-printf 'partial release' >"$install_root_latest/releases/6.0.0/landscape-webserver"
-
-publish_release 6.0.0 healthy
-run_switch "$install_root_latest" 6.0.0
-[[ $switch_status -eq 0 ]] || fail "recovery plus switch to 6.0.0 returned $switch_status"
-[[ $(json_value "$fabricated" phase) == failed ]] \
-  || fail "fabricated preparing transaction was not marked failed"
-assert_no_unfinished "$install_root_latest"
-assert_state_version 6.0.0 "$install_root_latest"
-assert_latest_phase "$install_root_latest" committed
-backup=$(latest_backup "$install_root_latest")
-assert_backup_metadata "$backup" 5.0.0 "$state_architecture"
-assert_service_identity "$install_root_latest"
-
-# ---------------------------------------------------------------- S6 服务管理器迁移 none → systemd
-# S8 的 latest 安装根当前持有全局 unit，迁移到 none 后再测试新安装根接管。
-lkit service-manager none --install-dir "$install_root_latest"
-run_install "$install_root_migrate" \
-  --version 6.0.0 \
-  --repository "$public_base" \
-  --admin-user admin \
-  --password-file "$password_file" \
-  --service-manager none
-[[ $install_status -eq 0 ]] || fail "none-manager install returned $install_status"
-migrate_state="$install_root_migrate/state/install-state.json"
-assert_state_version 6.0.0 "$install_root_migrate"
-[[ $(json_value "$migrate_state" service.manager) == none ]] \
-  || fail "none-manager install must record service.manager none"
-[[ $(json_value "$migrate_state" initialization.status) == pending ]] \
-  || fail "none-manager install must leave initialization pending"
-if systemctl is-enabled --quiet landscape-router.service; then
-  fail "none-manager install must not register a systemd unit"
-fi
-run_with_tty_confirm "/usr/local/bin/lkit service-manager systemd --install-dir $install_root_migrate --test-runtime $runtime_config"
-[[ $tty_status -eq 0 ]] || fail "service-manager migration returned $tty_status"
-[[ $(json_value "$migrate_state" service.manager) == systemd ]] \
-  || fail "migration did not commit service.manager systemd"
-[[ $(json_value "$migrate_state" initialization.status) == complete ]] \
-  || fail "migration did not complete pending initialization"
-assert_service_identity "$install_root_migrate"
-
-# ---------------------------------------------------------------- S2 导出失败回滚路径
-# export 发生在备份创建之前,且总是查询运行中的服务;因此先成功安装并运行
-# export_error 的 4.0.0,再尝试切换到尚未安装的 4.1.0,触发导出 500 失败。
-lkit service-manager none --install-dir "$install_root_migrate"
-run_install "$install_root_export" \
-  --version 4.0.0 \
-  --repository "$public_base" \
-  --admin-user admin \
-  --password-file "$password_file" \
-  --service-manager systemd
-[[ $install_status -eq 0 ]] || fail "export_error install returned $install_status"
-assert_state_version 4.0.0 "$install_root_export"
-write_repository_config "$install_root_export"
-assert_service_identity "$install_root_export"
-lkb_before=$(lkb_count "$install_root_export")
-run_switch "$install_root_export" 4.1.0
-[[ $switch_status -ne 0 ]] || fail "switch from export_error must fail at export"
-assert_state_version 4.0.0 "$install_root_export"
-assert_latest_phase "$install_root_export" failed
-[[ $(lkb_count "$install_root_export") -eq "$lkb_before" ]] \
-  || fail "failed export must not create a new .lkb"
-assert_service_identity "$install_root_export"
-
 # ---------------------------------------------------------------- S11 restore 激活失败自动回滚
 # RST-03:发布 delayed-ready 版本(启动延迟 2500ms),用默认 4 秒启动超时正常切换并
 # 创建其手工备份;restore 时改用 2000ms 启动超时的运行时,激活必然超时失败,
 # systemd 模式内联自动回滚并返回退出码 5。
-# S7 已把 install_root 迁移到 none,全局 unit 注册属于 S2 的 export 根;
-# 先迁移 export 根到 none 释放注册链接,再把 install_root 恢复为 systemd 托管。
-lkit service-manager none --install-dir "$install_root_export"
-run_with_tty_confirm "/usr/local/bin/lkit service-manager systemd --install-dir $install_root --test-runtime $runtime_config"
-[[ $tty_status -eq 0 ]] || fail "service-manager migration returned $tty_status"
+# 主安装根自基础安装起一直持有 systemd 托管,无需释放或重新注册。
 assert_service_identity
 publish_release 8.0.0 delayed-ready 2500
 run_switch "$install_root" 8.0.0
@@ -1062,5 +921,104 @@ assert_latest_phase "$install_root" committed
   || fail "reused release directory was rewritten"
 [[ $(find "$install_root/releases/9.0.0" -type f | wc -l) == "$reuse_files_before" ]] \
   || fail "reused release directory file set changed"
+
+# ---------------------------------------------------------------- S7 latest 通道安装
+# 全局 unit 只能属于一个安装根;先 uninstall 主安装根释放注册链接与端口
+# (保留 data、config.toml 与 backups,后续场景不再使用该根)。
+lkit uninstall --yes --install-dir "$install_root"
+run_install "$install_root_latest" \
+  --repository "$public_base" \
+  --admin-user admin \
+  --password-file "$password_file"
+[[ $install_status -eq 0 ]] || fail "latest-channel install returned $install_status"
+assert_state_version 9.0.0 "$install_root_latest"
+python3 - "$install_root_latest/state/install-state.json" <<'PY' \
+  || fail "install-state.json must not record the repository source"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+assert "repository" not in state, state.get("repository")
+PY
+[[ ! -e "$install_root_latest/config.toml" ]] \
+  || fail "install must not create config.toml"
+write_repository_config "$install_root_latest"
+assert_service_identity "$install_root_latest"
+# ---------------------------------------------------------------- S8 中断事务恢复
+# 手工制造 preparing 现场:switch 事务文件 + 半成品目标 release 目录 + current 未动
+tx_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+fabricated="$install_root_latest/transactions/$tx_id.json"
+mkdir -p "$install_root_latest/transactions" "$install_root_latest/logs"
+python3 - "$fabricated" "$tx_id" "$install_root_latest" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, tx_id, root = sys.argv[1:]
+now = datetime.now(timezone.utc).isoformat()
+transaction = {
+    "schema_version": 1,
+    "transaction_id": tx_id,
+    "operation": "switch",
+    "phase": "preparing",
+    "install_root": root,
+    "canonical_install_root": root,
+    "from_version": "9.0.0",
+    "target_version": "10.0.0",
+    "from_service_manager": None,
+    "target_service_manager": None,
+    "previous_current": "releases/9.0.0",
+    "target_release": "releases/10.0.0",
+    "backup": None,
+    "no_backup": False,
+    "static_backup": None,
+    "systemd_before": None,
+    "resolv_conf_backup": None,
+    "log_path": f"logs/{tx_id}.log",
+    "started_at": now,
+    "updated_at": now,
+}
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(transaction, stream, indent=2)
+PY
+printf 'phase: preparing\n' >"$install_root_latest/logs/$tx_id.log"
+chmod 0600 "$install_root_latest/logs/$tx_id.log"
+mkdir -p "$install_root_latest/releases/10.0.0"
+printf 'partial release' >"$install_root_latest/releases/10.0.0/landscape-webserver"
+
+publish_release 10.0.0 healthy
+run_switch "$install_root_latest" 10.0.0
+[[ $switch_status -eq 0 ]] || fail "recovery plus switch to 10.0.0 returned $switch_status"
+[[ $(json_value "$fabricated" phase) == failed ]] \
+  || fail "fabricated preparing transaction was not marked failed"
+assert_no_unfinished "$install_root_latest"
+assert_state_version 10.0.0 "$install_root_latest"
+assert_latest_phase "$install_root_latest" committed
+backup=$(latest_backup "$install_root_latest")
+assert_backup_metadata "$backup" 9.0.0 "$state_architecture"
+assert_service_identity "$install_root_latest"
+# ---------------------------------------------------------------- S2 导出失败回滚路径
+# export 发生在备份创建之前,且总是查询运行中的服务;因此先成功安装并运行
+# export_error 的 4.0.0,再尝试切换到尚未安装的 4.1.0,触发导出 500 失败。
+# latest 根已持有全局 unit,先 uninstall 释放注册链接与端口。
+lkit uninstall --yes --install-dir "$install_root_latest"
+run_install "$install_root_export" \
+  --version 4.0.0 \
+  --repository "$public_base" \
+  --admin-user admin \
+  --password-file "$password_file"
+[[ $install_status -eq 0 ]] || fail "export_error install returned $install_status"
+assert_state_version 4.0.0 "$install_root_export"
+write_repository_config "$install_root_export"
+assert_service_identity "$install_root_export"
+lkb_before=$(lkb_count "$install_root_export")
+run_switch "$install_root_export" 4.1.0
+[[ $switch_status -ne 0 ]] || fail "switch from export_error must fail at export"
+assert_state_version 4.0.0 "$install_root_export"
+assert_latest_phase "$install_root_export" failed
+[[ $(lkb_count "$install_root_export") -eq "$lkb_before" ]] \
+  || fail "failed export must not create a new .lkb"
+assert_service_identity "$install_root_export"
 
 echo "PASS: Docker functional E2E completed for $native_architecture"

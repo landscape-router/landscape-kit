@@ -1,6 +1,14 @@
 name: Test Docker functional lifecycle
 
 on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - scripts/docker-e2e/**
+      - scripts/test-docker-lifecycle.sh
+      - .github/workflows/test-docker-lifecycle.yml
   push:
     branches: [dev, main]
     paths:
@@ -18,6 +26,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: docker-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lifecycle:
