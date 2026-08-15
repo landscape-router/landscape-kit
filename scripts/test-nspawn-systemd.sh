@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TODO(daemon-rewrite):`lkit service-manager` 命令已在移除 none 部署模式的
-# 破坏性重构中删除,本脚本的迁移场景不再可执行。多后端重写(daemon 委托、
-# OpenRC/sysvinit)已完成,本脚本应改为预置 systemd 已提交状态并部署
-# `lkit self-service install` 的常驻 daemon,再以 `lkit switch`/`lkit uninstall`
-# 触发真实 systemd 契约验证(注册、启停、MainPID、前端被杀后 daemon 子进程组
-# 独立提交、所有权冲突)。
+# 真实 systemd 契约验证:在 systemd-nspawn 中部署 lkit 常驻 daemon
+# (`lkit self-service install`),以委托的 `lkit uninstall` 验证真实 manager
+# 的注册、启停、MainPID、前端被杀后 daemon 子进程组独立提交,以及注册链接
+# 所有权冲突。OpenRC/sysvinit 后端由 manager_backends fixture E2E 覆盖。
 if [[ $(uname -s):$(uname -m) != Linux:x86_64 ]]; then
   echo "systemd-nspawn integration currently requires Linux x86_64" >&2
   exit 2
@@ -69,7 +67,7 @@ install -D -m 0755 "$prebuilt_dir/landscape-webserver" \
 
 install_root=$rootfs/var/lib/lkit-nspawn/landscape
 release=$install_root/releases/1.0.0
-mkdir -p "$release/static" "$install_root/data" "$install_root/state"
+mkdir -p "$release/static" "$install_root/data" "$install_root/state" "$install_root/service"
 install -m 0755 "$prebuilt_dir/landscape-webserver" "$release/landscape-webserver"
 ln -s releases/1.0.0 "$install_root/current"
 cat >"$release/static/lkit-fixture.json" <<'JSON'
@@ -92,13 +90,35 @@ printf 'version = "1.0.0"\nadmin_user = "admin"\nadmin_pass = "Secret123"\n' \
   >"$install_root/data/landscape_init.toml"
 chmod 0600 "$install_root/data/landscape_init.toml"
 
+# 预置受管 unit 原件与系统注册链接(state 与真实 systemd 一致,内容与
+# render_unit 完全一致;注册与启动在 machine 起来后由真实 systemd 完成)。
+cat >"$install_root/service/landscape-router.service" <<'UNIT'
+[Unit]
+Description=Landscape Router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/var/lib/lkit-nspawn/landscape/current/landscape-webserver --config-dir /var/lib/lkit-nspawn/landscape/data --web /var/lib/lkit-nspawn/landscape/current/static
+User=root
+Restart=always
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0600 "$install_root/service/landscape-router.service"
+ln -s /var/lib/lkit-nspawn/landscape/service/landscape-router.service \
+  "$rootfs/etc/systemd/system/landscape-router.service"
+
 webserver_sha=$(sha256sum "$release/landscape-webserver" | awk '{print $1}')
 webserver_size=$(stat -c '%s' "$release/landscape-webserver")
-python3 - "$install_root/state/install-state.json" "$webserver_sha" "$webserver_size" <<'PY'
+unit_sha=$(sha256sum "$install_root/service/landscape-router.service" | awk '{print $1}')
+python3 - "$install_root/state/install-state.json" "$webserver_sha" "$webserver_size" "$unit_sha" <<'PY'
 import json
 import sys
 
-path, webserver_sha, webserver_size = sys.argv[1:]
+path, webserver_sha, webserver_size, unit_sha = sys.argv[1:]
 root = "/var/lib/lkit-nspawn/landscape"
 state = {
     "schema_version": 1,
@@ -121,12 +141,12 @@ state = {
         "initialized_at": None,
     },
     "service": {
-        "manager": "none",
-        "registered": False,
-        "enabled": False,
-        "verified": False,
-        "definition_path": None,
-        "definition_sha256": None,
+        "manager": "systemd",
+        "registered": True,
+        "enabled": True,
+        "verified": True,
+        "definition_path": "/var/lib/lkit-nspawn/landscape/service/landscape-router.service",
+        "definition_sha256": unit_sha,
     },
     "last_transaction_id": None,
     "committed_at": "2026-08-02T00:00:00Z",
@@ -214,99 +234,30 @@ if [[ $system_bus_ready != true ]]; then
   exit 1
 fi
 
-# none -> systemd 会启动真实临时 worker unit。进入 verifying 后杀掉前端
-# machinectl 会话，模拟 SSH 会话随 Landscape 重启而断开。
-frontend_input=$test_root/frontend.input
-mkfifo "$frontend_input"
-exec 9<>"$frontend_input"
-machinectl shell --quiet "root@$machine" /bin/bash -lc \
-  "/usr/local/bin/lkit service-manager systemd --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json" \
-  <"$frontend_input" >"$test_root/frontend.log" 2>&1 &
-frontend_pid=$!
-
-prompt_visible=false
-for _ in $(seq 1 100); do
-  if grep -q "stop your Landscape instance" "$test_root/frontend.log"; then
-    prompt_visible=true
-    break
-  fi
-  kill -0 "$frontend_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if [[ $prompt_visible != true ]]; then
-  cat "$test_root/frontend.log" >&2
-  echo "delegated migration did not request confirmation" >&2
-  exit 1
-fi
-printf 'yes\n' >&9
-
-reached_verifying=false
-for _ in $(seq 1 100); do
-  if machine_shell \
-    "grep -q '\"phase\": \"verifying\"' /var/lib/lkit-nspawn/landscape/transactions/*.json 2>/dev/null"; then
-    reached_verifying=true
-    break
-  fi
-  sleep 0.2
-done
-if [[ $reached_verifying != true ]]; then
-  cat "$test_root/frontend.log" >&2
-  machine_shell \
-    "ls -la /run/lkit/operations; cat /run/lkit/operations/*.log 2>/dev/null" >&2 || true
-  machine_shell \
-    "systemctl --no-pager --full status 'lkit-operation-*'" >&2 || true
-  cat "$test_root/nspawn.log" >&2
-  echo "delegated migration did not reach verifying" >&2
-  exit 1
-fi
-kill "$frontend_pid" 2>/dev/null || true
-wait "$frontend_pid" 2>/dev/null || true
-exec 9>&-
-
-committed=false
-for _ in $(seq 1 100); do
-  if machine_shell \
-    "python3 -c 'import json; print(json.load(open(\"/var/lib/lkit-nspawn/landscape/state/install-state.json\"))[\"service\"][\"manager\"])' | grep -qx systemd"; then
-    committed=true
-    break
-  fi
-  sleep 0.2
-done
-if [[ $committed != true ]]; then
-  cat "$test_root/frontend.log" >&2
-  cat "$test_root/nspawn.log" >&2
-  echo "worker did not commit after the frontend session was killed" >&2
-  exit 1
-fi
-
+# 真实 systemd 契约:注册并启动受管的 landscape-router 服务。
+machine_shell "systemctl daemon-reload"
+machine_shell "systemctl enable --quiet landscape-router.service"
+machine_shell "systemctl start landscape-router.service"
 machine_shell "systemctl is-enabled --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet landscape-router.service"
 machine_shell "test \"\$(systemctl show --property=MainPID --value landscape-router.service)\" -gt 1"
-worker_cleaned=false
-for _ in $(seq 1 50); do
-  if machine_shell "! systemctl list-units --all 'lkit-operation-*' --no-legend | grep -q ."; then
-    worker_cleaned=true
-    break
-  fi
-  sleep 0.2
-done
-[[ $worker_cleaned == true ]] || {
-  echo "delegated worker unit was not cleaned after commit" >&2
-  exit 1
-}
 
-# systemd -> none 也由 worker 执行，并必须停止、禁用和注销真实 unit。
+# 部署常驻 daemon:self-service install 在真实 systemd 下注册并启动 lkit.service。
 machine_shell \
-  "/usr/local/bin/lkit service-manager none --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json"
-machine_shell \
-  "python3 -c 'import json; print(json.load(open(\"/var/lib/lkit-nspawn/landscape/state/install-state.json\"))[\"service\"][\"manager\"])' | grep -qx none"
-machine_shell "! systemctl is-active --quiet landscape-router.service"
-machine_shell "test ! -e /etc/systemd/system/landscape-router.service"
+  "/usr/local/bin/lkit self-service install --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json"
+machine_shell "systemctl is-enabled --quiet lkit.service"
+machine_shell "systemctl is-active --quiet lkit.service"
+machine_shell "test \"\$(systemctl show --property=MainPID --value lkit.service)\" -gt 1"
+machine_shell "systemctl show --property=KillMode --value lkit.service | grep -qx process"
+machine_shell "test -f /var/lib/lkit-nspawn/landscape/run/lkit.pid"
 
-# 所有权冲突必须在接管前失败,不留失败状态。
+# 所有权冲突:注册链接被外部文件替换时,委托的 uninstall 必须在接管前失败,
+# 不停止服务、不删除外部文件。冲突发生在事务前捕获阶段,留下未终结事务,
+# 由下次命令的恢复流程标记 failed。
+machine_shell "rm /etc/systemd/system/landscape-router.service"
 machine_shell "printf '[Unit]\nDescription=foreign unit\n' >/etc/systemd/system/landscape-router.service"
 if machine_shell \
-  "printf 'yes\\n' | script -qec '/usr/local/bin/lkit service-manager systemd --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json' /dev/null"; then
+  "/usr/local/bin/lkit uninstall --yes --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json"; then
   conflict_status=0
 else
   conflict_status=$?
@@ -315,22 +266,87 @@ fi
   echo "systemd ownership conflict unexpectedly succeeded" >&2
   exit 1
 }
+machine_shell "grep -q 'Description=foreign unit' /etc/systemd/system/landscape-router.service"
+machine_shell "systemctl is-active --quiet landscape-router.service"
 machine_shell "rm /etc/systemd/system/landscape-router.service"
-machine_shell \
-  "python3 -c 'import json; print(json.load(open(\"/var/lib/lkit-nspawn/landscape/state/install-state.json\"))[\"service\"][\"manager\"])' | grep -qx none"
-machine_shell \
-  "! find /var/lib/lkit-nspawn/landscape/transactions -name '*.json' -exec grep -lE '\"phase\": \"(preparing|prepared|stopping|activating|verifying|rolling_back)\"' {} + | grep -q ."
-conflict_worker_cleaned=false
-for _ in $(seq 1 50); do
-  if machine_shell "! systemctl list-units --all 'lkit-operation-*' --no-legend | grep -q ."; then
-    conflict_worker_cleaned=true
+machine_shell "ln -s /var/lib/lkit-nspawn/landscape/service/landscape-router.service /etc/systemd/system/landscape-router.service"
+machine_shell "systemctl daemon-reload"
+
+# 前端断开独立提交:委托的 uninstall 由 daemon 执行。抓到请求文件后杀掉
+# machinectl 前端,模拟 SSH 会话断开;daemon 必须独立完成卸载并提交。
+frontend_input=$test_root/frontend.input
+mkfifo "$frontend_input"
+exec 9<>"$frontend_input"
+machinectl shell --quiet "root@$machine" /bin/bash -lc \
+  "/usr/local/bin/lkit uninstall --yes --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json" \
+  <"$frontend_input" >"$test_root/frontend.log" 2>&1 &
+frontend_pid=$!
+
+request_seen=false
+for _ in $(seq 1 200); do
+  if machine_shell "ls /run/lkit/operations/*.request.json >/dev/null 2>&1"; then
+    request_seen=true
+    break
+  fi
+  kill -0 "$frontend_pid" 2>/dev/null || break
+  sleep 0.2
+done
+if [[ $request_seen == true ]]; then
+  echo "killing the frontend while the daemon is executing the delegated uninstall" >&2
+  kill "$frontend_pid" 2>/dev/null || true
+else
+  echo "frontend finished before the request file could be observed" >&2
+fi
+wait "$frontend_pid" 2>/dev/null || true
+exec 9>&-
+
+uninstalled=false
+for _ in $(seq 1 200); do
+  if machine_shell "! test -e /var/lib/lkit-nspawn/landscape/state/install-state.json" \
+    && machine_shell "! systemctl is-active --quiet landscape-router.service"; then
+    uninstalled=true
     break
   fi
   sleep 0.2
 done
-[[ $conflict_worker_cleaned == true ]] || {
-  echo "failed delegated worker unit was not cleaned" >&2
+if [[ $uninstalled != true ]]; then
+  cat "$test_root/frontend.log" >&2
+  machine_shell "ls -la /run/lkit/operations" >&2 || true
+  machine_shell "systemctl --no-pager --full status landscape-router.service lkit.service" >&2 || true
+  echo "delegated uninstall did not complete after the frontend was killed" >&2
   exit 1
-}
+fi
 
-echo "PASS: systemd-nspawn worker and real-systemd integration"
+# 收尾断言:服务停止、禁用并注销;daemon 服务随卸载停止;事务全部终结。
+machine_shell "! systemctl is-enabled --quiet landscape-router.service"
+machine_shell "test ! -e /etc/systemd/system/landscape-router.service"
+machine_shell "! systemctl is-active --quiet lkit.service"
+machine_shell "test ! -e /etc/systemd/system/lkit.service"
+machine_shell "test ! -e /var/lib/lkit-nspawn/landscape/service/lkit"
+python3 - "$install_root" <<'PY'
+import json
+import os
+import sys
+
+root = sys.argv[1]
+tx_dir = os.path.join(root, "transactions")
+leftovers = []
+committed_uninstall = False
+for name in sorted(os.listdir(tx_dir)):
+    if not name.endswith(".json"):
+        continue
+    with open(os.path.join(tx_dir, name), encoding="utf-8") as stream:
+        tx = json.load(stream)
+    if tx["phase"] not in ("committed", "rolled_back", "failed"):
+        leftovers.append(f"{name}:{tx['phase']}")
+    if tx.get("operation") == "uninstall" and tx["phase"] == "committed":
+        committed_uninstall = True
+if leftovers:
+    print(f"unfinished transactions remain: {','.join(leftovers)}", file=sys.stderr)
+    sys.exit(1)
+if not committed_uninstall:
+    print("no committed uninstall transaction found", file=sys.stderr)
+    sys.exit(1)
+PY
+
+echo "PASS: systemd-nspawn daemon delegation and real-systemd integration"

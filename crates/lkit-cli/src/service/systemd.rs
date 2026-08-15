@@ -233,6 +233,7 @@ pub(crate) fn render_lkit_daemon_unit(canonical_root: &Path) -> String {
          ExecStart={0}/service/lkit daemon --config-dir {0}/data\n\
          User=root\n\
          Restart=always\n\
+         KillMode=process\n\
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
@@ -268,13 +269,15 @@ fn parse_unit(content: &str) -> Result<Vec<(String, String)>, InstallError> {
 /// - `ExecStart` 恰好指向本安装根目录的受管命令;
 /// - `User=root`、`Restart=always`、`WantedBy=multi-user.target`;
 /// - Landscape 额外要求 `LimitMEMLOCK=infinity`;
+/// - daemon 额外要求 `KillMode=process`(停服时只向主进程发信号,daemon
+///   能完成进行中的委托请求,不会通过 cgroup 信号杀死执行子进程);
 /// - 不包含明显的凭据内容。
 pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), InstallError> {
     let expected = format!(
         "{0}/current/landscape-webserver --config-dir {0}/data --web {0}/current/static",
         canonical_root.display()
     );
-    validate_definition(content, expected, true)
+    validate_definition(content, expected, true, false)
 }
 
 fn validate_lkit_daemon_unit(content: &str, canonical_root: &Path) -> Result<(), InstallError> {
@@ -282,13 +285,14 @@ fn validate_lkit_daemon_unit(content: &str, canonical_root: &Path) -> Result<(),
         "{0}/service/lkit daemon --config-dir {0}/data",
         canonical_root.display()
     );
-    validate_definition(content, expected, false)
+    validate_definition(content, expected, false, true)
 }
 
 fn validate_definition(
     content: &str,
     expected_exec: String,
     require_memlock: bool,
+    require_kill_mode_process: bool,
 ) -> Result<(), InstallError> {
     let entries = parse_unit(content)?;
     let mut exec_start: Option<&str> = None;
@@ -296,6 +300,7 @@ fn validate_definition(
     let mut restart: Option<&str> = None;
     let mut memlock: Option<&str> = None;
     let mut wanted_by: Option<&str> = None;
+    let mut kill_mode: Option<&str> = None;
     for (key, value) in &entries {
         match key.as_str() {
             "ExecStart" => exec_start = Some(value),
@@ -303,6 +308,7 @@ fn validate_definition(
             "Restart" => restart = Some(value),
             "LimitMEMLOCK" => memlock = Some(value),
             "WantedBy" => wanted_by = Some(value),
+            "KillMode" => kill_mode = Some(value),
             _ => {}
         }
         let lower = value.to_ascii_lowercase();
@@ -330,6 +336,9 @@ fn validate_definition(
     }
     if require_memlock && memlock != Some("infinity") {
         return Err(systemd_error("unit LimitMEMLOCK must be infinity".into()));
+    }
+    if require_kill_mode_process && kill_mode != Some("process") {
+        return Err(systemd_error("unit KillMode must be process".into()));
     }
     if wanted_by != Some("multi-user.target") {
         return Err(systemd_error(
@@ -941,6 +950,9 @@ mod tests {
 
         let tampered = content.replace("/srv/landscape", "/srv/other");
         assert!(validate_lkit_daemon_unit(&tampered, root).is_err());
+
+        let without_kill_mode = content.replace("KillMode=process\n", "");
+        assert!(validate_lkit_daemon_unit(&without_kill_mode, root).is_err());
 
         assert!(validate_unit(&content, root).is_err());
     }

@@ -98,11 +98,13 @@ capture_before(manager: &dyn ServiceManager, service: ManagedService) -> Result<
 - `LandscapeRouter`:`<root>/current/landscape-webserver --config-dir <root>/data
   --web <root>/current/static`,含 `LimitMEMLOCK=infinity`;
 - `LkitDaemon`:`<root>/service/lkit daemon --config-dir <root>/data`
-  (lkit 二进制复制到 `<root>/service/lkit`,与网络接管恢复二进制同目录约定)。
+  (lkit 二进制复制到 `<root>/service/lkit`,与网络接管恢复二进制同目录约定),
+  含 `KillMode=process`——停服时只向主进程发信号,daemon 能完成进行中的委托
+  请求,不会通过 cgroup 信号杀死执行子进程(停 lkit.service 自身即停服场景)。
 
 `validate_definition` 校验 `ExecStart` 恰为对应受管命令、`User=root`、
-`Restart=always`、`WantedBy=multi-user.target`(Landscape 额外要求 MEMLOCK),
-且不含凭据内容。
+`Restart=always`、`WantedBy=multi-user.target`(Landscape 额外要求 MEMLOCK,
+daemon 额外要求 `KillMode=process`),且不含凭据内容。
 
 ## OpenRC 后端(简单实现)
 
