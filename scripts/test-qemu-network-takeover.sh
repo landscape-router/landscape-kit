@@ -369,7 +369,7 @@ start_takeover() {
   printf '%s\n1\n\n\n\n' "$wan_index" | timeout 900 ssh "${ssh_common[@]}" \
     -tt -p "$active_ssh_port" root@127.0.0.1 \
     /usr/local/bin/lkit install --takeover-network \
-    --install-dir /var/lib/landscape --service-manager systemd \
+    --install-dir /var/lib/landscape \
     --admin-user admin --password-file /var/lib/lkit-qemu/password \
     "${version_args[@]}" \
     >"$artifact_dir/$scenario-install.log" 2>&1

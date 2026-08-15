@@ -41,9 +41,8 @@ software: common software for Debian:
 不支持的其他发行版（如 Alpine）由发行版检测直接报错阻断；缺少 apt 代号或 dnf 主版本
 号、不支持的 CPU 架构（apt 家族）同样报错。
 
-安装完成后启用并启动服务（systemd 的 `systemctl enable --now docker`；无 systemd 时
-回退 `service docker start`），并以 `docker info` 做最终验证：daemon 未就绪时报
-"服务未运行"错误，安装视为失败。
+安装完成后通过 `systemctl enable --now docker` 启用并启动服务，并以 `docker info`
+做最终验证：daemon 未就绪时报"服务未运行"错误，安装视为失败。
 
 ## 权限与确认
 

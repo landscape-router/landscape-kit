@@ -1,4 +1,3 @@
-existing.service_manager_already = "service manager is already %{key}"
 existing.static_pages_restored = "static pages restored from the published release assets"
 existing.backend_restored_and_verified = "the active backend binary was restored and verified"
 existing.repair_failed_rolled_back = "repairing the backend failed; rolled back to the previous binary"

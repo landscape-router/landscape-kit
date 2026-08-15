@@ -7,10 +7,8 @@ use clap::{Args, Subcommand};
 use crate::deployment::plan::InstallError;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, plan, root};
-use crate::service::manager::{ManagedService, ServiceManager, ServiceManagerKind};
-use crate::workflows::install::{ManagerChoice, select_manager};
-
-use super::manage::ServiceManagerArg;
+use crate::service::manager::{ManagedService, ServiceManager};
+use crate::workflows::install::require_manager;
 
 /// 把 lkit 自身安装为受管服务(`self-service install`)或移除
 /// (`self-service remove`)。Phase B 提供垂直切片,验证
@@ -32,9 +30,6 @@ pub enum SelfServiceAction {
 
 #[derive(Debug, Args)]
 pub struct SelfServiceArgs {
-    /// 服务管理器:`systemd` 或自动探测;不支持 `none`
-    #[arg(long, value_enum)]
-    pub service_manager: Option<ServiceManagerArg>,
     #[arg(long, value_name = "PATH")]
     pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
@@ -81,21 +76,7 @@ fn install(
     args: &SelfServiceArgs,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
-    let choice = match args.service_manager {
-        Some(ServiceManagerArg::Systemd) => ManagerChoice::Systemd,
-        Some(ServiceManagerArg::None) => {
-            return Err(InstallError::ParameterUsage(
-                "self-service install requires a real service manager; `none` is not supported"
-                    .into(),
-            ));
-        }
-        None => ManagerChoice::Auto,
-    };
-    if select_manager(choice, manager)? != ServiceManagerKind::Systemd {
-        return Err(InstallError::ParameterUsage(
-            "self-service install requires the systemd service manager; it is not available".into(),
-        ));
-    }
+    require_manager(manager)?;
     let service = ManagedService::LkitDaemon;
     let canonical = &install_root.canonical;
     std::fs::create_dir_all(canonical.join("service")).map_err(InstallError::Io)?;

@@ -5,7 +5,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use super::super::health::PortCheck;
-use crate::service::manager::ServiceManagerKind;
 use crate::service::systemd::Systemd;
 
 use sha2::{Digest, Sha256};
@@ -177,82 +176,33 @@ pub(crate) fn none_options() -> HealthOptions<FakeDocs> {
     test_options()
 }
 
-pub(crate) fn version() -> semver::Version {
-    semver::Version::new(1, 2, 3)
+/// 探测返回 Available 的 systemd(不提供 systemctl 脚本,不执行注册/启动)。
+/// 探测返回 Available 的 systemd(仅响应版本查询,不执行注册/启动)。
+pub(crate) fn available_systemd(dir: &std::path::Path) -> Systemd {
+    std::fs::create_dir_all(dir.join("run")).unwrap();
+    let script = dir.join("systemctl");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+case "$*" in
+  "show --property=Version") echo "Version=252.fake";;
+  *) exit 0;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Systemd {
+        systemctl: script,
+        system_unit_dir: dir.join("units"),
+        run_systemd_dir: dir.join("run"),
+        pid1_is_systemd: true,
+        resolv_conf: dir.join("resolv.conf"),
+    }
 }
 
-#[tokio::test]
-async fn performs_first_install_from_http_repository() {
-    let (server, root, provider) = start_repository("e2e-explicit", repository_files().0);
-    let outcome = first_install(
-        &root,
-        &provider,
-        &TargetVersion::Version(version()),
-        &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(outcome.release.version, version());
-
-    let binary = root.canonical.join("releases/1.2.3/landscape-webserver");
-    assert_eq!(std::fs::read(&binary).unwrap(), WEBSERVER_PAYLOAD);
-    let mode = std::fs::metadata(&binary).unwrap().permissions().mode();
-    assert_eq!(mode & 0o111, 0o111);
-
-    let index = root.canonical.join("releases/1.2.3/static/index.html");
-    assert_eq!(std::fs::read_to_string(&index).unwrap(), "<h1>hello</h1>");
-
-    assert_eq!(
-        std::fs::read_link(root.canonical.join("current")).unwrap(),
-        std::path::PathBuf::from("releases/1.2.3")
-    );
-
-    let init_config =
-        std::fs::read_to_string(root.canonical.join("data/landscape_init.toml")).unwrap();
-    assert!(init_config.contains("version = \"1.2.3\""));
-    assert!(init_config.contains("admin_user = \"admin\""));
-    assert!(init_config.contains("admin_pass = \"Secret123\""));
-
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
-    assert_eq!(state.active_version, "1.2.3");
-    assert_eq!(state.initialization.status, InitStatus::Pending);
-    assert!(!state.initialization.lock_present);
-    assert!(state.initialization.initialized_at.is_none());
-    assert_eq!(state.service.manager, StateServiceManager::None);
-    assert_eq!(
-        state.assets.webserver.sha256,
-        super::hex(&{
-            let mut hasher = Sha256::new();
-            hasher.update(WEBSERVER_PAYLOAD);
-            hasher.finalize()
-        })
-    );
-
-    assert!(
-        server
-            .request_paths()
-            .contains(&"/releases/1.2.3/landscape-webserver-x86_64.zst".into())
-    );
-    assert!(
-        server
-            .request_paths()
-            .contains(&"/releases/1.2.3/static.zip".into())
-    );
-
-    assert!(
-        super::super::transaction::find_unfinished(&root)
-            .unwrap()
-            .is_none()
-    );
-    let tx_files: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
-    assert_eq!(tx_files.len(), 1);
-    let _ = std::fs::remove_dir_all(&root.install_root);
+pub(crate) fn version() -> semver::Version {
+    semver::Version::new(1, 2, 3)
 }
 
 pub(crate) fn fake_systemd(dir: &std::path::Path, main_pid: u32) -> Systemd {
@@ -285,43 +235,140 @@ esac
 }
 
 #[tokio::test]
-async fn auto_selects_none_without_systemd() {
-    let (files, _) = repository_files();
-    let (_server, root, provider) = start_repository("e2e-auto-none", files);
+async fn performs_first_install_from_http_repository() {
+    use std::net::{TcpListener, UdpSocket};
+
+    let (server, root, provider) = start_repository("e2e-explicit", repository_files().0);
     let dir = std::env::temp_dir().join(format!(
-        "lkit-pipeline-test-auto-none-{}",
+        "lkit-pipeline-test-explicit-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let systemd = Systemd {
-        systemctl: dir.join("systemctl"),
-        system_unit_dir: dir.join("units"),
-        run_systemd_dir: dir.join("run"),
-        pid1_is_systemd: true,
-        resolv_conf: dir.join("resolv.conf"),
+
+    let tcp1 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp2 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp3 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let ports = vec![
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp1.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp2.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp3.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Udp,
+            port: udp.local_addr().unwrap().port(),
+        },
+    ];
+
+    let systemd = fake_systemd(&dir, std::process::id());
+    let data_dir = root.canonical.join("data");
+    let watcher = std::thread::spawn(move || {
+        loop {
+            if data_dir.join("landscape_init.toml").is_file() {
+                std::fs::write(data_dir.join("landscape_init.lock"), b"").unwrap();
+                std::fs::write(data_dir.join("landscape.toml"), b"").unwrap();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+
+    let options = HealthOptions {
+        docs: FakeDocs,
+        ports: ports.clone(),
+        startup_timeout: Duration::from_secs(15),
+        stable_duration: Duration::from_millis(100),
     };
     let outcome = first_install(
         &root,
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::Auto,
         &systemd,
-        &none_options(),
+        &options,
     )
     .await
     .unwrap();
-    assert_eq!(outcome.manager, ServiceManagerKind::None);
+    watcher.join().unwrap();
+    assert_eq!(outcome.release.version, version());
+
+    let binary = root.canonical.join("releases/1.2.3/landscape-webserver");
+    assert_eq!(std::fs::read(&binary).unwrap(), WEBSERVER_PAYLOAD);
+    let mode = std::fs::metadata(&binary).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111);
+
+    let index = root.canonical.join("releases/1.2.3/static/index.html");
+    assert_eq!(std::fs::read_to_string(&index).unwrap(), "<h1>hello</h1>");
+
+    assert_eq!(
+        std::fs::read_link(root.canonical.join("current")).unwrap(),
+        std::path::PathBuf::from("releases/1.2.3")
+    );
+
+    let init_config =
+        std::fs::read_to_string(root.canonical.join("data/landscape_init.toml")).unwrap();
+    assert!(init_config.contains("version = \"1.2.3\""));
+    assert!(init_config.contains("admin_user = \"admin\""));
+    assert!(init_config.contains("admin_pass = \"Secret123\""));
+
     let state = super::super::state::load_state(&root).unwrap().unwrap();
-    assert_eq!(state.service.manager, StateServiceManager::None);
-    assert_eq!(state.initialization.status, InitStatus::Pending);
-    let _ = std::fs::remove_dir_all(&root.install_root);
+    assert_eq!(state.active_version, "1.2.3");
+    assert_eq!(state.initialization.status, InitStatus::Complete);
+    assert!(state.initialization.lock_present);
+    assert!(state.initialization.initialized_at.is_some());
+    assert_eq!(state.service.manager, StateServiceManager::Systemd);
+    assert!(state.service.registered);
+    assert!(state.service.enabled);
+    assert!(state.service.verified);
+    assert_eq!(
+        state.assets.webserver.sha256,
+        super::hex(&{
+            let mut hasher = Sha256::new();
+            hasher.update(WEBSERVER_PAYLOAD);
+            hasher.finalize()
+        })
+    );
+
+    assert!(
+        server
+            .request_paths()
+            .contains(&"/releases/1.2.3/landscape-webserver-x86_64.zst".into())
+    );
+    assert!(
+        server
+            .request_paths()
+            .contains(&"/releases/1.2.3/static.zip".into())
+    );
+
+    assert!(
+        super::super::transaction::find_unfinished(&root)
+            .unwrap()
+            .is_none()
+    );
+    let tx_files: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(tx_files.len(), 1);
+    drop(tcp1);
+    drop(tcp2);
+    drop(tcp3);
+    drop(udp);
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&root.install_root);
 }
 
 #[tokio::test]
-async fn systemd_request_fails_when_unavailable() {
+async fn first_install_fails_without_available_systemd() {
     let (files, _) = repository_files();
     let (_server, root, provider) = start_repository("e2e-systemd-unavail", files);
     let dir = std::env::temp_dir().join(format!(
@@ -343,12 +390,11 @@ async fn systemd_request_fails_when_unavailable() {
             &provider,
             &TargetVersion::Version(version()),
             &credentials(),
-            ManagerChoice::Systemd,
             &systemd,
             &none_options(),
         )
         .await,
-        Err(InstallError::Systemd(_))
+        Err(InstallError::UnsupportedPlatform(_))
     ));
     assert!(!root.canonical.join("state/install-state.json").exists());
     let _ = std::fs::remove_dir_all(&root.install_root);
@@ -357,15 +403,10 @@ async fn systemd_request_fails_when_unavailable() {
 
 #[tokio::test]
 async fn first_install_with_systemd_registers_and_verifies() {
-    assert_systemd_first_install(ManagerChoice::Systemd, "e2e-systemd-explicit").await;
+    assert_systemd_first_install("e2e-systemd").await;
 }
 
-#[tokio::test]
-async fn auto_selects_systemd_when_available() {
-    assert_systemd_first_install(ManagerChoice::Auto, "e2e-systemd-auto").await;
-}
-
-pub(crate) async fn assert_systemd_first_install(choice: ManagerChoice, case: &str) {
+pub(crate) async fn assert_systemd_first_install(case: &str) {
     use std::net::{TcpListener, UdpSocket};
 
     let (files, payload) = repository_files();
@@ -422,14 +463,13 @@ pub(crate) async fn assert_systemd_first_install(choice: ManagerChoice, case: &s
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        choice,
         &systemd,
         &options,
     )
     .await
     .unwrap();
     watcher.join().unwrap();
-    assert_eq!(outcome.manager, ServiceManagerKind::Systemd);
+    assert_eq!(outcome.release.version, version());
 
     assert!(dir.join("units/landscape-router.service").is_symlink());
     let unit_origin = root.canonical.join("service/landscape-router.service");
@@ -495,19 +535,73 @@ pub(crate) fn load_transaction_json(root: &InstallRoot) -> serde_json::Value {
 
 #[tokio::test]
 async fn resolves_latest_stable_from_channel() {
+    use std::net::{TcpListener, UdpSocket};
+
     let (_server, root, provider) = start_repository("e2e-latest", repository_files().0);
+    let dir =
+        std::env::temp_dir().join(format!("lkit-pipeline-test-latest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let tcp1 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp2 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp3 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let ports = vec![
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp1.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp2.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp3.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Udp,
+            port: udp.local_addr().unwrap().port(),
+        },
+    ];
+
+    let systemd = fake_systemd(&dir, std::process::id());
+    let data_dir = root.canonical.join("data");
+    let watcher = std::thread::spawn(move || {
+        loop {
+            if data_dir.join("landscape_init.toml").is_file() {
+                std::fs::write(data_dir.join("landscape_init.lock"), b"").unwrap();
+                std::fs::write(data_dir.join("landscape.toml"), b"").unwrap();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+
+    let options = HealthOptions {
+        docs: FakeDocs,
+        ports: ports.clone(),
+        startup_timeout: Duration::from_secs(15),
+        stable_duration: Duration::from_millis(100),
+    };
     let outcome = first_install(
         &root,
         &provider,
         &TargetVersion::Latest,
         &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
+        &systemd,
+        &options,
     )
     .await
     .unwrap();
+    watcher.join().unwrap();
     assert_eq!(outcome.release.version, version());
+    drop(tcp1);
+    drop(tcp2);
+    drop(tcp3);
+    drop(udp);
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&root.install_root);
 }
 
@@ -517,19 +611,24 @@ async fn fails_without_stable_channel() {
     let mut files = files;
     files.remove("/channels/stable.json");
     let (_server, root, provider) = start_repository("e2e-missing", files);
+    let dir =
+        std::env::temp_dir().join(format!("lkit-pipeline-test-missing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let systemd = available_systemd(&dir);
     assert!(matches!(
         first_install(
             &root,
             &provider,
             &TargetVersion::Latest,
             &credentials(),
-            ManagerChoice::None,
-            &Systemd::host(),
+            &systemd,
             &none_options(),
         )
         .await,
         Err(InstallError::NoStableVersion)
     ));
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&root.install_root);
 }
 
@@ -539,6 +638,13 @@ async fn cleans_up_on_asset_download_failure() {
     let asset_path = "/releases/1.2.3/landscape-webserver-x86_64.zst";
     files.remove(asset_path);
     let (server, root, provider) = start_repository("e2e-download-failure", files);
+    let dir = std::env::temp_dir().join(format!(
+        "lkit-pipeline-test-download-failure-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let systemd = available_systemd(&dir);
 
     assert!(
         first_install(
@@ -546,13 +652,13 @@ async fn cleans_up_on_asset_download_failure() {
             &provider,
             &TargetVersion::Version(version()),
             &credentials(),
-            ManagerChoice::None,
-            &Systemd::host(),
+            &systemd,
             &none_options(),
         )
         .await
         .is_err()
     );
+    let _ = std::fs::remove_dir_all(&dir);
     assert!(server.request_paths().contains(&asset_path.to_string()));
     assert_failed_first_install_cleanup(&root);
     let _ = std::fs::remove_dir_all(&root.install_root);
@@ -591,20 +697,25 @@ async fn cleans_up_on_corrupted_webserver_archive() {
         b"garbage".to_vec(),
     );
     let (_server, root, provider) = start_repository("e2e-corrupt", files);
+    let dir =
+        std::env::temp_dir().join(format!("lkit-pipeline-test-corrupt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let systemd = available_systemd(&dir);
     assert!(
         first_install(
             &root,
             &provider,
             &TargetVersion::Version(version()),
             &credentials(),
-            ManagerChoice::None,
-            &Systemd::host(),
+            &systemd,
             &none_options(),
         )
         .await
         .is_err()
     );
     assert_failed_first_install_cleanup(&root);
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&root.install_root);
 }
 
@@ -643,6 +754,13 @@ async fn cleans_up_on_invalid_static_archive() {
     );
     files.insert("/releases/1.2.3/static.zip".into(), invalid_static.to_vec());
     let (server, root, provider) = start_repository("e2e-invalid-static", files);
+    let dir = std::env::temp_dir().join(format!(
+        "lkit-pipeline-test-invalid-static-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let systemd = available_systemd(&dir);
 
     assert!(
         first_install(
@@ -650,13 +768,13 @@ async fn cleans_up_on_invalid_static_archive() {
             &provider,
             &TargetVersion::Version(version()),
             &credentials(),
-            ManagerChoice::None,
-            &Systemd::host(),
+            &systemd,
             &none_options(),
         )
         .await
         .is_err()
     );
+    let _ = std::fs::remove_dir_all(&dir);
     assert!(
         server
             .request_paths()
@@ -684,19 +802,24 @@ pub(crate) fn assert_failed_first_install_cleanup(root: &InstallRoot) {
 async fn rejects_existing_release_directory() {
     let (_server, root, provider) = start_repository("e2e-exists", repository_files().0);
     std::fs::create_dir_all(root.canonical.join("releases/1.2.3")).unwrap();
+    let dir =
+        std::env::temp_dir().join(format!("lkit-pipeline-test-exists-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let systemd = available_systemd(&dir);
     assert!(matches!(
         first_install(
             &root,
             &provider,
             &TargetVersion::Version(version()),
             &credentials(),
-            ManagerChoice::None,
-            &Systemd::host(),
+            &systemd,
             &none_options(),
         )
         .await,
         Err(InstallError::ReleaseExists(_))
     ));
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&root.install_root);
 }
 

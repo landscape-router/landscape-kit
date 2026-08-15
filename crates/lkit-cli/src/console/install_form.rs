@@ -10,8 +10,8 @@ use super::preflight::{render_preflight_details, render_preflight_summary};
 use super::render::{display_pad, mask, panel_block};
 use super::widgets::{Focus, Hit, block_row_of};
 use super::{ConsoleAction, ConsoleApp};
+use crate::commands::Commands;
 use crate::commands::install::Install;
-use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::plan;
 use crate::interaction::credentials;
 use crate::network::config::NetworkPlan;
@@ -19,7 +19,7 @@ use crate::network::config::NetworkPlan;
 // TODO(network-takeover): 处理完不同发行版网络服务差异后恢复网络接管开关:
 // `FORM_FIELDS` 改回 10,恢复下方被注释的字段 8 代码,并把
 // `InstallForm::default` 的 `takeover_network` 改回 false。
-pub(crate) const FORM_FIELDS: usize = 9;
+pub(crate) const FORM_FIELDS: usize = 8;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RepositoryMode {
     Default,
@@ -52,41 +52,6 @@ impl RepositoryMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ManagerMode {
-    Auto,
-    Systemd,
-    None,
-}
-
-impl ManagerMode {
-    fn label(self) -> String {
-        match self {
-            Self::Auto => crate::tr!(crate::keys::CONSOLE_MANAGER_AUTO),
-            Self::Systemd => "systemd".into(),
-            Self::None => "none".into(),
-        }
-    }
-
-    fn change(&mut self, forward: bool) {
-        *self = match (*self, forward) {
-            (Self::Auto, true) | (Self::None, false) => Self::Systemd,
-            (Self::Systemd, true) => Self::None,
-            (Self::Systemd, false) => Self::Auto,
-            (Self::None, true) => Self::Auto,
-            (Self::Auto, false) => Self::None,
-        };
-    }
-
-    fn cli(self) -> Option<ServiceManagerArg> {
-        match self {
-            Self::Auto => None,
-            Self::Systemd => Some(ServiceManagerArg::Systemd),
-            Self::None => Some(ServiceManagerArg::None),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct InstallForm {
     pub(crate) version: String,
@@ -96,7 +61,6 @@ pub(crate) struct InstallForm {
     pub(crate) admin_user: String,
     pub(crate) password: String,
     pub(crate) password_confirmation: String,
-    pub(crate) manager: ManagerMode,
     pub(crate) takeover_network: bool,
     pub(crate) selected: usize,
     pub(crate) checks_selected: bool,
@@ -114,7 +78,6 @@ impl Default for InstallForm {
             admin_user: "admin".into(),
             password: String::new(),
             password_confirmation: String::new(),
-            manager: ManagerMode::Auto,
             // TODO(network-takeover): 开关暂隐藏且恒为 true,console 安装始终走网络接管;
             // 处理完不同发行版网络服务差异后恢复开关并把默认改回 false。
             takeover_network: true,
@@ -182,17 +145,13 @@ impl InstallForm {
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_HELP),
             ),
-            7 => (
-                crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_LABEL),
-                crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_HELP),
-            ),
-            // TODO(network-takeover): 恢复网络接管开关时,该字段回到索引 8,
-            // 开始安装回到索引 9,并放开下面被注释的接管 arm。
-            // 8 => (
+            // TODO(network-takeover): 恢复网络接管开关时,该字段回到索引 7,
+            // 开始安装回到索引 8,并放开下面被注释的接管 arm。
+            // 7 => (
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_HELP),
             // ),
-            8 => (
+            7 => (
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_LABEL),
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_HELP),
             ),
@@ -218,9 +177,8 @@ impl InstallForm {
     pub(crate) fn change_choice(&mut self, forward: bool) {
         match self.selected {
             1 => self.repository.change(forward),
-            7 => self.manager.change(forward),
             // TODO(network-takeover): 恢复网络接管开关时放开:
-            // 8 => self.takeover_network = !self.takeover_network,
+            // 7 => self.takeover_network = !self.takeover_network,
             _ => {}
         }
     }
@@ -290,7 +248,6 @@ impl InstallForm {
             admin_user: Some(self.admin_user.clone()),
             password_file: None,
             interactive_password: Some(password),
-            service_manager: self.manager.cli(),
             force: false,
             takeover_network: self.takeover_network,
             network_plan,
@@ -313,15 +270,6 @@ impl InstallForm {
             "--admin-user".into(),
             self.admin_user.clone(),
         ]);
-        if let Some(manager) = self.manager.cli() {
-            args.extend([
-                "--service-manager".into(),
-                match manager {
-                    ServiceManagerArg::Systemd => "systemd".into(),
-                    ServiceManagerArg::None => "none".into(),
-                },
-            ]);
-        }
         if self.takeover_network {
             args.push("--takeover-network".into());
         }
@@ -369,7 +317,6 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
         form.admin_user.clone(),
         mask(&form.password),
         mask(&form.password_confirmation),
-        form.manager.label().into(),
         // TODO(network-takeover): 恢复网络接管开关时放开该行。
         // if form.takeover_network { "[x]" } else { "[ ]" }.into(),
         crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON).into(),
@@ -382,7 +329,6 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
         crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
         crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
         crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
-        crate::tr!(crate::keys::CONSOLE_SERVICE_MANAGER_LABEL),
         // TODO(network-takeover): 恢复网络接管开关时放开该行。
         // crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
         String::new(),

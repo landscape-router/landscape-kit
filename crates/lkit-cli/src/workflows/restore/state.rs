@@ -87,37 +87,18 @@ pub(super) fn build_restore_state(
         BackupArchitecture::X86_64 => StateArchitecture::X86_64,
         BackupArchitecture::Aarch64 => StateArchitecture::Aarch64,
     };
-    let (initialization, service) = match previous.service.manager {
-        StateServiceManager::Systemd => (
-            InitializationState {
-                status: InitStatus::Complete,
-                lock_present: true,
-                initialized_at: Some(Utc::now()),
-            },
-            ServiceState {
-                manager: StateServiceManager::Systemd,
-                registered: true,
-                enabled: true,
-                verified: true,
-                definition_path: Some("service/landscape-router.service".into()),
-                definition_sha256: unit_sha,
-            },
-        ),
-        StateServiceManager::None => (
-            InitializationState {
-                status: InitStatus::Pending,
-                lock_present: false,
-                initialized_at: None,
-            },
-            ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
-            },
-        ),
+    let initialization = InitializationState {
+        status: InitStatus::Complete,
+        lock_present: true,
+        initialized_at: Some(Utc::now()),
+    };
+    let service = ServiceState {
+        manager: StateServiceManager::Systemd,
+        registered: true,
+        enabled: true,
+        verified: true,
+        definition_path: Some("service/landscape-router.service".into()),
+        definition_sha256: unit_sha,
     };
     Ok(InstallState {
         schema_version: STATE_SCHEMA_VERSION,
@@ -149,15 +130,14 @@ mod tests {
 
     use super::super::tests::{
         NonInteractiveGuard, PAYLOAD_1_3_0, TOKEN, YES, ZIP_1_3_0, activate_version,
-        create_target_backup, install_state, interactive_guard, none_health, setup_current,
-        temp_root,
+        create_target_backup, fake_systemd_stateful, init_watcher, install_state,
+        interactive_guard, none_health, setup_current, temp_root, write_unit_origin,
     };
     use super::super::{RestoreArgs, RestoreOptions, RestoreOutcome, restore_version};
     use crate::deployment::state::load_state;
     use crate::deployment::state::write_state;
     use crate::deployment::transaction::find_unfinished;
     use crate::release::repository::test_server::{TestResponse, TestServer};
-    use crate::service::systemd::Systemd;
 
     #[tokio::test]
     async fn restore_blocks_without_allow_no_backup_when_protection_fails() {
@@ -170,6 +150,7 @@ mod tests {
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
+        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         write_state(&install_root, &state).unwrap();
         let (backup_ref, _) = create_target_backup(&install_root);
@@ -188,7 +169,7 @@ mod tests {
             console_confirmed: false,
         };
         assert!(
-            restore_version(&install_root, &state, &Systemd::host(), &args, &options)
+            restore_version(&install_root, &state, &systemd, &args, &options)
                 .await
                 .is_err()
         );
@@ -217,6 +198,10 @@ mod tests {
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
+        write_unit_origin(&install_root);
+        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         write_state(&install_root, &state).unwrap();
         let (backup_ref, _) = create_target_backup(&install_root);
@@ -235,9 +220,11 @@ mod tests {
             console_confirmed: false,
         };
         assert!(matches!(
-            restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
+            restore_version(&install_root, &state, &systemd, &args, &options).await,
             Ok(RestoreOutcome::Committed { .. })
         ));
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        watcher.join().unwrap();
         let transaction = find_unfinished(&install_root).unwrap();
         assert!(
             transaction.is_none(),

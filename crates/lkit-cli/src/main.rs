@@ -168,7 +168,6 @@ async fn run_command(
         Commands::Reinit(args) => commands::reinit::run(&args).await,
         Commands::Backup(args) => commands::backup::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
-        Commands::ServiceManager(args) => commands::service_manager::run(&args).await,
         Commands::SetMirror(args) => commands::set_mirror::run(&args),
         Commands::Software(args) => commands::software::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,

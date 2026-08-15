@@ -14,7 +14,7 @@ lkit switch --version <VERSION> [--repository [<BASE_URL>]]
 允许升级时，目标资产必须在停止当前服务前完成下载和校验。systemd 环境由 `lkit` 停止、激活、
 启动并验证。正常路径在停止服务前创建 `.lkb`，失败时用它重建旧版本；服务已经停止且
 用户显式指定 `--allow-no-backup` 时是唯一例外，此时仍恢复文件、服务状态、`current`
-和 `/etc/resolv.conf`，但无法从快照重建 data。无 systemd 环境要求用户确认已通过自己的
+和 `/etc/resolv.conf`，但无法从快照重建 data。
 进程管理器停止实例。
 
 `switch` 的 `.lkb` 是升级事务的自动保险，不接受用户选择备份，也不允许把目标版本降到

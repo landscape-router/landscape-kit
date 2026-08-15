@@ -98,7 +98,7 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 已下载版本和 `.lkb` 备份默认永久保留，v1 不自动清理。
 
 网络接管的未提交首次安装是例外：确认前回滚可以删除本次创建的整个 `data/`，但不得删除
-已提交安装、switch、repair 或 service-manager 迁移的数据。
+已提交安装、switch 或 repair 的数据。
 
 ### 卸载保留物
 
@@ -203,10 +203,10 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 - `active_version` 是规范化 SemVer；
 - `assets.webserver` 记录实际落盘后端的架构、大小和可信摘要；
 - `assets.static_archive` 只记录安装来源，不用于验证当前静态目录；
-- `initialization.status` 只允许 `pending` 或 `complete`；无 systemd 的首次安装尚未由用户启动时为 `pending`；
+- `initialization.status` 只允许 `pending` 或 `complete`；首次安装尚未由用户启动时为 `pending`；
 - `initialization.lock_present` 是提交状态时对初始化锁的观察结果；`status: pending` 时必须为 false，`status: complete` 时必须为 true；
 - `initialization.initialized_at` 在 `pending` 时必须为 `null`，在 `complete` 时为 UTC RFC 3339；
-- `service.manager` 只允许 `systemd` 或 `none`；
+- `service.manager` 只允许 `systemd`；
 - `registered` 表示是否已向服务管理器注册；
 - `enabled` 表示提交时是否设置为开机启动；
 - `verified` 表示最近成功事务实际启动并通过健康检查；
@@ -233,7 +233,6 @@ CLI 参数和环境变量都表示完整安装根目录，不自动追加 `lands
 - `initialization.status: pending` 但 `lock_present != false` 或 `initialized_at != null`；
 - `initialization.status: complete` 但 `lock_present != true` 或 `initialized_at` 不是合法 UTC RFC 3339；
 - `service.manager: systemd` 但 `registered`、`enabled`、`definition_path` 或 `definition_sha256` 的组合不符合 systemd 状态规则；
-- `service.manager: none` 但 `registered != false`、`enabled != false`、`verified != false`，或服务定义路径/摘要不为 null；
 - 其他服务字段与 manager 类型或初始化字段与 status 的组合矛盾。
 
 状态文件可解析但后端文件缺失或实际摘要不一致时，属于“受管资产漂移”，不是状态 Schema 损坏，应按 `lkit repair binary` 规则处理。`current` 仍位于安装根目录且仅与 `active_version` 不一致时属于“激活状态漂移”，应阻断并结合事务记录诊断，不得自行选择任一版本。

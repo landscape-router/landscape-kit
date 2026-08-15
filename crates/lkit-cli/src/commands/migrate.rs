@@ -5,18 +5,13 @@ use clap::Args;
 
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, plan, root, state, transaction};
-use crate::workflows::migrate::{MigrateArgs, MigrateManager, MigrateOptions, MigrateOutcome};
-
-use super::manage::ServiceManagerArg;
+use crate::workflows::migrate::{MigrateArgs, MigrateOptions, MigrateOutcome};
 
 #[derive(Debug, Args)]
 pub struct Migrate {
     /// 旧手工部署的 Landscape 配置目录(如 /root/.landscape-router)
     #[arg(long, value_name = "CONFIG_DIR")]
     pub from: PathBuf,
-    /// 目标服务管理模式
-    #[arg(long, value_enum)]
-    pub service_manager: Option<ServiceManagerArg>,
     /// 仅用于 static.zip 缺失时从发布仓库下载该版本
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
@@ -125,11 +120,6 @@ pub async fn run(args: &Migrate) -> ExitCode {
     };
     let args = MigrateArgs {
         config_dir: args.from.clone(),
-        manager: match args.service_manager {
-            Some(ServiceManagerArg::Systemd) => MigrateManager::Systemd,
-            Some(ServiceManagerArg::None) => MigrateManager::None,
-            None => MigrateManager::Auto,
-        },
         yes: args.yes,
         console_confirmed: args.console_confirmed,
         repository: super::manage::repository_override(&args.repository),
@@ -151,16 +141,6 @@ pub async fn run(args: &Migrate) -> ExitCode {
                     backup_id = backup_id
                 )
             );
-            if args.manager == MigrateManager::None {
-                println!(
-                    "migrate: {}",
-                    crate::tr!(crate::keys::MIGRATE_NONE_REFERENCE_COMMAND)
-                );
-                println!(
-                    "{}",
-                    crate::workflows::install::reference_command(&normalized)
-                );
-            }
             println!(
                 "migrate: {}",
                 crate::tr!(

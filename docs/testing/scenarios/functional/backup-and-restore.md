@@ -11,12 +11,12 @@
 
 ## BKP-02
 
-**none manager 外部实例创建备份，导出失败时不留下最终文件**
+**受管实例创建备份，导出失败时不留下最终文件**
 
 - 测试层：CLI fixture E2E、Rust 命令层
 - 状态：`已覆盖`
 - 证据：[backup create](../../../commands/backup.md#backup-create)、`create_writes_manual_backup_without_any_service_manager`、`create_export_failure_leaves_no_final_file`（crates/lkit-cli/src/commands/backup.rs）、`read_api_token` 单测（crates/lkit-cli/src/backup/export.rs）
-- 说明：none 模式命令层测试完整走 `backup create` 流程（导出 API、token、归档自校验），断言归档内容为导出配置而非种子文件；导出返回 500 时 `backups/` 不留任何 `.lkb`。
+- 说明：命令层测试完整走 `backup create` 流程（导出 API、token、归档自校验），断言归档内容为导出配置而非种子文件；导出返回 500 时 `backups/` 不留任何 `.lkb`。
 
 ## BKP-03
 
@@ -80,7 +80,7 @@
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
 - 证据：[restore 命令](../../../commands/restore.md)、`restores_cross_version_without_systemd`（crates/lkit-cli/src/workflows/restore.rs）、[S13 systemd 跨版本 restore](../../../../scripts/docker-e2e/run-scenarios.sh)
-- 说明：Rust 工作流测试覆盖无 systemd 跨版本恢复；Docker E2E S13 在 systemd 模式用早期版本备份降级恢复（5.0.0 → 2.0.0），断言事务 `from_version`/`target_version`、保护备份、`config.toml` 来源记录不变，恢复后 state 资产身份与备份内容一致。
+- 说明：Rust 工作流测试覆盖跨版本恢复；Docker E2E S13 用早期版本备份降级恢复（5.0.0 → 2.0.0），断言事务 `from_version`/`target_version`、保护备份、`config.toml` 来源记录不变，恢复后 state 资产身份与备份内容一致。
 
 ## RST-03
 
@@ -120,12 +120,12 @@
 
 ## RST-07
 
-**none manager 恢复要求外部实例停止并提交 pending/未验证状态**
+**systemd 恢复提交完整验证状态**
 
 - 测试层：CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
-- 证据：[激活与提交](../../../commands/restore.md#激活与提交)、`restores_cross_version_without_systemd`（crates/lkit-cli/src/workflows/restore.rs）
-- 说明：Rust 工作流测试断言提交 `initialization.status: pending`、`service.verified: false`。
+- 证据：[激活与提交](../../../commands/restore.md#激活与提交)、`restores_cross_version_with_systemd`（crates/lkit-cli/src/workflows/restore.rs）
+- 说明：Rust 工作流测试断言提交 `initialization.status: complete`、`service.verified: true`。
 
 ## RST-08
 
@@ -138,12 +138,12 @@
 
 ## RST-09
 
-**none 模式激活后失败不内联回滚，由下次命令按 phase 恢复**
+**激活失败触发内联自动回滚并提交原状态**
 
 - 测试层：Rust 工作流、Docker E2E
 - 状态：`已覆盖`
-- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`none_mode_activation_failure_is_recovered_by_next_command`（crates/lkit-cli/src/workflows/restore.rs）、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
-- 说明：none 模式激活失败返回普通失败且不内联回滚，事务停在 `activating`，`previous-data` 保留在事务目录；现场修复后经 `recover_interrupted` 恢复入口恢复原 data、current 与 state，事务标记 `rolled_back`。
+- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`rollback_restores_previous_data_from_transaction_dir`（crates/lkit-cli/src/workflows/restore/rollback.rs）、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 说明：激活失败后自动回滚优先用事务目录中的 `previous-data`、`previous_current` 与 state 恢复原安装；恢复成功事务标记 `rolled_back`。
 
 ## RST-10
 
@@ -156,12 +156,12 @@
 
 ## RST-11
 
-**none 模式非交互 `--yes` 完成恢复，不触发 TTY 确认**
+**非交互 `--yes` 完成恢复，不触发 TTY 确认**
 
 - 测试层：Rust 工作流
 - 状态：`已覆盖`
-- 证据：[`lkit restore`](../../../commands/restore.md)、`none_mode_proceeds_with_non_interactive_yes`（crates/lkit-cli/src/workflows/restore.rs）
-- 说明：`--non-interactive --yes` 时"外部实例已停止"确认以 `--yes` 代替，不再调用 `/dev/tty`；none 模式恢复提交 pending/未验证状态。
+- 证据：[`lkit restore`](../../../commands/restore.md)、`restore_proceeds_with_non_interactive_yes`（crates/lkit-cli/src/workflows/restore.rs）
+- 说明：`--non-interactive --yes` 时恢复确认以 `--yes` 代替，不再调用 `/dev/tty`。
 
 ## RST-12
 

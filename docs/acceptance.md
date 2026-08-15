@@ -19,19 +19,13 @@
 - 初始化成功后保留 `landscape_init.toml`，权限为 `0600`，并生成初始化锁和持久配置。
 - pending 初始化要求 `landscape_init.toml` 是 root 所有、权限 `0600` 的普通文件；
   complete 后不跟踪其内容或存在性，初始化锁缺失仍不可绕过。
-- 首次安装未指定 `--service-manager` 时按 systemd 可用性自动选择，显式指定时严格使用目标模式。
-- systemd 模式下服务链接、启用、启动和健康检查成功。
+- 首次安装要求 systemd 可用；服务链接、启用、启动和健康检查成功。
 - 可能改变 systemd/Landscape 运行态的生产命令由临时 systemd unit 托管；杀掉等待
   结果的 SSH/CLI 前端后，worker 仍能提交或回滚并清理临时 unit。
-- 无 systemd 时不启动、不停止、不检查健康；文件激活成功后记录 `verified: false` 并输出参考启动命令。
-- 已安装环境未指定 manager 时保持当前模式，不发生隐式迁移。
-- `systemd → none` 迁移停止并注销受管服务、提交 `manager: none` 并保持 Landscape 停止；失败时按事务恢复原 enabled/active 状态。
-- `none → systemd` 迁移要求 `/dev/tty` 确认外部实例已停止并确认端口释放；启动验证成功后提交 `manager: systemd`，失败时撤销 systemd 接管但不尝试恢复未知的外部启动方式。
-- `none → systemd` 可以接管 `initialization.status: pending` 的安装，并在完整初始化验证成功后提交为 `complete`。
-- service manager 迁移不能与版本切换、仓库变化或 repair 合并执行。
-- systemd 环境的运行态验证固定检查 UDP `53`、TCP `6300`、TCP `6443` 和
-  `/api/docs`；无 systemd 环境不执行运行态验证。
-- systemd 环境按本文执行 180 秒启动等待和 10 秒稳定观察；无 systemd 环境不执行这些检查。
+- systemd 不可用时安装明确失败（退出码 `2`），不创建事务、不写文件；
+  不支持无 systemd 的部署。
+- 运行态验证固定检查 UDP `53`、TCP `6300`、TCP `6443` 和 `/api/docs`。
+- 按本文执行 180 秒启动等待和 10 秒稳定观察。
 
 ### 备份与回滚
 
@@ -61,8 +55,7 @@
 - restore 的目标 `.lkb` 不包含 SQLite 数据文件；恢复会创建空 data、重新初始化配置并
   保留恢复前 data 的事务现场。数据库以备份的 `landscape_init.toml` 重建（版本锁定），
   不得声称字节级数据库恢复。
-- systemd restore 必须恢复服务并通过完整健康检查后提交；none restore 必须保持停止并提交
-  `initialization.status: pending`、`verified: false`。
+- restore 必须恢复服务并通过完整健康检查后提交。
 - restore 目标失败但原状态恢复成功返回 `5`；恢复失败返回 `6`，保留目标 release、旧
   data、保护备份和事务日志。
 - 目标版本或后端 repair 失败但回滚成功时返回 `5`；回滚失败或需要人工恢复时返回 `6`。
@@ -122,9 +115,7 @@
 - 旧 unit 按 `ExecStart --config-dir` 发现：唯一匹配才接管（stop/disable，原件位于
   `/etc/systemd/system` 时移入事务目录）；多匹配阻断；无匹配或进程仍存活时要求用户
   确认前台实例已停止。
-- systemd 模式注册、启用、启动新受管服务并通过完整健康检查后提交
-  `initialization.status: complete`；none 模式不启动不检查，提交 pending 并输出参考
-  启动命令。
+- 注册、启用、启动新受管服务并通过完整健康检查后提交 `initialization.status: complete`。
 - 停止旧实例后任何失败自动回滚：注销/停止新受管 unit、恢复 `/etc/resolv.conf`、
   恢复旧 unit 的 enabled/active 状态并重启、删除新根内容；回滚成功 `rolled_back`
   返回 `5`，失败 `failed` 返回 `6`。
@@ -139,8 +130,7 @@
 - 卸载前默认创建保护 `.lkb`（备注 `uninstall 前自动保护备份`、auto 标记为 true），失败
   阻断；`--allow-no-backup` 显式跳过并记录 `no_backup: true`。
 - 非交互模式必须提供 `--yes`，否则返回 `2` 且不创建事务、不写任何文件。
-- systemd 模式按 stop → disable → 注销注册链接 → `daemon-reload` 的顺序清理；none 模式
-  要求确认外部实例已停且不探测运行态。
+- 按 stop → disable → 注销注册链接 → `daemon-reload` 的顺序清理。
 - 默认保留 `config.toml`、`backups/` 与 `transactions/`；`config.toml` 内容逐字节不变。
 - `--keep-data` 保留 `data/` 并删除其余受管内容；`--purge-root` 整树删除安装根目录且
   必须同时给出 `--allow-no-backup`；两者与缺参组合都返回 `2`。

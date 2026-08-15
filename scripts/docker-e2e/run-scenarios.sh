@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# TODO(service-manager-rewrite):`lkit service-manager` 命令与 `--service-manager`
+# 参数已在移除 none 部署模式的破坏性重构中删除,本脚本仍引用它们(S6/S7 迁移场景、
+# 安装参数)。等不同发行版的服务管理器后端重写完成后再统一改造:删除迁移场景,
+# S7 改用 uninstall 释放端口与注册链接,S11-S14 改在 export 根或重注册流程上执行。
 source /usr/local/lib/lkit-e2e/rustfs-test.sh
 
 endpoint=${RUSTFS_ENDPOINT:-http://rustfs:9000}

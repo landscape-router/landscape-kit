@@ -37,30 +37,10 @@ pub(crate) fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// 迁移目标的服务管理模式。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MigrateManager {
-    Auto,
-    Systemd,
-    None,
-}
-
-impl MigrateManager {
-    fn resolve(self, manager: &dyn ServiceManager) -> Result<ServiceManagerKind, InstallError> {
-        let choice = match self {
-            Self::Auto => super::pipeline::ManagerChoice::Auto,
-            Self::Systemd => super::pipeline::ManagerChoice::Systemd,
-            Self::None => super::pipeline::ManagerChoice::None,
-        };
-        super::pipeline::select_manager(choice, manager)
-    }
-}
-
 /// `lkit migrate` 运行参数。
 pub(crate) struct MigrateArgs {
     /// 旧手工部署的配置目录(`--from`)。
     pub config_dir: PathBuf,
-    pub manager: MigrateManager,
     /// 非交互模式必须显式 `--yes`。
     pub yes: bool,
     /// 交互控制台已确认迁移计划(worker 进程无法读取 TUI 输入)。
@@ -107,8 +87,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
     // 旧部署识别与 unit 操作是 systemd 专属能力;不可用时代理到前台进程确认路径。
     let systemd = systemd::downcast(manager)?;
     let source = validate_source_dir(&args.config_dir)?;
-    let manager_kind = args.manager.resolve(manager)?;
-    let is_systemd = manager_kind == ServiceManagerKind::Systemd;
+    let manager_kind = super::pipeline::require_manager(manager)?;
 
     // 导出配置要求旧实例运行中;运行实例同时提供后端版本与二进制来源。
     let instance = identify_running_instance(&source, options.probe_ports)?;
@@ -161,7 +140,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
         // ---- stopping:停止旧实例 ----
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
         stopping_started = true;
-        if is_systemd {
+        {
             transaction.systemd_before = Some(super::pipeline::capture_before(
                 manager,
                 ManagedService::LandscapeRouter,
@@ -218,7 +197,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
         super::rollback::restore_current(root, &format!("releases/{version}"))?;
 
         // ---- verifying(systemd):注册、启动与健康检查 ----
-        let unit_sha = if is_systemd {
+        let unit_sha = {
             let unit_sha = super::pipeline::write_unit_origin(
                 root,
                 manager,
@@ -250,9 +229,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
             };
             super::health::wait_for_startup(&startup).await?;
             super::health::observe_stable(&startup).await?;
-            Some(unit_sha)
-        } else {
-            None
+            unit_sha
         };
 
         // ---- 提交 ----
@@ -598,7 +575,7 @@ fn build_migrate_state(
     transaction: &TransactionFile,
     metadata: &lkb::BackupMetadata,
     restore_dir: &Path,
-    unit_sha: Option<String>,
+    unit_sha: String,
 ) -> Result<InstallState, InstallError> {
     let binary = restore_dir.join(WEBSERVER_BINARY);
     let (webserver_sha256, webserver_size) = hash_file(&binary)?;
@@ -611,8 +588,8 @@ fn build_migrate_state(
     let version = transaction.target_version.clone().ok_or_else(|| {
         InstallError::CorruptedTransaction("migrate transaction is missing target_version".into())
     })?;
-    let (initialization, service) = match unit_sha {
-        Some(unit_sha) => (
+    let (initialization, service) = {
+        (
             InitializationState {
                 status: InitStatus::Complete,
                 lock_present: true,
@@ -626,22 +603,7 @@ fn build_migrate_state(
                 definition_path: Some("service/landscape-router.service".into()),
                 definition_sha256: Some(unit_sha),
             },
-        ),
-        None => (
-            InitializationState {
-                status: InitStatus::Pending,
-                lock_present: false,
-                initialized_at: None,
-            },
-            ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
-            },
-        ),
+        )
     };
     Ok(InstallState {
         schema_version: STATE_SCHEMA_VERSION,

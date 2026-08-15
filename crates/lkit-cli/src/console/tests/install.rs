@@ -4,7 +4,6 @@ use super::super::*;
 use super::support::*;
 
 use super::super::widgets::*;
-use crate::commands::ServiceManagerArg;
 use crate::i18n::Language;
 use ratatui::backend::TestBackend;
 use ratatui::style::Color;
@@ -289,9 +288,8 @@ fn install_form_builds_cli_and_domain_request() {
         admin_user: "operator".into(),
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
-        manager: ManagerMode::None,
         takeover_network: false,
-        selected: 8,
+        selected: 7,
         checks_selected: false,
         editing: false,
     };
@@ -306,7 +304,6 @@ fn install_form_builds_cli_and_domain_request() {
         install.repository,
         Some(Some("https://example.com/releases/".into()))
     );
-    assert_eq!(install.service_manager, Some(ServiceManagerArg::None));
     assert!(!format!("{install:?}").contains("Secret123"));
     assert_eq!(install.interactive_password.as_deref(), Some("Secret123"));
     assert!(install.password_file.is_none());

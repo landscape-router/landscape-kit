@@ -34,9 +34,9 @@ Docker 中的 `lkit` 以 `test-support` 构建，所有管理命令显式传入�
 }
 ```
 
-`preflight: skip` 只关闭 root/BPF/内核/宿主依赖等完整环境审计。命令仍选择
-`--service-manager systemd`，仍创建和校验 unit、调用 systemctl 协议、停止和启动真实
-fixture 进程、检查 MainPID/端口/API，并按事务回滚。
+`preflight: skip` 只关闭 root/BPF/内核/宿主依赖等完整环境审计。命令仍创建和校验
+unit、调用 systemctl 协议、停止和启动真实 fixture 进程、检查 MainPID/端口/API，
+并按事务回滚。
 
 `execution: inline` 避免要求 fake systemctl 再模拟 lkit 自己的临时 worker unit。
 生产运行时始终执行完整 preflight；会改变 systemd 或 Landscape 运行态的生产命令由
@@ -44,7 +44,7 @@ systemd worker 托管，且生产二进制不提供 `--test-runtime`。
 
 fake systemctl 的配置不固定 `landscape_config`，因此每次 start 都由 unit 的 `--web`
 路径读取当前 release 的 `static/lkit-fixture.json`。调用序列追加到 root-only JSONL
-日志，便于断言 service-manager 协议。
+日志，便于断言 systemd 协议。
 
 该层是安装与生命周期功能正确性的主要 E2E 证据。资产下载与摘要校验、安装目录和状态
 写入、事务提交与恢复、fixture 进程启动、MainPID/端口/API 检查都真实执行；只有外部

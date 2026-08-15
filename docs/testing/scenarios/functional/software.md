@@ -81,8 +81,8 @@
   断言 apt `docker.list` 按真实 `VERSION_CODENAME` 与架构写入官方/镜像 URL、
   `docker.gpg` 为有效 keyring、dnf `docker-ce.repo` 按真实 `VERSION_ID` 主版本生成
   baseurl 与 gpgkey 指向阿里云、pacman 真实安装且来源参数被接受；安装后断言真实
-  `/usr/bin/docker` 存在、`software list` 状态刷新为已安装；容器无 systemd 也无法
-  运行 dockerd，`systemctl enable --now docker` 与 `docker info` 用记录型 shim
+  `/usr/bin/docker` 存在、`software list` 状态刷新为已安装；容器内无法运行
+  dockerd，`systemctl enable --now docker` 与 `docker info` 用记录型 shim
   验证调用契约；安装前验证 `--non-interactive` 无 `--source` 报用法错误。CI 在
   x86_64 与 aarch64 runner 上运行，aarch64 自动覆盖 arm64 仓库架构分支。
 - 缺口：TUNA 的 docker-ce 仓库存在地域/UA 过滤（非 CN 流量 403）、USTC 只同步

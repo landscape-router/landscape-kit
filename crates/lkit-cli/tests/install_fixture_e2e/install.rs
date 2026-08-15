@@ -276,7 +276,7 @@ fn preset_config_drives_first_install_without_writes() {
         .arg(&harness.install_root)
         .args(["--admin-user", "admin", "--password-file"])
         .arg(&harness.password)
-        .args(["--service-manager", "systemd", "--test-runtime"])
+        .args(["--test-runtime"])
         .arg(&harness.runtime_config)
         .output()
         .unwrap();

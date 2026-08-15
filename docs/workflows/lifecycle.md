@@ -15,8 +15,6 @@
 
 无法获取安装锁时立即失败，说明另一个安装过程可能正在运行。
 
-读取状态后如果确认请求的是 service manager 迁移，则转入“Service manager 迁移”流程，不继续执行本节的仓库解析、目标资产准备、`.lkb` 备份或版本激活步骤。迁移仍复用适用的平台、路径、状态、事务、受管文件和安全检查；`none → systemd` 的端口检查固定在用户确认外部实例已停止之后执行。
-
 ### 2. 准备目标资产
 
 1. 下载后端和静态压缩包；
@@ -32,13 +30,13 @@
 1. 创建 `preparing` 事务后，创建目录布局；
 2. 获取并验证管理员凭据；
 3. 创建 `data/landscape_init.toml`，权限 `0600`；
-4. systemd 环境记录 `systemd_before`，备份 `/etc/resolv.conf` 并写入 `resolv_conf_backup`；无 systemd 环境两者记录为 null；
-5. systemd 环境准备 unit，无 systemd 环境只生成供用户参考的启动命令；
+4. 记录 `systemd_before`，备份 `/etc/resolv.conf` 并写入 `resolv_conf_backup`；
+5. 准备 unit；
 6. 确认目标版本目录、初始化文件以及当前环境所需的其他文件均已完整落盘后，将事务从 `preparing` 更新为 `prepared`；
 7. 在第一次修改 `current` 或 systemd 注册链接前，将事务更新为 `activating`；
 8. 原子创建 `current`。
 
-systemd 环境继续执行：
+继续执行：
 
 9. 注册、启用并启动服务；
 10. 目标进程成功创建后、开始健康检查前，将事务更新为 `verifying`；
@@ -47,14 +45,7 @@ systemd 环境继续执行：
 13. 原子提交 `install-state.json`；
 14. 状态文件提交成功后，将事务更新为 `committed`。
 
-无 systemd 环境不进入 `verifying`，而是继续执行：
-
-9. 记录 `initialization.status: pending`、`lock_present: false`、`initialized_at: null` 和 `service.verified: false`；
-10. 原子提交 `install-state.json`；
-11. 状态文件提交成功后，将事务更新为 `committed`；
-12. 输出参考启动命令，但不执行、不等待也不检查。
-
-首次安装在 `activating` 或 systemd 的 `verifying` 阶段失败或中断时没有 `.lkb`，必须执行首次安装失败清理，不得进入配置级回滚。
+首次安装在 `activating` 或 `verifying` 阶段失败或中断时没有 `.lkb`，必须执行首次安装失败清理，不得进入配置级回滚。
 
 使用 `--takeover-network` 时，健康检查通过后先写入 pending install state 并进入
 `awaiting_network_confirmation`；此时安装尚未提交。只有运行 `lkit network
@@ -68,12 +59,11 @@ rollback 和手工
 需要替换后端的 repair 使用以下阶段边界：
 
 1. `preparing`：下载并校验原始可信后端，导出配置并创建 `.lkb`；
-2. `.lkb`、修复后端和修复前二进制完整落盘；systemd 环境还必须记录 `systemd_before`，完成 `/etc/resolv.conf` 备份并写入 `resolv_conf_backup`，然后更新为 `prepared`；
-3. systemd 环境在调用 stop 前先更新为 `stopping`，再由 `lkit` 停止服务；无 systemd 环境要求用户自行停止并明确确认，`lkit` 不验证运行态；
+2. `.lkb`、修复后端和修复前二进制完整落盘；记录 `systemd_before`，完成 `/etc/resolv.conf` 备份并写入 `resolv_conf_backup`，然后更新为 `prepared`；
+3. 在调用 stop 前先更新为 `stopping`，再由 `lkit` 停止服务；
 4. 第一次替换后端前更新为 `activating`；
-5. systemd 环境启动修复后进程，并在健康检查前更新为 `verifying`；健康检查成功并提交状态后更新为 `committed`；
-6. systemd 环境启动失败时更新为 `rolling_back`，使用 `.lkb` 和修复前二进制恢复；恢复成功后更新为 `rolled_back`；
-7. 无 systemd 环境完成原子文件替换后直接提交 `verified: false` 并更新为 `committed`，不启动、不检查，也不因用户之后启动失败自动回滚。
+5. 启动修复后进程，并在健康检查前更新为 `verifying`；健康检查成功并提交状态后更新为 `committed`；
+6. 启动失败时更新为 `rolling_back`，使用 `.lkb` 和修复前二进制恢复；恢复成功后更新为 `rolled_back`。
 
 `lkit repair static` 不停止 Landscape，也不创建 `.lkb`：
 
@@ -92,16 +82,14 @@ rollback 和手工
    `geo_tmp` 的 `.lkb`，并完整自校验；即使指定 `--allow-no-backup` 也不得跳过；
 4. systemd 服务已停止时，默认在创建事务前拒绝。仅显式 `--allow-no-backup` 时跳过导出
    和 `.lkb`，并在事务中记录 `no_backup: true` 且不记录 `backup`；
-5. systemd 环境备份 `/etc/resolv.conf`；无 systemd 环境不创建该主机状态备份；
+5. 备份 `/etc/resolv.conf`；
 6. 记录 `previous_current`、可选备份和目标目录；
 7. 将事务标记为 `prepared`。
 
 需要备份时，在 `.lkb` 完整落盘并自校验前不得停止当前 Landscape。无备份例外只适用于
-已经停止的 systemd 服务，不适用于后端 repair 或无 systemd 环境。
+已经停止的 systemd 服务，不适用于后端 repair。
 
 ### 6. 激活
-
-systemd 环境：
 
 1. 将事务标记为 `stopping`；
 2. 停止当前服务并确认进程退出；
@@ -112,19 +100,11 @@ systemd 环境：
 7. 将事务标记为 `verifying`；
 8. 执行 180 秒启动检查和 10 秒稳定观察。
 
-无 systemd 环境：
-
-1. 在前述人工检查点由用户明确确认已停止当前实例；`lkit` 不检查 PID、端口或实际停止状态；
-2. 将事务标记为 `activating`；
-3. 使用临时软链接和原子 rename 更新 `current`，或原子替换 repair 后端；
-4. 不启动目标版本，不进入运行态 `verifying` 健康检查；
-5. 文件和状态写入校验通过后直接进入成功提交。
-
 不得先删除旧 `current` 再创建新链接。
 
 ### 7. 成功提交
 
-1. 原子写入新的 `install-state.json`；systemd 环境记录 `verified: true`，无 systemd 环境记录 `verified: false`；
+1. 原子写入新的 `install-state.json`；记录 `verified: true`；
 2. 保留旧版本和 `.lkb`；
 3. 将事务标记为 `committed`；
 4. 释放安装锁；
@@ -149,8 +129,7 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
 3. 保存 `previous_current`、previous-state、systemd 事实和必要的 `/etc/resolv.conf`；
 4. 在 `prepared` 后进入 `stopping`，将旧 `data/` 原子移动到事务目录；
 5. 在 `activating` 从目标备份重建版本目录、空 data、初始化配置和 Geo 缓存；
-6. systemd 模式进入 `verifying`，通过启动和稳定健康检查后写入目标 state；none 模式直接
-   提交 pending/未验证状态并输出参考启动命令；state 的 `static_archive` 身份从备份内
+6. 进入 `verifying`，通过启动和稳定健康检查后写入目标 state；state 的 `static_archive` 身份从备份内
    压缩包现场计算，仓库来源记录（`config.toml`）保持不变；
 7. 成功提交后保留旧 data 事务现场和备份，事务进入 `committed`。
 
@@ -170,9 +149,8 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
    `--allow-no-backup` 显式跳过;
 4. 创建 `preparing` 卸载事务,记录 `systemd_before`、`previous_current`、备份引用和
    systemd 环境必要的 `/etc/resolv.conf` 备份现场;
-5. systemd 环境更新为 `stopping` 后停止服务并确认进程退出,再更新为 `activating`,
-   执行 `disable`、注销注册链接和 `daemon-reload`;none 环境要求用户确认外部实例已停
-   止,`lkit` 不验证运行态;
+5. 更新为 `stopping` 后停止服务并确认进程退出,再更新为 `activating`,
+   执行 `disable`、注销注册链接和 `daemon-reload`;
 6. 删除受管内容。默认保留 `config.toml`、`backups/` 与 `transactions/`;`--keep-data`
    额外保留 `data/`;`--purge-root` 整树删除安装根目录(必须同时给出
    `--allow-no-backup`);
@@ -235,9 +213,9 @@ systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
    时同样要求确认；
 6. 更新为 `activating`：从迁移备份解包重建 `releases/<版本>`，创建空 `data/`、写入
    导出的 `landscape_init.toml`（`0600`）、恢复 `geo_tmp`，原子创建 `current`；
-7. systemd 模式更新为 `verifying`：写入受管 unit 原件、注册、启用、启动并完成完整
-   健康检查；none 模式不启动不检查，提交 pending/未验证状态并输出参考启动命令；
-8. 提交 state（版本为被迁移版本、资产身份来自备份、systemd 模式
+7. 更新为 `verifying`：写入受管 unit 原件、注册、启用、启动并完成完整
+   健康检查；
+8. 提交 state（版本为被迁移版本、资产身份来自备份、
    `initialization.status: complete`），事务进入 `committed`，输出迁移备份 ID 与旧部署
    清理提示。
 
@@ -249,7 +227,7 @@ systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
 
 ## 首次安装失败
 
-systemd 环境首次安装启动失败时：
+首次安装启动失败时：
 - 停止失败服务；
 - 恢复或移除本次创建的 `current`；
 - 按事务中的 `systemd_before` 恢复 systemd 注册链接以及 enabled/active 状态并 reload；

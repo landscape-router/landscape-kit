@@ -5,6 +5,5 @@ restore.confirm_stop_with_own_manager = "stop your Landscape instance with your 
 restore.warning_no_protection_backup = "warning: could not create a protection backup of the current instance; continuing without it: %{error}"
 restore.rollback_failed = "automatic rollback failed: %{rollback_error}"
 restore.committed = "restored to version %{version} from backup %{backup_id}"
-restore.none_reference_command = "start the restored instance with your own process manager, for example:"
 restore.failed_rolled_back = "restore of %{version} failed; the previous installation was restored automatically"
 restore.failed_rollback_failed = "restore of %{version} failed and the previous installation could not be restored automatically: %{reason}"

@@ -25,8 +25,6 @@ fn self_installs_and_removes_the_lkit_service() {
             "install",
             "--install-dir",
             root.to_str().unwrap(),
-            "--service-manager",
-            "systemd",
             "--test-runtime",
         ])
         .arg(&harness.runtime_config)
@@ -114,40 +112,13 @@ fn self_installs_and_removes_the_lkit_service() {
     assert_eq!(String::from_utf8_lossy(&inactive.stdout).trim(), "inactive");
 }
 
-/// 参数错误路径:显式 `none` 或 systemd 不可用时返回退出码 2,不写任何文件。
+/// 参数错误路径:systemd 不可用时返回退出码 2,不写任何文件。
 #[test]
-fn self_install_rejects_none_and_unavailable_systemd() {
+fn self_install_rejects_unavailable_systemd() {
     let _guard = E2E_LOCK.lock().unwrap();
     let harness = InstallHarness::new("self-service-reject", "healthy", 30_000);
     let root = &harness.install_root;
     std::fs::create_dir_all(root).unwrap();
-
-    let rejected = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
-        .args([
-            "self-service",
-            "install",
-            "--install-dir",
-            root.to_str().unwrap(),
-            "--service-manager",
-            "none",
-            "--test-runtime",
-        ])
-        .arg(&harness.runtime_config)
-        .output()
-        .unwrap();
-    assert_eq!(
-        rejected.status.code(),
-        Some(2),
-        "none must be a usage error"
-    );
-    assert!(
-        !root.join("service/lkit").exists(),
-        "nothing may be written"
-    );
 
     // systemd 不可用:改写测试运行时的 systemctl 路径指向不存在文件。
     let mut runtime: serde_json::Value =
@@ -176,8 +147,6 @@ fn self_install_rejects_none_and_unavailable_systemd() {
             "install",
             "--install-dir",
             root.to_str().unwrap(),
-            "--service-manager",
-            "systemd",
             "--test-runtime",
         ])
         .arg(&broken_runtime)

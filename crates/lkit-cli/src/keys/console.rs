@@ -19,7 +19,6 @@ pub(crate) const CONSOLE_HINT_PANEL: &str = "console.hint_panel";
 pub(crate) const CONSOLE_REPOSITORY_DEFAULT: &str = "console.repository_default";
 pub(crate) const CONSOLE_REPOSITORY_MIRROR: &str = "console.repository_mirror";
 pub(crate) const CONSOLE_REPOSITORY_CUSTOM: &str = "console.repository_custom";
-pub(crate) const CONSOLE_MANAGER_AUTO: &str = "console.manager_auto";
 pub(crate) const CONSOLE_VERSION_HELP: &str = "console.version_help";
 pub(crate) const CONSOLE_REPOSITORY_HELP: &str = "console.repository_help";
 pub(crate) const CONSOLE_REPOSITORY_URL_HELP: &str = "console.repository_url_help";
@@ -27,7 +26,6 @@ pub(crate) const CONSOLE_INSTALL_ROOT_HELP: &str = "console.install_root_help";
 pub(crate) const CONSOLE_ADMIN_USER_HELP: &str = "console.admin_user_help";
 pub(crate) const CONSOLE_PASSWORD_HELP: &str = "console.password_help";
 pub(crate) const CONSOLE_CONFIRM_PASSWORD_HELP: &str = "console.confirm_password_help";
-pub(crate) const CONSOLE_SERVICE_MANAGER_HELP: &str = "console.service_manager_help";
 // TODO(network-takeover): 恢复网络接管开关时放开以下两个 key 及对应的 locale 条目。
 // pub(crate) const CONSOLE_NETWORK_TAKEOVER_HELP: &str = "console.network_takeover_help";
 pub(crate) const CONSOLE_START_INSTALLATION_HELP: &str = "console.start_installation_help";
@@ -133,7 +131,6 @@ pub(crate) const CONSOLE_INSTALL_ROOT_LABEL: &str = "console.install_root_label"
 pub(crate) const CONSOLE_ADMIN_USER_LABEL: &str = "console.admin_user_label";
 pub(crate) const CONSOLE_PASSWORD_LABEL: &str = "console.password_label";
 pub(crate) const CONSOLE_CONFIRM_PASSWORD_LABEL: &str = "console.confirm_password_label";
-pub(crate) const CONSOLE_SERVICE_MANAGER_LABEL: &str = "console.service_manager_label";
 // TODO(network-takeover): 恢复网络接管开关时放开。
 // pub(crate) const CONSOLE_NETWORK_TAKEOVER_LABEL: &str = "console.network_takeover_label";
 pub(crate) const CONSOLE_START_INSTALLATION_LABEL: &str = "console.start_installation_label";

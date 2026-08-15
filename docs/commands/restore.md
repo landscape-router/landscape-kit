@@ -12,7 +12,7 @@ lkit restore (--backup <ID> | --file <PATH>)
 `--non-interactive` 和 `--lang` 是全局参数。交互模式必须确认当前版本、目标版本、备份 ID
 和 minimal scope 的数据损失；非交互模式必须额外提供 `--yes`，否则直接返回参数错误。
 `--yes` 覆盖全部确认：在非交互模式下同时表示确认恢复计划、minimal scope 数据损失以及
-（none 模式）外部实例已由用户自己的进程管理器停止。
+（外部实例已由用户自己的进程管理器停止的场景由 systemd 模式接管）
 
 从交互控制台（TUI）发起的 restore 由 TUI 恢复确认层完成全部确认，命令内部标记
 `--console-confirmed`，不再请求 `/dev/tty` 二次确认；这在 systemd worker 路径下是必需
@@ -44,7 +44,7 @@ lkit restore (--backup <ID> | --file <PATH>)
 `/tmp` 或任何可预测路径留下中间产物。
 
 systemd 模式委托 worker 执行时，全屏操作页显示步骤进度条：准备（`1/4`）、停止服务
-（`2/4`）、激活（`3/4`）、初始化与健康检查（`4/4`）；none 模式为两步（准备、激活）。
+（`2/4`）、激活（`3/4`）、初始化与健康检查（`4/4`）。
 restore 不下载仓库资产，进度条表示阶段进度而非字节进度。
 
 ## 激活与提交
@@ -57,9 +57,6 @@ restore 使用与 switch 相同的事务锁和 systemd operation worker。system
 4. 原子切换 `current`，注册并启动目标 unit；
 5. 完成初始化和完整健康检查后提交目标 state。
 
-`none` 模式要求用户通过 `/dev/tty` 确认外部实例已停止（非交互模式以 `--yes` 代替）。
-lkit 不启动、不探测外部进程，恢复后提交 `initialization.status: pending`、
-`service.verified: false`，并输出参考启动命令。
 
 恢复成功后，事务目录中的旧 data 现场保留用于诊断和中断恢复。`.lkb` 不包含 SQLite
 数据文件，但包含 `landscape_init.toml`：恢复后首次启动时 Landscape 会清空并重建
@@ -77,9 +74,8 @@ API token、日志和指标不包含，备份之后新增的数据会丢失。
   - 停止目标服务失败（服务状态可能已改变）：先按 `systemd_before` 恢复 unit 注册与
     enabled/active 状态，再标记 `failed`；恢复成功返回普通失败 `1`，恢复也失败时按
     自动恢复失败处理，返回 `6`；
-- none 模式：lkit 不启动、不探测外部进程，因此激活后的失败不内联自动回滚，返回普通
-  失败 `1`；现场（`previous-data`、`previous_current`、previous-state 和保护备份）保留
-  在事务目录，下次任意 lkit 命令通过中断恢复入口按原阶段恢复原安装；
+- systemd 模式激活后的失败触发内联自动回滚（`RolledBack`，退出码 `0`）；回滚本身
+  失败时返回 `6` 并把事务标记为 `failed`，不再由下一条命令重复自动回滚；
 - 参数错误返回 `2`，用户拒绝或普通失败返回 `1`，显式 Ctrl+C 返回 `130`。
 
 systemd 模式自动回滚的顺序固定为：停止目标服务 → 恢复 unit 注册与 enabled 状态 →

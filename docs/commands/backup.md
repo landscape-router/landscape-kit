@@ -25,7 +25,7 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 ## `backup create`
 
 创建备份不会停止、启动或重启 Landscape，也不改变 `current`、安装状态或仓库来源。
-命令仍需取得安装锁，避免与 switch、repair、restore 或 service-manager 同时运行。
+命令仍需取得安装锁，避免与 switch、repair 或 restore 同时运行。
 
 创建前必须满足：
 
@@ -34,7 +34,7 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 - 当前运行二进制、`static/` 和 `geo_tmp/` 能按 `.lkb` v1 规则读取；
 - 当前架构为 `x86_64` 或 `aarch64`。
 
-`systemd` 模式使用受管服务；`none` 模式要求用户自己的进程管理器已经启动 Landscape。
+备份从运行中的受管服务导出配置。
 无法导出配置、token 不安全、配置版本不一致或归档自校验失败时，不生成最终备份文件。
 
 默认备份写入：

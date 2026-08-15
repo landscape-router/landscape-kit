@@ -25,8 +25,8 @@ Docker 功能 E2E 使用 `test-support` 构建，并显式配置：
 }
 ```
 
-首次安装仍选择 `--service-manager systemd`，后续命令保持已提交的 systemd 模式，并
-通过现有 fake systemctl 启动真实安装后的 fixture 进程；跳过的是宿主内核、BPF、依赖
+首次安装使用 systemd 模式，后续命令保持已提交的 systemd 模式，并通过现有 fake
+systemctl 启动真实安装后的 fixture 进程；跳过的是宿主内核、BPF、依赖
 和 PID 1 能力审计。Docker 因而无需
 `privileged`、cgroup 委托、`/boot` 挂载或 systemd PID 1。
 

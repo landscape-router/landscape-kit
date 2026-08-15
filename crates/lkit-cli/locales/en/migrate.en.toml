@@ -2,7 +2,6 @@ migrate.confirm_plan = "prepare to migrate: source config directory %{source}, b
 migrate.confirm_stop_foreground = "no systemd unit was found for the old instance; stop it manually (for example, terminate the foreground process or the shell that started it), then confirm"
 migrate.packing_static_locally = "warning: static.zip is missing locally and the release repository could not provide it; packing the extracted static directory into static.zip"
 migrate.committed = "migrated to version %{version}; migration backup %{backup_id} is preserved under backups/"
-migrate.none_reference_command = "start the migrated instance with your own process manager, for example:"
 migrate.legacy_deployment_left = "the old deployment at %{source} was left untouched (its service is now stopped); remove it manually once you no longer need it"
 migrate.requires_fresh_install_root = "the install root already has a committed installation; migrate requires a fresh directory"
 migrate.failed_rolled_back = "migration of %{version} failed; the old instance was restored automatically"

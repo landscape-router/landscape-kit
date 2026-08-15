@@ -4,13 +4,12 @@ use crate::deployment::plan;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::state;
 use crate::deployment::state::{InitStatus, StateServiceManager};
-use crate::deployment::transaction::TransactionServiceManager;
 use crate::release::repository::provider_for;
 use crate::workflows::install as pipeline;
 
-use super::manage::{InstallRequest, ServiceManagerArg};
+use super::manage::InstallRequest;
 
-/// 已安装环境:service manager 迁移、修复、版本切换或同版本验证。
+/// 已安装环境:修复、版本切换或同版本验证。
 pub(super) async fn run(
     args: &InstallRequest,
     plan: &plan::Plan,
@@ -33,48 +32,6 @@ async fn run_installed_inner(
     let state = crate::deployment::state::load_state(&plan.root)?.ok_or_else(|| {
         plan::InstallError::CorruptedState("install state disappeared during planning".into())
     })?;
-
-    if let Some(manager) = args.service_manager {
-        if args.version.is_some()
-            || args.repository.is_some()
-            || args.repair_static
-            || args.repair_binary
-            || args.accept_service_change
-            || args.admin_user.is_some()
-            || args.password_file.is_some()
-            || args.force
-        {
-            return Err(plan::InstallError::ParameterUsage(
-                "--service-manager migration must be executed alone and cannot be combined with --version, --repository, --repair-static, --repair-binary, any --accept-* flag, --admin-user, --password-file, or --force"
-                    .into(),
-            ));
-        }
-        let target = match manager {
-            ServiceManagerArg::Systemd => TransactionServiceManager::Systemd,
-            ServiceManagerArg::None => TransactionServiceManager::None,
-        };
-        if target == current_manager(&state) {
-            println!(
-                "install: {}",
-                crate::tr!(
-                    crate::keys::EXISTING_SERVICE_MANAGER_ALREADY,
-                    key = target.key()
-                )
-            );
-            return Ok(ExitCode::SUCCESS);
-        }
-        let health = runtime.health_options()?;
-        crate::workflows::service_manager::migrate_service_manager(
-            &plan.root,
-            &state,
-            target,
-            runtime.service_manager.as_ref(),
-            &health,
-            &|prompt| crate::interaction::interactive::confirm(prompt),
-        )
-        .await?;
-        return Ok(ExitCode::SUCCESS);
-    }
 
     if args.repair_static || args.repair_binary {
         if args.version.is_some() {
@@ -295,13 +252,6 @@ async fn run_installed_inner(
         )
     );
     Ok(ExitCode::SUCCESS)
-}
-
-fn current_manager(state: &state::InstallState) -> TransactionServiceManager {
-    match state.service.manager {
-        StateServiceManager::Systemd => TransactionServiceManager::Systemd,
-        StateServiceManager::None => TransactionServiceManager::None,
-    }
 }
 
 fn resolve_provider(

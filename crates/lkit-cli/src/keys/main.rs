@@ -14,7 +14,6 @@ pub(crate) const MAIN_REPOSITORY_HELP: &str = "main.repository_help";
 pub(crate) const MAIN_INSTALL_DIR_HELP: &str = "main.install_dir_help";
 pub(crate) const MAIN_ADMIN_USER_HELP: &str = "main.admin_user_help";
 pub(crate) const MAIN_PASSWORD_FILE_HELP: &str = "main.password_file_help";
-pub(crate) const MAIN_SERVICE_MANAGER_HELP: &str = "main.service_manager_help";
 pub(crate) const MAIN_FORCE_HELP: &str = "main.force_help";
 pub(crate) const MAIN_TAKEOVER_NETWORK_HELP: &str = "main.takeover_network_help";
 pub(crate) const MAIN_NETWORK_ABOUT: &str = "main.network_about";
@@ -59,8 +58,6 @@ pub(crate) const MAIN_REINIT_ALLOW_NO_BACKUP_HELP: &str = "main.reinit_allow_no_
 pub(crate) const BACKUP_REQUIRES_EXISTING_INSTALLATION: &str =
     "backup.requires_existing_installation";
 pub(crate) const MAIN_RECONCILE_ABOUT: &str = "main.reconcile_about";
-pub(crate) const MAIN_SERVICE_MANAGER_ABOUT: &str = "main.service_manager_about";
-pub(crate) const MAIN_SERVICE_MANAGER_TARGET_HELP: &str = "main.service_manager_target_help";
 pub(crate) const MAIN_UNINSTALL_ABOUT: &str = "main.uninstall_about";
 pub(crate) const MAIN_UNINSTALL_YES_HELP: &str = "main.uninstall_yes_help";
 pub(crate) const MAIN_UNINSTALL_ALLOW_NO_BACKUP_HELP: &str = "main.uninstall_allow_no_backup_help";

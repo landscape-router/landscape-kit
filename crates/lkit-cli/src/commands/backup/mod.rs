@@ -195,6 +195,10 @@ mod tests {
         std::fs::write(dir.join("data/geo_tmp/ip/geo.dat"), b"geo").unwrap();
         std::fs::write(dir.join("data/landscape_init.lock"), b"").unwrap();
         std::fs::write(dir.join("data/landscape.toml"), b"").unwrap();
+        std::fs::create_dir_all(dir.join("service")).unwrap();
+        let unit_bytes = b"[Unit]\nDescription=Landscape Router\n";
+        std::fs::write(dir.join("service/landscape-router.service"), unit_bytes).unwrap();
+        let unit_sha = crate::workflows::artifacts::hash_str(&String::from_utf8_lossy(unit_bytes));
         let (webserver_sha, webserver_size) = sha256_bytes(payload);
         let (static_sha, static_size) = sha256_bytes(zip);
         InstallState {
@@ -220,12 +224,12 @@ mod tests {
                 initialized_at: Some(chrono::Utc::now()),
             },
             service: ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some(unit_sha),
             },
             last_transaction_id: None,
             committed_at: Some(chrono::Utc::now()),

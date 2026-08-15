@@ -4,7 +4,7 @@
 
 ```text
 lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
-             [--service-manager <systemd|none>] [--repository [<BASE_URL>]]
+             [--repository [<BASE_URL>]]
              [--yes]
 ```
 
@@ -17,7 +17,6 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
   升级由后续 `lkit switch` 完成。
 - 目标安装根目录必须是全新目录：不存在 `install-state.json`，也没有遗留的
   `data/`、`releases/`、`service/` 或 `current`。
-- `--service-manager` 指定目标管理方式，缺省按 systemd 可用性自动选择（同首次安装）。
 - `--repository` 只在本地缺少 `static.zip` 时用于从发布仓库下载该版本的压缩包；
   下载不可用时回退为把解压后的 `static/` 现场打包。
 - 非交互模式必须显式 `--yes` 确认迁移计划。
@@ -49,7 +48,7 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
    `static.zip`、`static/`），创建空 `data/`，写入导出的 `landscape_init.toml`
    （`0600`），恢复 `geo_tmp`，原子创建 `current`。
 7. **接管运行态**（`verifying`，systemd 模式）：写入受管 unit 原件、注册、启用、
-   启动，完成 180 秒启动检查与 10 秒稳定观察。none 模式不启动、不检查，提交
+   启动，完成 180 秒启动检查与 10 秒稳定观察。
    pending/未验证状态并输出参考启动命令。
 8. **提交**：状态记录被迁移版本、备份内资产身份、`initialization.status: complete`
    （systemd 模式，初始化锁由新实例首次启动生成）与目标管理方式。
@@ -63,7 +62,7 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
 - 停止后失败（含健康检查失败）：自动回滚——停止/注销新受管 unit、恢复
   `/etc/resolv.conf`、把旧 unit 文件放回原位（或 `unmask`）并按事务前
   enabled/active 状态重启，再清理新根内容；回滚成功返回 `5`，回滚失败返回 `6`。
-- 前台实例场景无法自动重启旧实例，由用户负责（与无 systemd 环境的 switch 语义一致）。
+- 前台实例场景无法自动重启旧实例，由用户负责。
 - 中断恢复按事务阶段处理：`preparing` 标记 `failed`（迁移备份保留）；
   `prepared`/`stopping` 恢复旧 unit 与事务前 systemd 状态；
   `activating`/`verifying` 执行与失败相同的回滚。

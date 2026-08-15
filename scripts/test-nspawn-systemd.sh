@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# TODO(service-manager-rewrite):`lkit service-manager` 命令已在移除 none 部署模式的
+# 破坏性重构中删除,本脚本的迁移场景不再可执行。等不同发行版的服务管理器后端重写
+# 完成后,改为预置 systemd 已提交状态并以 `lkit switch`/`lkit uninstall` 触发真实
+# systemd worker 契约验证(注册、启停、MainPID、前端被杀后独立提交、所有权冲突)。
 if [[ $(uname -s):$(uname -m) != Linux:x86_64 ]]; then
   echo "systemd-nspawn integration currently requires Linux x86_64" >&2
   exit 2

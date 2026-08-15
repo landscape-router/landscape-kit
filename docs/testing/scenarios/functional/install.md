@@ -26,7 +26,7 @@
 
 ## INS-04
 
-**`--service-manager systemd` 安装后初始化、启动并验证服务**
+**首次安装后初始化、启动并验证服务**
 
 - 测试层：CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
@@ -34,20 +34,13 @@
 
 ## INS-05
 
-**`--service-manager none` 安装后提交 pending 状态且不启动服务**
-
-- 测试层：Rust workflow、Docker E2E
-- 状态：`已覆盖`
-- 证据：[service manager 迁移前置场景](../extended.md#s6-服务管理器迁移none--systemd)
-
-## INS-06
-
-**未指定 manager 时根据 systemd 可用性自动选择**
+**systemd 不可用时安装明确失败，不写任何文件**
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 证据：Rust workflow 直接覆盖 Auto 在 systemd 可用时选择 systemd、明确非 systemd 时
-  选择 none，以及 systemd 环境损坏时拒绝；见[首次安装语义](../../../commands/install.md)。
+- 证据：`first_install_fails_without_available_systemd`
+  （crates/lkit-cli/src/workflows/install/first_install_tests.rs）；无 systemd 平台为
+  unsupported，见[首次安装语义](../../../commands/install.md)。
 
 ## INS-07
 

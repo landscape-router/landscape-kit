@@ -136,7 +136,7 @@ fn migrate_command(harness: &InstallHarness, source: &Path) -> Command {
         .arg(source)
         .args(["--repository"])
         .arg(&harness.repository.base_url)
-        .args(["--service-manager", "systemd", "--install-dir"])
+        .args(["--install-dir"])
         .arg(&harness.install_root)
         .args(["--test-runtime"])
         .arg(&harness.runtime_config);

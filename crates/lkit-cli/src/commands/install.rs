@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use crate::network::config::NetworkPlan;
 use clap::Args;
 
-use super::manage::{InstallRequest, RequestMode, ServiceManagerArg};
+use super::manage::{InstallRequest, RequestMode};
 
 #[derive(Args)]
 pub struct Install {
@@ -28,9 +28,6 @@ pub struct Install {
     /// Password captured by the interactive console. Never populated by CLI parsing.
     #[arg(skip)]
     pub(crate) interactive_password: Option<String>,
-    /// Service manager: `systemd` or `none`
-    #[arg(long, value_enum)]
-    pub service_manager: Option<ServiceManagerArg>,
     /// Prompt the user to manually clean the existing directory before a clean install
     #[arg(long)]
     pub force: bool,
@@ -61,7 +58,6 @@ impl std::fmt::Debug for Install {
                 "interactive_password",
                 &self.interactive_password.as_ref().map(|_| "[REDACTED]"),
             )
-            .field("service_manager", &self.service_manager)
             .field("force", &self.force)
             .field("takeover_network", &self.takeover_network)
             .finish_non_exhaustive()
@@ -92,7 +88,6 @@ pub async fn run(args: &Install) -> ExitCode {
         admin_user: args.admin_user.clone(),
         password_file: args.password_file.clone(),
         interactive_password: args.interactive_password.clone(),
-        service_manager: args.service_manager,
         repair_static: false,
         repair_binary: false,
         allow_no_backup: false,
@@ -121,18 +116,9 @@ mod tests {
 
     #[test]
     fn parses_first_install_options() {
-        let install = parse(&[
-            "install",
-            "--repository",
-            "--version",
-            "0.19.2",
-            "--service-manager",
-            "none",
-        ])
-        .unwrap();
+        let install = parse(&["install", "--repository", "--version", "0.19.2"]).unwrap();
         assert_eq!(install.repository, Some(None));
         assert_eq!(install.version.as_deref(), Some("0.19.2"));
-        assert_eq!(install.service_manager, Some(ServiceManagerArg::None));
         assert!(!install.takeover_network);
     }
 

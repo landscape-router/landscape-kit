@@ -276,22 +276,19 @@ restore 事务在停止服务前先于事务临时目录完成安全解包与完
 `landscape_init.toml`、`static.zip` 为普通文件，`static/`、`geo_tmp/` 为目录；解包目录
 与文件分别保持 `0700`/`0600`，不使用可预测路径），停止服务后将旧 `data/` 原子移动到
 事务目录，再从已解包内容创建空 data、导出的初始化配置和 Geo 缓存，并重建目标版本
-release。systemd 模式必须启动并通过完整健康检查后提交；none 模式要求用户确认外部实例
-已停止（非交互模式以 `--yes` 代替），提交 pending 初始化和 `verified: false`，不自行
-启动或探测外部实例。
+release。恢复必须启动并通过完整健康检查后提交。
 
 恢复成功后旧 data 事务现场保留用于中断恢复和人工诊断。它不是 portable 数据库备份：
 数据库以初始化方式重建（见 [landscape_init.toml 与数据库重建](#landscape_inittoml-与数据库重建)，
 受版本锁定约束），不提供字节级恢复；`.lkb` 不包含 SQLite 数据文件、API token、日志
 和指标。
 
-失败语义按 service manager 区分：systemd 模式目标激活或健康检查失败但恢复前状态自动
-恢复成功时返回 `5`，自动恢复失败时返回 `6`；none 模式激活后的失败不内联自动回滚，
-返回普通失败 `1`，现场保留在事务目录，由下次 lkit 命令的 phase 恢复入口按原阶段恢复
-原安装。systemd 自动回滚固定按"停止 → 注册恢复 → 恢复 current/data → 启动并健康
-检查"顺序执行；同版本 restore 回滚时会把被替换的原 release 从事务目录移回，保证
-release 内容与回滚前一致。恢复阶段沿用现有 systemd operation worker 和 phase 恢复
-规则，不能猜测缺失的 state、`current` 或 service manager。恢复提交的 state 中：
+失败语义：目标激活或健康检查失败但恢复前状态自动恢复成功时返回 `5`，自动恢复失败
+时返回 `6`；激活失败触发内联自动回滚，回滚本身失败时事务标记 `failed` 返回 `6`。
+自动回滚固定按"停止 → 注册恢复 → 恢复 current/data → 启动并健康检查"顺序执行；
+同版本 restore 回滚时会把被替换的原 release 从事务目录移回，保证 release 内容与
+回滚前一致。恢复阶段沿用现有 systemd operation worker 和 phase 恢复规则，不能猜测
+缺失的 state、`current` 或 service manager。恢复提交的 state 中：
 `active_version` 取备份 metadata，`webserver` 身份从解包二进制现场计算，
 `static_archive` 身份从备份内 `static.zip` 现场计算；`config.toml` 中的仓库
 来源记录不修改、不猜测。

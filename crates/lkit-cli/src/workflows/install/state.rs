@@ -142,23 +142,13 @@ pub(crate) fn build_switched_state(
 ) -> InstallState {
     let architecture = architecture_from_state(previous);
     let lock_present = root.canonical.join("data/landscape_init.lock").is_file();
-    let service = match previous.service.manager {
-        StateServiceManager::Systemd => ServiceState {
-            manager: StateServiceManager::Systemd,
-            registered: true,
-            enabled: true,
-            verified: true,
-            definition_path: Some("service/landscape-router.service".into()),
-            definition_sha256: unit_sha,
-        },
-        StateServiceManager::None => ServiceState {
-            manager: StateServiceManager::None,
-            registered: false,
-            enabled: false,
-            verified: false,
-            definition_path: None,
-            definition_sha256: None,
-        },
+    let service = ServiceState {
+        manager: StateServiceManager::Systemd,
+        registered: true,
+        enabled: true,
+        verified: true,
+        definition_path: Some("service/landscape-router.service".into()),
+        definition_sha256: unit_sha,
     };
     InstallState {
         schema_version: STATE_SCHEMA_VERSION,
@@ -271,11 +261,11 @@ mod tests {
                 initialized_at: (status == InitStatus::Complete).then(Utc::now),
             },
             service: ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
                 definition_sha256: None,
             },
             last_transaction_id: None,

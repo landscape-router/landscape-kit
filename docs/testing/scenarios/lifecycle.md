@@ -35,7 +35,6 @@ lkit install \
   --install-dir /var/lib/lkit-e2e/landscape \
   --admin-user admin \
   --password-file /var/lib/lkit-e2e/password \
-  --service-manager systemd
 ```
 
 必须验证：

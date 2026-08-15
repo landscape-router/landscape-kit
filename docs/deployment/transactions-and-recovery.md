@@ -4,7 +4,7 @@
 
 ### Schema v4
 
-每次首次安装、同版本修复、版本切换、service manager 迁移、restore 或卸载创建：
+每次首次安装、同版本修复、版本切换、restore 或卸载创建：
 
 ```text
 <install-root>/transactions/<transaction-id>.json
@@ -22,8 +22,6 @@
   "canonical_install_root": "/root/.lkit/landscape",
   "from_version": "0.19.2",
   "target_version": "0.20.0",
-  "from_service_manager": null,
-  "target_service_manager": null,
   "previous_current": "releases/0.19.2",
   "target_release": "releases/0.20.0",
   "backup": {
@@ -55,7 +53,6 @@
 - `install`；
 - `repair`；
 - `switch`；
-- `service_migration`；
 - `restore`；
 - `uninstall`。
 
@@ -78,9 +75,8 @@
 
 - `switch` 和后端 `repair` 使用 `.lkb` 时，`backup` 必须为对象，`restore_backup` 和 `static_backup` 为 null；
 - `lkit repair static` 时，`backup` 和 `restore_backup` 为 null，`static_backup` 必须为对象；
-- 无 systemd 的 pending→complete 初始化观测 repair 时，三者均为 null，且不得修改 `current`、版本资产或服务定义；
+- pending→complete 初始化观测 repair 时，三者均为 null，且不得修改 `current`、版本资产或服务定义；
 - 首次 `install` 时三者均为 null；
-- `service_migration` 时三者均为 null，且 `from_service_manager` 和 `target_service_manager` 必须分别为不同的 `systemd` 或 `none`。
 
 `restore` 时 `restore_backup` 必须记录用户选择的目标 `.lkb`，`from_version`、`target_version`、
 `previous_current` 和 `target_release` 必须同时记录当前与目标版本关系；`backup` 在默认保护备份成功
@@ -105,8 +101,6 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 `--allow-no-backup` 时同样为 true 且 `backup` 必须为 null。其他事务
 固定为 false。读取旧 v1 文件时缺失该字段按 false 处理。
 
-`from_service_manager` 和 `target_service_manager` 是必填但可为 `null` 的字段。只有 `service_migration` 时两者必须为非 null；其他 operation 必须为 null。迁移事务不得改变 `from_version`、`target_version`、`previous_current` 或 `target_release` 表示的当前版本关系。
-
 `static_backup` Schema 固定为：
 
 ```json
@@ -118,7 +112,7 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 
 两个路径都是相对于安装根目录的规范路径，必须留在安装根目录内。备份目录只能包含本次替换前的静态目录内容。
 
-`systemd_before` 和 `resolv_conf_backup` 都是必填但可为 `null` 的字段。普通无 systemd 事务两者必须为 null；需要注册、停止、启动或重启 Landscape 的 systemd 事务，以及任一 `service_migration`，必须在首次修改 systemd 或运行状态前记录 `systemd_before`。需要启动或重启 Landscape 的事务还必须先创建 `resolv_conf_backup`。
+`systemd_before` 和 `resolv_conf_backup` 都是必填但可为 `null` 的字段。需要注册、停止、启动或重启 Landscape 的 systemd 事务，必须在首次修改 systemd 或运行状态前记录 `systemd_before`。需要启动或重启 Landscape 的事务还必须先创建 `resolv_conf_backup`。
 
 `systemd_before` 固定记录事务开始前的服务状态（JSON 键名保持兼容；Rust 侧类型为
 `ServiceBefore`,由 [`ServiceManager`](../service/manager.md) 的
@@ -136,7 +130,7 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 
 `registration.kind` 只允许 `missing` 或 `symlink`。为 `symlink` 时必须额外包含绝对字符串字段 `target`，记录 `/etc/systemd/system/landscape-router.service` 的原始链接目标；其他文件类型仍属于所有权冲突，不进入事务。`enabled` 和 `active` 是事务开始前通过 systemd 查询得到的布尔值。
 
-`resolv_conf_backup` 是安装根目录相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 和无 systemd 事务不修改运行状态时，该字段为 null。
+`resolv_conf_backup` 是安装根目录相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 不修改运行状态时，该字段为 null。
 
 `network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
 接口与 MAC、Landscape 网络计划、NetworkManager/`networking.service`/firewalld/
@@ -183,7 +177,7 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 - `preparing`：尚未改变运行状态；普通事务清理临时文件并标记 `failed`，初始化观测 repair 保持旧状态并标记 `failed`；
 - `prepared` 或 `stopping`：`current` 和数据尚未激活，但服务可能已经停止；按
   `systemd_before` 幂等恢复注册链接、enabled/active 状态，清理目标临时资产并标记
-  `failed`。无 systemd 事务只清理临时资产；
+  `failed`。
 - `uninstall` 的 `preparing`：尚未改变运行状态，清理临时文件并标记 `failed`，用户可
   重新执行卸载；
 - `uninstall` 的 `prepared`、`stopping` 或 `activating`：采用**前向完成**语义，不恢复
@@ -197,11 +191,8 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   - systemd 下有 `backup` 的 `switch`：停止目标版本，使用 `previous_current` 和 `.lkb`
     恢复旧版本；
   - systemd 下的 `repair` 且事务含 `.lkb`：停止修复后的版本，使用 `.lkb` 恢复修复前运行状态；
-  - 无 systemd 的 `switch` 或后端 `repair`：只恢复尚未提交的 `current` 或后端文件变更，不启动、不停止、不检查健康，也不执行配置级 data 重建；
   - `install`：没有旧版本和 `.lkb`，执行首次安装失败清理；仅 systemd 环境恢复服务注册和 `/etc/resolv.conf`，不得调用 `.lkb` 回滚；
   - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，不重建 Landscape data；
-- `service_migration` 从 `systemd` 到 `none`：按 `systemd_before` 恢复注册链接和 enabled/active 状态，不修改 `current` 或 data；
-- `service_migration` 从 `none` 到 `systemd`：停止本次 systemd 服务，按 `systemd_before` 撤销注册状态并恢复 `/etc/resolv.conf`，保持已提交状态为 `manager: "none"`，不尝试重新启动外部实例；
 - `migrate`（手工部署迁移）按阶段恢复：
   - `preparing`：尚未停止旧实例，标记 `failed`；迁移 `.lkb` 保留在 `backups/`；
   - `prepared` 或 `stopping`：旧 unit 可能已停止，幂等恢复旧 unit（`legacy_unit` 记录的
@@ -219,7 +210,6 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
       顺序固定为：停止目标服务 → 恢复 unit 注册与 enabled 状态（**不启动**）→ 同版本
       restore 时把被替换的原 release 从事务目录移回 → 恢复 `current` → 恢复 `data/`
       （幂等，见下）→ 仅在恢复前服务活跃时启动并做完整健康检查 → 重新提交恢复前 state。
-      none 模式只恢复 `data/`、`current` 和 state，不启动、不探测、不检查健康；
       必要时再使用 `backup` 保护快照；恢复成功标记 `rolled_back`，失败标记 `failed` 并
       保留目标 release、旧 data 和两个备份引用；
     - 回滚恢复 `data/` 必须幂等，调用方按三态判定：`previous-data` 存在 → 移回原位；
@@ -254,7 +244,7 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 4. 移除 recovery binary、timer 和 service，并将事务标记为 `rolled_back`。
 
 任一恢复或清理步骤失败时不得标记 `rolled_back`，事务必须进入 `failed`，保留现场和日志供
-人工恢复。switch、repair、service-manager 以及已经提交的安装不得使用整棵 `data/` 清理。
+人工恢复。switch、repair 以及已经提交的安装不得使用整棵 `data/` 清理。
 
 ## systemd 托管操作
 
@@ -301,7 +291,6 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 - systemd worker 不配置自动重试，业务失败不会重复执行整条命令；
 - 主机重启会终止 `/run` 中的临时 worker，不承诺跨重启自动继续。下次 lkit 调用按
   本节事务阶段恢复；
-- 明确 `service.manager: none` 且不触碰 systemd 的操作保持 inline。
 
 ### daemon 自动恢复
 
@@ -312,8 +301,7 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 - CLI 进程因 SSH 断开、崩溃或 `SIGKILL` 消失后，遗留事务由 daemon 自动接管：
   失败激活回滚（含 `.lkb` 配置级回滚）、中断恢复、卸载前向完成均按本节规则执行，
   不再依赖下一次 lkit 调用或 systemd worker 存活；
-- daemon 恢复目标固定为自身所在安装根；`service.manager: none` 环境同样生效
-  （恢复路径不依赖 systemd）；
+- daemon 恢复目标固定为自身所在安装根；
 - 网络接管 `awaiting_network_confirmation` / `finalizing` / `rolling_back` 阶段
   保持人工处理（`lkit network confirm|rollback`），daemon 不代替确认；
 - 并发安全：CLI 命令整个操作期间持有安装锁，daemon 获取失败即跳过本周期；

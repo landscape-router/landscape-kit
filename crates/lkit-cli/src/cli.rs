@@ -123,9 +123,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 .mut_arg("password_file", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_PASSWORD_FILE_HELP))
                 })
-                .mut_arg("service_manager", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_HELP))
-                })
                 .mut_arg("force", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_FORCE_HELP))
                 })
@@ -138,9 +135,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 .about(crate::tr_static!(keys::MAIN_MIGRATE_ABOUT))
                 .mut_arg("from", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_MIGRATE_FROM_HELP))
-                })
-                .mut_arg("service_manager", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_HELP))
                 })
                 .mut_arg("repository", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_HELP))
@@ -354,16 +348,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 })
                 .mut_arg("accept_service_change", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
-                })
-        })
-        .mut_subcommand("service-manager", |command| {
-            command
-                .about(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_ABOUT))
-                .mut_arg("target", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_TARGET_HELP))
-                })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
         })
         .mut_subcommand("software", |command| {

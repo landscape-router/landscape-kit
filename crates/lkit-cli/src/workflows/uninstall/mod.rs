@@ -378,15 +378,45 @@ mod tests {
                 initialized_at: Some(chrono::Utc::now()),
             },
             service: ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("d".repeat(64)),
             },
             last_transaction_id: None,
             committed_at: Some(chrono::Utc::now()),
+        }
+    }
+
+    /// 与 cleanup::tests 相同的假 systemctl:对任意命令返回成功,
+    /// 托管服务处于 inactive 状态(卸载路径跳过 stop)。
+    fn fake_systemd(dir: &std::path::Path) -> Systemd {
+        std::fs::create_dir_all(dir).unwrap();
+        let script = dir.join("systemctl");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+case "$*" in
+  "is-active landscape-router.service") echo inactive; exit 3;;
+  "is-active lkit.service") echo inactive; exit 3;;
+  "is-enabled landscape-router.service") echo disabled;;
+  "is-enabled lkit.service") echo disabled;;
+  *) exit 0;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(dir.join("run")).unwrap();
+        std::fs::create_dir_all(dir.join("units")).unwrap();
+        Systemd {
+            systemctl: script,
+            system_unit_dir: dir.join("units"),
+            run_systemd_dir: dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: dir.join("resolv.conf"),
         }
     }
 
@@ -480,7 +510,7 @@ mod tests {
             uninstall_installation(
                 &install_root,
                 &state,
-                &Systemd::host(),
+                &fake_systemd(&root.join("fake-systemd")),
                 &args(true, false, false, true),
                 &options_for(&server, &none_health()),
             )
@@ -491,7 +521,7 @@ mod tests {
             uninstall_installation(
                 &install_root,
                 &state,
-                &Systemd::host(),
+                &fake_systemd(&root.join("fake-systemd")),
                 &args(true, true, true, true),
                 &options_for(&server, &none_health()),
             )
@@ -526,7 +556,7 @@ mod tests {
             uninstall_installation(
                 &install_root,
                 &state,
-                &Systemd::host(),
+                &fake_systemd(&root.join("fake-systemd")),
                 &args(false, false, false, false),
                 &options_for(&server, &none_health()),
             )
@@ -565,7 +595,7 @@ mod tests {
             uninstall_installation(
                 &install_root,
                 &state,
-                &Systemd::host(),
+                &fake_systemd(&root.join("fake-systemd")),
                 &args(true, false, false, false),
                 &options_for(&server, &none_health()),
             )
@@ -606,7 +636,7 @@ mod tests {
             uninstall_installation(
                 &install_root,
                 &state,
-                &Systemd::host(),
+                &fake_systemd(&root.join("fake-systemd")),
                 &args(true, true, false, false),
                 &options_for(&server, &none_health()),
             )

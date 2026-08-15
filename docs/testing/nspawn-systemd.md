@@ -45,8 +45,8 @@ sudo env LKIT_NSPAWN_PREBUILT_DIR="$PWD/target/release" \
 脚本创建临时 trixie rootfs 和 private network namespace，结束时终止 machine 并删除
 rootfs。CI 当前每周及手动运行；普通 PR 和普通发布不承担 rootfs 下载和 boot 成本。
 
-测试先从 `manager: none` 的合法 fixture 状态迁移到 systemd。在事务进入 `verifying`
-后杀掉 `machinectl shell` 前端，等待 systemd worker 独立提交；随后迁移回 none 并断言
-服务停止、注册链接移除、所有事务终结且没有残留 `lkit-operation-*` unit。
-最后制造一个 foreign unit 所有权冲突，确认接管在创建迁移事务前失败、状态仍为 none，
-且执行失败命令的 operation unit 同样被清理。
+测试先执行完整的首次安装并注册、启动受管 unit。在事务进入 `verifying` 后杀掉
+`machinectl shell` 前端，等待 systemd worker 独立提交；随后执行卸载，断言服务停止、
+注册链接移除、所有事务终结且没有残留 `lkit-operation-*` unit。
+最后制造一个 foreign unit 所有权冲突，确认注册在创建事务前失败，且执行失败命令的
+operation unit 同样被清理。

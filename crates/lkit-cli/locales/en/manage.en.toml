@@ -13,7 +13,6 @@ manage.takeover_awaiting_confirmation = "network takeover is awaiting confirmati
 manage.reconnect_and_run_confirm = "reconnect to %{address} and run `lkit network confirm`"
 manage.takeover_awaiting_confirmation_dhcp = "network takeover is awaiting confirmation; reconnect using the WAN DHCP lease and run `lkit network confirm`"
 manage.management_interface = "management interface https://127.0.0.1:6443"
-manage.initialization_pending = "initialization is pending; start the service manually with:"
 manage.confirm_before_rollback = "confirm the network takeover within %{minutes} minutes or the installation will be rolled back automatically"
 manage.enter_admin_password = "Enter admin password"
 manage.old_manual_deployment_warning = "warning: found an old manual deployment at /root/.landscape-router; install does not migrate it and rejects deployments that could overwrite it or conflict on the fixed ports; use `lkit migrate --from /root/.landscape-router` to migrate"

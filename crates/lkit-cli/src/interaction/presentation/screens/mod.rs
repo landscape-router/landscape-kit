@@ -2,7 +2,6 @@ pub(crate) mod install;
 pub(crate) mod reinit;
 pub(crate) mod repair;
 pub(crate) mod restore;
-pub(crate) mod service_migration;
 pub(crate) mod switch;
 pub(crate) mod uninstall;
 pub(crate) mod update;
@@ -11,7 +10,6 @@ pub(crate) use install::InstallScreen;
 pub(crate) use reinit::ReinitScreen;
 pub(crate) use repair::RepairScreen;
 pub(crate) use restore::RestoreScreen;
-pub(crate) use service_migration::ServiceMigrationScreen;
 pub(crate) use switch::SwitchScreen;
 pub(crate) use uninstall::UninstallScreen;
 pub(crate) use update::UpdateScreen;
@@ -62,7 +60,6 @@ pub(crate) fn operation_screen(args: &[String]) -> Box<dyn OperationScreen> {
         Some("repair") => Box::new(repair::RepairScreen),
         Some("restore") => Box::new(restore::RestoreScreen),
         Some("reinit") => Box::new(reinit::ReinitScreen),
-        Some("service-manager") => Box::new(service_migration::ServiceMigrationScreen),
         Some("uninstall") => Box::new(uninstall::UninstallScreen),
         _ => Box::new(install::InstallScreen),
     }

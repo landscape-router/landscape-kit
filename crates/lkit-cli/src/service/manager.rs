@@ -15,18 +15,19 @@ use crate::deployment::plan::InstallError;
 
 /// 服务管理器后端标识。序列化在安装状态与事务文件中,
 /// 新增后端时在此增加变体并处理状态 schema 演进。
+///
+/// lkit 明确依赖发行版自启服务:`none`(不托管运行态)不再是受支持的部署类型,
+/// 安装时必须探测到可用的服务管理器,否则失败。
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ServiceManagerKind {
     Systemd,
-    None,
 }
 
 impl ServiceManagerKind {
     pub(crate) fn key(self) -> &'static str {
         match self {
             Self::Systemd => "systemd",
-            Self::None => "none",
         }
     }
 }

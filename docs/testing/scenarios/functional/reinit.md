@@ -7,7 +7,7 @@
 - 测试层：CLI fixture E2E
 - 状态：`待补充`
 - 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../crates/lkit-cli/src/commands/reinit.rs)
-- 说明：无有效状态返回参数错误；`manager: none` 与宿主网络服务未接管均返回参数错误，
+- 说明：无有效状态返回参数错误；宿主网络服务未接管返回参数错误，
   不创建事务、不写文件。
 
 ## REI-02

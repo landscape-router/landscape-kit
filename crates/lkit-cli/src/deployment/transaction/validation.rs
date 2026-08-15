@@ -96,18 +96,15 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
     let has_backup = transaction.backup.is_some();
     let has_restore_backup = transaction.restore_backup.is_some();
     let has_static_backup = transaction.static_backup.is_some();
-    let has_managers =
-        transaction.from_service_manager.is_some() || transaction.target_service_manager.is_some();
     let has_versions = transaction.from_version.is_some()
         || transaction.target_version.is_some()
         || transaction.previous_current.is_some()
         || transaction.target_release.is_some();
     match transaction.operation {
         Operation::Install => {
-            if has_backup || has_restore_backup || has_static_backup || has_managers {
+            if has_backup || has_restore_backup || has_static_backup {
                 return Err(corrupted(
-                    "install transaction must not record backups, static backups, or service managers"
-                        .into(),
+                    "install transaction must not record backups or static backups".into(),
                 ));
             }
             if transaction.from_version.is_some() || transaction.previous_current.is_some() {
@@ -161,9 +158,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                         .into(),
                 ));
             }
-            if has_static_backup || has_managers {
+            if has_static_backup {
                 return Err(corrupted(
-                    "switch transaction must not record static backups or service managers".into(),
+                    "switch transaction must not record static backups".into(),
                 ));
             }
             if transaction.from_version.is_none()
@@ -178,9 +175,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
         }
         Operation::Restore => {
             reject_network_takeover(transaction, "restore")?;
-            if has_static_backup || has_managers {
+            if has_static_backup {
                 return Err(corrupted(
-                    "restore transaction must not record static backups or service managers".into(),
+                    "restore transaction must not record static backups".into(),
                 ));
             }
             if transaction.no_backup && has_backup {
@@ -210,11 +207,6 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             if transaction.no_backup || has_restore_backup {
                 return Err(corrupted(
                     "repair transaction must not record no_backup or restore_backup".into(),
-                ));
-            }
-            if has_managers {
-                return Err(corrupted(
-                    "repair transaction must not record service managers".into(),
                 ));
             }
             let observation = !has_backup
@@ -247,38 +239,11 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 ));
             }
         }
-        Operation::ServiceMigration => {
-            reject_network_takeover(transaction, "service migration")?;
-            if has_backup || has_restore_backup || has_static_backup || has_versions {
-                return Err(corrupted(
-                    "service migration must not record backups, static backups, or version changes"
-                        .into(),
-                ));
-            }
-            let (Some(from), Some(target)) = (
-                transaction.from_service_manager,
-                transaction.target_service_manager,
-            ) else {
-                return Err(corrupted(
-                    "service migration must record both service managers".into(),
-                ));
-            };
-            if from == target {
-                return Err(corrupted(
-                    "service migration must record two different service managers".into(),
-                ));
-            }
-            if transaction.systemd_before.is_none() {
-                return Err(corrupted(
-                    "service migration must record systemd_before".into(),
-                ));
-            }
-        }
         Operation::Uninstall => {
             reject_network_takeover(transaction, "uninstall")?;
-            if has_restore_backup || has_static_backup || has_managers {
+            if has_restore_backup || has_static_backup {
                 return Err(corrupted(
-                    "uninstall transaction must not record restore backups, static backups, or service managers"
+                    "uninstall transaction must not record restore backups or static backups"
                         .into(),
                 ));
             }
@@ -309,10 +274,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
         }
         Operation::Migrate => {
             reject_network_takeover(transaction, "migrate")?;
-            if has_restore_backup || has_static_backup || has_managers {
+            if has_restore_backup || has_static_backup {
                 return Err(corrupted(
-                    "migrate transaction must not record restore backups, static backups, or service managers"
-                        .into(),
+                    "migrate transaction must not record restore backups or static backups".into(),
                 ));
             }
             if transaction.no_backup {
@@ -360,10 +324,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             }
         }
         Operation::Reinit => {
-            if has_restore_backup || has_static_backup || has_managers {
+            if has_restore_backup || has_static_backup {
                 return Err(corrupted(
-                    "reinit transaction must not record restore backups, static backups, or service managers"
-                        .into(),
+                    "reinit transaction must not record restore backups or static backups".into(),
                 ));
             }
             if transaction.no_backup && has_backup {
@@ -460,10 +423,7 @@ fn is_safe_unit_name(value: &str) -> bool {
 mod tests {
     use super::*;
 
-    use super::super::{
-        BackupRef, Registration, ServiceBefore, StaticBackupRef, TransactionServiceManager,
-        find_unfinished,
-    };
+    use super::super::{BackupRef, Registration, ServiceBefore, StaticBackupRef, find_unfinished};
     use crate::deployment::root::InstallRoot;
 
     fn temp_root(name: &str) -> std::path::PathBuf {
@@ -544,25 +504,6 @@ mod tests {
         });
         assert!(validate_transaction(&transaction).is_ok());
 
-        transaction.operation = Operation::ServiceMigration;
-        transaction.backup = None;
-        transaction.from_version = None;
-        transaction.previous_current = None;
-        transaction.target_version = None;
-        transaction.target_release = None;
-        assert!(validate_transaction(&transaction).is_err());
-        transaction.from_service_manager = Some(TransactionServiceManager::Systemd);
-        transaction.target_service_manager = Some(TransactionServiceManager::None);
-        assert!(validate_transaction(&transaction).is_err());
-        transaction.systemd_before = Some(ServiceBefore {
-            registration: Registration {
-                kind: RegistrationKind::Missing,
-                target: None,
-            },
-            enabled: false,
-            active: false,
-        });
-        assert!(validate_transaction(&transaction).is_ok());
         let _ = std::fs::remove_dir_all(&temp);
     }
 
@@ -720,10 +661,6 @@ mod tests {
         let mut invalid =
             TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
         invalid.target_version = Some("1.3.0".into());
-        assert!(validate_transaction(&invalid).is_err());
-        let mut invalid =
-            TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
-        invalid.target_service_manager = Some(TransactionServiceManager::Systemd);
         assert!(validate_transaction(&invalid).is_err());
         let _ = std::fs::remove_dir_all(&temp);
     }

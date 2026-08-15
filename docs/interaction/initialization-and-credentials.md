@@ -75,8 +75,7 @@ stderr 转发通道，保证 warning 不会因两条输出通道竞争而插入�
 
 显式 `--repository` 已经表示使用该仓库，不再要求二次确认。上述命令和专用参数不能
 绕过状态损坏、初始化锁缺失、未知冲突进程、systemd unit 所有权冲突、同版本资产身份
-不一致、下载校验失败或未解决事务。无 systemd 的版本切换和后端 repair 仍要求用户通过
-`/dev/tty` 确认已经用自己的进程管理方式停止 Landscape，v1 不提供非交互替代参数。
+不一致、下载校验失败或未解决事务。
 
 密码复杂度按当前 Landscape 稳定接口固定为：
 
@@ -120,7 +119,7 @@ stderr 转发通道，保证 warning 不会因两条输出通道竞争而插入�
 
 如果存在数据库或 `landscape.toml`，或者安装状态记录 `initialization.status: complete`，但 `landscape_init.lock` 缺失，则属于高危异常。Landscape 可能重新读取初始化文件并清空配置；任何普通确认或 `--accept-*` 均不能绕过，安装必须停止。
 
-无 systemd 首次安装提交的 `initialization.status: pending`、无数据库、无 `landscape.toml` 且无初始化锁是预期状态，不得误判为损坏。之后观察到数据库或 `landscape.toml` 已出现但初始化锁仍缺失时，立即按高危异常处理。
+首次安装提交的 `initialization.status: pending`、无数据库、无 `landscape.toml` 且无初始化锁是预期状态，不得误判为损坏。之后观察到数据库或 `landscape.toml` 已出现但初始化锁仍缺失时，立即按高危异常处理。
 
 网络接管首次安装在确认前仍未提交。超时、确认前重启或手工 rollback 成功后，其整个
 `data/` 会被删除；因此下一次 `lkit install` 可以重新提供 `--admin-user` 和

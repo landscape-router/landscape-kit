@@ -18,7 +18,6 @@ pub(crate) const MANAGE_RECONNECT_AND_RUN_CONFIRM: &str = "manage.reconnect_and_
 pub(crate) const MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP: &str =
     "manage.takeover_awaiting_confirmation_dhcp";
 pub(crate) const MANAGE_MANAGEMENT_INTERFACE: &str = "manage.management_interface";
-pub(crate) const MANAGE_INITIALIZATION_PENDING: &str = "manage.initialization_pending";
 pub(crate) const MANAGE_CONFIRM_BEFORE_ROLLBACK: &str = "manage.confirm_before_rollback";
 pub(crate) const MANAGE_ENTER_ADMIN_PASSWORD: &str = "manage.enter_admin_password";
 pub(crate) const MANAGE_OLD_MANUAL_DEPLOYMENT_WARNING: &str =

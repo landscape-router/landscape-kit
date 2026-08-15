@@ -24,10 +24,10 @@ lkit update [--version <VERSION>] [--repository [<BASE_URL>]]
    - 相同：输出已是最新，返回 `0`，不创建事务、不下载任何资产，也不验证或持久化所选仓库来源；
    - 更低：返回参数使用错误（退出码 `2`），不创建切换事务（沿用 switch 的降级规则）；
    - 更高：展示 `当前 <X> → 目标 <Y>` 并要求输入完整 `yes` 确认。拒绝这次升级确认时返回
-     退出码 `1`，不创建事务、不下载、零副作用；无 systemd 环境在后续仍按 switch 规则
+     退出码 `1`，不创建事务、不下载、零副作用；后续仍按 switch 规则
      询问用户是否已停止外部 Landscape。
 4. **执行**：确认后复用 `lkit switch --version <Y> [--repository ...]` 的流水线。备份、
-   回滚、systemd worker、退出码 `0/1/2/5/6` 与无 systemd 环境的停机确认语义全部与
+   回滚、systemd worker、退出码 `0/1/2/5/6` 语义全部与
    switch 一致，见 [`lkit switch`](switch.md)。
 
 ## 非交互环境
@@ -53,7 +53,7 @@ lkit switch --version latest
   进程，无法读取 TUI 键盘输入，继续交互确认会阻塞；
 - 未显式 `--repository` 时按 switch 规则解析来源（显式 CLI > `config.toml` > 官方
   GitHub），面板总是显式传递所选来源，因此正常情况下不会走到该回退；
-- switch 流水线内部的交互确认（如无 systemd 环境的“已停止实例”确认）同样视为已确认；
+- switch 流水线内部的交互确认同样视为已确认；
 - 目标解析、比较与执行仍在命令内完成，`--console-confirmed` 只跳过交互步骤。
 
 ## 与 `lkit switch` 的关系

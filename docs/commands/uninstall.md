@@ -12,7 +12,7 @@ lkit uninstall [--install-dir <PATH>] [--yes] [--allow-no-backup]
 `--non-interactive` 和 `--lang` 是全局参数。交互模式必须确认卸载计划、数据损失范围
 (数据库、API token、日志和指标不可逆删除)与保留物;非交互模式必须额外提供 `--yes`,
 否则直接返回参数错误(`2`)。`--yes` 覆盖全部确认:卸载计划、minimal scope 数据损失、
-网络接管警告以及(none 模式)外部实例已由用户自己的进程管理器停止。
+网络接管警告。
 
 从交互控制台(TUI)发起的 uninstall 由 TUI 卸载确认层完成全部确认,命令内部标记
 `--console-confirmed`,不再请求 `/dev/tty` 二次确认;这在 systemd worker 路径下是必需
@@ -66,7 +66,7 @@ lkit uninstall [--install-dir <PATH>] [--yes] [--allow-no-backup]
 6. 创建 `uninstall` 事务,记录 `systemd_before`、`previous_current`、`backup` 引用和
    (systemd 环境)必要的 `/etc/resolv.conf` 备份现场。
 
-保护备份创建失败、所有权冲突或状态损坏时,保持当前服务和现场不变。none 模式要求用户
+保护备份创建失败、所有权冲突或状态损坏时,保持当前服务和现场不变。
 通过 `/dev/tty` 确认外部实例已停止(非交互模式以 `--yes` 代替),`lkit` 不启动、不探测
 外部进程。
 
@@ -81,7 +81,8 @@ systemd 模式委托 systemd worker(与 switch/restore 相同的 operation unit 
 3. 按上述清理选项删除受管内容(保留物见[清理选项](#清理选项));
 4. 将事务标记为 `committed`,输出卸载结果、保护备份 ID(如创建)与保留物清单。
 
-none 模式不停止、不探测外部进程,用户在确认阶段已声明实例停止;文件删除与事务提交
+systemd 模式停止、disable 并注销受管服务(Landscape 与 lkit 常驻服务)后删除受管内容;
+文件删除与事务提交
 直接进行,输出与 systemd 模式相同。
 
 卸载成功后该安装根目录不再存在 `install-state.json`,再次运行 `lkit install` 按全新

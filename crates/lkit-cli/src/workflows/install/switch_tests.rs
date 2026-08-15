@@ -55,42 +55,109 @@ fn switch_options<'a, P: DocsProbe>(
     }
 }
 
-#[tokio::test]
-async fn switches_version_without_systemd() {
-    let (server, root, provider) = start_switch_repository(
-        "e2e-switch-none",
-        "1.2.3",
-        "1.3.0",
-        b"webserver 1.3.0 payload",
-    );
+/// 系统化 first-install + switch 测试世界:假 systemd、监听端口、init watcher。
+struct SwitchWorld {
+    _server: TestServer,
+    root: InstallRoot,
+    provider: ReleaseProvider,
+    systemd: Systemd,
+    dir: std::path::PathBuf,
+    options: HealthOptions<FakeDocs>,
+    _tcp: Vec<std::net::TcpListener>,
+    _udp: UdpSocket,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+fn switch_world(name: &str) -> SwitchWorld {
+    use std::net::{TcpListener, UdpSocket};
+
+    let (server, root, provider) =
+        start_switch_repository(name, "1.2.3", "1.3.0", b"webserver 1.3.0 payload");
+    let dir = std::env::temp_dir().join(format!("lkit-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let tcp1 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp2 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp3 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let ports = vec![
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp1.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp2.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp3.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Udp,
+            port: udp.local_addr().unwrap().port(),
+        },
+    ];
+    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    init_watcher(root.canonical.join("data"), stop.clone());
+    let options = HealthOptions {
+        docs: FakeDocs,
+        ports: ports.clone(),
+        startup_timeout: Duration::from_secs(15),
+        stable_duration: Duration::from_millis(100),
+    };
+    SwitchWorld {
+        _server: server,
+        root,
+        provider,
+        systemd,
+        dir,
+        options,
+        _tcp: vec![tcp1, tcp2, tcp3],
+        _udp: udp,
+        stop,
+    }
+}
+
+async fn install_v1(world: &SwitchWorld) {
     first_install(
-        &root,
-        &provider,
+        &world.root,
+        &world.provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
+        &world.systemd,
+        &world.options,
     )
     .await
     .unwrap();
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn switches_version_after_first_install() {
+    let world = switch_world("e2e-switch-after-install");
+    install_v1(&world).await;
+    let state = super::super::state::load_state(&world.root)
+        .unwrap()
+        .unwrap();
     assert_eq!(state.active_version, "1.2.3");
 
-    let target = provider
+    let target = world
+        .provider
         .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
         .await
         .unwrap();
     let health = test_options();
     let outcome = switch_version(
-        &root,
+        &world.root,
         &state,
         target,
         &SwitchArgs {
             allow_no_backup: false,
         },
-        &Systemd::host(),
-        &switch_options(&server.base, &health, true),
+        &world.systemd,
+        &switch_options(&world._server.base, &health, true),
     )
     .await
     .unwrap();
@@ -101,26 +168,30 @@ async fn switches_version_without_systemd() {
     assert!(backup_id.is_some());
 
     assert_eq!(
-        std::fs::read_link(root.canonical.join("current")).unwrap(),
+        std::fs::read_link(world.root.canonical.join("current")).unwrap(),
         std::path::PathBuf::from("releases/1.3.0")
     );
-    assert!(root.canonical.join("releases/1.2.3").is_dir());
+    assert!(world.root.canonical.join("releases/1.2.3").is_dir());
     assert!(
-        root.canonical
+        world
+            .root
+            .canonical
             .join("backups")
             .join(format!("{}.lkb", backup_id.as_ref().unwrap()))
             .is_file()
     );
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
+    let state = super::super::state::load_state(&world.root)
+        .unwrap()
+        .unwrap();
     assert_eq!(state.active_version, "1.3.0");
-    assert_eq!(state.service.manager, StateServiceManager::None);
-    assert!(!state.service.verified);
+    assert_eq!(state.service.manager, StateServiceManager::Systemd);
+    assert!(state.service.verified);
     assert!(
-        super::super::transaction::find_unfinished(&root)
+        super::super::transaction::find_unfinished(&world.root)
             .unwrap()
             .is_none()
     );
-    let tx = load_transaction_json(&root);
+    let tx = load_transaction_json(&world.root);
     assert_eq!(tx["phase"], "committed");
     assert_eq!(tx["operation"], "switch");
     assert_eq!(tx["from_version"], "1.2.3");
@@ -128,45 +199,38 @@ async fn switches_version_without_systemd() {
     assert_eq!(tx["previous_current"], "releases/1.2.3");
     assert!(tx["backup"]["backup_id"].as_str().unwrap() == backup_id.as_deref().unwrap());
     assert!(
-        server
+        world
+            ._server
             .request_paths()
             .contains(&"/api/v1/system/config/export".to_string())
     );
-    let _ = std::fs::remove_dir_all(&root.install_root);
+
+    world.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::fs::remove_dir_all(&world.dir);
+    let _ = std::fs::remove_dir_all(&world.root.install_root);
 }
 
 #[tokio::test]
 async fn reuses_existing_target_release_directory_without_redownloading() {
-    let (server, root, provider) = start_switch_repository(
-        "e2e-switch-reuse-existing",
-        "1.2.3",
-        "1.3.0",
-        b"webserver 1.3.0 payload",
-    );
-    first_install(
-        &root,
-        &provider,
-        &TargetVersion::Version(version()),
-        &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
-    )
-    .await
-    .unwrap();
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
+    let world = switch_world("e2e-switch-reuse-existing");
+    install_v1(&world).await;
+    let state = super::super::state::load_state(&world.root)
+        .unwrap()
+        .unwrap();
     assert_eq!(state.active_version, "1.2.3");
 
     // 模拟上次切换回滚后残留的目标版本目录:内容与 manifest 一致。
-    let target = provider
+    let target = world
+        .provider
         .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
         .await
         .unwrap();
-    let final_dir = root.canonical.join("releases/1.3.0");
+    let final_dir = world.root.canonical.join("releases/1.3.0");
     std::fs::create_dir_all(&final_dir).unwrap();
     fetch_webserver_asset(&target, &final_dir).await.unwrap();
     fetch_static_asset(&target, &final_dir).await.unwrap();
-    let asset_requests_before = server
+    let asset_requests_before = world
+        ._server
         .request_paths()
         .iter()
         .filter(|path| path.starts_with("/releases/1.3.0/"))
@@ -174,14 +238,14 @@ async fn reuses_existing_target_release_directory_without_redownloading() {
 
     let health = test_options();
     let outcome = switch_version(
-        &root,
+        &world.root,
         &state,
         target,
         &SwitchArgs {
             allow_no_backup: false,
         },
-        &Systemd::host(),
-        &switch_options(&server.base, &health, true),
+        &world.systemd,
+        &switch_options(&world._server.base, &health, true),
     )
     .await
     .unwrap();
@@ -189,7 +253,8 @@ async fn reuses_existing_target_release_directory_without_redownloading() {
         panic!("expected committed switch, got {outcome:?}");
     };
     assert_eq!(version.to_string(), "1.3.0");
-    let asset_requests_after = server
+    let asset_requests_after = world
+        ._server
         .request_paths()
         .iter()
         .filter(|path| path.starts_with("/releases/1.3.0/"))
@@ -199,53 +264,66 @@ async fn reuses_existing_target_release_directory_without_redownloading() {
         "the existing trusted release must be reused without re-downloading its assets"
     );
     assert_eq!(
-        std::fs::read_link(root.canonical.join("current")).unwrap(),
+        std::fs::read_link(world.root.canonical.join("current")).unwrap(),
         std::path::PathBuf::from("releases/1.3.0")
     );
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
+    let state = super::super::state::load_state(&world.root)
+        .unwrap()
+        .unwrap();
     assert_eq!(state.active_version, "1.3.0");
     assert_eq!(
         std::fs::read(final_dir.join("landscape-webserver")).unwrap(),
         b"webserver 1.3.0 payload"
     );
-    let _ = std::fs::remove_dir_all(&root.install_root);
+
+    world.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::fs::remove_dir_all(&world.dir);
+    let _ = std::fs::remove_dir_all(&world.root.install_root);
 }
 
 #[tokio::test]
 async fn rejects_version_downgrade_before_transaction_or_asset_download() {
+    let mut world = switch_world("e2e-switch-downgrade");
+    // 仓库内容不同:降级路径使用 0.22.2 → 0.21.1。
+    let _ = std::fs::remove_dir_all(&world.root.install_root);
     let (server, root, provider) = start_switch_repository(
         "e2e-switch-downgrade",
         "0.22.2",
         "0.21.1",
         b"webserver 0.21.1 payload",
     );
+    world._server = server;
+    world.root = root;
+    world.provider = provider;
     first_install(
-        &root,
-        &provider,
+        &world.root,
+        &world.provider,
         &TargetVersion::Version(semver::Version::new(0, 22, 2)),
         &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
+        &world.systemd,
+        &world.options,
     )
     .await
     .unwrap();
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
-    let target = provider
+    let state = super::super::state::load_state(&world.root)
+        .unwrap()
+        .unwrap();
+    let target = world
+        .provider
         .release(&semver::Version::new(0, 21, 1), Architecture::X86_64)
         .await
         .unwrap();
     let health = test_options();
 
     let result = switch_version(
-        &root,
+        &world.root,
         &state,
         target,
         &SwitchArgs {
             allow_no_backup: false,
         },
-        &Systemd::host(),
-        &switch_options(&server.base, &health, true),
+        &world.systemd,
+        &switch_options(&world._server.base, &health, true),
     )
     .await;
 
@@ -255,113 +333,88 @@ async fn rejects_version_downgrade_before_transaction_or_asset_download() {
     assert!(reason.contains("0.22.2"));
     assert!(reason.contains("0.21.1"));
     assert_eq!(
-        std::fs::read_link(root.canonical.join("current")).unwrap(),
+        std::fs::read_link(world.root.canonical.join("current")).unwrap(),
         std::path::PathBuf::from("releases/0.22.2")
     );
     assert_eq!(
-        super::super::state::load_state(&root)
+        super::super::state::load_state(&world.root)
             .unwrap()
             .unwrap()
             .active_version,
         "0.22.2"
     );
-    assert!(!root.canonical.join("releases/0.21.1").exists());
+    assert!(!world.root.canonical.join("releases/0.21.1").exists());
     assert!(
-        super::super::transaction::find_unfinished(&root)
+        super::super::transaction::find_unfinished(&world.root)
             .unwrap()
             .is_none()
     );
-    let transaction = load_transaction_json(&root);
+    let transaction = load_transaction_json(&world.root);
     assert_eq!(transaction["operation"], "install");
     assert_eq!(transaction["target_version"], "0.22.2");
-    let requests = server.request_paths();
+    let requests = world._server.request_paths();
     assert!(!requests.contains(&"/releases/0.21.1/landscape-webserver-x86_64.zst".to_string()));
     assert!(!requests.contains(&"/releases/0.21.1/static.zip".to_string()));
-    let _ = std::fs::remove_dir_all(&root.install_root);
+
+    world.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::fs::remove_dir_all(&world.dir);
+    let _ = std::fs::remove_dir_all(&world.root.install_root);
 }
 
 #[tokio::test]
-async fn refuses_switch_when_user_does_not_confirm() {
-    let (server, root, provider) = start_switch_repository(
-        "e2e-switch-refuse",
-        "1.2.3",
-        "1.3.0",
-        b"webserver 1.3.0 payload",
-    );
-    first_install(
-        &root,
-        &provider,
-        &TargetVersion::Version(version()),
-        &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
-    )
-    .await
-    .unwrap();
-    let state = super::super::state::load_state(&root).unwrap().unwrap();
-    let target = provider
+async fn switches_without_confirmation_when_systemd() {
+    let world = switch_world("e2e-switch-no-confirm");
+    install_v1(&world).await;
+    let state = super::super::state::load_state(&world.root)
+        .unwrap()
+        .unwrap();
+    let target = world
+        .provider
         .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
         .await
         .unwrap();
     let health = test_options();
-    assert!(matches!(
-        switch_version(
-            &root,
-            &state,
-            target,
-            &SwitchArgs {
-                allow_no_backup: false,
-            },
-            &Systemd::host(),
-            &switch_options(&server.base, &health, false),
-        )
-        .await,
-        Err(InstallError::UserRefused(_))
-    ));
+    // systemd 路径不请求用户确认:confirm 返回 false 也应完成切换。
+    let outcome = switch_version(
+        &world.root,
+        &state,
+        target,
+        &SwitchArgs {
+            allow_no_backup: false,
+        },
+        &world.systemd,
+        &switch_options(&world._server.base, &health, false),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, SwitchOutcome::Committed { .. }));
     assert_eq!(
-        std::fs::read_link(root.canonical.join("current")).unwrap(),
-        std::path::PathBuf::from("releases/1.2.3")
+        std::fs::read_link(world.root.canonical.join("current")).unwrap(),
+        std::path::PathBuf::from("releases/1.3.0")
     );
-    let _ = std::fs::remove_dir_all(&root.install_root);
+
+    world.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::fs::remove_dir_all(&world.dir);
+    let _ = std::fs::remove_dir_all(&world.root.install_root);
 }
 
 #[tokio::test]
 async fn repository_override_does_not_require_a_second_confirmation() {
-    let (_first_server, first_root, first_provider) = start_switch_repository(
-        "e2e-switch-repo-a",
-        "1.2.3",
-        "1.3.0",
-        b"webserver 1.3.0 payload",
-    );
-    first_install(
-        &first_root,
-        &first_provider,
-        &TargetVersion::Version(version()),
-        &credentials(),
-        ManagerChoice::None,
-        &Systemd::host(),
-        &none_options(),
-    )
-    .await
-    .unwrap();
-    let state = super::super::state::load_state(&first_root)
+    let first = switch_world("e2e-switch-repo-a");
+    install_v1(&first).await;
+    let state = super::super::state::load_state(&first.root)
         .unwrap()
         .unwrap();
     assert!(
-        super::super::config::load_repository(&first_root)
+        super::super::config::load_repository(&first.root)
             .unwrap()
             .is_none(),
         "first install must not create config.toml"
     );
 
-    let (second_server, second_root, second_provider) = start_switch_repository(
-        "e2e-switch-repo-b",
-        "1.2.3",
-        "1.3.0",
-        b"webserver 1.3.0 payload",
-    );
-    let target = second_provider
+    let second = switch_world("e2e-switch-repo-b");
+    let target = second
+        .provider
         .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
         .await
         .unwrap();
@@ -373,49 +426,55 @@ async fn repository_override_does_not_require_a_second_confirmation() {
         Ok(true)
     };
     let options = SwitchOptions {
-        export_base_url: second_server.base.clone(),
+        export_base_url: second._server.base.clone(),
         token: &token,
         confirm: &confirm,
         health: &health,
     };
     let outcome = switch_version(
-        &first_root,
+        &first.root,
         &state,
         target,
         &SwitchArgs {
             allow_no_backup: false,
         },
-        &Systemd::host(),
+        &first.systemd,
         &options,
     )
     .await
     .unwrap();
     assert!(matches!(outcome, SwitchOutcome::Committed { .. }));
-    assert_eq!(
-        prompts.into_inner(),
-        vec!["stop your Landscape instance with your own process manager, then confirm"]
+    assert!(
+        prompts.into_inner().is_empty(),
+        "systemd 路径不得要求用户确认停止服务"
     );
     assert_eq!(
-        std::fs::read_link(first_root.canonical.join("current")).unwrap(),
+        std::fs::read_link(first.root.canonical.join("current")).unwrap(),
         std::path::PathBuf::from("releases/1.3.0")
     );
     assert!(
-        super::super::transaction::find_unfinished(&first_root)
+        super::super::transaction::find_unfinished(&first.root)
             .unwrap()
             .is_none()
     );
-    let state = super::super::state::load_state(&first_root)
+    let state = super::super::state::load_state(&first.root)
         .unwrap()
         .unwrap();
     assert_eq!(state.active_version, "1.3.0");
     assert!(
-        super::super::config::load_repository(&first_root)
+        super::super::config::load_repository(&first.root)
             .unwrap()
             .is_none(),
         "switch must not write config.toml"
     );
-    let _ = std::fs::remove_dir_all(&first_root.install_root);
-    let _ = std::fs::remove_dir_all(&second_root.install_root);
+    first.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    second
+        .stop
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::fs::remove_dir_all(&first.dir);
+    let _ = std::fs::remove_dir_all(&second.dir);
+    let _ = std::fs::remove_dir_all(&first.root.install_root);
+    let _ = std::fs::remove_dir_all(&second.root.install_root);
 }
 
 /// 有状态假 systemctl:start/stop 维护 state 文件,stop 后 ActiveState 为 inactive。
@@ -521,7 +580,6 @@ async fn switches_version_with_systemd() {
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::Systemd,
         &systemd,
         &options,
     )
@@ -668,7 +726,6 @@ async fn refuses_switch_when_stopped_service_without_allow_no_backup() {
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::Systemd,
         &systemd,
         &options,
     )
@@ -726,7 +783,6 @@ async fn switches_stopped_service_without_backup_when_allowed() {
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::Systemd,
         &systemd,
         &options,
     )
@@ -807,7 +863,6 @@ async fn rolls_back_stopped_service_switch_without_backup_on_health_failure() {
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::Systemd,
         &systemd,
         &install_options,
     )
@@ -935,7 +990,6 @@ async fn switches_and_rolls_back_via_lkb_on_health_failure() {
         &provider,
         &TargetVersion::Version(version()),
         &credentials(),
-        ManagerChoice::Systemd,
         &systemd,
         &install_options,
     )

@@ -31,11 +31,11 @@
 
 ## SW-04
 
-**none manager 下只切换文件和状态，不执行运行态检查**
+**systemd 下切换执行完整停止、激活与健康检查**
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 证据：[无 systemd 激活语义](../../../workflows/lifecycle.md#6-激活)
+- 证据：[激活语义](../../../workflows/lifecycle.md#6-激活)
 
 ## SW-05
 

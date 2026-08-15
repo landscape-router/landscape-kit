@@ -182,7 +182,7 @@ esac
             .arg(&self.install_root)
             .args(["--admin-user", "admin", "--password-file"])
             .arg(&self.password)
-            .args(["--service-manager", "systemd", "--test-runtime"])
+            .args(["--test-runtime"])
             .arg(&self.runtime_config)
             .output()
             .unwrap()
@@ -204,13 +204,7 @@ esac
                 "--install-dir",
             ])
             .arg(&self.install_root)
-            .args([
-                "--admin-user",
-                "admin",
-                "--service-manager",
-                "none",
-                "--test-runtime",
-            ])
+            .args(["--admin-user", "admin", "--test-runtime"])
             .arg(&self.runtime_config);
         attach_pty(&mut command, pty);
         command
@@ -274,7 +268,7 @@ esac
             .arg(&self.install_root)
             .args(["--admin-user", "admin", "--password-file"])
             .arg(&self.password)
-            .args(["--service-manager", "systemd", "--test-runtime"])
+            .args(["--test-runtime"])
             .arg(&self.runtime_config)
             .output()
             .unwrap()

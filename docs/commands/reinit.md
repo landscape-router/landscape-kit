@@ -24,7 +24,7 @@ lkit [--non-interactive] reinit [--install-dir <PATH>]
 - 无未完成事务;存在待确认的网络接管事务时阻断并提示使用 `lkit network status`、
   `lkit network confirm` 或 `lkit network rollback`。
 
-不接受的参数:`--version`、`--repository`、`--service-manager`、`--force`、`--takeover-network`。
+不接受的参数:`--version`、`--repository`、`--force`、`--takeover-network`。
 reinit 不下载任何资产,版本固定为当前活动版本,release 与静态资产保持逐字节不变。
 
 ## 语义

@@ -378,6 +378,8 @@ fn confirm_restore<P: DocsProbe>(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::super::health::HealthOptions;
     use super::super::repository::test_server::{TestResponse, TestServer};
     use super::super::state::{
@@ -465,12 +467,12 @@ mod tests {
                 initialized_at: Some(Utc::now()),
             },
             service: ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("d".repeat(64)),
             },
             last_transaction_id: None,
             committed_at: Some(Utc::now()),
@@ -563,8 +565,71 @@ mod tests {
         std::fs::write(root.canonical.join("data/landscape.toml"), b"").unwrap();
     }
 
+    /// 受管服务 unit 源文件(restore 的 systemd 路径会读取并记录其 sha256)。
+    pub(super) fn write_unit_origin(root: &InstallRoot) {
+        std::fs::create_dir_all(root.canonical.join("service")).unwrap();
+        std::fs::write(
+            root.canonical.join("service/landscape-router.service"),
+            b"[Unit]\nDescription=Landscape Router\n",
+        )
+        .unwrap();
+    }
+
+    /// 有状态假 systemctl:stop/start 维护 state 文件,stop 后 ActiveState 为 inactive。
+    pub(super) fn fake_systemd_stateful(dir: &std::path::Path) -> Systemd {
+        std::fs::create_dir_all(dir.join("units")).unwrap();
+        std::fs::create_dir_all(dir.join("run")).unwrap();
+        std::fs::write(dir.join("state"), b"active").unwrap();
+        let script = dir.join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+STATE_FILE="{}"
+case "$*" in
+  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
+  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
+  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
+  "show --property=MainPID --value landscape-router.service") echo {};;
+  "is-enabled landscape-router.service") echo enabled;;
+  "is-active landscape-router.service") cat "$STATE_FILE";;
+  *) exit 0;;
+esac
+"#,
+                dir.join("state").display(),
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Systemd {
+            systemctl: script,
+            system_unit_dir: dir.join("units"),
+            run_systemd_dir: dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: dir.join("resolv.conf"),
+        }
+    }
+
+    /// 初始化 watcher:landscape_init.toml 出现后写入 lock 与 landscape.toml
+    /// (restore 的 systemd 启动检查要求;与 move_data_aside 竞态下容错重试)。
+    pub(super) fn init_watcher(
+        data_dir: std::path::PathBuf,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if data_dir.join("landscape_init.toml").is_file() {
+                    let _ = std::fs::write(data_dir.join("landscape_init.lock"), b"");
+                    let _ = std::fs::write(data_dir.join("landscape.toml"), b"");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        })
+    }
+
     #[tokio::test]
-    async fn restores_cross_version_without_systemd() {
+    async fn restores_cross_version_with_systemd() {
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("cross-version");
@@ -574,6 +639,10 @@ mod tests {
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
+        write_unit_origin(&install_root);
+        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         super::super::state::write_state(&install_root, &state).unwrap();
         let (backup_ref, _) = create_target_backup(&install_root);
@@ -592,7 +661,7 @@ mod tests {
             yes: false,
             console_confirmed: false,
         };
-        let outcome = restore_version(&install_root, &state, &Systemd::host(), &args, &options)
+        let outcome = restore_version(&install_root, &state, &systemd, &args, &options)
             .await
             .unwrap();
         assert!(
@@ -615,8 +684,9 @@ mod tests {
         let (static_sha, static_size) = sha256_bytes(ZIP_1_2_3);
         assert_eq!(updated.assets.static_archive.sha256, static_sha);
         assert_eq!(updated.assets.static_archive.size, static_size);
-        assert_eq!(updated.initialization.status, InitStatus::Pending);
-        assert!(!updated.service.verified);
+        assert_eq!(updated.initialization.status, InitStatus::Complete);
+        assert!(updated.service.verified);
+        assert_eq!(updated.service.manager, StateServiceManager::Systemd);
 
         let release = install_root.canonical.join("releases/1.2.3");
         assert_eq!(
@@ -655,6 +725,8 @@ mod tests {
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"))
             .count();
         assert_eq!(lkb_count, 2, "target backup plus the protection backup");
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        watcher.join().unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -723,17 +795,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn none_mode_proceeds_with_non_interactive_yes() {
+    async fn restore_proceeds_with_non_interactive_yes() {
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
-        let root = temp_root("none-yes");
+        let root = temp_root("restore-yes");
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
+        write_unit_origin(&install_root);
+        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         super::super::state::write_state(&install_root, &state).unwrap();
         let (backup_ref, _) = create_target_backup(&install_root);
@@ -741,7 +817,7 @@ mod tests {
         let options = RestoreOptions {
             export_base_url: server.base.clone(),
             token: &TOKEN,
-            confirm: &|_| panic!("none mode with --yes must not open a TTY confirmation"),
+            confirm: &|_| panic!("systemd restore with --yes must not open a TTY confirmation"),
             health: &none_health(),
         };
         let args = RestoreArgs {
@@ -752,7 +828,7 @@ mod tests {
             console_confirmed: false,
         };
         assert!(matches!(
-            restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
+            restore_version(&install_root, &state, &systemd, &args, &options).await,
             Ok(RestoreOutcome::Committed { .. })
         ));
         assert_eq!(
@@ -762,6 +838,8 @@ mod tests {
                 .active_version,
             "1.2.3"
         );
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        watcher.join().unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -778,6 +856,10 @@ mod tests {
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
+        write_unit_origin(&install_root);
+        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         super::super::state::write_state(&install_root, &state).unwrap();
         let (backup_ref, _) = create_target_backup(&install_root);
@@ -796,7 +878,7 @@ mod tests {
             console_confirmed: true,
         };
         assert!(matches!(
-            restore_version(&install_root, &state, &Systemd::host(), &args, &options).await,
+            restore_version(&install_root, &state, &systemd, &args, &options).await,
             Ok(RestoreOutcome::Committed { .. })
         ));
         assert_eq!(
@@ -806,6 +888,8 @@ mod tests {
                 .active_version,
             "1.2.3"
         );
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        watcher.join().unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 }

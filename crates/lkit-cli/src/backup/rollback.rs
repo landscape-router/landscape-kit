@@ -304,39 +304,26 @@ fn build_restored_state(
     let binary = restore_dir.join("landscape-webserver");
     let (webserver_sha256, webserver_size) = hash_file(&binary)?;
     let architecture = metadata.architecture;
-    let (initialization, service) = match snapshot.service.manager {
-        StateServiceManager::Systemd => {
-            let unit_sha = hash_str(
-                &std::fs::read_to_string(root.canonical.join("service/landscape-router.service"))
-                    .map_err(InstallError::Io)?,
-            );
-            (
-                state::InitializationState {
-                    status: state::InitStatus::Complete,
-                    lock_present: true,
-                    initialized_at: snapshot.initialization.initialized_at,
-                },
-                state::ServiceState {
-                    manager: StateServiceManager::Systemd,
-                    registered: true,
-                    enabled: true,
-                    verified: true,
-                    definition_path: Some("service/landscape-router.service".into()),
-                    definition_sha256: Some(unit_sha),
-                },
-            )
-        }
-        StateServiceManager::None => (
-            snapshot.initialization.clone(),
-            state::ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
+    let (initialization, service) = {
+        let unit_sha = hash_str(
+            &std::fs::read_to_string(root.canonical.join("service/landscape-router.service"))
+                .map_err(InstallError::Io)?,
+        );
+        (
+            state::InitializationState {
+                status: state::InitStatus::Complete,
+                lock_present: true,
+                initialized_at: snapshot.initialization.initialized_at,
             },
-        ),
+            state::ServiceState {
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some(unit_sha),
+            },
+        )
     };
     Ok(InstallState {
         schema_version: state::STATE_SCHEMA_VERSION,
@@ -489,6 +476,53 @@ mod tests {
         let from_version = semver::Version::new(1, 2, 3);
         let target_version = semver::Version::new(2, 0, 0);
 
+        // 有状态假 systemctl:stop/start 维护 state 文件。
+        let fake_dir = dir.join("fake-systemd");
+        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
+        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
+        std::fs::write(fake_dir.join("state"), b"active").unwrap();
+        let script = fake_dir.join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+STATE_FILE="{}"
+case "$*" in
+  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
+  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
+  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
+  "show --property=MainPID --value landscape-router.service") echo {};;
+  "is-enabled landscape-router.service") echo enabled;;
+  "is-active landscape-router.service") cat "$STATE_FILE";;
+  *) exit 0;;
+esac
+"#,
+                fake_dir.join("state").display(),
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let systemd = Systemd {
+            systemctl: script,
+            system_unit_dir: fake_dir.join("units"),
+            run_systemd_dir: fake_dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: fake_dir.join("resolv.conf"),
+        };
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let data_dir = dir.join("data");
+        let watcher_stop = stop.clone();
+        let watcher = std::thread::spawn(move || {
+            while !watcher_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if data_dir.join("landscape_init.toml").is_file() {
+                    let _ = std::fs::write(data_dir.join("landscape_init.lock"), b"");
+                    let _ = std::fs::write(data_dir.join("landscape.toml"), b"");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+
         let backup_source = dir.join("backup-source");
         let backup_binary = backup_source.join("landscape-webserver");
         let backup_static = backup_source.join("static");
@@ -523,6 +557,8 @@ mod tests {
         std::fs::write(old_release.join("static/assets/app.js"), b"polluted-asset").unwrap();
         std::fs::create_dir_all(dir.join("releases/2.0.0")).unwrap();
         std::os::unix::fs::symlink("releases/2.0.0", dir.join("current")).unwrap();
+        std::fs::create_dir_all(dir.join("service")).unwrap();
+        std::fs::write(dir.join("service/landscape-router.service"), b"[Unit]\n").unwrap();
 
         let live_geo = dir.join("data/geo_tmp/ip");
         std::fs::create_dir_all(&live_geo).unwrap();
@@ -548,15 +584,15 @@ mod tests {
                 },
             },
             initialization: state::InitializationState {
-                status: state::InitStatus::Pending,
-                lock_present: false,
-                initialized_at: None,
+                status: state::InitStatus::Complete,
+                lock_present: true,
+                initialized_at: Some(chrono::Utc::now()),
             },
             service: state::ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
                 definition_path: None,
                 definition_sha256: None,
             },
@@ -571,11 +607,11 @@ mod tests {
         let health = HealthOptions {
             docs: AlwaysHealthy,
             ports: Vec::new(),
-            startup_timeout: std::time::Duration::from_secs(1),
+            startup_timeout: std::time::Duration::from_secs(5),
             stable_duration: std::time::Duration::from_millis(1),
         };
 
-        rollback_switch(&root, &transaction, &snapshot, &Systemd::host(), &health)
+        rollback_switch(&root, &transaction, &snapshot, &systemd, &health)
             .await
             .unwrap();
 
@@ -637,6 +673,8 @@ mod tests {
             restored.last_transaction_id,
             Some(transaction.transaction_id)
         );
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        watcher.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -147,16 +147,6 @@ pub async fn run(args: &Restore) -> ExitCode {
                     backup_id = backup_id
                 )
             );
-            if state.service.manager == crate::deployment::state::StateServiceManager::None {
-                println!(
-                    "restore: {}",
-                    crate::tr!(crate::keys::RESTORE_NONE_REFERENCE_COMMAND)
-                );
-                println!(
-                    "{}",
-                    crate::workflows::install::reference_command(&normalized)
-                );
-            }
             ExitCode::SUCCESS
         }
         Ok(RestoreOutcome::RolledBack { version }) => {

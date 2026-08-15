@@ -1,4 +1,3 @@
-existing.service_manager_already = "服务管理器已经是 %{key}"
 existing.static_pages_restored = "已从发布资产恢复静态页面"
 existing.backend_restored_and_verified = "已恢复并验证活动后端二进制文件"
 existing.repair_failed_rolled_back = "后端修复失败；已回滚到之前的二进制文件"

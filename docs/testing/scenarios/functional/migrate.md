@@ -10,7 +10,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（E2E + 单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`migrates_manual_deployment_through_full_cli`（crates/lkit-cli/tests/install_fixture_e2e/migrate.rs）、`migrates_in_none_mode_with_running_instance`（crates/lkit-cli/src/workflows/migrate/tests.rs）
+- 证据：[migrate 命令](../../commands/migrate.md)、`migrates_manual_deployment_through_full_cli`（crates/lkit-cli/tests/install_fixture_e2e/migrate.rs）
 - 说明：fixture 实例运行中 → 迁移创建 `.lkb`（旧版本不升级）→ 停止旧 unit → 重建 release/data/current → 注册并启动新受管实例 → 完整健康检查后提交 complete 状态，旧目录不被修改。
 
 ## MIG-02
@@ -37,7 +37,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（单元测试）
 - 状态：`已覆盖`
-- 证据：`none_mode_requires_yes_in_non_interactive`、`validates_source_directories`（crates/lkit-cli/src/workflows/migrate/tests.rs）
+- 证据：`migrate_requires_yes_in_non_interactive`、`validates_source_directories`（crates/lkit-cli/src/workflows/migrate/tests.rs）
 - 说明：非交互缺 `--yes` 时不创建事务；源目录必须含特征文件、必须是真实目录、不能是受管安装的 data。
 
 ## MIG-05

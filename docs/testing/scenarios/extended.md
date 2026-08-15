@@ -25,10 +25,9 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 | S3b | 稳定期退出 | exit_during_stability | 已运行 2.0.0 | `lkit switch 4.2.0` | 就绪后退出，稳定观察失败 |
 | S3c | 慢启动超时 | delayed_ready | 已运行 2.0.0 | `lkit switch 4.3.0` | 启动轮询超时 |
 | S4 | 停止服务后切换 | healthy | 2.0.0 停止 | `systemctl stop` + `lkit switch 5.0.0 [--allow-no-backup]` | 停止服务默认拒绝；显式允许后无备份切换 |
-| S6 | 服务管理器迁移 | healthy | `--service-manager none` 安装 6.0.0 | `lkit service-manager systemd` | none → systemd 迁移 |
-| S7 | latest 通道安装 | healthy | 服务已停止、端口空闲 | `lkit install`（无版本） | 解析 stable 并安装 |
-| S8 | 中断事务恢复 | healthy | 手工制造 preparing 现场 | `lkit switch 6.0.0` | 确定性恢复未完成事务 |
-| S9 | reconcile | healthy | 外部修改/破坏受管元数据 | `lkit reconcile` | 校验并接受受管元数据变化 |
+| S6 | latest 通道安装 | healthy | 服务已停止、端口空闲 | `lkit install`（无版本） | 解析 stable 并安装 |
+| S7 | 中断事务恢复 | healthy | 手工制造 preparing 现场 | `lkit switch 6.0.0` | 确定性恢复未完成事务 |
+| S8 | reconcile | healthy | 外部修改/破坏受管元数据 | `lkit reconcile` | 校验并接受受管元数据变化 |
 
 版本规划（避免与现有 1.0.0/2.0.0/3.0.0 冲突）：
 
@@ -37,8 +36,8 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 4.1.0 start_exit（S3a；S2 的失败切换目标）
 4.2.0 exit_during_stability
 4.3.0 delayed_ready（ready_delay_ms = 10000，超过 4 秒测试启动超时）
-5.0.0 healthy（S4/S7 共用）
-6.0.0 healthy（S6/S8 共用）
+5.0.0 healthy（S4/S6 共用）
+6.0.0 healthy（S7 共用）
 ```
 
 ## S1 repair 全流程
@@ -58,7 +57,7 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
    - 服务仍运行，事务 phase 为 `committed`。
 
 `--repair-binary` 走 `allow_sha_drift` 放行路径（preflight 端口占用豁免）。Docker 场景
-验证该豁免与 service-manager 协议的组合；nspawn 只低频抽样验证真实 systemd 兼容性，
+验证该豁免的组合；nspawn 只低频抽样验证真实 systemd 兼容性，
 不重复该功能场景。
 
 ## S2 导出失败回滚（export_error）
@@ -68,10 +67,9 @@ export 失败（发生在备份创建之前）只能在 export_error 版本**正
 切换到 export_error 版本本身会成功（fixture 可正常启动，`/api/docs` 返回 `200`）。
 该场景使用独立的安装根，避免污染主安装根的后续切换：
 
-1. 将当前持有全局 unit 的安装根迁移到 none，释放固定端口和注册链接，再安装
-   `4.0.0`（export_error）到独立根：
+1. 使用新的 `--install-dir` 安装 `4.0.0`（export_error）到独立根：
    ```sh
-   lkit install --version 4.0.0 --install-dir <root-export> --service-manager systemd
+   lkit install --version 4.0.0 --install-dir <root-export>
    ```
 2. 尝试切换到尚未安装的 `4.1.0`：
    ```sh
@@ -134,39 +132,14 @@ install: the managed service is not running: ... start it with
 恢复被目标版本重新初始化过的数据。服务运行中显式传 `--allow-no-backup` 时忽略
 并仍创建 `.lkb`。
 
-## S6 服务管理器迁移（none → systemd）
+## S6 latest 通道安装
 
-none → systemd 迁移需要用户通过 `/dev/tty` 确认"外部实例已停止"，并确认固定端口
-已释放。非交互 Docker runner 没有控制终端，场景通过 `script`（util-linux）提供 pty
-并向其输入一行 `yes`：
-
-1. 将当前持有全局 unit 的安装根迁移到 none，释放固定端口和注册链接，再安装
-   `6.0.0` 到独立根：
-   ```sh
-   lkit install --version 6.0.0 --install-dir <root-migrate> --service-manager none
-   ```
-   - state 中 `service.manager == none`，初始化状态为 `pending`；
-   - 无 systemd unit 注册（`systemctl is-enabled` 失败）；
-2. `lkit service-manager systemd --install-dir <root-migrate>`（经 pty 确认）：
-   - unit 注册、enable、start；
-   - state `service.manager == systemd`，初始化完成；
-   - `assert_service_identity` 通过。
-
-迁移路径是 `RequestMode::ServiceManager`。Docker 场景覆盖
-文件模式 → systemd 协议模式的完整状态转换；nspawn 只对真实 manager 转换做低频
-兼容性 smoke，不作为该业务场景的第二套必需验收。
-
-## S7 latest 通道安装
-
-固定端口被现有服务占用，因此需要先释放端口：
-
-1. `lkit service-manager none --install-dir <current-root>`，释放全局 unit；
-2. 使用新的 `--install-dir` 执行 `lkit install --repository <base>`（不带版本）：
+使用新的 `--install-dir` 执行 `lkit install --repository <base>`（不带版本）：
    - 解析 `channels/stable.json` 为 `5.0.0`（此时 6.0.0 尚未发布）；
    - 安装成功并注册新服务；
    - state `active_version == 5.0.0`，仓库来源为 HTTP。
 
-## S8 中断事务恢复
+## S7 中断事务恢复
 
 以确定性方式模拟 kill -9 中断（不真正 kill）：
 
@@ -188,7 +161,7 @@ none → systemd 迁移需要用户通过 `/dev/tty` 确认"外部实例已停�
 恢复逻辑与目标版本无关（preparing 阶段不读取旧状态）。该场景使用
 `5.0.0 → 6.0.0`，避免与主安装根上 S4 的 `5.0.0` 切换竞争同一版本。
 
-## S9 reconcile
+## S8 reconcile
 
 `lkit reconcile` 的语义是"检查活动版本并协调受管元数据的外部变化"，
 **不会**从缺失状态或损坏链接重建状态。`load_state` 对缺失 `current` 链接或

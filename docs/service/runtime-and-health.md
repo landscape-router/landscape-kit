@@ -90,14 +90,15 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 
 处理规则：
 
-- 首次安装显式指定 `--service-manager none`：不执行 systemd 集成，只管理文件和事务；
-- 首次安装显式指定 `--service-manager systemd`：全部满足时进行 systemd 集成，否则失败；
-- 首次安装未指定 manager 且全部满足：自动选择 systemd；
-- 首次安装未指定 manager 且明确不是 systemd init：自动选择 none，只管理文件和事务；
+- systemd 不可用（`/run/systemd/system` 缺失、PID 1 不是 systemd、`systemctl` 缺失或
+  无法连接 manager）时，`lkit` 不支持在该主机上部署，所有需要运行态管理的命令明确
+  失败（退出码 `2`，参数使用错误），不留下任何安装或事务文件；
 - 看似使用 systemd，但 `systemctl` 缺失、无法连接或权限异常：环境损坏，安装失败；
 - systemd 为 degraded 不直接阻断，只要 manager 可通信且 Landscape unit 可启动。
 
-已安装环境未指定 `--service-manager` 时不重新选择 manager，而是继续使用状态文件记录的 `systemd` 或 `none`。显式迁移到 systemd 时必须通过本节全部可用性判断；保持或迁移到 none 时不要求 systemd 可用，但从 systemd 迁移到 none 时必须能连接当前 manager，以安全停止和注销受管服务。
+`lkit` 明确依赖发行版自启服务（当前唯一实现为 systemd），不再提供
+`none`（不托管运行态）部署模式。未来接入其他 init 系统时，由 `ServiceManager`
+trait 定义统一的注册、启停与状态语义，工作流行为不变。
 
 ### 命令会话隔离
 
@@ -151,73 +152,17 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 `lkit` 自身需要升级 unit 格式时，应生成目标内容并展示差异后更新受管原件。
 
-## 无 systemd 环境
+## 不支持的平台
 
-明确没有 systemd 时，`lkit` 只管理安装文件、备份、软链接、状态和事务，不管理 Landscape 运行态：
+`lkit` 要求主机由 systemd 管理（见[可用性判断](#可用性判断)）。无 systemd 的环境
+（OpenRC、runit、sysvinit、容器运行时等）当前**不支持**：
 
-- 不启动 Landscape；
-- 不停止或向 Landscape 发送信号；
-- 不调用 OpenRC、runit、s6、容器运行时或用户脚本(未来接入这些后端时,由
-  `ServiceManager` trait 定义统一的注册、启停与状态语义,工作流行为不变)；
-- 激活后不等待用户启动；
-- 不执行端口、PID、`/api/docs`、初始化锁或稳定观察检查；
-- 是否启动、何时启动以及如何判断健康完全由用户负责。
-
-首次安装完成后：
-
-- 保留 `data/landscape_init.toml`；
-- `landscape_init.lock` 和 `landscape.toml` 可以尚不存在；
-- 安装状态记录 `initialization.status: "pending"`、`lock_present: false`、`initialized_at: null`；
-- 输出基于真实安装目录的参考启动命令，但不执行该命令：
-
-  ```shell
-  '<canonical-install-root>/current/landscape-webserver' --config-dir '<canonical-install-root>/data' --web '<canonical-install-root>/current/static'
-  ```
-
-  输出时必须使用适合当前 shell 的安全参数转义；上例单引号仅表示三个路径参数都必须作为独立参数传递。该命令与 systemd unit 的 `ExecStart` 使用相同的可执行文件、data 目录和 static 目录；
-- 文件安装和事务提交成功即可返回 `0`，不得宣称 Landscape 已初始化、正在运行或健康。
-
-用户之后再次执行 `lkit install` 时，如果当前状态为 `initialization.status: pending`，且同时检测到普通文件 `landscape_init.lock` 和 `landscape.toml`，应创建一个无 `.lkb`、无 `static_backup` 的轻量 `repair` 事务：
-
-1. 将事务写为 `preparing`；
-2. 初始化锁已经出现，说明一次性 init 输入已被消费；不读取或比较现场
-   `landscape_init.toml`，文件已被删除也不重建；
-3. 重新确认初始化锁和 `landscape.toml` 仍存在且是普通文件；
-4. 原子更新状态为 `status: complete`、`lock_present: true`，并把 `initialized_at` 设置为本次首次观察到初始化完成的 UTC 时间；该字段表示 lkit 的首次观察时间，不保证等于 Landscape 实际完成初始化的精确时间；
-5. 保持 `service.verified: false`，因为没有执行运行态健康检查；
-6. 状态提交成功后将事务直接更新为 `committed`。
-
-该轻量 repair 不启动或停止进程、不访问端口或 API、不创建 `.lkb`，也不改变 active version。任一步失败时保持旧状态并将事务标为 `failed`。
-
-状态中的服务部分记录：
-
-```json
-{
-  "manager": "none",
-  "registered": false,
-  "enabled": false,
-  "verified": false,
-  "definition_path": null,
-  "definition_sha256": null
-}
-```
-
-### 无 systemd 的版本切换与后端 repair
-
-版本切换和后端 repair 仍需要运行中旧版本的导出 API 创建 `.lkb`：
-
-- 当前 Landscape 未运行或导出 API 不可访问时，`lkit` 不代为启动；
-- 输出提示，要求用户按自己的方式启动当前版本并重新执行命令；
-- 导出和 `.lkb` 创建成功后，`lkit` 要求用户按自己的方式停止当前实例；
-- `lkit` 不检查或确认 PID、端口和实际停止状态，只要求用户通过 `/dev/tty` 明确确认已经完成停止；
-- 用户确认后才修改 `current` 或后端文件；该确认表示运行态风险由用户承担；
-- 该人工检查点要求 `/dev/tty`，v1 不支持无 systemd 环境下无人值守的版本切换或后端 repair；
-- 文件激活完成后立即提交状态和事务，不等待用户启动目标版本，也不执行健康检查；
-- 提交后的 `service.verified` 为 false。
-
-由于 `lkit` 不观察目标版本启动结果，无 systemd 环境下目标版本之后启动失败不会自动触发回滚。升级前 `.lkb` 仍被保留，用于后续人工恢复能力；本命令只能对激活过程中的文件操作失败恢复旧软链接和文件。
-
-`lkit repair static` 不要求 Landscape 运行或停止，也不做运行态健康检查。
+- 探测不到可用服务管理器时，安装、切换、更新、修复、恢复、卸载等命令明确失败并返回
+  退出码 `2`（参数使用错误），不创建事务、不写文件；
+- 已安装环境（状态记录 `service.manager` 为 `systemd`）中 systemd 暂时不可用时，
+  需要运行态管理的命令同样明确失败，不自动降级为前台进程管理；
+- 未来接入其他 init 系统时，由 `ServiceManager` trait 定义统一的注册、启停与状态语义，
+  工作流行为不变。
 
 ## `/etc/resolv.conf` 主机状态备份
 
@@ -266,7 +211,7 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 ### 启动等待
 
-本节健康检查只适用于由 `lkit` 通过 systemd 启动的 Landscape。无 systemd 环境不执行本节任何检查。
+本节健康检查只适用于由 `lkit` 通过 systemd 启动的 Landscape。
 
 从 `systemctl start` 成功返回后开始，最长等待 `180` 秒，每秒检查一次。
 

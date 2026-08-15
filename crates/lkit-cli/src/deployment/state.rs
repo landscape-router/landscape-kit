@@ -169,28 +169,17 @@ pub(crate) fn validate_state(state: &InstallState) -> Result<(), InstallError> {
             }
         }
     }
-    match state.service.manager {
-        StateServiceManager::Systemd => {
-            if state.service.definition_path.is_none() || state.service.definition_sha256.is_none()
-            {
-                return Err(corrupted(
-                    "systemd service state must record the definition path and sha256".into(),
-                ));
-            }
-        }
-        StateServiceManager::None => {
-            if state.service.registered
-                || state.service.enabled
-                || state.service.verified
-                || state.service.definition_path.is_some()
-                || state.service.definition_sha256.is_some()
-            {
-                return Err(corrupted(
-                    "service manager none requires registered, enabled, verified, and definitions to be false or null"
-                        .into(),
-                ));
-            }
-        }
+    // lkit 明确依赖发行版自启服务;状态必须记录受管服务定义。
+    if state.service.manager != StateServiceManager::Systemd {
+        return Err(corrupted(format!(
+            "unsupported service manager {:?}",
+            state.service.manager
+        )));
+    }
+    if state.service.definition_path.is_none() || state.service.definition_sha256.is_none() {
+        return Err(corrupted(
+            "service state must record the definition path and sha256".into(),
+        ));
     }
     Ok(())
 }
@@ -452,7 +441,7 @@ mod tests {
             install_root: "/x".into(),
             canonical: "/x".into(),
         });
-        state.service.manager = StateServiceManager::None;
+        state.service.definition_path = None;
         assert!(validate_state(&state).is_err());
         let mut state = valid_state(&InstallRoot {
             install_root: "/x".into(),

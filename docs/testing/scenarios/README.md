@@ -31,7 +31,6 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 重新初始化 | `REI-01` 至 `REI-10` | [reinit.md](functional/reinit.md) |
 | 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
-| Service Manager 迁移 | `SM-01` 至 `SM-07` | [service-manager.md](functional/service-manager.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
 | 网络接管 | `NET-01` 至 `NET-11` | [network-takeover.md](functional/network-takeover.md) |
@@ -58,7 +57,6 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 2. [`LKR-01`](functional/lkit-release.md#lkr-01)、[`LKR-04`](functional/lkit-release.md#lkr-04)：首次真实 lkit Release 与公开安装 smoke；
 3. [`RB-06`](functional/rollback.md#rb-06)：自动回滚自身失败及退出码 `6`；
 4. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
-5. [`SM-07`](functional/service-manager.md#sm-07)：service-manager 迁移失败恢复。
 6. [`RST-03`](functional/backup-and-restore.md#rst-03)：restore 激活或健康检查失败后的自动回滚与退出码 `5`；
 7. [`RST-05`](functional/backup-and-restore.md#rst-05)、[`RST-12`](functional/backup-and-restore.md#rst-12)：restore 中断恢复与同版本回滚的 release 恢复；
 8. [`RST-08`](functional/backup-and-restore.md#rst-08) 至 [`RST-11`](functional/backup-and-restore.md#rst-11)：restore 拒绝/失败路径与恢复入口的自动化覆盖。

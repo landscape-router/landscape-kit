@@ -3,7 +3,7 @@
 把 lkit 自身安装为受管服务（lkit 常驻服务化的安装入口）。
 
 ```text
-lkit self-service install [--service-manager systemd] [--install-dir <PATH>]
+lkit self-service install [--install-dir <PATH>]
 lkit self-service remove [--install-dir <PATH>]
 ```
 
@@ -16,8 +16,7 @@ lkit self-service remove [--install-dir <PATH>]
 
 1. 解析安装根目录（`--install-dir` / `LKIT_INSTALL_DIR` / 默认
    `/root/.lkit/landscape`）并获取安装锁；
-2. 选择服务管理器：显式 `--service-manager systemd` 或自动探测；
-   `none` 不受支持（无人监管的“服务”没有意义）；
+2. 服务管理器固定为 systemd；
 3. 创建 `<root>/service/` 与 `<root>/data/`；
 4. 把当前 lkit 可执行文件复制到 `<root>/service/lkit`（权限 `0700`，
    与网络接管恢复二进制的存放约定一致）；
@@ -54,5 +53,5 @@ lkit self-service remove [--install-dir <PATH>]
 ## 退出码
 
 - `0`：成功；
-- `2`：参数错误（如 `none` 管理器、请求 systemd 但不可用）；
+- `2`：参数错误（如请求 systemd 但不可用）；
 - `1`：其他失败。

@@ -1,12 +1,12 @@
 # `lkit install`
 
-仅用于首次安装 Landscape Router。目标目录中已经存在有效安装状态时返回参数使用错误，并提示使用 `update`、`switch`、`repair`、`reconcile` 或 `service-manager`。
+仅用于首次安装 Landscape Router。目标目录中已经存在有效安装状态时返回参数使用错误，并提示使用 `update`、`switch`、`repair` 或 `reconcile`。
 
 ```text
 lkit [--non-interactive] install [--version <VERSION>]
              [--repository [<BASE_URL>]]
              [--install-dir <PATH>] [--admin-user <NAME>]
-             [--password-file <PATH>] [--service-manager <systemd|none>]
+             [--password-file <PATH>]
              [--force] [--takeover-network]
 ```
 
@@ -19,7 +19,6 @@ lkit [--non-interactive] install [--version <VERSION>]
 - 仓库来源不写入 `state/install-state.json`，`lkit` 也**从不创建或更新** `config.toml`；
   该文件完全由用户维护，只影响后续命令未显式指定 `--repository` 时的缺省来源，
   见[配置文件](../deployment/config.md)。
-- `--service-manager` 只表示首次安装的运行管理模式；缺省时自动选择。
 - `--force` 不删除文件，只显示规范化安装根目录并要求用户自行清理。
 - `--takeover-network` 仅用于首次安装，要求 systemd 和交互终端。它让用户选择 WAN/LAN
   接口，并在 Landscape 健康后进入待确认状态；完整行为见[网络接管](../network/takeover.md)。

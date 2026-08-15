@@ -16,7 +16,7 @@
 
 ```rust
 trait ServiceManager: Send + Sync {
-    fn kind(&self) -> ServiceManagerKind;                 // systemd | none(未来 openrc/runit/...)
+    fn kind(&self) -> ServiceManagerKind;                 // systemd(未来 openrc/runit/...)
     fn probe(&self) -> Availability;                       // Available / NotDetected / Unavailable
 
     fn service_name(&self, service: ManagedService) -> &str;
@@ -46,13 +46,12 @@ trait ServiceManager: Send + Sync {
 共享类型:
 
 - `ServiceManagerKind`:序列化在安装状态(`state/install-state.json` 的
-  `service.manager`)与事务文件(`from_service_manager`/`target_service_manager`,
-  `systemd_before`)中,值 `systemd` / `none`。新增后端时增加变体并处理状态
-  schema 演进;
+  `service.manager`)与事务文件(`systemd_before`)中,当前只有 `systemd`。
+  新增后端时增加变体并处理状态 schema 演进;
 - `ManagedService`:lkit 需要托管的服务身份,当前有 `LandscapeRouter` 与
   `LkitDaemon`(lkit 常驻服务,Phase B 起使用);
-- `Availability`:`Available { version }` / `NotDetected`(主机没有运行该 init,
-  自动选择时尝试下一个或选 none)/ `Unavailable(reason)`(看似使用该 init 但环境损坏);
+- `Availability`:`Available { version }` / `NotDetected`(主机没有运行该 init)/
+  `Unavailable(reason)`(看似使用该 init 但环境损坏);
 - `SystemRegistration`:系统注册路径的实时状态(`Missing` / `Symlink { target }` /
   `Conflict { file_type }`);
 - `Registration` / `RegistrationKind`:序列化的事务前注册状态;

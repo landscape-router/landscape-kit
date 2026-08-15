@@ -13,10 +13,8 @@ use uuid::Uuid;
 
 use super::plan::InstallError;
 use super::root::InstallRoot;
-pub(crate) use crate::service::manager::{
-    Registration, RegistrationKind, ServiceBefore, ServiceManager,
-    ServiceManagerKind as TransactionServiceManager,
-};
+use crate::service::manager::ServiceManager;
+pub(crate) use crate::service::manager::{Registration, RegistrationKind, ServiceBefore};
 
 pub(crate) use self::cleanup::{
     cleanup_failed_first_install, cleanup_uncommitted_network_install,
@@ -33,7 +31,6 @@ pub(crate) enum Operation {
     Repair,
     Switch,
     Restore,
-    ServiceMigration,
     Uninstall,
     Reinit,
     Migrate,
@@ -46,7 +43,6 @@ impl Operation {
             Self::Repair => "repair",
             Self::Switch => "switch",
             Self::Restore => "restore",
-            Self::ServiceMigration => "service_migration",
             Self::Uninstall => "uninstall",
             Self::Reinit => "reinit",
             Self::Migrate => "migrate",
@@ -156,8 +152,6 @@ pub(crate) struct TransactionFile {
     pub canonical_install_root: String,
     pub from_version: Option<String>,
     pub target_version: Option<String>,
-    pub from_service_manager: Option<TransactionServiceManager>,
-    pub target_service_manager: Option<TransactionServiceManager>,
     pub previous_current: Option<String>,
     pub target_release: Option<String>,
     pub backup: Option<BackupRef>,
@@ -198,8 +192,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: None,
             target_version: Some(version.to_string()),
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: None,
             target_release: Some(format!("releases/{version}")),
             backup: None,
@@ -234,8 +226,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: Some(from_version.to_string()),
             target_version: Some(target_version.to_string()),
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: Some(format!("releases/{from_version}")),
             target_release: Some(format!("releases/{target_version}")),
             backup: None,
@@ -272,8 +262,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: Some(from_version.to_string()),
             target_version: Some(target_version.to_string()),
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: Some(format!("releases/{from_version}")),
             target_release: Some(format!("releases/{target_version}")),
             backup: None,
@@ -322,8 +310,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: version.clone(),
             target_version: version,
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: None,
             target_release: None,
             backup: None,
@@ -331,45 +317,6 @@ impl TransactionFile {
             no_backup: false,
             static_backup: None,
             systemd_before: None,
-            resolv_conf_backup: None,
-            network_takeover: None,
-            legacy_unit: None,
-            log_path: format!("logs/{transaction_id}.log"),
-            started_at: now,
-            updated_at: now,
-        };
-        validate_transaction(&transaction)?;
-        Ok(transaction)
-    }
-
-    /// service manager 迁移事务。`systemd_before` 是事务开始前的受管状态,
-    /// 在创建事务前完成捕获。
-    pub(crate) fn new_service_migration(
-        root: &InstallRoot,
-        from: TransactionServiceManager,
-        to: TransactionServiceManager,
-        systemd_before: ServiceBefore,
-    ) -> Result<Self, InstallError> {
-        let transaction_id = Uuid::now_v7().to_string();
-        let now = Utc::now();
-        let transaction = Self {
-            schema_version: TRANSACTION_SCHEMA_VERSION,
-            transaction_id: transaction_id.clone(),
-            operation: Operation::ServiceMigration,
-            phase: Phase::Preparing,
-            install_root: root.install_root.display().to_string(),
-            canonical_install_root: root.canonical.display().to_string(),
-            from_version: None,
-            target_version: None,
-            from_service_manager: Some(from),
-            target_service_manager: Some(to),
-            previous_current: None,
-            target_release: None,
-            backup: None,
-            restore_backup: None,
-            no_backup: false,
-            static_backup: None,
-            systemd_before: Some(systemd_before),
             resolv_conf_backup: None,
             network_takeover: None,
             legacy_unit: None,
@@ -399,8 +346,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: None,
             target_version: Some(version.to_string()),
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: None,
             target_release: Some(format!("releases/{version}")),
             backup: None,
@@ -436,8 +381,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: Some(version.to_string()),
             target_version: None,
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: Some(format!("releases/{version}")),
             target_release: None,
             backup: None,
@@ -474,8 +417,6 @@ impl TransactionFile {
             canonical_install_root: root.canonical.display().to_string(),
             from_version: Some(version.to_string()),
             target_version: None,
-            from_service_manager: None,
-            target_service_manager: None,
             previous_current: None,
             target_release: None,
             backup: None,

@@ -44,7 +44,7 @@
 
 ## REP-06
 
-**none manager 下 repair 只原子替换文件并提交 `verified: false`**
+**systemd 下 repair 重建后端并完成完整健康检查**
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`

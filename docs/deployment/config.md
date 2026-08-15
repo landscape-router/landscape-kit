@@ -68,7 +68,7 @@ location = "https://repo.example.com/landscape/"
 - 需要读取：首次安装（配置驱动来源）、`install`/`switch`/`update`（解析版本）、
   `repair`（解析来源）；
 - 不读取：普通 `reconcile` 同版本检查、`check`、`restore`、`backup`、
-  `service-manager` 迁移、`network` 子命令、`install --force`，以及不通过安装适用性
+  `network` 子命令、`install --force`，以及不通过安装适用性
   检查就报错的命令（例如空目录上运行 `switch`/`reconcile` 或已有安装上再次
   `install`）。这些命令不受损坏配置影响。
 

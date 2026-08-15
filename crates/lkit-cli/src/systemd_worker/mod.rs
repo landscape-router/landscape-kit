@@ -8,8 +8,8 @@ use std::process::{Command, ExitCode, Stdio};
 
 use uuid::Uuid;
 
+use crate::commands::Commands;
 use crate::commands::network::NetworkAction;
-use crate::commands::{Commands, ServiceManagerArg};
 use crate::deployment::state::StateServiceManager;
 use crate::interaction::interactive::SYSTEMD_WORKER_TTY_ENV;
 use crate::interaction::presentation::{
@@ -45,23 +45,15 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
             matches!(args.action, NetworkAction::Rollback { automatic: false })
         }
         Commands::Install(args) => {
-            if args.force || args.service_manager == Some(ServiceManagerArg::None) {
+            if args.force {
                 return false;
             }
-            if load_manager(args.install_dir.as_deref()).is_some() {
-                return false;
-            }
-            match args.service_manager {
-                Some(ServiceManagerArg::Systemd) => true,
-                Some(ServiceManagerArg::None) => false,
-                None => matches!(Systemd::host().probe(), Availability::Available { .. }),
-            }
+            load_manager(args.install_dir.as_deref()).is_none()
+                && matches!(Systemd::host().probe(), Availability::Available { .. })
         }
-        Commands::Migrate(args) => match args.service_manager {
-            Some(ServiceManagerArg::Systemd) => true,
-            Some(ServiceManagerArg::None) => false,
-            None => matches!(Systemd::host().probe(), Availability::Available { .. }),
-        },
+        Commands::Migrate(_) => {
+            matches!(Systemd::host().probe(), Availability::Available { .. })
+        }
         Commands::Switch(args) => {
             load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
         }
@@ -80,14 +72,6 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         }
         Commands::Uninstall(args) => {
             load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
-        }
-        Commands::ServiceManager(args) => {
-            let current = load_manager(args.install_dir.as_deref());
-            let target = match args.target {
-                ServiceManagerArg::Systemd => StateServiceManager::Systemd,
-                ServiceManagerArg::None => StateServiceManager::None,
-            };
-            current.is_some_and(|manager| manager != target)
         }
     }
 }
@@ -116,7 +100,6 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
             crate::commands::backup::BackupAction::Delete(_) => None,
         },
         Commands::Reconcile(args) => args.test_runtime.as_deref(),
-        Commands::ServiceManager(args) => args.test_runtime.as_deref(),
         Commands::Network(args) => args.test_runtime.as_deref(),
     };
     let Some(path) = path else {

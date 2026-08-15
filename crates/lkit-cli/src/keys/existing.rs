@@ -1,4 +1,3 @@
-pub(crate) const EXISTING_SERVICE_MANAGER_ALREADY: &str = "existing.service_manager_already";
 pub(crate) const EXISTING_STATIC_PAGES_RESTORED: &str = "existing.static_pages_restored";
 pub(crate) const EXISTING_BACKEND_RESTORED_AND_VERIFIED: &str =
     "existing.backend_restored_and_verified";

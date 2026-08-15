@@ -386,6 +386,7 @@ fn tx_dir(root: &InstallRoot, transaction: &TransactionFile) -> std::path::PathB
 mod tests {
     use crate::service::systemd::Systemd;
     use std::collections::HashMap;
+    use std::os::unix::fs::PermissionsExt;
 
     use super::super::health::HealthOptions;
     use super::super::repository::ProviderKind;
@@ -581,7 +582,7 @@ mod tests {
         .unwrap();
         let state = install_state(
             &root,
-            StateServiceManager::None,
+            StateServiceManager::Systemd,
             InitStatus::Complete,
             &static_sha,
             static_size,
@@ -664,7 +665,7 @@ mod tests {
         activate_version(&root, "1.2.3");
         let state = install_state(
             &root,
-            StateServiceManager::None,
+            StateServiceManager::Systemd,
             InitStatus::Complete,
             &"e".repeat(64),
             99,
@@ -683,7 +684,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repairs_drifted_backend_without_systemd() {
+    async fn repairs_drifted_backend_with_systemd() {
         let static_zip = build_static_zip("<h1>page</h1>");
         let (static_sha, static_size) = sha256_bytes(&static_zip);
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>page</h1>");
@@ -706,6 +707,48 @@ mod tests {
         };
         let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
         activate_version(&install_root, "1.2.3");
+        // systemd 假环境:stop/start 维护 state 文件,MainPID 指向测试进程。
+        let fake_dir = root.join("fake-systemd");
+        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
+        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
+        std::fs::write(fake_dir.join("state"), b"active").unwrap();
+        let script = fake_dir.join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+STATE_FILE="{}"
+case "$*" in
+  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
+  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
+  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
+  "show --property=MainPID --value landscape-router.service") echo {};;
+  "is-enabled landscape-router.service") echo enabled;;
+  "is-active landscape-router.service") cat "$STATE_FILE";;
+  *) exit 0;;
+esac
+"#,
+                fake_dir.join("state").display(),
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let systemd = Systemd {
+            systemctl: script,
+            system_unit_dir: fake_dir.join("units"),
+            run_systemd_dir: fake_dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: fake_dir.join("resolv.conf"),
+        };
+        std::fs::create_dir_all(install_root.canonical.join("service")).unwrap();
+        std::fs::write(
+            install_root
+                .canonical
+                .join("service/landscape-router.service"),
+            b"[Unit]\nDescription=Landscape Router\n",
+        )
+        .unwrap();
         std::fs::write(
             install_root.canonical.join("releases/1.2.3/static.zip"),
             &static_zip,
@@ -720,7 +763,7 @@ mod tests {
         std::fs::write(install_root.canonical.join("data/landscape.toml"), b"").unwrap();
         let state = install_state(
             &install_root,
-            StateServiceManager::None,
+            StateServiceManager::Systemd,
             InitStatus::Complete,
             &static_sha,
             static_size,
@@ -733,7 +776,7 @@ mod tests {
             confirm: &YES,
             health: &none_health(),
         };
-        let outcome = repair_binary(&install_root, &provider, &state, &Systemd::host(), &options)
+        let outcome = repair_binary(&install_root, &provider, &state, &systemd, &options)
             .await
             .unwrap();
         assert!(matches!(outcome, RepairOutcome::Committed));
@@ -792,7 +835,7 @@ mod tests {
         activate_version(&install_root, "1.2.3");
         let state = install_state(
             &install_root,
-            StateServiceManager::None,
+            StateServiceManager::Systemd,
             InitStatus::Pending,
             &"b".repeat(64),
             1,
@@ -828,7 +871,7 @@ mod tests {
         activate_version(&install_root, "1.2.3");
         let state = install_state(
             &install_root,
-            StateServiceManager::None,
+            StateServiceManager::Systemd,
             InitStatus::Pending,
             &"b".repeat(64),
             1,

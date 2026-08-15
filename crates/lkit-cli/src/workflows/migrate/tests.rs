@@ -223,9 +223,22 @@ fn new_root(path: &Path) -> InstallRoot {
     }
 }
 
-fn none_systemd(dir: &Path) -> Systemd {
+fn available_systemd(dir: &Path) -> Systemd {
+    std::fs::create_dir_all(dir.join("run")).unwrap();
+    let script = dir.join("systemctl");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+case "$*" in
+  "show --property=Version") echo "Version=252.fake";;
+  *) exit 0;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     Systemd {
-        systemctl: dir.join("missing-systemctl"),
+        systemctl: script,
         system_unit_dir: dir.join("units"),
         run_systemd_dir: dir.join("run"),
         pid1_is_systemd: true,
@@ -252,10 +265,9 @@ fn health(ports: &FixturePorts) -> HealthOptions<FakeDocs> {
 
 static YES: fn(&str) -> Result<bool, InstallError> = |_| Ok(true);
 
-fn migrate_args(source: &Path, manager: MigrateManager) -> MigrateArgs {
+fn migrate_args(source: &Path) -> MigrateArgs {
     MigrateArgs {
         config_dir: source.to_path_buf(),
-        manager,
         yes: true,
         console_confirmed: false,
         repository: None,
@@ -326,86 +338,17 @@ fn validates_source_directories() {
 }
 
 #[tokio::test]
-async fn migrates_in_none_mode_with_running_instance() {
+async fn migrate_requires_yes_in_non_interactive() {
     let _guard = interactive_guard().await;
     interactive::configure(true);
     let _reset = NonInteractiveGuard;
-    let root = TempRoot::new("none-mode");
-    let ports = FixturePorts::unique();
-    let (source, static_dir, _instance) =
-        spawn_manual_install(&root, &ports, Scenario::Healthy).await;
-
-    let install_root = new_root(&root.join("install"));
-    let systemd = none_systemd(&root.path);
-    let options = MigrateOptions {
-        export_base_url: format!("https://127.0.0.1:{}", ports.https),
-        managed_uid: unsafe { libc::geteuid() },
-        confirm: &YES,
-        health: &health(&ports),
-        probe_ports: &ports.checks(),
-    };
-    let outcome = migrate_version(
-        &install_root,
-        &systemd,
-        &migrate_args(&source, MigrateManager::None),
-        &options,
-    )
-    .await
-    .unwrap();
-    let MigrateOutcome::Committed { version, backup_id } = outcome else {
-        panic!("expected committed, got {outcome:?}");
-    };
-    assert_eq!(version.to_string(), EXPORT_VERSION);
-    assert_eq!(committed_version(&install_root), EXPORT_VERSION);
-
-    let release = install_root.canonical.join("releases").join(EXPORT_VERSION);
-    assert!(release.join("landscape-webserver").is_file());
-    assert_eq!(
-        std::fs::read_to_string(release.join("static/index.html")).unwrap(),
-        "manual static"
-    );
-    assert!(release.join("static.zip").is_file());
-    assert_eq!(
-        std::fs::read_link(install_root.canonical.join("current")).unwrap(),
-        PathBuf::from(format!("releases/{EXPORT_VERSION}"))
-    );
-    assert_eq!(
-        std::fs::read_to_string(install_root.canonical.join("data/landscape_init.toml")).unwrap(),
-        format!("version = \"{EXPORT_VERSION}\"\n")
-    );
-    assert!(
-        install_root
-            .canonical
-            .join("backups")
-            .join(format!("{backup_id}.lkb"))
-            .is_file()
-    );
-    let state = installed_state(&install_root);
-    assert_eq!(state.initialization.status, InitStatus::Pending);
-    assert_eq!(state.service.manager, StateServiceManager::None);
-    assert!(!state.service.verified);
-    assert!(find_unfinished(&install_root).unwrap().is_none());
-    assert!(
-        !install_root
-            .canonical
-            .join("data/landscape_init.lock")
-            .exists()
-    );
-    let _ = static_dir;
-}
-
-#[tokio::test]
-async fn none_mode_requires_yes_in_non_interactive() {
-    let _guard = interactive_guard().await;
-    interactive::configure(true);
-    let _reset = NonInteractiveGuard;
-    let root = TempRoot::new("none-yes");
+    let root = TempRoot::new("migrate-yes");
     let ports = FixturePorts::unique();
     let (source, _static_dir, _instance) =
         spawn_manual_install(&root, &ports, Scenario::Healthy).await;
 
     let install_root = new_root(&root.join("install"));
-    let systemd = none_systemd(&root.path);
+    let systemd = available_systemd(&root.path);
     let options = MigrateOptions {
         export_base_url: format!("https://127.0.0.1:{}", ports.https),
         managed_uid: unsafe { libc::geteuid() },
@@ -415,7 +358,6 @@ async fn none_mode_requires_yes_in_non_interactive() {
     };
     let args = MigrateArgs {
         config_dir: source.clone(),
-        manager: MigrateManager::None,
         yes: false,
         console_confirmed: false,
         repository: None,
@@ -502,14 +444,9 @@ async fn migrates_in_systemd_mode_with_legacy_unit_adoption() {
         health: &health(&new_ports),
         probe_ports: &old_ports.checks(),
     };
-    let outcome = migrate_version(
-        &install_root,
-        &systemd,
-        &migrate_args(&source, MigrateManager::Systemd),
-        &options,
-    )
-    .await
-    .unwrap();
+    let outcome = migrate_version(&install_root, &systemd, &migrate_args(&source), &options)
+        .await
+        .unwrap();
     let MigrateOutcome::Committed { version, .. } = outcome else {
         panic!(
             "expected committed, got {outcome:?}\nfixture log:\n{}",
@@ -621,14 +558,9 @@ async fn systemd_mode_rolls_back_and_restores_legacy_unit_on_activation_failure(
         health: &health(&new_ports),
         probe_ports: &old_ports.checks(),
     };
-    let outcome = migrate_version(
-        &install_root,
-        &systemd,
-        &migrate_args(&source, MigrateManager::Systemd),
-        &options,
-    )
-    .await
-    .unwrap();
+    let outcome = migrate_version(&install_root, &systemd, &migrate_args(&source), &options)
+        .await
+        .unwrap();
     assert!(
         matches!(outcome, MigrateOutcome::RolledBack { .. }),
         "expected rolled back, got {outcome:?}"

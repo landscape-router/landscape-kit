@@ -12,11 +12,11 @@
 
 ## UNI-02
 
-**none 模式卸载：要求确认外部实例已停，lkit 不验证运行态**
+**systemd 模式卸载：停止、disable 并注销受管服务后删除受管内容**
 
 - 测试层：Rust workflow、CLI E2E
-- 状态：`待补充`
-- 证据：[`lkit uninstall`](../../../commands/uninstall.md#执行与提交)
+- 状态：`已覆盖`
+- 证据：[`lkit uninstall`](../../../commands/uninstall.md#执行与提交)、`uninstalls_none_mode_and_keeps_config_backups_transactions`（crates/lkit-cli/src/workflows/uninstall/cleanup.rs）
 
 ## UNI-03
 
@@ -25,7 +25,7 @@
 - 测试层：CLI
 - 状态：`待补充`
 - 证据：[`lkit uninstall`](../../../commands/uninstall.md)、[输出与退出码](../../../commands/output-and-exit-codes.md)
-- 说明：`--yes` 覆盖卸载计划、数据损失、网络接管警告与 none 模式外部实例已停确认。
+- 说明：`--yes` 覆盖卸载计划、数据损失与网络接管警告确认。
 
 ## UNI-04
 

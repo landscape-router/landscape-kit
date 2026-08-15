@@ -234,12 +234,12 @@ mod tests {
                 initialized_at: Some(chrono::Utc::now()),
             },
             service: ServiceState {
-                manager: StateServiceManager::None,
-                registered: false,
-                enabled: false,
-                verified: false,
-                definition_path: None,
-                definition_sha256: None,
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("d".repeat(64)),
             },
             last_transaction_id: None,
             committed_at: Some(chrono::Utc::now()),
@@ -256,6 +256,7 @@ mod tests {
     }
 
     fn fake_systemd(dir: &std::path::Path) -> Systemd {
+        std::fs::create_dir_all(dir).unwrap();
         let script = dir.join("systemctl");
         std::fs::write(
             &script,
@@ -371,7 +372,7 @@ esac
         let outcome = uninstall_installation(
             &install_root,
             &state,
-            &Systemd::host(),
+            &fake_systemd(&root.join("fake-systemd")),
             &args(true, false, false, false),
             &options_for(&server, &none_health()),
         )
@@ -428,7 +429,7 @@ esac
         uninstall_installation(
             &install_root,
             &state,
-            &Systemd::host(),
+            &fake_systemd(&root.join("fake-systemd")),
             &args(true, false, true, false),
             &options_for(&server, &none_health()),
         )
@@ -470,7 +471,7 @@ esac
         uninstall_installation(
             &install_root,
             &state,
-            &Systemd::host(),
+            &fake_systemd(&root.join("fake-systemd")),
             &args(true, true, false, true),
             &options_for(&server, &none_health()),
         )

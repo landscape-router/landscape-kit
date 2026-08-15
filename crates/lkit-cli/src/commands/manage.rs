@@ -17,7 +17,6 @@ pub(crate) enum RequestMode {
     RepairStatic,
     RepairBinary,
     Reconcile,
-    ServiceManager,
 }
 
 pub(crate) struct InstallRequest {
@@ -39,9 +38,6 @@ pub(crate) struct InstallRequest {
 
     /// First-install password captured by the interactive console.
     pub(crate) interactive_password: Option<String>,
-
-    /// Service manager: `systemd` or `none`
-    pub(crate) service_manager: Option<ServiceManagerArg>,
 
     /// Restore official static pages from the target release
     pub(crate) repair_static: bool,
@@ -71,12 +67,6 @@ pub(crate) struct InstallRequest {
 
     #[cfg(feature = "test-support")]
     pub(crate) test_runtime: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ServiceManagerArg {
-    Systemd,
-    None,
 }
 
 pub(crate) fn repository_override(
@@ -220,11 +210,6 @@ async fn run_first_install(
             return exit_code(&error);
         }
     };
-    let manager_choice = match args.service_manager {
-        Some(ServiceManagerArg::Systemd) => pipeline::ManagerChoice::Systemd,
-        Some(ServiceManagerArg::None) => pipeline::ManagerChoice::None,
-        None => pipeline::ManagerChoice::Auto,
-    };
     let network_plan = if let Some(network_plan) = args.network_plan.clone() {
         Some(network_plan)
     } else if args.takeover_network {
@@ -274,7 +259,6 @@ async fn run_first_install(
             &provider,
             &plan.target,
             &credentials,
-            manager_choice,
             runtime.service_manager.as_ref(),
             &health_options,
             network,
@@ -287,7 +271,6 @@ async fn run_first_install(
             &provider,
             &plan.target,
             &credentials,
-            manager_choice,
             runtime.service_manager.as_ref(),
             &health_options,
         )
@@ -312,43 +295,232 @@ async fn run_first_install(
                     )
                 );
             }
-            match outcome.manager {
-                crate::service::manager::ServiceManagerKind::Systemd => {
-                    println!(
-                        "install: {}",
-                        crate::tr!(crate::keys::MANAGE_SYSTEMD_UNIT_REGISTERED)
-                    );
-                    if let Some(address) = outcome.pending_network_address {
-                        println!(
-                            "install: {}",
-                            crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
-                        );
-                        println!(
-                            "install: {}",
-                            crate::tr!(
-                                crate::keys::MANAGE_RECONNECT_AND_RUN_CONFIRM,
-                                address = address
-                            )
-                        );
-                    } else if outcome.pending_network_confirmation {
-                        println!(
-                            "install: {}",
-                            crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP)
-                        );
-                    } else {
-                        println!(
-                            "install: {}",
-                            crate::tr!(crate::keys::MANAGE_MANAGEMENT_INTERFACE)
-                        );
-                    }
-                }
-                crate::service::manager::ServiceManagerKind::None => {
-                    println!(
-                        "install: {}",
-                        crate::tr!(crate::keys::MANAGE_INITIALIZATION_PENDING)
-                    );
-                    println!("{}", pipeline::reference_command(&plan.root));
-                }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            println!(
+                "install: {}",
+                crate::tr!(crate::keys::MANAGE_SYSTEMD_UNIT_REGISTERED)
+            );
+            if let Some(address) = outcome.pending_network_address {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
+                );
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_RECONNECT_AND_RUN_CONFIRM,
+                        address = address
+                    )
+                );
+            } else if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP)
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_MANAGEMENT_INTERFACE)
+                );
+            }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            println!(
+                "install: {}",
+                crate::tr!(crate::keys::MANAGE_SYSTEMD_UNIT_REGISTERED)
+            );
+            if let Some(address) = outcome.pending_network_address {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
+                );
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_RECONNECT_AND_RUN_CONFIRM,
+                        address = address
+                    )
+                );
+            } else if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP)
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_MANAGEMENT_INTERFACE)
+                );
+            }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            println!(
+                "install: {}",
+                crate::tr!(crate::keys::MANAGE_SYSTEMD_UNIT_REGISTERED)
+            );
+            if let Some(address) = outcome.pending_network_address {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
+                );
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_RECONNECT_AND_RUN_CONFIRM,
+                        address = address
+                    )
+                );
+            } else if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP)
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_MANAGEMENT_INTERFACE)
+                );
+            }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_ACTIVATED_AWAITING_NETWORK_CONFIRMATION,
+                        version = outcome.release.version
+                    )
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_COMMITTED_FIRST_INSTALL,
+                        version = outcome.release.version
+                    )
+                );
+            }
+            println!(
+                "install: {}",
+                crate::tr!(crate::keys::MANAGE_SYSTEMD_UNIT_REGISTERED)
+            );
+            if let Some(address) = outcome.pending_network_address {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
+                );
+                println!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::MANAGE_RECONNECT_AND_RUN_CONFIRM,
+                        address = address
+                    )
+                );
+            } else if outcome.pending_network_confirmation {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP)
+                );
+            } else {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_MANAGEMENT_INTERFACE)
+                );
             }
             if outcome.pending_network_confirmation {
                 let minutes = runtime.network_confirm_timeout.as_secs().div_ceil(60);
@@ -415,11 +587,6 @@ async fn execute(
         if args.mode != RequestMode::Install {
             return Err(plan::InstallError::ParameterUsage(
                 "--takeover-network is only valid for first install".into(),
-            ));
-        }
-        if args.service_manager == Some(ServiceManagerArg::None) {
-            return Err(plan::InstallError::ParameterUsage(
-                "--takeover-network requires --service-manager systemd".into(),
             ));
         }
         crate::network::takeover::preflight(runtime)?;
@@ -580,7 +747,6 @@ mod tests {
             admin_user: Some("admin".into()),
             password_file: None,
             interactive_password: password.map(str::to_string),
-            service_manager: None,
             repair_static: false,
             repair_binary: false,
             allow_no_backup: false,

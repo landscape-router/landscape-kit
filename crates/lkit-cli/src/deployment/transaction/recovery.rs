@@ -55,7 +55,6 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
         Operation::Switch => recover_switch(root, transaction, systemd, health).await,
         Operation::Repair => recover_repair(root, transaction, systemd, health).await,
         Operation::Restore => recover_restore(root, transaction, systemd, health).await,
-        Operation::ServiceMigration => recover_migration(root, transaction, systemd),
         Operation::Uninstall => recover_uninstall(root, transaction, systemd),
         Operation::Reinit => recover_reinit(root, transaction, systemd, health).await,
         Operation::Migrate => recover_migrate(root, transaction, systemd),
@@ -492,7 +491,7 @@ mod tests {
 
     use super::super::{
         BackupRef, NetworkTakeoverTransaction, Registration, RegistrationKind, ServiceBefore,
-        TransactionServiceManager, begin, find_unfinished, load_transaction_file, mark_phase,
+        begin, find_unfinished, load_transaction_file, mark_phase,
     };
     use chrono::Utc;
 
@@ -719,6 +718,8 @@ mod tests {
 
         std::fs::create_dir_all(temp.join("releases/1.2.3")).unwrap();
         std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
+        std::fs::create_dir_all(temp.join("service")).unwrap();
+        std::fs::write(temp.join("service/landscape-router.service"), b"[Unit]\n").unwrap();
         std::fs::create_dir_all(temp.join("state")).unwrap();
         let state = serde_json::json!({
             "schema_version": 1,
@@ -732,7 +733,7 @@ mod tests {
                 "static_archive": {"sha256": "b".repeat(64), "size": 1}
             },
             "initialization": {"status": "pending", "lock_present": false, "initialized_at": null},
-            "service": {"manager": "none", "registered": false, "enabled": false, "verified": false, "definition_path": null, "definition_sha256": null},
+            "service": {"manager": "systemd", "registered": true, "enabled": true, "verified": true, "definition_path": "service/landscape-router.service", "definition_sha256": "c".repeat(64)},
             "last_transaction_id": null,
             "committed_at": null
         });
@@ -811,39 +812,6 @@ mod tests {
         let temp = temp_root("repair-recover");
         let root = new_root(&temp);
         let tx = TransactionFile::new_repair_binary(&root, &semver::Version::new(1, 1, 0)).unwrap();
-        begin(&root, &tx).unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
-            recover_interrupted(&root, &tx, &Systemd::host(), &test_health())
-                .await
-                .unwrap()
-        });
-        assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
-    }
-
-    #[test]
-    fn recovers_service_migration_transaction_in_preparing() {
-        let temp = temp_root("migration-recover");
-        let root = new_root(&temp);
-        let before = ServiceBefore {
-            registration: Registration {
-                kind: RegistrationKind::Missing,
-                target: None,
-            },
-            enabled: false,
-            active: false,
-        };
-        let tx = TransactionFile::new_service_migration(
-            &root,
-            TransactionServiceManager::None,
-            TransactionServiceManager::Systemd,
-            before,
-        )
-        .unwrap();
         begin(&root, &tx).unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
