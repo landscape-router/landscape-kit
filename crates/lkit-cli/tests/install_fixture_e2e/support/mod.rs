@@ -19,7 +19,7 @@ use self::world::TestWorld;
 
 pub(crate) const VERSION: &str = "1.2.3";
 pub(crate) const LKIT: &str = env!("CARGO_BIN_EXE_lkit");
-const LANDSCAPE_FIXTURE: &str = env!("CARGO_BIN_EXE_lkit-landscape-fixture");
+pub(crate) const LANDSCAPE_FIXTURE: &str = env!("CARGO_BIN_EXE_lkit-landscape-fixture");
 const SYSTEMCTL_FIXTURE: &str = env!("CARGO_BIN_EXE_lkit-test-systemctl");
 pub(crate) static E2E_LOCK: Mutex<()> = Mutex::new(());
 

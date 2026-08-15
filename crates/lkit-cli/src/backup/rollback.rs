@@ -388,7 +388,7 @@ pub(crate) fn copy_tree_into(source: &Path, target: &Path) -> Result<(), Install
     Ok(())
 }
 
-fn write_file_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
+pub(crate) fn write_file_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
     let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)

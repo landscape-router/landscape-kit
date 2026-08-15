@@ -476,6 +476,140 @@ pub(crate) fn stop_and_wait(
     ))
 }
 
+/// 从 ExecStart 值中提取 `--config-dir` 指向的目录,支持 `--config-dir <path>`
+/// 与 `--config-dir=<path>` 两种形式,`<path>` 按 systemd 双引号/反斜杠规则解析。
+fn exec_config_dir(exec_start: &str) -> Option<PathBuf> {
+    let tokens = exec_tokens(exec_start);
+    let mut index = 0;
+    while index < tokens.len() {
+        if tokens[index] == "--config-dir" {
+            if let Some(path) = tokens.get(index + 1) {
+                return Some(PathBuf::from(path));
+            }
+        } else if let Some(path) = tokens[index].strip_prefix("--config-dir=")
+            && !path.is_empty()
+        {
+            return Some(PathBuf::from(path));
+        }
+        index += 1;
+    }
+    None
+}
+
+/// 宽容的 systemd ExecStart 分词:支持双引号字符串与反斜杠转义,
+/// 其余空白作为分隔符。不实现完整的 systemd 引号规则,只用于定位参数。
+fn exec_tokens(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                in_token = true;
+                while let Some(inner) = chars.next() {
+                    match inner {
+                        '\\' => {
+                            if let Some(next) = chars.next() {
+                                current.push(next);
+                            }
+                        }
+                        '"' => break,
+                        other => current.push(other),
+                    }
+                }
+            }
+            '\\' => {
+                in_token = true;
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            other if other.is_whitespace() => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+            }
+            other => {
+                in_token = true;
+                current.push(other);
+            }
+        }
+    }
+    if in_token {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// 在系统 unit 目录中查找 ExecStart 携带 `--config-dir <dir>` 的 service unit。
+/// 用于发现指向旧手工部署 config 目录的旧 Landscape unit。
+pub(crate) fn find_units_serving_config_dir(
+    systemd: &Systemd,
+    config_dir: &Path,
+) -> Result<Vec<String>, InstallError> {
+    let config_dir = config_dir.canonicalize().map_err(InstallError::Io)?;
+    let mut dirs = vec![systemd.system_unit_dir.clone()];
+    for dir in [
+        "/etc/systemd/system",
+        "/usr/lib/systemd/system",
+        "/run/systemd/system",
+    ] {
+        let path = PathBuf::from(dir);
+        if !dirs.contains(&path) {
+            dirs.push(path);
+        }
+    }
+    let mut found = Vec::new();
+    for dir in dirs {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".service") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            let Ok(entries) = parse_unit(&content) else {
+                continue;
+            };
+            let Some(exec_start) = entries
+                .iter()
+                .find(|(key, _)| key == "ExecStart")
+                .map(|(_, value)| value)
+            else {
+                continue;
+            };
+            let Some(served) = exec_config_dir(exec_start) else {
+                continue;
+            };
+            let served = served.canonicalize().unwrap_or(served);
+            if served == config_dir {
+                found.push(name);
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+/// 查询 unit 原件的绝对路径(`systemctl show --property=FragmentPath`)。
+pub(crate) fn fragment_path(systemd: &Systemd, unit: &str) -> Result<String, InstallError> {
+    let value = unit_property(systemd, unit, "FragmentPath")?;
+    if value.is_empty() {
+        return Err(systemd_error(format!(
+            "unit {unit} reports an empty FragmentPath"
+        )));
+    }
+    Ok(value)
+}
+
 /// 恢复注册链接与 enabled/active 状态,并执行 daemon-reload。
 /// 期望状态为「不存在」的恢复(未注册/未启用/未运行)采用宽容路径,
 /// 已经处于期望状态时不视为失败;期望状态为「存在」的恢复失败则报错。

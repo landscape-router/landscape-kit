@@ -3,6 +3,7 @@ pub mod check;
 mod existing;
 pub mod install;
 mod manage;
+pub mod migrate;
 pub mod network;
 pub mod reconcile;
 pub mod reinit;
@@ -21,6 +22,7 @@ pub use backup::Backup;
 pub use check::Check;
 pub use install::Install;
 pub(crate) use manage::ServiceManagerArg;
+pub use migrate::Migrate;
 pub use network::Network;
 pub use reconcile::Reconcile;
 pub use reinit::Reinit;
@@ -37,6 +39,7 @@ pub use update::Update;
 pub enum Commands {
     Check(Check),
     Install(Install),
+    Migrate(Migrate),
     Network(Network),
     Switch(Switch),
     Update(Update),

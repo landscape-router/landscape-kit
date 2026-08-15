@@ -70,7 +70,8 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 
 未占用固定端口、也未引用当前安装目录的同名进程不作为安装冲突。
 
-发现 `/root/.landscape-router` 等旧手工部署数据时，首版不自动迁移；应拒绝可能覆盖或端口冲突的部署，并提示未来使用独立迁移流程。
+发现 `/root/.landscape-router` 等旧手工部署数据时，`install` 不迁移它，并拒绝可能覆盖或端口冲突的部署；迁移使用独立的 `lkit migrate` 流程，见
+[`lkit migrate`](../commands/migrate.md)。
 
 ## systemd 集成
 

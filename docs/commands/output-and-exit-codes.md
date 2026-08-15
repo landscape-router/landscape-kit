@@ -42,7 +42,8 @@ CI、`Command::output()` 和其他非交互调用只消费进度事件，不产�
 - `0`：目标状态达到；只有 warning 且安装成功时仍返回 `0`；
 - `1`：普通失败，当前已提交安装状态未被破坏，包括用户拒绝、安装锁冲突、首次安装失败和 `--force` 提示手工清理；唯一例外是 none 模式的 restore：激活后的失败不内联自动回滚，返回 `1` 但现场已替换并保留在事务目录，由下一次执行按中断恢复规则处理，详见 [`lkit restore`](../commands/restore.md#失败与恢复)；
 - `2`：CLI 参数或参数组合错误，沿用 Clap 的用法错误退出码；
-- `5`：目标版本、后端 repair 或 restore 激活失败，但原安装状态自动恢复成功；
+- `5`：目标版本、后端 repair、restore 或迁移激活失败，但原安装状态（迁移场景为旧
+  实例）自动恢复成功；
 - `6`：回滚失败、事务或状态损坏，或者需要人工恢复。
 - `130`：进程收到显式 Ctrl+C；该状态是信号取消结果，不是业务失败码。
 
@@ -63,7 +64,8 @@ worker 继续完成提交或自动回滚。worker 或主机重启导致事务中
 - 不自动修改 `/etc/network/interfaces` 或选择 WAN/LAN 网卡。
 - 不自动修改防火墙、SELinux、sysctl、Cgroup 或内核配置。
 - 不自动安装系统软件包、PPP 或容器运行时。
-- 不自动迁移 `/root/.landscape-router` 等旧手工部署。
+- `install` 不迁移 `/root/.landscape-router` 等旧手工部署；迁移使用 `lkit migrate`
+  （备份 → 确认 → 停止旧实例 → 重建 → 接管），见 [`lkit migrate`](migrate.md)。
 - 当前发布产物不支持 Alpine 等 musl 发行版。
 - 不支持 `x86_64` 和 `aarch64` 以外架构。
 - 不允许安装 prerelease。

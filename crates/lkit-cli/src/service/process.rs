@@ -170,7 +170,7 @@ fn read_cmdline(pid: u32) -> Vec<String> {
 }
 
 /// 从参数中提取 `--config-dir` 和 `--web` 的值。
-fn path_args(args: &[String]) -> (Option<PathBuf>, Option<PathBuf>) {
+pub(crate) fn path_args(args: &[String]) -> (Option<PathBuf>, Option<PathBuf>) {
     let mut config_dir = None;
     let mut web = None;
     let mut index = 0;
@@ -225,6 +225,14 @@ pub(crate) fn is_managed(process: &Process, canonical_root: &Path, state: &Insta
 
 fn is_under(path: &str, root: &Path) -> bool {
     Path::new(path).starts_with(root)
+}
+
+/// 判定进程是否为指向指定 config 目录的外部 Landscape(非 lkit 受管部署)。
+/// 外部实例没有可信摘要,由 cmdline 的 `--config-dir` 与源目录特征文件共同确认;
+/// 特征文件校验发生在命令层(源目录必须含 Landscape 特征文件)。
+pub(crate) fn is_external_landscape(process: &Process, config_dir: &Path) -> bool {
+    let (dir, _web) = path_args(&process.args);
+    dir.as_deref() == Some(config_dir)
 }
 
 /// 冲突进程检查:给定固定端口,若存在无法确认身份的占用者则返回错误;

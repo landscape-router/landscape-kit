@@ -2,6 +2,7 @@
 
 mod console;
 mod install;
+mod migrate;
 mod network;
 mod reinit;
 mod support;

@@ -21,7 +21,7 @@ pub(crate) enum ServiceManager {
     None,
 }
 
-pub(super) fn select_manager(
+pub(crate) fn select_manager(
     choice: ManagerChoice,
     systemd: &Systemd,
 ) -> Result<ServiceManager, InstallError> {

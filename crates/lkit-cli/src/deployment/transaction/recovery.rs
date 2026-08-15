@@ -58,6 +58,37 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
         Operation::ServiceMigration => recover_migration(root, transaction, systemd),
         Operation::Uninstall => recover_uninstall(root, transaction, systemd),
         Operation::Reinit => recover_reinit(root, transaction, systemd, health).await,
+        Operation::Migrate => recover_migrate(root, transaction, systemd),
+    }
+}
+
+/// 中断的迁移事务恢复:
+/// - `preparing`:尚未停止旧实例,标记 `failed`(迁移 `.lkb` 保留在 `backups/`);
+/// - `prepared`/`stopping`:恢复旧 unit 与事务前 systemd 状态后标记 `failed`;
+/// - `activating`/`verifying`:停止新受管 unit,恢复旧 unit,清理新根后标记 `failed`。
+fn recover_migrate(
+    root: &InstallRoot,
+    transaction: &TransactionFile,
+    systemd: &Systemd,
+) -> Result<(), InstallError> {
+    match transaction.phase {
+        Phase::Preparing => {
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Prepared | Phase::Stopping => {
+            crate::workflows::migrate::restore_legacy_unit(root, transaction, systemd)?;
+            restore_pre_activation_systemd(root, transaction, systemd)?;
+            transaction::mark_phase(root, transaction, Phase::Failed)?;
+            Ok(())
+        }
+        Phase::Activating | Phase::Verifying | Phase::RollingBack => {
+            crate::workflows::migrate::rollback_migrate(root, transaction, systemd)
+        }
+        phase => Err(InstallError::BlockedByTransaction(format!(
+            "migrate transaction in terminal phase {} cannot be recovered",
+            phase.key()
+        ))),
     }
 }
 

@@ -109,6 +109,29 @@
   systemd 状态;`activating`/`verifying` 执行旧 data 回滚;待确认阶段阻断并提示
   `lkit network confirm`/`rollback`。
 
+### 手工部署迁移
+
+- `lkit migrate --from` 只接受含 Landscape 特征文件（`landscape.toml` 或
+  `landscape_init.lock`）的真实目录，拒绝受管安装的 data 目录；目标安装根必须全新
+  （无 state、无遗留 data/releases/service/current）。
+- 迁移要求旧实例运行中：按固定端口定位并用 `--config-dir` 参数确认实例身份，
+  通过导出 API 读取当前配置与后端版本；端口上有无法确认身份的进程时阻断。
+- 迁移备份 `.lkb` 记录旧版本（不升级），生成后保留在 `backups/`；`static.zip` 本地
+  缺失时从发布仓库下载，仓库不可用时从 `static/` 现场打包并自校验。
+- 确认先于停止：拒绝或非交互缺 `--yes` 时不创建事务、不写任何文件、不停旧实例。
+- 旧 unit 按 `ExecStart --config-dir` 发现：唯一匹配才接管（stop/disable，原件位于
+  `/etc/systemd/system` 时移入事务目录）；多匹配阻断；无匹配或进程仍存活时要求用户
+  确认前台实例已停止。
+- systemd 模式注册、启用、启动新受管服务并通过完整健康检查后提交
+  `initialization.status: complete`；none 模式不启动不检查，提交 pending 并输出参考
+  启动命令。
+- 停止旧实例后任何失败自动回滚：注销/停止新受管 unit、恢复 `/etc/resolv.conf`、
+  恢复旧 unit 的 enabled/active 状态并重启、删除新根内容；回滚成功 `rolled_back`
+  返回 `5`，失败 `failed` 返回 `6`。
+- 迁移不删除、不修改旧部署目录与旧二进制；成功后旧 unit 保持停止并提示用户自行清理。
+- 中断迁移按阶段恢复：`preparing` 标 `failed`（备份保留）；`prepared`/`stopping`
+  恢复旧 unit；`activating`/`verifying` 执行与失败相同的回滚。
+
 ### 卸载
 
 - `lkit uninstall` 只接受已有有效 `install-state.json` 的安装；无状态返回 `2`，损坏状态

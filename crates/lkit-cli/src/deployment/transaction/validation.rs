@@ -307,6 +307,58 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 ));
             }
         }
+        Operation::Migrate => {
+            reject_network_takeover(transaction, "migrate")?;
+            if has_restore_backup || has_static_backup || has_managers {
+                return Err(corrupted(
+                    "migrate transaction must not record restore backups, static backups, or service managers"
+                        .into(),
+                ));
+            }
+            if transaction.no_backup {
+                return Err(corrupted(
+                    "migrate transaction must not record no_backup".into(),
+                ));
+            }
+            if transaction.from_version.is_some() || transaction.previous_current.is_some() {
+                return Err(corrupted(
+                    "migrate transaction must not record a previous version".into(),
+                ));
+            }
+            if transaction.target_version.is_none() || transaction.target_release.is_none() {
+                return Err(corrupted(
+                    "migrate transaction must record the target version and release".into(),
+                ));
+            }
+            if !has_backup && !matches!(transaction.phase, Phase::Preparing | Phase::Failed) {
+                return Err(corrupted(
+                    "migrate transaction must record the migration backup unless it is still preparing or already failed"
+                        .into(),
+                ));
+            }
+            if let Some(unit) = &transaction.legacy_unit {
+                if !is_safe_unit_name(&unit.unit) {
+                    return Err(corrupted(format!("invalid legacy unit name {}", unit.unit)));
+                }
+                if let Some(path) = &unit.file_path
+                    && !Path::new(path).is_absolute()
+                {
+                    return Err(corrupted(
+                        "legacy unit file_path must be an absolute path".into(),
+                    ));
+                }
+                if let Some(path) = &unit.file_backup
+                    && !is_safe_relative(path)
+                {
+                    return Err(corrupted(format!("unsafe legacy unit backup path {path}")));
+                }
+                if unit.file_moved && (unit.file_path.is_none() || unit.file_backup.is_none()) {
+                    return Err(corrupted(
+                        "a moved legacy unit must record both file_path and file_backup".into(),
+                    ));
+                }
+            }
+        }
         Operation::Reinit => {
             if has_restore_backup || has_static_backup || has_managers {
                 return Err(corrupted(

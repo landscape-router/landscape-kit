@@ -33,6 +33,7 @@ pub(crate) enum Operation {
     ServiceMigration,
     Uninstall,
     Reinit,
+    Migrate,
 }
 
 impl Operation {
@@ -45,6 +46,7 @@ impl Operation {
             Self::ServiceMigration => "service_migration",
             Self::Uninstall => "uninstall",
             Self::Reinit => "reinit",
+            Self::Migrate => "migrate",
         }
     }
 }
@@ -123,12 +125,33 @@ pub(crate) struct SystemdBefore {
     pub active: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct HostServiceBefore {
     pub unit: String,
     pub installed: bool,
     pub active: bool,
     pub enable_state: String,
+}
+
+/// migrate 事务记录的旧部署 systemd unit 事务前状态。
+/// 旧 unit 原件位于 `/etc/systemd/system` 时,`stop` 后会把 unit 文件移入事务目录
+/// (`file_moved: true`),因为 `mask` 会在该目录创建同名符号链接,与受管
+/// `landscape-router.service` 的注册冲突;位于 `/usr/lib` 或 `/run` 时走
+/// `stop + disable + mask`。
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct LegacyUnitBefore {
+    pub unit: String,
+    pub installed: bool,
+    pub active: bool,
+    pub enable_state: String,
+    #[serde(default)]
+    pub file_moved: bool,
+    /// 旧 unit 原件路径(`file_moved` 时非空)。
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// 事务目录内相对备份路径(`file_moved` 时非空)。
+    #[serde(default)]
+    pub file_backup: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -183,6 +206,10 @@ pub(crate) struct TransactionFile {
     pub resolv_conf_backup: Option<String>,
     #[serde(default)]
     pub network_takeover: Option<NetworkTakeoverTransaction>,
+    /// migrate 事务记录被接管的旧部署 systemd unit 事务前状态。
+    /// 旧实例为前台进程时保持 None。
+    #[serde(default)]
+    pub legacy_unit: Option<LegacyUnitBefore>,
     pub log_path: String,
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -215,6 +242,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -250,6 +278,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -287,6 +316,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -336,6 +366,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -374,6 +405,45 @@ impl TransactionFile {
             systemd_before: Some(systemd_before),
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
+            log_path: format!("logs/{transaction_id}.log"),
+            started_at: now,
+            updated_at: now,
+        };
+        validate_transaction(&transaction)?;
+        Ok(transaction)
+    }
+
+    /// 迁移事务:从非 lkit 手工部署接管到全新安装根。`target_version` 是被迁移
+    /// 部署导出的版本(备份不升级),`backup` 是迁移 `.lkb`,在创建后由调用方记录;
+    /// `legacy_unit` 在停止旧 systemd unit 前由调用方记录。
+    pub(crate) fn new_migrate(
+        root: &InstallRoot,
+        version: &semver::Version,
+    ) -> Result<Self, InstallError> {
+        let transaction_id = Uuid::now_v7().to_string();
+        let now = Utc::now();
+        let transaction = Self {
+            schema_version: TRANSACTION_SCHEMA_VERSION,
+            transaction_id: transaction_id.clone(),
+            operation: Operation::Migrate,
+            phase: Phase::Preparing,
+            install_root: root.install_root.display().to_string(),
+            canonical_install_root: root.canonical.display().to_string(),
+            from_version: None,
+            target_version: Some(version.to_string()),
+            from_service_manager: None,
+            target_service_manager: None,
+            previous_current: None,
+            target_release: Some(format!("releases/{version}")),
+            backup: None,
+            restore_backup: None,
+            no_backup: false,
+            static_backup: None,
+            systemd_before: None,
+            resolv_conf_backup: None,
+            network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -410,6 +480,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,
@@ -447,6 +518,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
             updated_at: now,

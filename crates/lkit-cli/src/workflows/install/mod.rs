@@ -27,8 +27,7 @@ mod unit;
 
 use init_config::write_init_config;
 pub(crate) use init_config::{activate_current, build_init_config, parse_stable_version};
-use manager::select_manager;
-pub(crate) use manager::{ManagerChoice, ServiceManager, capture_systemd_before};
+pub(crate) use manager::{ManagerChoice, ServiceManager, capture_systemd_before, select_manager};
 use state::{UnitActivation, build_state};
 pub(crate) use state::{
     architecture_from_state, build_switched_state, check_initialization, verify_current_backend,

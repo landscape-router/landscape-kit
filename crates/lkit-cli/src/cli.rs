@@ -133,6 +133,25 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                     arg.help(crate::tr_static!(keys::MAIN_TAKEOVER_NETWORK_HELP))
                 })
         })
+        .mut_subcommand("migrate", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_MIGRATE_ABOUT))
+                .mut_arg("from", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_MIGRATE_FROM_HELP))
+                })
+                .mut_arg("service_manager", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SERVICE_MANAGER_HELP))
+                })
+                .mut_arg("repository", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_HELP))
+                })
+                .mut_arg("yes", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_MIGRATE_YES_HELP))
+                })
+                .mut_arg("install_dir", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
+                })
+        })
         .mut_subcommand("network", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_NETWORK_ABOUT))

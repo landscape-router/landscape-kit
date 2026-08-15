@@ -199,8 +199,17 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   - 无 systemd 的 `switch` 或后端 `repair`：只恢复尚未提交的 `current` 或后端文件变更，不启动、不停止、不检查健康，也不执行配置级 data 重建；
   - `install`：没有旧版本和 `.lkb`，执行首次安装失败清理；仅 systemd 环境恢复服务注册和 `/etc/resolv.conf`，不得调用 `.lkb` 回滚；
   - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，不重建 Landscape data；
-  - `service_migration` 从 `systemd` 到 `none`：按 `systemd_before` 恢复注册链接和 enabled/active 状态，不修改 `current` 或 data；
-  - `service_migration` 从 `none` 到 `systemd`：停止本次 systemd 服务，按 `systemd_before` 撤销注册状态并恢复 `/etc/resolv.conf`，保持已提交状态为 `manager: "none"`，不尝试重新启动外部实例；
+- `service_migration` 从 `systemd` 到 `none`：按 `systemd_before` 恢复注册链接和 enabled/active 状态，不修改 `current` 或 data；
+- `service_migration` 从 `none` 到 `systemd`：停止本次 systemd 服务，按 `systemd_before` 撤销注册状态并恢复 `/etc/resolv.conf`，保持已提交状态为 `manager: "none"`，不尝试重新启动外部实例；
+- `migrate`（手工部署迁移）按阶段恢复：
+  - `preparing`：尚未停止旧实例，标记 `failed`；迁移 `.lkb` 保留在 `backups/`；
+  - `prepared` 或 `stopping`：旧 unit 可能已停止，幂等恢复旧 unit（`legacy_unit` 记录的
+    unit 文件放回原位或 `unmask`，按 enabled/active 状态恢复），再按 `systemd_before`
+    恢复受管 unit 状态并标记 `failed`；
+  - `activating`、`verifying` 或 `rolling_back`：执行与失败相同的回滚——注销并停止新
+    受管 unit、恢复 `/etc/resolv.conf`、恢复旧 unit、删除新根内容（`data/`、`service/`、
+    `state/`、目标 release 与 `current`），标记 `rolled_back`；回滚失败标记 `failed`；
+    前台实例场景 `legacy_unit` 为 `None`，不自动重启旧实例；
   - `restore` 按阶段恢复：
     - `preparing`：尚未改变运行状态，清理事务目录并标记 `failed`；
     - `prepared` 或 `stopping`：`current` 和数据尚未激活，按 `systemd_before` 幂等恢复

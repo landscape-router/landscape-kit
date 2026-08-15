@@ -71,6 +71,11 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         {
             println!("{}", load_state(config, unit));
         }
+        [show, property, value, unit]
+            if show == "show" && property == "--property=FragmentPath" && value == "--value" =>
+        {
+            println!("{}", config.unit_dir.join(unit).display());
+        }
         [command, unit] if command == "is-enabled" => {
             if masked_path(config, unit).is_file() {
                 println!("masked");
@@ -186,6 +191,22 @@ fn start(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
 
 fn stop(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
     if unit != UNIT_NAME {
+        // 任意 unit:`stop` 移除 active 标记;若测试预置了 `main.pid`
+        // (模拟 systemd 管理的真实进程),同时信号并等待进程退出。
+        let state = unit_state_dir(config, unit);
+        if let Ok(content) = std::fs::read_to_string(state.join(PID_FILE))
+            && let Ok(pid) = content.trim().parse::<u32>()
+            && process_alive(pid)
+        {
+            signal(pid, libc::SIGTERM)?;
+            let started = Instant::now();
+            while process_alive(pid) && started.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if process_alive(pid) {
+                signal(pid, libc::SIGKILL)?;
+            }
+        }
         return remove_if_exists(&active_path(config, unit));
     }
     let Some(pid) = read_pid(config) else {

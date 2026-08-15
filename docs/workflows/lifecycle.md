@@ -215,10 +215,41 @@ systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
 `awaiting_network_confirmation`/`finalizing`/`rolling_back` 阻断并提示使用
 `lkit network confirm` 或 `lkit network rollback`。
 
+### 11. 手工部署迁移
+
+`lkit migrate` 把手工部署（非 lkit 安装格式）迁移为受管安装，是独立的 `migrate`
+事务，目标安装根必须全新。完整命令规格见 [`lkit migrate`](../commands/migrate.md)。
+
+1. 获取安装锁并恢复未完成事务；校验安装根无状态且无遗留受管内容；校验 `--from`
+   目录含 Landscape 特征文件且不是受管安装的 data；
+2. 按固定端口识别运行中的旧实例（`--config-dir` 匹配源目录），未运行则报错提示先启动；
+   端口上有无法确认身份的进程时阻断；
+3. 创建 `preparing` 迁移事务，通过导出 API 读取当前配置与后端版本（备份不升级），
+   从 `/proc/<pid>/exe` 读取二进制，static 目录取进程 `--web` 参数或缺省
+   `<from>/static`，`static.zip` 本地缺失时从发布仓库下载、仓库不可用时从现场打包，
+   生成迁移 `.lkb` 到 `backups/`；
+4. 交互确认迁移计划（非交互必须 `--yes`），拒绝时不创建事务、不写文件；
+5. 更新为 `prepared`，再更新为 `stopping`：systemd 可用时按 `ExecStart --config-dir`
+   匹配发现旧 unit——唯一匹配则 stop/disable（原件位于 `/etc/systemd/system` 时移入
+   事务目录，否则 mask），无匹配或多匹配分别要求人工确认或先清理；旧实例进程仍存活
+   时同样要求确认；
+6. 更新为 `activating`：从迁移备份解包重建 `releases/<版本>`，创建空 `data/`、写入
+   导出的 `landscape_init.toml`（`0600`）、恢复 `geo_tmp`，原子创建 `current`；
+7. systemd 模式更新为 `verifying`：写入受管 unit 原件、注册、启用、启动并完成完整
+   健康检查；none 模式不启动不检查，提交 pending/未验证状态并输出参考启动命令；
+8. 提交 state（版本为被迁移版本、资产身份来自备份、systemd 模式
+   `initialization.status: complete`），事务进入 `committed`，输出迁移备份 ID 与旧部署
+   清理提示。
+
+失败语义：停止旧实例前失败标记 `failed` 返回 `1`；停止后失败进入 `rolling_back`——
+注销/停止新受管 unit、恢复 `/etc/resolv.conf`、恢复旧 unit（文件放回原位或 unmask，
+按 enabled/active 重启）、删除新根内容，回滚成功返回 `5`、失败返回 `6`；前台实例
+场景不自动重启旧实例。中断恢复见
+[事务与中断恢复](../deployment/transactions-and-recovery.md)。
+
 ## 首次安装失败
 
 systemd 环境首次安装启动失败时：
-
 - 停止失败服务；
 - 恢复或移除本次创建的 `current`；
 - 按事务中的 `systemd_before` 恢复 systemd 注册链接以及 enabled/active 状态并 reload；

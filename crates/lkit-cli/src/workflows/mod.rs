@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub(crate) mod install;
+pub(crate) mod migrate;
 pub(crate) mod reinit;
 pub(crate) mod repair;
 pub(crate) mod restore;
@@ -14,4 +15,3 @@ pub(crate) use crate::interaction::{credentials, interactive};
 pub(crate) use crate::release::{artifacts, repository};
 pub(crate) use crate::service::{health, preflight, process, resolv, systemd};
 pub(crate) use install as pipeline;
-pub(crate) use service_manager as migrate;

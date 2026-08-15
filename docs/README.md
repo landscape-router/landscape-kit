@@ -12,6 +12,7 @@
 ## 命令
 
 - [`install`](commands/install.md)：首次安装。
+- [`migrate`](commands/migrate.md)：把手工部署（非 lkit 安装格式）迁移为受管安装。
 - [`update`](commands/update.md)：交互式更新到最新或指定 stable 版本。
 - [`switch`](commands/switch.md)：切换到指定 stable 版本。
 - [`backup`](commands/backup.md)：创建、查看和验证 `.lkb` minimal 备份。

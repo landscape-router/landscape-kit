@@ -55,6 +55,11 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
                 None => matches!(Systemd::host().probe(), Availability::Available { .. }),
             }
         }
+        Commands::Migrate(args) => match args.service_manager {
+            Some(ServiceManagerArg::Systemd) => true,
+            Some(ServiceManagerArg::None) => false,
+            None => matches!(Systemd::host().probe(), Availability::Available { .. }),
+        },
         Commands::Switch(args) => {
             load_manager(args.install_dir.as_deref()) == Some(StateServiceManager::Systemd)
         }
@@ -92,6 +97,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::SetMirror(_) => None,
         Commands::Software(_) => None,
         Commands::Install(args) => args.test_runtime.as_deref(),
+        Commands::Migrate(args) => args.test_runtime.as_deref(),
         Commands::Switch(args) => args.test_runtime.as_deref(),
         Commands::Update(args) => args.test_runtime.as_deref(),
         Commands::Repair(args) => args.test_runtime.as_deref(),
