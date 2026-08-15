@@ -40,7 +40,13 @@ docker run --rm --volume "$volume:/out" lkit-mirror-builder cp /output/lkit /out
 docker run --rm --volume "$volume:/out" lkit-mirror-builder test -x /out/lkit
 
 overall=0
+# Arch Linux 官方镜像只有 amd64 manifest;aarch64 job 跳过 archlinux。
+distro_list=$'debian debian:bookworm\nubuntu ubuntu:24.04\nfedora fedora:latest'
+if [[ $(uname -m) == x86_64 ]]; then
+  distro_list+=$'\narchlinux archlinux:latest'
+fi
 while read -r distro image; do
+  [[ -n $distro ]] || continue
   echo "== $distro ($image) =="
   if docker run --rm \
     --volume "$volume:/usr/local/bin:ro" \
@@ -52,12 +58,7 @@ while read -r distro image; do
     echo "[$distro] FAILED" >&2
     overall=1
   fi
-done <<'EOF'
-debian debian:bookworm
-ubuntu ubuntu:24.04
-fedora fedora:latest
-archlinux archlinux:latest
-EOF
+done <<< "$distro_list"
 
 if [[ $overall -eq 0 ]]; then
   echo "all distro mirror checks passed"
