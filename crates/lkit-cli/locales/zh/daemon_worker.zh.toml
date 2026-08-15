@@ -1,0 +1,1 @@
+daemon_worker.stop_failed_warning = "警告：Ctrl+C 已恢复终端，但无法停止委托操作，该操作可能仍在运行：%{error}"

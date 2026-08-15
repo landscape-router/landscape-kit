@@ -28,7 +28,7 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
     default_tty.master.write_all(b"\n").unwrap();
     let default_output = harness
         .update_command()
-        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &default_tty.slave_path)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &default_tty.slave_path)
         .output()
         .unwrap();
     assert_success(&default_output);
@@ -50,7 +50,7 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
     let explicit_tty = Pty::open();
     let explicit_output = harness
         .update_command()
-        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &explicit_tty.slave_path)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &explicit_tty.slave_path)
         .arg("--repository")
         .arg(&harness.repository.base_url)
         .output()
@@ -66,7 +66,7 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
     cancel_tty.master.write_all(b"no\n").unwrap();
     let cancel_output = harness
         .update_command()
-        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &cancel_tty.slave_path)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &cancel_tty.slave_path)
         .arg("--repository")
         .arg(&newer_repository.base_url)
         .output()

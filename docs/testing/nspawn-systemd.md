@@ -8,12 +8,12 @@
 - `/bin/systemctl` 能连接 manager；
 - system unit 能注册、enable、start、stop、disable 和 unregister；
 - 服务启动后真实 manager 报告非零 MainPID；
-- lkit 临时 operation unit 能由 systemd 执行并自动清理；
-- 杀掉等待结果的前端会话后，worker 继续完成事务并清理临时 unit；
-- systemd unit 所有权冲突返回失败，且不会留下 failed operation unit。
+- lkit 常驻 daemon 由真实 systemd 托管并处理委托请求；
+- 杀掉等待结果的前端会话后，daemon 子进程组继续完成事务；
+- systemd unit 所有权冲突返回失败，且不会留下失败状态。
 
 测试使用 test-support 运行时跳过完整宿主 preflight，但配置
-`execution: systemd_worker` 并使用真实 `/bin/systemctl`、`/etc/systemd/system` 和
+`execution: daemon` 并使用真实 `/bin/systemctl`、`/etc/systemd/system` 和
 `/run/systemd/system`。这不是功能场景矩阵的第二份实现，不负责重新证明首次安装、
 切换、修复或回滚的业务正确性，也不验证宿主 BPF/内核能力。
 
@@ -46,7 +46,6 @@ sudo env LKIT_NSPAWN_PREBUILT_DIR="$PWD/target/release" \
 rootfs。CI 当前每周及手动运行；普通 PR 和普通发布不承担 rootfs 下载和 boot 成本。
 
 测试先执行完整的首次安装并注册、启动受管 unit。在事务进入 `verifying` 后杀掉
-`machinectl shell` 前端，等待 systemd worker 独立提交；随后执行卸载，断言服务停止、
-注册链接移除、所有事务终结且没有残留 `lkit-operation-*` unit。
-最后制造一个 foreign unit 所有权冲突，确认注册在创建事务前失败，且执行失败命令的
-operation unit 同样被清理。
+`machinectl shell` 前端，等待委托的 daemon 子进程组独立提交；随后执行卸载，断言服务
+停止、注册链接移除、所有事务终结且没有残留运行状态。
+最后制造一个 foreign unit 所有权冲突，确认注册在创建事务前失败，且不留失败状态。

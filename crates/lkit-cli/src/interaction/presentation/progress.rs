@@ -166,7 +166,7 @@ enum StepOutput {
 }
 
 /// 无字节下载的按步骤操作（如 `backup create` 的按文件进度）在普通终端上
-/// 渲染的内联进度条。事件文件由 systemd worker 专用，备份创建不委托，因此
+/// 渲染的内联进度条。事件文件由 daemon worker 专用，备份创建不委托，因此
 /// 只支持 stderr 内联渲染。
 pub(crate) struct StepProgress {
     state: StepState,

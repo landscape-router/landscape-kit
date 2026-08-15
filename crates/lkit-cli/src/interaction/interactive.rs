@@ -30,8 +30,8 @@ pub(crate) fn is_non_interactive() -> bool {
 }
 
 /// 所有交互输入输出只通过终端设备,不读取 stdin,避免消费管道数据。
-/// 通常使用 `/dev/tty`; systemd worker 直接打开前端传入的原终端设备,
-/// 避免 transient unit 争用 controlling terminal。
+/// 通常使用 `/dev/tty`; daemon worker 通过 `LKIT_INTERNAL_DAEMON_TTY` 直接
+/// 打开前端传入的原终端设备,避免争用 controlling terminal。
 pub(crate) struct Tty {
     file: File,
 }

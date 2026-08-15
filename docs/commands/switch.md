@@ -21,9 +21,9 @@ lkit switch --version <VERSION> [--repository [<BASE_URL>]]
 更低版本。需要主动创建、查看、验证或从历史 `.lkb` 恢复时，使用 [`lkit backup`](backup.md)
 和 [`lkit restore`](restore.md)；restore 的版本方向独立于 switch。
 
-生产 systemd 环境中，整条 switch 命令由临时 systemd operation unit 托管。SSH 会话
-因 Landscape 重启而断开时，worker 仍会继续健康检查并提交，或在失败时自动回滚。
-事务在 stop 前先写入 `stopping`；主机重启不自动继续，而由下次调用恢复。
+生产环境中，整条 switch 命令委托给目标安装根的常驻 daemon 执行。SSH 会话
+因 Landscape 重启而断开时，daemon 的子进程组仍会继续健康检查并提交，或在失败时
+自动回滚。事务在 stop 前先写入 `stopping`；主机重启不自动继续，而由下次调用恢复。
 
 未指定 `--repository` 时按 显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源
 （文件缺失时官方 GitHub，损坏时报错阻断，见[配置文件](../deployment/config.md)）。

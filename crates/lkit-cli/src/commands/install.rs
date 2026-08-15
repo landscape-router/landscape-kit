@@ -37,7 +37,7 @@ pub struct Install {
     /// Network plan captured by the full-screen console. Never populated by CLI parsing.
     #[arg(skip)]
     pub(crate) network_plan: Option<NetworkPlan>,
-    /// Root-only network plan file created for an internal systemd worker.
+    /// Root-only network plan file created for an internal daemon worker.
     #[arg(long, value_name = "PATH", hide = true)]
     pub(crate) network_plan_file: Option<PathBuf>,
     #[cfg(feature = "test-support")]

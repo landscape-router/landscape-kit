@@ -41,11 +41,11 @@ admin_pass = "<password>"
 - 不提供明文密码命令行参数；
 - 不把密码写入日志、状态或事务文件。
 
-控制台 inline 安装在内存中传递密码。systemd 托管安装使用
+控制台 inline 安装在内存中传递密码。委托安装使用
 `/run/lkit/operations/<id>.credential` 作为 root-only `0600` 的短生命周期内部通道；该
-文件不是用户输入接口；request JSON 只记录路径，不记录密码内容。worker 与前端按
-完成或取消路径清理。若
-operation unit 无法停止则保留现场，不能提前删除仍可能被运行中 worker 使用的凭据。
+文件不是用户输入接口；request JSON 只记录路径，不记录密码内容。daemon 与前端按
+完成或取消路径清理。若委托命令
+无法停止则保留现场，不能提前删除仍可能被运行中命令使用的凭据。
 
 ### 交互规则
 

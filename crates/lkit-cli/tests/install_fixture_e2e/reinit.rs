@@ -16,7 +16,7 @@ fn run_reinit(harness: &InstallHarness, password: &Path) -> Output {
             lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
             &harness.world.systemctl_config,
         )
-        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &pty.slave_path)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
         .args(["reinit", "--install-dir"])
         .arg(&harness.install_root)
         .args(["--admin-user", "admin", "--password-file"])

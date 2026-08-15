@@ -122,8 +122,8 @@
 
 - 测试层：PTY CLI fixture E2E
 - 状态：`部分覆盖`
-- 证据：[输出与退出码](../../../commands/output-and-exit-codes.md)、[事务托管](../../../deployment/transactions-and-recovery.md#systemd-托管操作)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
-- 缺口：真实 systemd smoke 尚未直接验证 Ctrl+C 会停止临时 operation unit。
+- 证据：[输出与退出码](../../../commands/output-and-exit-codes.md)、[委托执行](../../../deployment/transactions-and-recovery.md#委托执行daemon-托管)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 缺口：真实 systemd smoke 尚未直接验证 Ctrl+C 会停止委托的子进程组。
 - 说明：PTY 场景在密码回显关闭后发送 SIGINT，断言退出状态为 `130` 且 `ECHO` 已恢复。
 
 ## INS-16

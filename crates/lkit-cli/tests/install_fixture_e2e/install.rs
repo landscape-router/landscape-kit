@@ -157,7 +157,7 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
             lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
             &harness.world.systemctl_config,
         )
-        .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &update_tty.slave_path)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &update_tty.slave_path)
         .arg("update")
         .arg("--install-dir")
         .arg(&harness.install_root)

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TODO(service-manager-rewrite):`lkit service-manager` 命令已在移除 none 部署模式的
-# 破坏性重构中删除,本脚本的迁移场景不再可执行。等不同发行版的服务管理器后端重写
-# 完成后,改为预置 systemd 已提交状态并以 `lkit switch`/`lkit uninstall` 触发真实
-# systemd worker 契约验证(注册、启停、MainPID、前端被杀后独立提交、所有权冲突)。
+# TODO(daemon-rewrite):`lkit service-manager` 命令已在移除 none 部署模式的
+# 破坏性重构中删除,本脚本的迁移场景不再可执行。多后端重写(daemon 委托、
+# OpenRC/sysvinit)已完成,本脚本应改为预置 systemd 已提交状态并部署
+# `lkit self-service install` 的常驻 daemon,再以 `lkit switch`/`lkit uninstall`
+# 触发真实 systemd 契约验证(注册、启停、MainPID、前端被杀后 daemon 子进程组
+# 独立提交、所有权冲突)。
 if [[ $(uname -s):$(uname -m) != Linux:x86_64 ]]; then
   echo "systemd-nspawn integration currently requires Linux x86_64" >&2
   exit 2
@@ -140,7 +142,7 @@ cat >"$rootfs/var/lib/lkit-nspawn/runtime.json" <<'JSON'
   "schema_version": 1,
   "allow_non_root": false,
   "preflight": "skip",
-  "execution": "systemd_worker",
+  "execution": "daemon",
   "managed_uid": 0,
   "os_release_path": "/etc/os-release",
   "systemd": {
@@ -301,7 +303,7 @@ machine_shell \
 machine_shell "! systemctl is-active --quiet landscape-router.service"
 machine_shell "test ! -e /etc/systemd/system/landscape-router.service"
 
-# 所有权冲突必须在接管前失败，并清理用于执行失败命令的 operation unit。
+# 所有权冲突必须在接管前失败,不留失败状态。
 machine_shell "printf '[Unit]\nDescription=foreign unit\n' >/etc/systemd/system/landscape-router.service"
 if machine_shell \
   "printf 'yes\\n' | script -qec '/usr/local/bin/lkit service-manager systemd --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json' /dev/null"; then

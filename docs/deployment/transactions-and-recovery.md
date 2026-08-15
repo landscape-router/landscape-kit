@@ -246,51 +246,52 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 任一恢复或清理步骤失败时不得标记 `rolled_back`，事务必须进入 `failed`，保留现场和日志供
 人工恢复。switch、repair 以及已经提交的安装不得使用整棵 `data/` 清理。
 
-## systemd 托管操作
+## 委托执行(daemon 托管)
 
-生产运行时中，任何可能注册、停止、启动或注销 Landscape system unit 的命令，在进入
-部署检查和事务前先交给 systemd 托管。lkit 在 `/run/systemd/system` 写入唯一的临时
-`lkit-operation-<id>.service`，通过已有 `systemctl` 执行 `daemon-reload` 与
-`start --no-block`；不依赖 `systemd-run`。
+生产运行时中，任何可能注册、停止、启动或注销服务（含网络接管）的命令，在进入
+部署检查和事务前先委托给目标安装根的常驻 daemon（`lkit daemon`）执行。委托前提是
+该根的 daemon 已在运行（`<root>/run/lkit.pid` pidfile 存活），否则命令明确失败
+（退出码 `2`）并提示重新安装或运行 `lkit self-service install`。daemon 由 init 系统
+托管（systemd / OpenRC / sysvinit 受管服务），因此不再依赖临时 systemd unit。
 
-临时 unit 执行同一 lkit 可执行文件和原始参数。当前工作目录与环境先写入
-`/run/lkit/operations/<id>.json`，文件仅 root 可读，worker 读取后立即删除；该文件
-可能短暂包含仓库环境凭据，因此不得复制到事务日志或安装根目录。stdout/stderr 写入
-同目录临时日志，仍在连接的前端持续转发；结果使用 root-only JSON 原子提交。
-`/run/lkit/operations` 固定为 root-only `0700`。下载进度另写入同目录的 root-only
-`<id>.presentation.jsonl`，只包含资产显示名称、字节数、耗时和状态，不包含 URL、凭据或
-初始化配置。前端 stderr 为终端时使用 Ratatui inline viewport 消费这些事件；非交互前端
-消费但不渲染。前端保持连接时，在读取结果、日志和展示事件后删除这些文件；前端已经消失
-时，worker 仍删除临时 unit 和请求文件，但结果、stdout/stderr 与展示事件可能保留到主机
-重启或管理员手工清理。不得将这些运行时残留描述为已完整自动清理。
+CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
+（schema_version 2，含原始参数、最终环境与工作目录、结果路径、cancel 路径、
+原始终端设备路径、展示事件路径与凭据路径）；目录固定为 `0700`。daemon 每个周期
+（2 秒）扫描并认领请求，以同一 lkit 可执行文件和原始参数在独立进程组中执行。
+
+请求文件可能短暂包含仓库环境凭据，因此不得复制到事务日志或安装根目录。stdout/stderr
+写入同目录日志，仍在连接的前端持续转发；结果使用 root-only JSON 原子提交到
+`<id>.result.json`。下载进度另写入同目录的 root-only `<id>.presentation.jsonl`，
+只包含资产显示名称、字节数、耗时和状态，不包含 URL、凭据或初始化配置。前端 stderr
+为终端时使用 Ratatui inline viewport 消费这些事件；非交互前端消费但不渲染。前端保持
+连接时，在读取结果、日志和展示事件后删除这些文件；前端已经消失时，daemon 仍继续
+执行，但结果、stdout/stderr 与展示事件可能保留到主机重启或管理员手工清理。不得将
+这些运行时残留描述为已完整自动清理。
 
 Ratatui Install 面板收集的密码不进入原始参数、环境或 request JSON。需要委托时，前端在
 同一 root-only operations 目录创建 `<id>.credential`，权限固定为 `0600`，内部子命令只
-接收该路径。worker 完成或前端成功停止 operation unit 后删除；停止失败时保留，避免仍在
-运行的 worker 读取失败。该文件与其他 `/run` 残留一样最迟在主机重启时消失。
+接收该路径。daemon 完成或前端成功取消后删除；停止失败时保留，避免仍在执行的命令
+读取失败。该文件与其他 `/run` 残留一样最迟在主机重启时消失。
 
-operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling terminal。
-前端存在终端时，请求文件只记录其 `/dev` 设备路径；worker 中真正执行命令的子进程以
-`O_NOCTTY` 直接打开该设备完成交互。业务命令的退出码写入结果 JSON，wrapper 在结果
-落盘后以成功退出，避免可预期的业务失败把已删除的临时 unit 留在 systemd failed set；
-只有请求损坏、无法启动子进程或无法写结果等 worker 基础设施错误才令 unit 失败并保留
-日志供诊断。
+子进程以 `setpgid(0, 0)` 建立独立进程组并以 `O_NOCTTY` 打开原始终端设备，不取得
+SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只有请求损坏、无法启动
+子进程或无法写结果等基础设施错误才令请求失败并保留日志供诊断。
 
 这提供以下边界：
 
-- SSH、终端或调用 lkit 的前端进程消失后，operation unit 与其 cgroup 不受影响，继续
-  完成提交或自动回滚；
-- 前端收到显式 Ctrl+C 时先恢复原始终端属性和光标，再停止对应 operation unit 及其
-  cgroup，清理运行时文件并返回 `130`；停止失败时输出 warning、保留现场并提示 operation
-  可能仍在运行；
-- 手工 `lkit network rollback` 同样进入 operation unit，避免 NetworkManager 或
-  `networking.service` 恢复后当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚已经位于
-  独立恢复 unit，不再次委派；
-- 交互确认仍通过原终端完成，但 unit 不接管该终端；若终端在破坏性阶段前消失，确认
-  读取失败并安全停止；
-- systemd worker 不配置自动重试，业务失败不会重复执行整条命令；
-- 主机重启会终止 `/run` 中的临时 worker，不承诺跨重启自动继续。下次 lkit 调用按
-  本节事务阶段恢复；
+- SSH、终端或调用 lkit 的前端进程消失后，daemon 的子进程组不受影响，继续完成提交
+  或自动回滚；
+- 前端收到显式 Ctrl+C 时先恢复原始终端属性和光标，再写 `<id>.cancel` 文件；daemon
+  对子进程组发送 SIGTERM，约 5 秒（25 轮 × 200ms）内未退出则 SIGKILL。前端返回
+  `130` 并清理运行时文件；停止失败时输出 warning、保留现场并提示操作可能仍在运行；
+- 手工 `lkit network rollback` 同样委托给 daemon，避免 NetworkManager 或
+  `networking.service` 恢复后当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚
+  已经位于独立恢复路径，不再次委派；
+- 交互确认仍通过原终端完成，但 daemon 子进程不接管该终端；若终端在破坏性阶段前
+  消失，确认读取失败并安全停止；
+- daemon 不配置自动重试，业务失败不会重复执行整条命令；
+- 主机重启会终止 `/run` 中的请求与结果文件，不承诺跨重启自动继续；daemon 由 init
+  系统自动拉起，未完成事务由 daemon 或下次 lkit 调用按本节事务阶段恢复；
 
 ### daemon 自动恢复
 
@@ -300,12 +301,12 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 
 - CLI 进程因 SSH 断开、崩溃或 `SIGKILL` 消失后，遗留事务由 daemon 自动接管：
   失败激活回滚（含 `.lkb` 配置级回滚）、中断恢复、卸载前向完成均按本节规则执行，
-  不再依赖下一次 lkit 调用或 systemd worker 存活；
+  不再依赖下一次 lkit 调用或委托进程存活；
 - daemon 恢复目标固定为自身所在安装根；
 - 网络接管 `awaiting_network_confirmation` / `finalizing` / `rolling_back` 阶段
   保持人工处理（`lkit network confirm|rollback`），daemon 不代替确认；
 - 并发安全：CLI 命令整个操作期间持有安装锁，daemon 获取失败即跳过本周期；
   daemon 收到 `SIGTERM` 时先完成当前周期再退出，不中断进行中的恢复。
 
-`test-support` 运行时可选择 `execution: inline` 或 `systemd_worker`。生产构建不提供该
-开关；凡进入本节 systemd 托管边界的命令都固定使用 worker。
+`test-support` 运行时可选择 `execution: inline` 或 `daemon`。生产构建不提供该
+开关；凡进入本节 daemon 托管边界的命令都固定由 daemon 委托执行。

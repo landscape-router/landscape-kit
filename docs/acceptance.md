@@ -19,9 +19,10 @@
 - 初始化成功后保留 `landscape_init.toml`，权限为 `0600`，并生成初始化锁和持久配置。
 - pending 初始化要求 `landscape_init.toml` 是 root 所有、权限 `0600` 的普通文件；
   complete 后不跟踪其内容或存在性，初始化锁缺失仍不可绕过。
-- 首次安装要求 systemd 可用；服务链接、启用、启动和健康检查成功。
-- 可能改变 systemd/Landscape 运行态的生产命令由临时 systemd unit 托管；杀掉等待
-  结果的 SSH/CLI 前端后，worker 仍能提交或回滚并清理临时 unit。
+- 首次安装要求可用的服务管理器（systemd/OpenRC/sysvinit 探测链，见
+  [manager.md](service/manager.md)）；服务链接、启用、启动和健康检查成功。
+- 可能改变运行态的生产命令委托给目标安装根的常驻 daemon 执行；杀掉等待
+  结果的 SSH/CLI 前端后，daemon 的子进程组仍能提交或回滚。
 - systemd 不可用时安装明确失败（退出码 `2`），不创建事务、不写文件；
   不支持无 systemd 的部署。
 - 运行态验证固定检查 UDP `53`、TCP `6300`、TCP `6443` 和 `/api/docs`。

@@ -255,7 +255,7 @@ esac
                 lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
                 &self.world.systemctl_config,
             )
-            .env("LKIT_INTERNAL_SYSTEMD_WORKER_TTY", &pty.slave_path)
+            .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
             .args([
                 "install",
                 "--takeover-network",

@@ -72,7 +72,7 @@ lkit uninstall [--install-dir <PATH>] [--yes] [--allow-no-backup]
 
 ## 执行与提交
 
-systemd 模式委托 systemd worker(与 switch/restore 相同的 operation unit 边界),并按
+由常驻 daemon 委托执行(与 switch/restore 相同的委托边界),并按
 以下顺序执行:
 
 1. 将事务标记为 `stopping`,停止受管服务并确认进程退出;
