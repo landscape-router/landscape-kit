@@ -11,7 +11,7 @@ use crate::keys;
 #[command(name = "lkit", version)]
 pub(crate) struct Cli {
     #[arg(long, hide = true)]
-    pub(crate) internal_systemd_worker: bool,
+    pub(crate) internal_daemon_worker: bool,
     /// Do not open a terminal or prompt for input
     #[arg(long, global = true)]
     pub(crate) non_interactive: bool,

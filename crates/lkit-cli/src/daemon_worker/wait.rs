@@ -1,66 +1,24 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::time::Duration;
 
 use crate::interaction::presentation::{
     InterruptGuard, OperationResult, OperationScreen, WorkerPresentation,
 };
 
+use super::daemon_is_running;
 use super::protocol::{WaitOutcome, WorkerResult};
-use super::{cleanup_files, systemctl};
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn interrupt_worker(
-    systemctl_path: &Path,
-    unit_name: &str,
-    request_path: &Path,
-    result_path: &Path,
-    unit_path: &Path,
-    stdout_path: &Path,
-    stderr_path: &Path,
-    presentation_path: &Path,
-    credential_path: &Path,
-    network_plan_path: &Path,
-    interrupt: &InterruptGuard,
-    full_screen: bool,
-) -> Result<ExitCode, String> {
-    if let Err(error) = systemctl(systemctl_path, &["stop", unit_name]) {
-        eprintln!(
-            "install: {}",
-            crate::tr!(
-                crate::keys::SYSTEMD_WORKER_STOP_FAILED_WARNING,
-                error = error
-            )
-        );
-        return Ok(ExitCode::from(130));
-    }
-    cleanup_files(&[
-        request_path,
-        result_path,
-        unit_path,
-        stdout_path,
-        stderr_path,
-        presentation_path,
-        credential_path,
-        network_plan_path,
-    ]);
-    let _ = systemctl(systemctl_path, &["daemon-reload"]);
-    if full_screen {
-        crate::interaction::presentation::show_cancelled_screen(interrupt)?;
-    }
-    Ok(ExitCode::from(130))
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn wait_for_result(
-    systemctl_path: &Path,
-    unit_name: &str,
+    install_root: &Path,
     result_path: &Path,
     stdout_path: &Path,
     stderr_path: &Path,
     presentation_path: &Path,
+    cancel_path: &Path,
     interrupt: &InterruptGuard,
     full_screen: bool,
     operation: Box<dyn OperationScreen>,
@@ -68,11 +26,12 @@ pub(super) fn wait_for_result(
     let mut stdout = None;
     let mut stderr = None;
     let mut presentation = WorkerPresentation::new(full_screen, operation);
-    let mut inactive_polls = 0_u8;
+    let mut daemon_dead_polls = 0_u8;
     loop {
         presentation.drain(presentation_path)?;
         if interrupt.requested() {
             if presentation.is_cancellable() {
+                let _ = std::fs::write(cancel_path, b"");
                 presentation.finish();
                 return Ok(WaitOutcome::Interrupted);
             }
@@ -82,6 +41,7 @@ pub(super) fn wait_for_result(
         if let Some(action) = presentation.poll_action()? {
             match action {
                 crate::interaction::presentation::PresentationAction::Stop => {
+                    let _ = std::fs::write(cancel_path, b"");
                     presentation.finish();
                     return Ok(WaitOutcome::Interrupted);
                 }
@@ -95,7 +55,7 @@ pub(super) fn wait_for_result(
                 .map_err(|error| format!("read worker result: {error}"))?;
             let result: WorkerResult = serde_json::from_slice(&content)
                 .map_err(|error| format!("parse worker result: {error}"))?;
-            if result.schema_version != 1 {
+            if result.schema_version != 2 {
                 return Err(format!(
                     "unsupported worker result schema {}",
                     result.schema_version
@@ -115,37 +75,20 @@ pub(super) fn wait_for_result(
             return Ok(WaitOutcome::Completed(code));
         }
 
-        if worker_unit_has_stopped(systemctl_path, unit_name)? {
-            inactive_polls = inactive_polls.saturating_add(1);
-            if inactive_polls >= 10 {
+        if !daemon_is_running(install_root) {
+            daemon_dead_polls = daemon_dead_polls.saturating_add(1);
+            if daemon_dead_polls >= 10 {
                 return Err(format!(
-                    "worker unit {unit_name} stopped without writing a result; inspect {} and {}",
+                    "the lkit daemon stopped before the operation finished; inspect {} and {}",
                     stdout_path.display(),
                     stderr_path.display()
                 ));
             }
         } else {
-            inactive_polls = 0;
+            daemon_dead_polls = 0;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-}
-
-fn worker_unit_has_stopped(systemctl_path: &Path, unit_name: &str) -> Result<bool, String> {
-    let output = Command::new(systemctl_path)
-        .args(["show", "--property=ActiveState", "--value", unit_name])
-        .output()
-        .map_err(|error| format!("inspect worker unit {unit_name}: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "inspect worker unit {unit_name}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(matches!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "inactive" | "failed"
-    ))
 }
 
 fn drain_log(
@@ -182,8 +125,8 @@ fn drain_log(
 }
 
 /// 操作结束后在普通终端输出明确的结果提示。全屏安装页关闭、或命令模式
-/// 委托安装的流式输出结束（可能被忽略）后，用户都能看到操作是否完成。
-/// 文案与全屏结果页标题一致（按操作区分，不复用安装文案），前缀为子命令名。
+/// 委托安装的流式输出结束(可能被忽略)后,用户都能看到操作是否完成。
+/// 文案与全屏结果页标题一致(按操作区分,不复用安装文案),前缀为子命令名。
 fn announce_completion(operation: &dyn OperationScreen, exit_code: u8) {
     let message = completion_message(operation, exit_code);
     if exit_code == 0 {

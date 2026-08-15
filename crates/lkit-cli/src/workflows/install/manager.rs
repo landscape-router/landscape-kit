@@ -7,7 +7,7 @@ pub(crate) fn require_manager(
     manager: &dyn ServiceManager,
 ) -> Result<ServiceManagerKind, InstallError> {
     match manager.probe() {
-        Availability::Available { .. } => Ok(ServiceManagerKind::Systemd),
+        Availability::Available { .. } => Ok(manager.kind()),
         availability => Err(InstallError::UnsupportedPlatform(format!(
             "no supported service manager is available on this host: {availability:?}; lkit requires the distro init system to supervise the service"
         ))),

@@ -13,6 +13,10 @@ name = "lkit-test-systemctl"
 path = "src/bin/lkit-test-systemctl.rs"
 
 [[bin]]
+name = "lkit-test-init"
+path = "src/bin/lkit-test-init.rs"
+
+[[bin]]
 name = "lkit-fixture-release"
 path = "src/bin/lkit-fixture-release.rs"
 

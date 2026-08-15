@@ -75,30 +75,31 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 
 ## 服务管理器集成
 
-`lkit` 通过 [`ServiceManager` trait](manager.md) 操作 init 系统。当前唯一实现后端
-是 systemd,本文所述可用性判定、unit 路径与内容均针对该后端;其他后端接入时
-只改变定义渲染与生命周期操作的实现,不改变工作流语义。
+`lkit` 通过 [`ServiceManager` trait](manager.md) 操作 init 系统。已实现后端:
+`systemd`(默认)、`openrc`、`sysvinit`(简单实现)。后端只改变定义渲染与
+生命周期操作的实现,不改变工作流语义。生产运行时按
+[探测顺序](manager.md#后端探测顺序)选择可用后端;探测不到任何后端时,
+所有需要运行态管理的命令明确失败(退出码 `2`,参数使用错误),不留下任何
+安装或事务文件。
 
 ### 可用性判断
 
-只有同时满足以下条件才视为 systemd 可用：
+- systemd 同时满足:`/run/systemd/system` 存在、PID 1 确认为 systemd、
+  `systemctl` 存在且可执行、`systemctl show --property=Version` 能连接
+  systemd manager;
+- OpenRC:`/etc/init.d` 存在、`rc-service`/`rc-update` 可执行且可应答
+  (`rc-update --version`),且 PID 1 不是 systemd;
+- sysvinit:`/etc/init.d` 存在、`update-rc.d` 可执行,且 PID 1 不是 systemd。
 
-1. `/run/systemd/system` 存在；
-2. PID 1 确认为 systemd；
-3. `systemctl` 存在且可执行；
-4. `systemctl show --property=Version` 能连接 systemd manager。
+处理规则:
 
-处理规则：
+- 全部后端不可用时,`lkit` 不支持在该主机上部署,所有需要运行态管理的命令明确
+  失败(退出码 `2`,参数使用错误),不留下任何安装或事务文件;
+- 看似使用某 init 系统,但对应工具缺失、无法连接或权限异常:环境损坏,安装失败;
+- systemd 为 degraded 不直接阻断,只要 manager 可通信且 Landscape unit 可启动。
 
-- systemd 不可用（`/run/systemd/system` 缺失、PID 1 不是 systemd、`systemctl` 缺失或
-  无法连接 manager）时，`lkit` 不支持在该主机上部署，所有需要运行态管理的命令明确
-  失败（退出码 `2`，参数使用错误），不留下任何安装或事务文件；
-- 看似使用 systemd，但 `systemctl` 缺失、无法连接或权限异常：环境损坏，安装失败；
-- systemd 为 degraded 不直接阻断，只要 manager 可通信且 Landscape unit 可启动。
-
-`lkit` 明确依赖发行版自启服务（当前唯一实现为 systemd），不再提供
-`none`（不托管运行态）部署模式。未来接入其他 init 系统时，由 `ServiceManager`
-trait 定义统一的注册、启停与状态语义，工作流行为不变。
+`lkit` 明确依赖发行版自启服务,不再提供 `none`(不托管运行态)部署模式。
+各后端由 `ServiceManager` trait 定义统一的注册、启停与状态语义,工作流行为不变。
 
 ### 命令会话隔离
 
@@ -110,17 +111,20 @@ worker cgroup 传播退出。unit 不取得前端 controlling terminal；需要�
 
 ### unit 路径与内容
 
-unit 原件：
+unit 原件(systemd 后端):
 
 ```text
 <install-root>/service/landscape-router.service
 ```
 
-系统注册链接：
+系统注册链接(systemd 后端):
 
 ```text
 /etc/systemd/system/landscape-router.service
 ```
+
+OpenRC/sysvinit 后端使用同名定义原件,注册为 `/etc/init.d/landscape-router.service`
+软链接,内容为 init 脚本(见 [manager.md](manager.md))。
 
 系统路径必须是指向受管原件的软链接。已存在普通文件、其他目标软链接或无法证明归属时，视为所有权冲突并拒绝覆盖。
 
@@ -154,14 +158,14 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 ## 不支持的平台
 
-`lkit` 要求主机由 systemd 管理（见[可用性判断](#可用性判断)）。无 systemd 的环境
-（OpenRC、runit、sysvinit、容器运行时等）当前**不支持**：
+`lkit` 要求主机由受支持的 init 系统管理(见[可用性判断](#可用性判断))。
+探测不到任何后端的环境(如容器运行时、无 init 的 chroot)当前**不支持**:
 
-- 探测不到可用服务管理器时，安装、切换、更新、修复、恢复、卸载等命令明确失败并返回
-  退出码 `2`（参数使用错误），不创建事务、不写文件；
-- 已安装环境（状态记录 `service.manager` 为 `systemd`）中 systemd 暂时不可用时，
-  需要运行态管理的命令同样明确失败，不自动降级为前台进程管理；
-- 未来接入其他 init 系统时，由 `ServiceManager` trait 定义统一的注册、启停与状态语义，
+- 探测不到可用服务管理器时,安装、切换、更新、修复、恢复、卸载等命令明确失败并返回
+  退出码 `2`(参数使用错误),不创建事务、不写文件;
+- 已安装环境(状态记录 `service.manager` 为受支持后端)中对应 init 系统暂时不可用时,
+  需要运行态管理的命令同样明确失败,不自动降级为前台进程管理;
+- 未来接入其他 init 系统时,由 `ServiceManager` trait 定义统一的注册、启停与状态语义,
   工作流行为不变。
 
 ## `/etc/resolv.conf` 主机状态备份

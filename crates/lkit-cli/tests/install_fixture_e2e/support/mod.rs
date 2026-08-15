@@ -7,7 +7,7 @@ mod ports;
 mod pty;
 mod repo;
 mod transactions;
-mod world;
+pub(crate) mod world;
 
 pub(crate) use self::harness::InstallHarness;
 pub(crate) use self::pty::{Pty, attach_pty};
@@ -15,7 +15,7 @@ pub(crate) use self::repo::{RepositoryServer, repository_files, repository_files
 pub(crate) use self::transactions::{
     read_only_transaction, transaction_count, transaction_of_operation,
 };
-use self::world::TestWorld;
+pub(crate) use self::world::TestWorld;
 
 pub(crate) const VERSION: &str = "1.2.3";
 pub(crate) const LKIT: &str = env!("CARGO_BIN_EXE_lkit");
@@ -34,6 +34,10 @@ pub(crate) fn systemctl(world: &TestWorld, args: &[&str]) -> Output {
         .unwrap()
 }
 
+pub(crate) fn write_json(path: &Path, value: &serde_json::Value) {
+    std::fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
+}
+
 pub(crate) fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -42,10 +46,6 @@ pub(crate) fn assert_success(output: &Output) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-fn write_json(path: &Path, value: &serde_json::Value) {
-    std::fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
 
 pub(crate) fn assert_host_services_masked(harness: &InstallHarness, units: &[&str]) {

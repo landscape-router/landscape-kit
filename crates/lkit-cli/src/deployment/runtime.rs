@@ -7,11 +7,31 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::health::{self, HealthOptions, HttpsDocsProbe, PortCheck};
-use super::manager::ServiceManager;
+use super::manager::{Availability, ServiceManager, ServiceManagerKind};
+use super::openrc::Openrc;
 use super::plan::InstallError;
 #[cfg(feature = "test-support")]
 use super::process::Protocol;
 use super::systemd::Systemd;
+use super::sysvinit::Sysvinit;
+
+/// 按探测顺序选择当前主机可用的服务管理器后端。探测全部失败时退回 systemd,
+/// 由工作流的 `require_manager` 对不可用环境报 `UnsupportedPlatform`。
+pub(crate) fn host_manager() -> Box<dyn ServiceManager + Send + Sync> {
+    let systemd = Systemd::host();
+    if matches!(systemd.probe(), Availability::Available { .. }) {
+        return Box::new(systemd);
+    }
+    let openrc = Openrc::host();
+    if matches!(openrc.probe(), Availability::Available { .. }) {
+        return Box::new(openrc);
+    }
+    let sysvinit = Sysvinit::host();
+    if matches!(sysvinit.probe(), Availability::Available { .. }) {
+        return Box::new(sysvinit);
+    }
+    Box::new(systemd)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PreflightPolicy {
@@ -51,7 +71,7 @@ impl InstallRuntime {
             selinux_config_path: PathBuf::from("/etc/selinux/config"),
             network_confirm_timeout: Duration::from_secs(600),
             test_runtime_path: None,
-            service_manager: Box::new(Systemd::host()),
+            service_manager: host_manager(),
             export_base_url: "https://127.0.0.1:6443".into(),
             health_base_url: "https://127.0.0.1:6443".into(),
             health_ports: health::default_port_checks(),
@@ -82,7 +102,7 @@ impl InstallRuntime {
     }
 
     #[cfg(feature = "test-support")]
-    pub(crate) fn test_uses_systemd_worker(path: &Path) -> Result<bool, InstallError> {
+    pub(crate) fn test_uses_daemon(path: &Path) -> Result<bool, InstallError> {
         let content = std::fs::read(path).map_err(InstallError::Io)?;
         let config: TestRuntimeConfig = serde_json::from_slice(&content).map_err(|error| {
             InstallError::ParameterUsage(format!(
@@ -90,10 +110,7 @@ impl InstallRuntime {
                 path.display()
             ))
         })?;
-        Ok(matches!(
-            config.execution,
-            TestExecutionPolicy::SystemdWorker
-        ))
+        Ok(matches!(config.execution, TestExecutionPolicy::Daemon))
     }
 }
 
@@ -118,7 +135,14 @@ struct TestRuntimeConfig {
     selinux_config_path: PathBuf,
     #[serde(default = "default_network_confirm_timeout_ms")]
     network_confirm_timeout_ms: u64,
-    systemd: TestSystemdConfig,
+    #[serde(default)]
+    manager_kind: TestManagerKind,
+    #[serde(default)]
+    systemd: Option<TestSystemdConfig>,
+    #[serde(default)]
+    openrc: Option<TestOpenrcConfig>,
+    #[serde(default)]
+    sysvinit: Option<TestSysvinitConfig>,
     health: TestHealthConfig,
     export_base_url: String,
 }
@@ -138,6 +162,103 @@ impl TestRuntimeConfig {
                 "test runtime export_base_url must not be empty".into(),
             ));
         }
+        let service_manager: Box<dyn ServiceManager + Send + Sync> = match self.manager_kind {
+            TestManagerKind::Systemd => Box::new(Systemd {
+                systemctl: self
+                    .systemd
+                    .as_ref()
+                    .ok_or_else(|| {
+                        InstallError::ParameterUsage(
+                            "test runtime manager_kind systemd requires a systemd block".into(),
+                        )
+                    })?
+                    .systemctl
+                    .clone(),
+                system_unit_dir: self
+                    .systemd
+                    .as_ref()
+                    .expect("validated above")
+                    .system_unit_dir
+                    .clone(),
+                run_systemd_dir: self
+                    .systemd
+                    .as_ref()
+                    .expect("validated above")
+                    .run_systemd_dir
+                    .clone(),
+                pid1_is_systemd: self
+                    .systemd
+                    .as_ref()
+                    .expect("validated above")
+                    .pid1_is_systemd,
+                resolv_conf: self
+                    .systemd
+                    .as_ref()
+                    .expect("validated above")
+                    .resolv_conf
+                    .clone(),
+            }),
+            TestManagerKind::Openrc => Box::new(Openrc {
+                rc_service: self
+                    .openrc
+                    .as_ref()
+                    .ok_or_else(|| {
+                        InstallError::ParameterUsage(
+                            "test runtime manager_kind openrc requires an openrc block".into(),
+                        )
+                    })?
+                    .rc_service
+                    .clone(),
+                rc_update: self
+                    .openrc
+                    .as_ref()
+                    .expect("validated above")
+                    .rc_update
+                    .clone(),
+                init_d_dir: self
+                    .openrc
+                    .as_ref()
+                    .expect("validated above")
+                    .init_d_dir
+                    .clone(),
+                resolv_conf: self
+                    .openrc
+                    .as_ref()
+                    .expect("validated above")
+                    .resolv_conf
+                    .clone(),
+            }),
+            TestManagerKind::Sysvinit => Box::new(Sysvinit {
+                update_rc_d: self
+                    .sysvinit
+                    .as_ref()
+                    .ok_or_else(|| {
+                        InstallError::ParameterUsage(
+                            "test runtime manager_kind sysvinit requires a sysvinit block".into(),
+                        )
+                    })?
+                    .update_rc_d
+                    .clone(),
+                init_d_dir: self
+                    .sysvinit
+                    .as_ref()
+                    .expect("validated above")
+                    .init_d_dir
+                    .clone(),
+                rc_d_glob: self
+                    .sysvinit
+                    .as_ref()
+                    .expect("validated above")
+                    .rc_d_glob
+                    .clone(),
+                resolv_conf: self
+                    .sysvinit
+                    .as_ref()
+                    .expect("validated above")
+                    .resolv_conf
+                    .clone(),
+            }),
+        };
         Ok(InstallRuntime {
             allow_non_root: self.allow_non_root,
             preflight: self.preflight.into(),
@@ -149,13 +270,7 @@ impl TestRuntimeConfig {
             selinux_config_path: self.selinux_config_path,
             network_confirm_timeout: Duration::from_millis(self.network_confirm_timeout_ms),
             test_runtime_path: Some(source_path.to_path_buf()),
-            service_manager: Box::new(Systemd {
-                systemctl: self.systemd.systemctl,
-                system_unit_dir: self.systemd.system_unit_dir,
-                run_systemd_dir: self.systemd.run_systemd_dir,
-                pid1_is_systemd: self.systemd.pid1_is_systemd,
-                resolv_conf: self.systemd.resolv_conf,
-            }),
+            service_manager,
             export_base_url: self.export_base_url,
             health_base_url: self.health.base_url,
             health_ports: vec![
@@ -232,7 +347,17 @@ impl From<TestPreflightPolicy> for PreflightPolicy {
 enum TestExecutionPolicy {
     #[default]
     Inline,
-    SystemdWorker,
+    Daemon,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TestManagerKind {
+    #[default]
+    Systemd,
+    Openrc,
+    Sysvinit,
 }
 
 #[cfg(feature = "test-support")]
@@ -242,6 +367,24 @@ struct TestSystemdConfig {
     system_unit_dir: PathBuf,
     run_systemd_dir: PathBuf,
     pid1_is_systemd: bool,
+    resolv_conf: PathBuf,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Deserialize)]
+struct TestOpenrcConfig {
+    rc_service: PathBuf,
+    rc_update: PathBuf,
+    init_d_dir: PathBuf,
+    resolv_conf: PathBuf,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Deserialize)]
+struct TestSysvinitConfig {
+    update_rc_d: PathBuf,
+    init_d_dir: PathBuf,
+    rc_d_glob: PathBuf,
     resolv_conf: PathBuf,
 }
 

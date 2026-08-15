@@ -1,7 +1,10 @@
 //! lkit 常驻服务。
 //!
 //! 常驻服务承担两件事:
-//! 1. pidfile 与信号处理(Phase B 骨架);
+//! 1. **委托命令执行**:生产命令由 CLI 写入
+//!    [`OPERATIONS_DIR`](OPERATIONS_DIR) 的
+//!    root-only 请求文件,daemon 周期扫描并执行,CLI 轮询结果。daemon 由 init
+//!    系统启动,天然脱离用户会话,SSH 断开不会中止进行中的事务;
 //! 2. **周期中断恢复**:CLI 进程因 SSH 断开、崩溃等原因消失后,遗留的未完成
 //!    事务由 daemon 自动接管并执行与 CLI 相同的恢复语义
 //!    ([`crate::deployment::transaction::recover_interrupted`])。
@@ -25,6 +28,7 @@ use crate::deployment::plan::InstallError;
 use crate::deployment::root::InstallRoot;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, transaction};
+use crate::interaction::presentation::OPERATIONS_DIR;
 
 pub(crate) const PIDFILE_NAME: &str = "lkit.pid";
 
@@ -97,6 +101,7 @@ async fn run_inner(config_dir: &Path, runtime: InstallRuntime) -> Result<(), Ins
         libc::signal(libc::SIGINT, handler as libc::sighandler_t);
     }
     loop {
+        execute_pending_requests();
         recovery_cycle(&runtime, &install_root).await;
         // 分片睡眠,保证 SIGTERM 及时生效。
         let slices = DAEMON_CYCLE_INTERVAL.as_millis().div_ceil(200).max(1) as u64;
@@ -114,6 +119,34 @@ async fn run_inner(config_dir: &Path, runtime: InstallRuntime) -> Result<(), Ins
     }
     let _ = std::fs::remove_file(&pidfile);
     Ok(())
+}
+
+/// 扫描并执行委托请求。请求文件由 CLI 写入
+/// `OPERATIONS_DIR/<id>.request.json`;daemon 逐次认领执行,期间阻塞周期循环,
+/// 完成后立即检查下一个请求(恢复周期让位于执行)。
+fn execute_pending_requests() {
+    let operations = match std::fs::read_dir(OPERATIONS_DIR) {
+        Ok(operations) => operations,
+        Err(_) => return,
+    };
+    let mut requests: Vec<std::path::PathBuf> = operations
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".request.json"))
+        })
+        .collect();
+    requests.sort();
+    for request in requests {
+        if request.parent() != Some(std::path::Path::new(OPERATIONS_DIR)) {
+            continue;
+        }
+        let exit_code = crate::daemon_worker::execute_request(&request);
+        if exit_code != 0 {
+            eprintln!("lkit daemon: delegated operation exited with {exit_code}");
+        }
+    }
 }
 
 /// 单个恢复周期:以非阻塞方式获取安装锁,存在未完成事务时执行
@@ -190,7 +223,7 @@ fn write_pidfile(pidfile: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-fn process_alive(pid: u32) -> bool {
+pub(crate) fn process_alive(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }

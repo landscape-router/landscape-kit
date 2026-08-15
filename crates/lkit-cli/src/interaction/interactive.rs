@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::plan::InstallError;
 
 const TTY_PATH: &str = "/dev/tty";
-pub(crate) const SYSTEMD_WORKER_TTY_ENV: &str = "LKIT_INTERNAL_SYSTEMD_WORKER_TTY";
+pub(crate) const DAEMON_WORKER_TTY_ENV: &str = "LKIT_INTERNAL_DAEMON_TTY";
 static NON_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
@@ -43,7 +43,7 @@ impl Tty {
                 "interactive terminal access is disabled by --non-interactive".into(),
             ));
         }
-        let path = std::env::var_os(SYSTEMD_WORKER_TTY_ENV)
+        let path = std::env::var_os(DAEMON_WORKER_TTY_ENV)
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(TTY_PATH));
@@ -226,7 +226,7 @@ impl Tty {
     fn write_prompt(&mut self, prompt: &str) -> Result<(), InstallError> {
         // Delegated commands share stderr with preflight messages so the
         // frontend observes warnings and prompts in their original order.
-        let result = if std::env::var_os(SYSTEMD_WORKER_TTY_ENV).is_some() {
+        let result = if std::env::var_os(DAEMON_WORKER_TTY_ENV).is_some() {
             let mut stderr = std::io::stderr().lock();
             stderr
                 .write_all(prompt.as_bytes())

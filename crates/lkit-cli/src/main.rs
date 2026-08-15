@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod console;
 mod daemon;
+mod daemon_worker;
 mod deployment;
 mod i18n;
 mod interaction;
@@ -14,7 +15,6 @@ mod release;
 mod report;
 mod service;
 mod software;
-mod systemd_worker;
 mod workflows;
 
 use std::process::ExitCode;
@@ -28,16 +28,6 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let mut raw_args = std::env::args_os();
-    let _program = raw_args.next();
-    if raw_args.next().as_deref() == Some(std::ffi::OsStr::new("__systemd-worker")) {
-        let Some(request) = raw_args.next() else {
-            eprintln!("lkit worker: missing request path");
-            return ExitCode::FAILURE;
-        };
-        return systemd_worker::run_worker(std::path::Path::new(&request));
-    }
-
     dotenvy::dotenv().ok();
 
     i18n::preconfigure(std::env::args_os());
@@ -63,7 +53,7 @@ async fn main() -> ExitCode {
     ));
     interaction::interactive::configure(cli.non_interactive);
     let Some(command) = cli.command else {
-        if cli.non_interactive || cli.internal_systemd_worker {
+        if cli.non_interactive || cli.internal_daemon_worker {
             eprintln!(
                 "lkit: {}",
                 crate::tr!(keys::MAIN_SUBCOMMAND_REQUIRED_NON_INTERACTIVE)
@@ -96,7 +86,7 @@ async fn main() -> ExitCode {
             }
         };
     };
-    run_command(command, None, cli.internal_systemd_worker).await
+    run_command(command, None, cli.internal_daemon_worker).await
 }
 
 async fn run_command(
@@ -105,7 +95,7 @@ async fn run_command(
     internal_worker: bool,
 ) -> ExitCode {
     let from_console = delegated_args.is_some();
-    let delegated = !internal_worker && systemd_worker::should_delegate(&command);
+    let delegated = !internal_worker && daemon_worker::should_delegate(&command);
     let interrupt = match interaction::presentation::InterruptGuard::install(delegated) {
         Ok(interrupt) => interrupt,
         Err(error) => {
@@ -120,7 +110,7 @@ async fn run_command(
     if delegated {
         let args = match delegated_args {
             Some(args) => args,
-            None => match systemd_worker::string_args() {
+            None => match daemon_worker::string_args() {
                 Ok(args) => args,
                 Err(error) => {
                     eprintln!("lkit: {error}");
@@ -138,21 +128,30 @@ async fn run_command(
             Commands::Reinit(reinit) => reinit.network_plan.take(),
             _ => None,
         };
-        return match systemd_worker::delegate(
+        let install_root = match daemon_worker::delegate_install_root(&command) {
+            Ok(Some(root)) => root,
+            Ok(None) => {
+                eprintln!(
+                    "install: {}",
+                    crate::tr!(
+                        keys::MAIN_UNABLE_DELEGATE_SYSTEMD,
+                        error = "cannot resolve the install root"
+                    )
+                );
+                return ExitCode::FAILURE;
+            }
+            Err(error) => return delegate_error_exit(&error),
+        };
+        return match daemon_worker::delegate(
             &interrupt,
             args,
             interactive_password,
             network_plan,
             from_console,
+            &install_root,
         ) {
             Ok(code) => code,
-            Err(error) => {
-                eprintln!(
-                    "install: {}",
-                    crate::tr!(keys::MAIN_UNABLE_DELEGATE_SYSTEMD, error = error)
-                );
-                ExitCode::FAILURE
-            }
+            Err(error) => delegate_error_exit(&error),
         };
     }
 
@@ -173,5 +172,19 @@ async fn run_command(
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
         Commands::SelfService(args) => commands::self_service::run(&args),
         Commands::Daemon(args) => daemon::run(&args).await,
+    }
+}
+
+fn delegate_error_exit(error: &daemon_worker::DelegateError) -> ExitCode {
+    use daemon_worker::DelegateError;
+    match error {
+        DelegateError::Usage(message) => {
+            eprintln!("lkit: {message}");
+            ExitCode::from(2)
+        }
+        DelegateError::Infrastructure(message) => {
+            eprintln!("lkit: {message}");
+            ExitCode::FAILURE
+        }
     }
 }

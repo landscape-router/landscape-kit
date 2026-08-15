@@ -6,14 +6,17 @@ use serde::{Deserialize, Serialize};
 
 extern crate self as lkit_test_fixture;
 
+#[path = "bin/lkit-test-init.rs"]
+#[allow(dead_code)]
+pub mod init_program;
 #[path = "bin/landscape-webserver.rs"]
 pub mod landscape_program;
 #[path = "bin/lkit-test-systemctl.rs"]
 pub mod systemctl_program;
-
 pub const FIXTURE_CONFIG_ENV: &str = "LKIT_LANDSCAPE_FIXTURE_CONFIG";
 pub const FIXTURE_CONFIG_FILE: &str = "lkit-fixture.json";
 pub const SYSTEMCTL_CONFIG_ENV: &str = "LKIT_TEST_SYSTEMCTL_CONFIG";
+pub const INIT_CONFIG_ENV: &str = "LKIT_TEST_INIT_CONFIG";
 pub const FIXTURE_BUILD_VERSION: Option<&str> = option_env!("LKIT_FIXTURE_BUILD_VERSION");
 
 pub mod contract {
@@ -145,6 +148,37 @@ impl SystemctlFixtureConfig {
 
 fn default_systemd_version() -> String {
     "252.fixture".into()
+}
+
+/// 多角色 init 系统替身(`lkit-test-init`)的配置。`state_dir` 保存 enabled
+/// 标记与运行中 pid;`init_d_dir`/`rc_d_dir` 是替身操作的系统目录镜像。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InitFixtureConfig {
+    pub schema_version: u64,
+    pub state_dir: PathBuf,
+    pub init_d_dir: PathBuf,
+    pub rc_d_dir: PathBuf,
+    #[serde(default)]
+    pub call_log: Option<PathBuf>,
+}
+
+impl InitFixtureConfig {
+    pub fn read(path: &Path) -> Result<Self> {
+        let content = std::fs::read(path)
+            .with_context(|| format!("read init fixture config {}", path.display()))?;
+        let config: Self = serde_json::from_slice(&content)
+            .with_context(|| format!("parse init fixture config {}", path.display()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.schema_version == 1,
+            "unsupported fixture schema version"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

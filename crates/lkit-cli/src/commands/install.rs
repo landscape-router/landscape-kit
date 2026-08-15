@@ -67,7 +67,7 @@ impl std::fmt::Debug for Install {
 pub async fn run(args: &Install) -> ExitCode {
     let network_plan = match (&args.network_plan, &args.network_plan_file) {
         (Some(plan), None) => Some(plan.clone()),
-        (None, Some(path)) => match crate::systemd_worker::read_network_plan(path) {
+        (None, Some(path)) => match crate::daemon_worker::read_network_plan(path) {
             Ok(plan) => Some(plan),
             Err(error) => {
                 eprintln!("install: {error}");

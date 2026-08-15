@@ -1,4 +1,6 @@
-use std::os::unix::fs::MetadataExt;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -7,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::interaction::presentation::OPERATIONS_DIR;
 use crate::network::config::NetworkPlan;
 
+pub(super) const CANCEL_FILE_SUFFIX: &str = ".cancel";
+
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct WorkerRequest {
     pub(super) schema_version: u64,
@@ -14,8 +18,7 @@ pub(super) struct WorkerRequest {
     pub(super) environment: Vec<(String, String)>,
     pub(super) working_directory: PathBuf,
     pub(super) result_path: PathBuf,
-    pub(super) unit_path: PathBuf,
-    pub(super) systemctl: PathBuf,
+    pub(super) cancel_path: PathBuf,
     pub(super) terminal: Option<PathBuf>,
     pub(super) presentation_path: PathBuf,
     #[serde(default)]
@@ -40,7 +43,7 @@ pub(crate) fn string_args() -> Result<Vec<String>, String> {
         .skip(1)
         .map(|value| {
             value.into_string().map_err(|_| {
-                "command arguments must be valid UTF-8 for systemd delegation".to_string()
+                "command arguments must be valid UTF-8 for daemon delegation".to_string()
             })
         })
         .collect()
@@ -50,7 +53,7 @@ pub(super) fn string_environment() -> Result<Vec<(String, String)>, String> {
     std::env::vars_os()
         .map(|(key, value)| {
             let key = key.into_string().map_err(|_| {
-                "environment names must be valid UTF-8 for systemd delegation".to_string()
+                "environment names must be valid UTF-8 for daemon delegation".to_string()
             })?;
             let value = value
                 .into_string()
@@ -134,4 +137,75 @@ pub(super) fn validate_request_path(path: &Path) -> Result<(), String> {
         return Err("worker request must be root-owned and inaccessible to group/other".into());
     }
     Ok(())
+}
+
+pub(super) fn terminal_path() -> Option<PathBuf> {
+    let path = std::fs::read_link("/proc/self/fd/0").ok()?;
+    (path.starts_with("/dev/") && !path.as_os_str().is_empty()).then_some(path)
+}
+
+pub(super) fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let temporary = path.with_extension("tmp");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|error| format!("create {}: {error}", temporary.display()))?;
+    serde_json::to_writer_pretty(&mut file, value)
+        .map_err(|error| format!("serialize {}: {error}", path.display()))?;
+    file.write_all(b"\n")
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("write {}: {error}", path.display()))?;
+    std::fs::rename(&temporary, path).map_err(|error| format!("commit {}: {error}", path.display()))
+}
+
+pub(super) fn create_private_file(path: &Path) -> Result<(), String> {
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map(|_| ())
+        .map_err(|error| format!("create {}: {error}", path.display()))
+}
+
+pub(super) fn create_private_secret_file(path: &Path, content: &[u8]) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| format!("create internal credential file: {error}"))?;
+    if let Err(error) = file.write_all(content).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("write internal credential file: {error}"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::protocol::RemoveFile;
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn internal_credential_file_is_private_and_removed_by_guard() {
+        let path = std::env::temp_dir().join(format!(
+            "lkit-worker-credential-{}-{}.credential",
+            std::process::id(),
+            Uuid::now_v7()
+        ));
+        create_private_secret_file(&path, b"Secret123").unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(metadata.mode() & 0o077, 0);
+        assert_eq!(std::fs::read(&path).unwrap(), b"Secret123");
+        {
+            let _credential = RemoveFile::new(&path);
+        }
+        assert!(!path.exists());
+    }
 }

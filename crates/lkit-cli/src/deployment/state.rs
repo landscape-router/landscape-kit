@@ -170,7 +170,7 @@ pub(crate) fn validate_state(state: &InstallState) -> Result<(), InstallError> {
         }
     }
     // lkit 明确依赖发行版自启服务;状态必须记录受管服务定义。
-    if state.service.manager != StateServiceManager::Systemd {
+    if !StateServiceManager::supported().contains(&state.service.manager) {
         return Err(corrupted(format!(
             "unsupported service manager {:?}",
             state.service.manager

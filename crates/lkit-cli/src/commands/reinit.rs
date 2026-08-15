@@ -189,7 +189,7 @@ pub async fn run(args: &Reinit) -> ExitCode {
     };
     let network_plan = match (&args.network_plan, &args.network_plan_file) {
         (Some(plan), None) => plan.clone(),
-        (None, Some(path)) => match crate::systemd_worker::read_network_plan(path) {
+        (None, Some(path)) => match crate::daemon_worker::read_network_plan(path) {
             Ok(plan) => plan,
             Err(error) => {
                 eprintln!("reinit: {error}");

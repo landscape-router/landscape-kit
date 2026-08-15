@@ -1,13 +1,14 @@
 # 服务管理器抽象
 
-`lkit` 通过 `ServiceManager` trait 抽象主流发行版 init 系统的服务操作。当前唯一
-实现后端是 systemd;OpenRC、runit、sysvinit 等后端按需接入。
+`lkit` 通过 `ServiceManager` trait 抽象主流发行版 init 系统的服务操作。已实现
+后端:`systemd`、`openrc`(Alpine/Gentoo)、`sysvinit`(Debian/RedHat 的
+update-rc.d 环境)。runit 等后端按需接入。
 
 ## 设计原则
 
 - 契约只暴露 lkit 对服务的操作需求,不绑定任何具体 init 系统的概念;
-- systemd 特有的概念(unit 名、MainPID 查询、daemon-reload、mask、注册软链接细节)
-  全部留在后端内部,不进 trait;
+- init 系统特有的概念(unit 名、MainPID 查询、daemon-reload、mask、注册软链接细节、
+  rc-service/update-rc.d 调用)全部留在后端内部,不进 trait;
 - 接入新后端时以真实操作驱动契约演进,不做投机抽象;
 - 后端必须满足 `Send + Sync`,可放入 `InstallRuntime.service_manager` 的
   `Box<dyn ServiceManager>`。
@@ -16,7 +17,7 @@
 
 ```rust
 trait ServiceManager: Send + Sync {
-    fn kind(&self) -> ServiceManagerKind;                 // systemd(未来 openrc/runit/...)
+    fn kind(&self) -> ServiceManagerKind;                 // systemd / openrc / sysvinit
     fn probe(&self) -> Availability;                       // Available / NotDetected / Unavailable
 
     fn service_name(&self, service: ManagedService) -> &str;
@@ -46,10 +47,10 @@ trait ServiceManager: Send + Sync {
 共享类型:
 
 - `ServiceManagerKind`:序列化在安装状态(`state/install-state.json` 的
-  `service.manager`)与事务文件(`systemd_before`)中,当前只有 `systemd`。
-  新增后端时增加变体并处理状态 schema 演进;
+  `service.manager`)与事务文件(`systemd_before`)中。当前变体
+  `systemd` / `openrc` / `sysvinit`,新增后端时增加变体并处理状态 schema 演进;
 - `ManagedService`:lkit 需要托管的服务身份,当前有 `LandscapeRouter` 与
-  `LkitDaemon`(lkit 常驻服务,Phase B 起使用);
+  `LkitDaemon`(lkit 常驻服务);
 - `Availability`:`Available { version }` / `NotDetected`(主机没有运行该 init)/
   `Unavailable(reason)`(看似使用该 init 但环境损坏);
 - `SystemRegistration`:系统注册路径的实时状态(`Missing` / `Symlink { target }` /
@@ -65,6 +66,18 @@ capture_before(manager: &dyn ServiceManager, service: ManagedService) -> Result<
 
 通用实现:查询注册 + enabled + active。注册所有权冲突(`Conflict`)时阻断,
 不能自动接管。
+
+## 后端探测顺序
+
+`InstallRuntime::production` 按 `host_manager()` 顺序探测:
+
+1. `systemd`:PID 1 是 systemd 且 systemctl 可连接;
+2. `openrc`:`/etc/init.d` 存在、`rc-service`/`rc-update` 可执行且可应答;
+3. `sysvinit`:`/etc/init.d` 存在、`update-rc.d` 可执行。
+
+全部失败时退回 systemd 实例,由工作流的 `require_manager` 对不可用环境报
+`UnsupportedPlatform`(退出码 2)。安装状态只接受受支持集合内的后端
+(`ServiceManagerKind::supported()`),其他值视为损坏。
 
 ## systemd 后端
 
@@ -91,10 +104,42 @@ capture_before(manager: &dyn ServiceManager, service: ManagedService) -> Result<
 `Restart=always`、`WantedBy=multi-user.target`(Landscape 额外要求 MEMLOCK),
 且不含凭据内容。
 
+## OpenRC 后端(简单实现)
+
+`service/openrc.rs` 的 `Openrc` 结构体。服务名与 systemd 一致
+(`landscape-router.service` / `lkit.service`,避免与 `service/lkit` 二进制同名冲突):
+
+- 注册:`/etc/init.d/<name>` 是指向 `<root>/service/<name>` 原件的软链接
+  (与原 unit 文件相同的所有权冲突语义);
+- 生命周期:`rc-service <name> {start|stop|restart|status}`;`status` 退出码
+  3 表示停止,其他非零视为错误;
+- 启用:`rc-update add|del <name> default`,`rc-update show` 解析启用表;
+- 定义:`#!/sbin/openrc-run` 脚本,`command=`/`command_args=` 指向受管可执行文件,
+  校验 command 与 `command_user="root"` 且不含凭据;
+- `main_pid`:扫描 `/proc/*/cmdline`(OpenRC 无 MainPID 概念),轮询等待
+  服务进程出现;
+- `refresh` 为 no-op。
+
+未覆盖的 OpenRC 特性(runlevels 之外、service 依赖)留给真实操作驱动。
+
+## sysvinit 后端(简单实现)
+
+`service/sysvinit.rs` 的 `Sysvinit` 结构体。服务名同样带 `.service` 后缀:
+
+- 注册:`/etc/init.d/<name>` 是指向原件的软链接;
+- 生命周期:直接以 `sh <script> {start|stop|restart}` 执行 LSB init 脚本
+  (定义原件是受管文本文件,不要求可执行位);
+- 启用:`update-rc.d enable|disable <name>`,`is_enabled` 扫描 `/etc/rc?.d`
+  各运行级目录的 `S*<name>` 链接;
+- 定义:`#!/bin/sh` LSB 脚本,内含 `start-stop-daemon` 调用;
+- `main_pid` 同 OpenRC 的 `/proc` 扫描。
+
 ## 后端接入清单
 
 1. 实现 `ServiceManager`(生命周期、定义渲染/校验、注册、`main_pid`);
-2. `ServiceManagerKind` 增加变体(serde lowercase),更新 `select_manager` 的
-   `Auto` 探测顺序与 `docs/service/runtime-and-health.md` 的可用性判定;
+2. `ServiceManagerKind` 增加变体(serde lowercase),加入
+   `ServiceManagerKind::supported()`,更新 `host_manager` 探测顺序与
+   `docs/service/runtime-and-health.md` 的可用性判定;
 3. 状态 schema 演进处理:旧 lkit 读新状态按未知枚举值报损坏并提示;
-4. 按需新增测试 fixture(镜像 `lkit-test-systemctl` 的配置/call_log/state 模式)。
+4. 按需新增测试 fixture(镜像 `lkit-test-init` 的多角色配置/call_log/state 模式,
+   或 `lkit-test-systemctl`)。

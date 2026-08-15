@@ -22,13 +22,22 @@ use crate::deployment::plan::InstallError;
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ServiceManagerKind {
     Systemd,
+    Openrc,
+    Sysvinit,
 }
 
 impl ServiceManagerKind {
     pub(crate) fn key(self) -> &'static str {
         match self {
             Self::Systemd => "systemd",
+            Self::Openrc => "openrc",
+            Self::Sysvinit => "sysvinit",
         }
+    }
+
+    /// 当前受支持的后端集合,用于状态校验与探测顺序。
+    pub(crate) fn supported() -> [Self; 3] {
+        [Self::Systemd, Self::Openrc, Self::Sysvinit]
     }
 }
 
@@ -55,7 +64,7 @@ impl ManagedService {
 pub(crate) enum Availability {
     /// 满足全部可用性条件。
     Available { version: String },
-    /// 主机没有运行该 init 系统(自动选择时应尝试下一个或选择 none)。
+    /// 主机没有运行该 init 系统。
     NotDetected,
     /// 看似使用该 init 系统但环境损坏,或工具缺失/不可连接。
     Unavailable(String),
@@ -221,4 +230,40 @@ pub(crate) fn capture_before(
         enabled: manager.is_enabled(service)?,
         active: manager.is_active(service)?,
     })
+}
+
+/// 扫描 `/proc/*/cmdline`,返回第一个命令行包含 `pattern` 的进程 pid。
+/// 供没有 MainPID 概念的 init 后端(OpenRC、sysvinit)解析主进程。
+pub(crate) fn pid_of_command(pattern: &str) -> Option<i64> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return None;
+    };
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i64>() else {
+            continue;
+        };
+        if pid <= 1 {
+            continue;
+        }
+        let Ok(content) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&content).replace('\0', " ");
+        if text.contains(pattern) {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// 轮询等待进程出现:服务启动是异步的,`spawn` 返回后子进程可能尚未完成
+/// exec,立即扫描 `/proc` 会错过。最多等待约 5 秒。
+pub(crate) fn wait_for_command_pid(pattern: &str) -> Option<i64> {
+    for _ in 0..50 {
+        if let Some(pid) = pid_of_command(pattern) {
+            return Some(pid);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    None
 }
