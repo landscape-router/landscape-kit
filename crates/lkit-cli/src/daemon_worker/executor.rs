@@ -6,12 +6,21 @@ use std::time::Duration;
 use crate::interaction::interactive::DAEMON_WORKER_TTY_ENV;
 use crate::interaction::presentation::PRESENTATION_EVENTS_ENV;
 
+use super::DAEMON_WORKER_FLAG;
 use super::protocol::{
     RemoveFile, WorkerRequest, WorkerResult, validate_credential_path, validate_network_plan_path,
     validate_request_path, write_private_json,
 };
 
 const CANCEL_GRACE_POLLS: u32 = 25;
+
+/// 委托请求原始参数前注入 worker 标记,使子命令内联执行而不再次委托。
+fn worker_args(request_args: &[String]) -> Vec<String> {
+    let mut args = Vec::with_capacity(request_args.len() + 1);
+    args.push(DAEMON_WORKER_FLAG.to_string());
+    args.extend(request_args.iter().cloned());
+    args
+}
 
 /// daemon 侧执行一次委托请求:读取并认领请求文件、以子进程执行命令、
 /// 响应 cancel 文件并写入结果。返回命令的业务退出码。
@@ -64,7 +73,7 @@ fn execute_request_inner(request_path: &Path) -> Result<i32, String> {
     }
     let mut command = Command::new(executable);
     command
-        .args(&request.args)
+        .args(worker_args(&request.args))
         .env_clear()
         .envs(request.environment)
         .current_dir(&request.working_directory)
@@ -126,5 +135,29 @@ fn wait_for_child(child: &mut std::process::Child, cancel_path: &Path) -> i32 {
             }
         }
         std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_args_injects_the_internal_worker_flag_before_the_subcommand() {
+        let request = ["uninstall", "--yes", "--install-dir", "/srv/landscape"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        let args = worker_args(&request);
+        assert_eq!(
+            args,
+            [
+                "--internal-daemon-worker",
+                "uninstall",
+                "--yes",
+                "--install-dir",
+                "/srv/landscape",
+            ]
+        );
     }
 }

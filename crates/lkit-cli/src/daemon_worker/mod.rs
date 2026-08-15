@@ -23,7 +23,10 @@ use self::protocol::{
     validate_network_plan_path, write_private_json,
 };
 
-pub(crate) const WORKER_COMMAND: &str = "__daemon-worker";
+/// 委托执行者标记:daemon executor 起子进程时注入的命令行参数。子命令以此为
+/// 依据内联执行,不再二次委托——否则 daemon 等待子进程、子进程又等待 daemon
+/// 认领自己写下的请求文件,形成死锁。
+pub(crate) const DAEMON_WORKER_FLAG: &str = "--internal-daemon-worker";
 
 /// 委托失败分类:Usage 属于使用错误(退出码 2),Infrastructure 属于环境故障。
 pub(crate) enum DelegateError {

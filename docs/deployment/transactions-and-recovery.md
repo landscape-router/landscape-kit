@@ -257,7 +257,10 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
 （schema_version 2，含原始参数、最终环境与工作目录、结果路径、cancel 路径、
 原始终端设备路径、展示事件路径与凭据路径）；目录固定为 `0700`。daemon 每个周期
-（2 秒）扫描并认领请求，以同一 lkit 可执行文件和原始参数在独立进程组中执行。
+（2 秒）扫描并认领请求，以同一 lkit 可执行文件在独立进程组中执行。执行器在
+原始参数前注入内部 worker 标记（`--internal-daemon-worker`），委托子命令因此
+内联执行、不再二次委托——否则 daemon 等待子进程、子进程又等待 daemon 认领
+自己写下的请求文件，形成死锁。
 
 请求文件可能短暂包含仓库环境凭据，因此不得复制到事务日志或安装根目录。stdout/stderr
 写入同目录日志，仍在连接的前端持续转发；结果使用 root-only JSON 原子提交到
