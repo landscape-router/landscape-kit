@@ -1,3 +1,5 @@
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -71,6 +73,30 @@ fn execute_request_inner(request_path: &Path) -> Result<i32, String> {
     unsafe {
         libc::signal(libc::SIGHUP, libc::SIG_IGN);
     }
+    // 子进程 stdout/stderr 写入请求声明的日志文件,仍在连接的前端持续转发,
+    // 前端消失后保留供诊断(与 result/presentation 文件相同的清理语义)。
+    let stdout_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(&request.stdout_path)
+        .map_err(|error| {
+            format!(
+                "open worker stdout log {}: {error}",
+                request.stdout_path.display()
+            )
+        })?;
+    let stderr_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(&request.stderr_path)
+        .map_err(|error| {
+            format!(
+                "open worker stderr log {}: {error}",
+                request.stderr_path.display()
+            )
+        })?;
     let mut command = Command::new(executable);
     command
         .args(worker_args(&request.args))
@@ -78,8 +104,8 @@ fn execute_request_inner(request_path: &Path) -> Result<i32, String> {
         .envs(request.environment)
         .current_dir(&request.working_directory)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(stdout_log)
+        .stderr(stderr_log);
     if let Some(terminal) = request.terminal {
         command.env(DAEMON_WORKER_TTY_ENV, terminal);
     } else {

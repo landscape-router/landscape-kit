@@ -18,6 +18,8 @@ pub(super) struct WorkerRequest {
     pub(super) environment: Vec<(String, String)>,
     pub(super) working_directory: PathBuf,
     pub(super) result_path: PathBuf,
+    pub(super) stdout_path: PathBuf,
+    pub(super) stderr_path: PathBuf,
     pub(super) cancel_path: PathBuf,
     pub(super) terminal: Option<PathBuf>,
     pub(super) presentation_path: PathBuf,

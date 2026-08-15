@@ -295,6 +295,12 @@ fi
   echo "systemd ownership conflict unexpectedly succeeded" >&2
   exit 1
 }
+if ! machine_shell \
+  "grep -Eq 'ownership conflict|not owned by the managed unit origin' /run/lkit/operations/*.stderr.log"; then
+  machine_shell "cat /run/lkit/operations/*.stderr.log" >&2 || true
+  echo "delegated uninstall did not fail on the ownership conflict" >&2
+  exit 1
+fi
 machine_shell "grep -q 'Description=foreign unit' /etc/systemd/system/landscape-router.service"
 machine_shell "systemctl is-active --quiet landscape-router.service"
 machine_shell "rm /etc/systemd/system/landscape-router.service"
@@ -347,6 +353,7 @@ done
 if [[ $uninstalled != true ]]; then
   cat "$test_root/frontend.log" >&2
   machine_shell "ls -la /run/lkit/operations" >&2 || true
+  machine_shell "cat /run/lkit/operations/*.stderr.log 2>/dev/null" >&2 || true
   machine_shell "systemctl --no-pager --full status landscape-router.service lkit.service" >&2 || true
   echo "delegated uninstall did not complete after the frontend was killed" >&2
   exit 1

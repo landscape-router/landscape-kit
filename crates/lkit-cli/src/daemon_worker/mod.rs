@@ -214,6 +214,8 @@ pub(crate) fn delegate(
         environment,
         working_directory,
         result_path: result_path.clone(),
+        stdout_path: stdout_path.clone(),
+        stderr_path: stderr_path.clone(),
         cancel_path: cancel_path.clone(),
         terminal,
         presentation_path: presentation_path.clone(),
