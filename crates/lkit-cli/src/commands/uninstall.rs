@@ -172,7 +172,9 @@ pub async fn run(args: &Uninstall) -> ExitCode {
 
 fn exit_code(error: &plan::InstallError) -> ExitCode {
     match error {
-        plan::InstallError::ParameterUsage(_) => ExitCode::from(2),
+        plan::InstallError::ParameterUsage(_) | plan::InstallError::UnsupportedPlatform(_) => {
+            ExitCode::from(2)
+        }
         _ => ExitCode::FAILURE,
     }
 }

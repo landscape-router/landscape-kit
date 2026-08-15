@@ -43,8 +43,10 @@ pub fn run(args: &SelfService) -> ExitCode {
         Err(error) => {
             eprintln!("self-service: {error}");
             match error {
-                // 参数错误与「请求 systemd 但不可用」均属于使用错误。
-                InstallError::ParameterUsage(_) | InstallError::Systemd(_) => ExitCode::from(2),
+                // 参数错误与「请求服务管理器但环境不可用」均属于使用错误。
+                InstallError::ParameterUsage(_)
+                | InstallError::Systemd(_)
+                | InstallError::UnsupportedPlatform(_) => ExitCode::from(2),
                 _ => ExitCode::FAILURE,
             }
         }

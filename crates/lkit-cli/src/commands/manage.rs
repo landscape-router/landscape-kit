@@ -122,11 +122,13 @@ pub(crate) async fn run_request(args: &InstallRequest) -> ExitCode {
     }
 }
 
-/// 按错误类型映射退出码:`ParameterUsage` 属于参数或参数组合错误,返回 `2`;
-/// 其余普通失败返回 `1`。
+/// 按错误类型映射退出码:`ParameterUsage` 与 `UnsupportedPlatform` 属于参数或
+/// 环境不匹配错误,返回 `2`;其余普通失败返回 `1`。
 pub(super) fn exit_code(error: &plan::InstallError) -> ExitCode {
     match error {
-        plan::InstallError::ParameterUsage(_) => ExitCode::from(2),
+        plan::InstallError::ParameterUsage(_) | plan::InstallError::UnsupportedPlatform(_) => {
+            ExitCode::from(2)
+        }
         _ => ExitCode::FAILURE,
     }
 }

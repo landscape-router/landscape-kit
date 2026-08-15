@@ -3,7 +3,6 @@
 pub(crate) mod backup;
 pub(crate) mod check;
 pub(crate) mod console;
-pub(crate) mod daemon_worker;
 pub(crate) mod dependency;
 pub(crate) mod discovery;
 pub(crate) mod dns;
@@ -36,7 +35,6 @@ pub(crate) mod update;
 pub(crate) use self::backup::*;
 pub(crate) use self::check::*;
 pub(crate) use self::console::*;
-pub(crate) use self::daemon_worker::*;
 pub(crate) use self::dependency::*;
 pub(crate) use self::discovery::*;
 pub(crate) use self::dns::*;
