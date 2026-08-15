@@ -149,6 +149,5 @@
 - 说明：解析优先级为 显式 CLI > `config.toml` > 官方 GitHub。`--repository` 支持精确小写值
   `github`；显式来源完全绕过配置（损坏配置下 reconcile/repair 仍成功，且原文件字节不变，
    预设的配置来源服务器收不到请求）。损坏配置只阻断需要仓库的命令（switch/repair/update
-   无显式来源时报错并提示修复或删除），普通 reconcile、check、restore、backup、
-   service-manager 和 network 子命令不受影响；删除文件后命令恢复。同版本显式来源诊断
+   无显式来源时报错并提示修复或删除），   普通 reconcile、check、restore、backup 和 network 子命令不受影响；删除文件后命令恢复。同版本显式来源诊断
    成功或失败都不修改配置。

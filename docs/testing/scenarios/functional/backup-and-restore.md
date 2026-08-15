@@ -209,7 +209,7 @@
 - 测试层：Rust 单元（presentation/screens）、Rust workflow
 - 状态：`已覆盖`
 - 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`、`renders_restore_result_with_its_own_title_not_install_wording`、`restore_in_progress_hint_is_not_installation_wording`（crates/lkit-cli/src/interaction/presentation/screens/restore.rs，断言 restore 页显示 `Restore complete`/`The operation is in progress` 且不含 `Installation` 文案）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（crates/lkit-cli/src/workflows/restore.rs）、`operation_screen` 按子命令选择操作页面组件（crates/lkit-cli/src/interaction/presentation/screens/mod.rs）
-- 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；每个委托操作（install/switch/update/repair/restore/service-manager）在 `screens/` 下有一个完全独立的页面文件（布局、进行中标题、完成/失败/取消结果页标题与状态框、底栏提示全部各自实现，不复用安装文案），命令行结束提示同样按操作输出（如 `restore: Restore complete`）；install 的字节进度条不受影响。
+- 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；每个委托操作（install/switch/update/repair/restore/reinit）在 `screens/` 下有一个完全独立的页面文件（布局、进行中标题、完成/失败/取消结果页标题与状态框、底栏提示全部各自实现，不复用安装文案），命令行结束提示同样按操作输出（如 `restore: Restore complete`）；install 的字节进度条不受影响。
 - 缺口：真实 worker 进程到全屏页的事件链路未单独 E2E 断言（Docker E2E 在无控制台终端下运行）。
 
 ## BKP-10

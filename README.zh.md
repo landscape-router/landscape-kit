@@ -1,6 +1,6 @@
 # Landscape Kit
 
-`lkit` 是用于管理 [Landscape](https://landscape.canonical.com/) 实例的交互终端控制台和命令行工具：支持首次安装、版本切换、修复、状态协调与服务管理器迁移。
+`lkit` 是用于管理 [Landscape](https://landscape.canonical.com/) 实例的交互终端控制台和命令行工具：支持首次安装、版本切换、修复、状态协调与服务注册。
 
 本仓库是一个 Cargo workspace，包含四个 crate：
 
@@ -20,7 +20,6 @@
 - `restore` — 在现有安装内从 `.lkb` 恢复版本和配置。
 - `repair` — 修复静态页面或后端二进制。
 - `reconcile` — 接受并记录初始化文件、service unit 或仓库来源变化。
-- `service-manager` — 在 systemd 与外部进程管理之间迁移。
 - `set-mirror` — 将主机软件包源切换到镜像（apt/dnf/pacman）。
 
 ## 文档

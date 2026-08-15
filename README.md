@@ -1,6 +1,6 @@
 # Landscape Kit
 
-`lkit` is an interactive terminal console and command-line tool for managing a [Landscape](https://landscape.canonical.com/) instance: first-time installation, version switching, repair, state reconciliation, and service manager migration.
+`lkit` is an interactive terminal console and command-line tool for managing a [Landscape](https://landscape.canonical.com/) instance: first-time installation, version switching, repair, state reconciliation, and service registration.
 
 The repository is a Cargo workspace made up of four crates:
 
@@ -20,7 +20,6 @@ The repository is a Cargo workspace made up of four crates:
 - `restore` — restore an existing installation from an `.lkb` backup.
 - `repair` — repair static pages or the backend binary.
 - `reconcile` — accept and record changes to init files, service units, or repository sources.
-- `service-manager` — migrate between systemd and external process management.
 - `set-mirror` — switch the host package sources to a mirror (apt/dnf/pacman).
 
 ## Documentation

@@ -9,7 +9,7 @@ use crate::deployment::runtime::{InstallRuntime, PreflightPolicy};
 /// - `error`/`unknown` 停止(端口检查例外:占用者全部被识别为当前受管进程时放行,
 ///   因为受管 Landscape 会在激活阶段停止并重启);
 /// - `warning` 显示后允许继续。
-/// - 测试运行时可显式选择 `skip`,用于只验证部署状态机与 service-manager 协议的
+/// - 测试运行时可显式选择 `skip`,用于只验证部署状态机与 daemon 委托协议的
 ///   功能测试;生产运行时始终执行完整检查。
 pub(crate) fn run_preflight(
     canonical_root: &Path,

@@ -45,5 +45,5 @@ minimal `.lkb` 不包含 `landscape_db.sqlite`。该场景不能声称数据库�
 - 导出的 init config；
 - geo cache；
 - install state；
-- systemd service-manager 协议状态；
+- systemd 服务注册协议状态；
 - 测试运行时隔离的 `resolv.conf`。
