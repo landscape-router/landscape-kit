@@ -5,6 +5,12 @@ set -euo pipefail
 # (`lkit self-service install`),以委托的 `lkit uninstall` 验证真实 manager
 # 的注册、启停、MainPID、前端被杀后 daemon 子进程组独立提交,以及注册链接
 # 所有权冲突。OpenRC/sysvinit 后端由 manager_backends fixture E2E 覆盖。
+#
+# 每条 machine_shell 命令都有超时(LKIT_NSPAWN_CMD_TIMEOUT,默认 120s),卡住
+# 的步骤会在约 2 分钟内失败并输出诊断,而不是空等到 workflow 超时。
+# LKIT_NSPAWN_DEBUG=1 时打印每一步的命令与步骤标记,便于定位卡点。
+LKIT_NSPAWN_DEBUG=${LKIT_NSPAWN_DEBUG:-0}
+LKIT_NSPAWN_CMD_TIMEOUT=${LKIT_NSPAWN_CMD_TIMEOUT:-120}
 if [[ $(uname -s):$(uname -m) != Linux:x86_64 ]]; then
   echo "systemd-nspawn integration currently requires Linux x86_64" >&2
   exit 2
@@ -211,6 +217,7 @@ systemd-nspawn \
 nspawn_pid=$!
 machine_started=true
 
+echo "== boot the nspawn machine"
 for _ in $(seq 1 100); do
   machinectl show "$machine" >/dev/null 2>&1 && break
   kill -0 "$nspawn_pid" 2>/dev/null || {
@@ -226,7 +233,10 @@ machinectl show "$machine" >/dev/null 2>&1 || {
 }
 
 machine_shell() {
-  systemd-run \
+  if [[ $LKIT_NSPAWN_DEBUG == 1 ]]; then
+    echo ">> machine: $1" >&2
+  fi
+  timeout "$LKIT_NSPAWN_CMD_TIMEOUT" systemd-run \
     --machine "$machine" \
     --wait \
     --pipe \
@@ -251,6 +261,7 @@ if [[ $system_bus_ready != true ]]; then
 fi
 
 # 真实 systemd 契约:注册并启动受管的 landscape-router 服务。
+echo "== register and start landscape-router.service"
 machine_shell "systemctl daemon-reload"
 machine_shell "systemctl enable --quiet landscape-router.service"
 machine_shell "systemctl start landscape-router.service"
@@ -259,6 +270,7 @@ machine_shell "systemctl is-active --quiet landscape-router.service"
 machine_shell "test \"\$(systemctl show --property=MainPID --value landscape-router.service)\" -gt 1"
 
 # 部署常驻 daemon:self-service install 在真实 systemd 下注册并启动 lkit.service。
+echo "== deploy the resident daemon via self-service install"
 machine_shell \
   "/usr/local/bin/lkit self-service install --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json"
 machine_shell "systemctl is-enabled --quiet lkit.service"
@@ -270,6 +282,7 @@ machine_shell "test -f /var/lib/lkit-nspawn/landscape/run/lkit.pid"
 # 所有权冲突:注册链接被外部文件替换时,委托的 uninstall 必须在接管前失败,
 # 不停止服务、不删除外部文件。冲突发生在事务前捕获阶段,留下未终结事务,
 # 由下次命令的恢复流程标记 failed。
+echo "== ownership conflict must fail before takeover"
 machine_shell "rm /etc/systemd/system/landscape-router.service"
 machine_shell "printf '[Unit]\nDescription=foreign unit\n' >/etc/systemd/system/landscape-router.service"
 if machine_shell \
@@ -290,6 +303,7 @@ machine_shell "systemctl daemon-reload"
 
 # 前端断开独立提交:委托的 uninstall 由 daemon 执行。抓到请求文件后杀掉
 # machinectl 前端,模拟 SSH 会话断开;daemon 必须独立完成卸载并提交。
+echo "== frontend disconnect: daemon completes the delegated uninstall"
 frontend_input=$test_root/frontend.input
 mkfifo "$frontend_input"
 exec 9<>"$frontend_input"
@@ -313,6 +327,11 @@ if [[ $request_seen == true ]]; then
 else
   echo "frontend finished before the request file could be observed" >&2
 fi
+for _ in $(seq 1 50); do
+  kill -0 "$frontend_pid" 2>/dev/null || break
+  sleep 0.2
+done
+kill -9 "$frontend_pid" 2>/dev/null || true
 wait "$frontend_pid" 2>/dev/null || true
 exec 9>&-
 
@@ -334,6 +353,7 @@ if [[ $uninstalled != true ]]; then
 fi
 
 # 收尾断言:服务停止、禁用并注销;daemon 服务随卸载停止;事务全部终结。
+echo "== final assertions"
 machine_shell "! systemctl is-enabled --quiet landscape-router.service"
 machine_shell "test ! -e /etc/systemd/system/landscape-router.service"
 machine_shell "! systemctl is-active --quiet lkit.service"
