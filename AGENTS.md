@@ -10,19 +10,22 @@
 
 Write commit messages in English.
 
-Run formatting and build before committing:
+Before each commit, run only unit tests and static checks (never the e2e fixture
+suite or the full test suite):
 
 ```sh
 cargo fmt
+cargo clippy --all-targets -- -D warnings
+cargo test -p lkit-cli <module-filter>
 ```
 
 ## Testing
 
 - Run unit tests for the current change only (e.g. `cargo test -p lkit-cli <module-filter>`),
   never the full test suite after every code change.
-- The e2e fixture suite (`crates/lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs only
-  as a PR check via `.github/workflows/test-e2e.yml`, not locally after each change. To run it
-  manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
+- The e2e fixture suite (`crates/lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs in CI
+  on every push and as a PR check via `.github/workflows/test-e2e.yml`, not locally before each
+  commit. To run it manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
 
 ## Project Layout
 

@@ -1,6 +1,13 @@
 name: Test e2e fixture
 
 on:
+  push:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - .github/workflows/test-e2e.yml
+      - .github/workflows/test-rust.yml
   pull_request:
     paths:
       - Cargo.lock
