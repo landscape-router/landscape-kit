@@ -46,7 +46,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let [header, body, status] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(8),
-        Constraint::Length(3),
+        Constraint::Length(5),
     ])
     .areas(frame.area());
     render_header(frame, app, header);
@@ -109,7 +109,7 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         area.height.saturating_sub(1),
     );
     let [summary, hints] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(content);
+        Layout::vertical([Constraint::Length(2), Constraint::Length(2)]).areas(content);
     let language = language_status(crate::i18n::current(), app.language_switch_available());
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
@@ -127,6 +127,7 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         } else {
             app.notice.clone()
         })
+        .wrap(Wrap { trim: true })
         .style(Style::default().fg(notice_color)),
         notice,
     );
@@ -137,7 +138,9 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         language_area,
     );
     frame.render_widget(
-        Paragraph::new(app.hints()).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(app.hints())
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(Color::DarkGray)),
         hints,
     );
 }

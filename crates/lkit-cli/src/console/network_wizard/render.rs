@@ -344,7 +344,7 @@ fn wizard_hints(wizard: &NetworkWizard) -> String {
 fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
     let screen = frame.area();
     let width = 52.min(screen.width.saturating_sub(2));
-    let height = 7.min(screen.height.saturating_sub(2));
+    let height = 8.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -369,6 +369,7 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
             ),
         ])
         .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CANCEL_WIZARD))),
         area,
     );
@@ -386,7 +387,7 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
     let confirm_allowed = app.takeover_confirm_allowed();
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 15.min(screen.height.saturating_sub(2));
+    let height = 17.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -483,9 +484,12 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
     );
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(lines).alignment(Alignment::Center).block(
-            Block::bordered().title(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)),
-        ),
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::bordered().title(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)),
+            ),
         area,
     );
 }

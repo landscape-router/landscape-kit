@@ -227,6 +227,21 @@ fn update_confirmation_esc_cancels_and_stays_in_panel() {
 }
 
 #[test]
+fn update_confirmation_wraps_the_pipeline_note_on_narrow_terminals() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = update_ready_app();
+    app.update.confirming = Some(resolved("1.2.3", "1.3.0"));
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 18)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("automatic rollback"),
+        "the update pipeline note must wrap inside the confirm dialog instead of truncating"
+    );
+}
+
+#[test]
 fn update_load_config_offers_current_source_and_reports_corruption() {
     let dir = std::env::temp_dir().join(format!("lkit-console-config-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

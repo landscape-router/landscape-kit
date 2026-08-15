@@ -272,7 +272,7 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
 pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 68.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -305,6 +305,7 @@ pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut Conso
             Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_HINT)),
         ])
         .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_TITLE))),
         area,
     );
@@ -400,7 +401,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 11.min(screen.height.saturating_sub(2));
+    let height = 13.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -432,6 +433,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
             ),
         ])
         .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_TITLE))),
         area,
     );
@@ -477,6 +479,7 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
             ),
         ])
         .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_TITLE))),
         area,
     );

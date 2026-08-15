@@ -144,6 +144,23 @@ fn backup_restore_flow_builds_restore_command() {
 }
 
 #[test]
+fn restore_confirmation_wraps_the_minimal_scope_note_on_narrow_terminals() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(app.backup.restore_confirming);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 18)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("will be lost"),
+        "the minimal scope note must wrap inside the restore dialog instead of truncating"
+    );
+}
+
+#[test]
 fn backup_delete_confirms_and_removes_the_backup() {
     use std::os::unix::fs::PermissionsExt;
     let _language = LanguageGuard::set(Language::En);

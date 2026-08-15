@@ -265,6 +265,23 @@ fn network_wizard_first_page_esc_opens_cancel_confirmation() {
 }
 
 #[test]
+fn wizard_cancel_confirmation_wraps_on_narrow_terminals() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.network_wizard = Some(sample_network_wizard());
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.network_wizard.as_ref().unwrap().cancel_confirming);
+
+    let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("Install form."),
+        "the wizard cancel explanation must wrap inside the dialog instead of truncating"
+    );
+}
+
+#[test]
 fn wizard_render_shows_gateway_and_confirm_summary() {
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();

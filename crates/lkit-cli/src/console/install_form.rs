@@ -445,10 +445,12 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
         );
     }
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block(
-            &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
-            app.focus == Focus::Panel && !form.checks_selected,
-        )),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
+                app.focus == Focus::Panel && !form.checks_selected,
+            )),
         area,
     );
 }

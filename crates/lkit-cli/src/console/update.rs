@@ -586,10 +586,12 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         ));
     }
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block(
-            &crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
-            focused,
-        )),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
+                focused,
+            )),
         area,
     );
 }
@@ -630,6 +632,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
             ),
         ])
         .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_TITLE))),
         area,
     );
@@ -717,10 +720,12 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
         Hit::UninstallAction,
     );
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block(
-            &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
-            focused,
-        )),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(panel_block(
+                &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
+                focused,
+            )),
         area,
     );
 }
@@ -769,9 +774,12 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(
-        Paragraph::new(lines).alignment(Alignment::Center).block(
-            Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_TITLE)),
-        ),
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_TITLE)),
+            ),
         area,
     );
 }

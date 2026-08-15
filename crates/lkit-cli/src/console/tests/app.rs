@@ -77,6 +77,38 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
 }
 
 #[test]
+fn long_panel_hint_wraps_instead_of_truncating() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+    let mut app = backup_ready_app();
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("Esc Esc Exit prompt"),
+        "the long backup list hint must wrap onto the second status line instead of truncating"
+    );
+}
+
+#[test]
+fn long_notice_wraps_instead_of_truncating() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+    let mut app = ConsoleApp::new();
+    let notice = "this is a long status notice that must wrap onto a second line: backup failed";
+    app.notice = notice.into();
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("backup failed"),
+        "a long status notice must wrap onto the second status line instead of truncating"
+    );
+}
+
+#[test]
 fn language_key_remains_text_while_editing() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = ConsoleApp::new();
