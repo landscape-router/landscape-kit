@@ -32,6 +32,7 @@
 
 **`self-service install` 拒绝 `--service-manager none` 或 systemd 不可用**
 
-- 测试层：待补充
-- 状态：`待补充`
-- 说明：参数校验已实现，缺少直接断言场景。
+- 测试层：Fixture E2E（`install_fixture_e2e::self_service`）
+- 状态：`已覆盖`
+- 说明：`--service-manager none` 与「systemctl 不可用」均断言退出码 `2`
+  且不写任何文件。

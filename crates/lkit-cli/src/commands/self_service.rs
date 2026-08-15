@@ -48,7 +48,8 @@ pub fn run(args: &SelfService) -> ExitCode {
         Err(error) => {
             eprintln!("self-service: {error}");
             match error {
-                InstallError::ParameterUsage(_) => ExitCode::from(2),
+                // 参数错误与「请求 systemd 但不可用」均属于使用错误。
+                InstallError::ParameterUsage(_) | InstallError::Systemd(_) => ExitCode::from(2),
                 _ => ExitCode::FAILURE,
             }
         }
@@ -102,29 +103,63 @@ fn install(
 
     let executable = std::env::current_exe().map_err(InstallError::Io)?;
     let binary = canonical.join("service/lkit");
-    std::fs::copy(&executable, &binary).map_err(InstallError::Io)?;
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
-        .map_err(InstallError::Io)?;
+    if std::fs::canonicalize(&executable).ok().as_deref()
+        != std::fs::canonicalize(&binary).ok().as_deref()
+    {
+        std::fs::copy(&executable, &binary).map_err(InstallError::Io)?;
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
+            .map_err(InstallError::Io)?;
+    }
 
     let content = manager.render_definition(service, canonical)?;
     crate::workflows::install::write_unit_origin(install_root, manager, service, &content)?;
     let origin = canonical
         .join("service")
         .join(manager.service_name(service));
-    manager.register(service, &origin)?;
-    manager.enable(service)?;
-    manager.start(service)?;
-    let pid = manager.main_pid(service)?;
-    if pid == 0 {
-        return Err(InstallError::Systemd(
-            "lkit daemon did not produce a main pid after start".into(),
-        ));
+    let result = (|| -> Result<(), InstallError> {
+        manager.register(service, &origin)?;
+        manager.enable(service)?;
+        if manager.is_active(service)? {
+            // 旧 daemon 仍在运行:重启使其加载新二进制。
+            manager.restart(service)?;
+        } else {
+            manager.start(service)?;
+        }
+        let pid = manager.main_pid(service)?;
+        if pid == 0 {
+            return Err(InstallError::Systemd(
+                "lkit daemon did not produce a main pid after start".into(),
+            ));
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        // 注册/启动失败:尽力恢复现场,避免遗留已启用但未运行的注册服务。
+        cleanup_partial_install(manager, service, &binary, &origin);
+        return Err(error);
     }
     println!(
-        "self-service: {} (pid {pid})",
+        "self-service: {}",
         crate::tr!(crate::keys::SELF_SERVICE_INSTALLED)
     );
     Ok(())
+}
+
+/// 注册/启动失败后的尽力清理:停止、注销并删除二进制与定义原件。
+fn cleanup_partial_install(
+    manager: &dyn ServiceManager,
+    service: ManagedService,
+    binary: &std::path::Path,
+    origin: &std::path::Path,
+) {
+    let _ = manager.stop(service);
+    if manager.is_enabled(service).unwrap_or(false) {
+        let _ = manager.disable(service);
+    }
+    let _ = manager.unregister(service, origin);
+    let _ = manager.refresh();
+    let _ = remove_file_if_present(binary);
+    let _ = remove_file_if_present(origin);
 }
 
 fn remove(
@@ -154,7 +189,6 @@ fn remove(
     if let Err(error) = manager.unregister(service, &origin) {
         eprintln!("self-service: {error}");
     }
-    let _ = manager.refresh();
     remove_file_if_present(&canonical.join("service/lkit"))?;
     remove_file_if_present(&origin)?;
     println!(
@@ -179,9 +213,9 @@ fn remove_file_if_present(path: &std::path::Path) -> Result<(), InstallError> {
     }
 }
 
-fn resolve_runtime(args: &SelfService) -> Result<InstallRuntime, InstallError> {
+fn resolve_runtime(_args: &SelfService) -> Result<InstallRuntime, InstallError> {
     #[cfg(feature = "test-support")]
-    if let Some(path) = sub_args(args).test_runtime.as_deref() {
+    if let Some(path) = sub_args(_args).test_runtime.as_deref() {
         return InstallRuntime::from_test_file(path);
     }
     Ok(InstallRuntime::production())

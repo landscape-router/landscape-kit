@@ -7,13 +7,32 @@ use crate::deployment::root::InstallRoot;
 use crate::service::manager::{ManagedService, ServiceManager, SystemRegistration};
 use crate::service::systemd;
 
-/// 幂等停止、disable 并注销受管服务,最后执行定义刷新。
+/// 幂等停止、disable 并注销受管服务(Landscape 与 lkit 常驻服务),最后执行定义刷新。
 /// 注册链接缺失视为已注销;指向其他目标的链接属于所有权冲突,阻断。
 pub(super) fn deactivate(
     manager: &dyn ServiceManager,
     root: &InstallRoot,
 ) -> Result<(), InstallError> {
-    let service = ManagedService::LandscapeRouter;
+    deactivate_service(manager, root, ManagedService::LandscapeRouter)?;
+    deactivate_service(manager, root, ManagedService::LkitDaemon)?;
+    manager.refresh()?;
+    Ok(())
+}
+
+fn deactivate_service(
+    manager: &dyn ServiceManager,
+    root: &InstallRoot,
+    service: ManagedService,
+) -> Result<(), InstallError> {
+    // 从未注册且未运行的服务不触碰 init 系统(真实 systemd 对缺失 unit 的
+    // stop 会报错)。
+    if matches!(
+        manager.query_registration(service)?,
+        SystemRegistration::Missing
+    ) && !manager.is_active(service).unwrap_or(false)
+    {
+        return Ok(());
+    }
     if manager.is_active(service)? {
         manager.stop_and_wait(
             service,
@@ -51,7 +70,6 @@ pub(super) fn deactivate(
             )));
         }
     }
-    manager.refresh()?;
     Ok(())
 }
 

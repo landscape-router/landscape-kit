@@ -274,6 +274,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
             "pending transaction has no network takeover state".into(),
         )
     })?;
+    let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
     if pending.phase == transaction::Phase::AwaitingNetworkConfirmation {
         if Utc::now() > network.confirmation_deadline {
             return Err(InstallError::ParameterUsage(
@@ -283,7 +284,6 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
         }
         verify_interfaces(&network.plan, runtime)?;
         super::discovery::verify_live(&network.plan, &runtime.ip_command)?;
-        let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
         let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::HealthCheck(
@@ -307,7 +307,6 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
         pending.updated_at = Utc::now();
         transaction::persist(root, &pending)?;
     }
-    let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
     remove_recovery_units(root, &network, systemd, false)?;
     let bytes =
         std::fs::read(root.canonical.join(&network.pending_state)).map_err(InstallError::Io)?;

@@ -180,7 +180,6 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 ### 中断恢复
 
 下次执行发现未结束事务时，先结合 `operation` 和 `phase` 处理：
-
 - `preparing`：尚未改变运行状态；普通事务清理临时文件并标记 `failed`，初始化观测 repair 保持旧状态并标记 `failed`；
 - `prepared` 或 `stopping`：`current` 和数据尚未激活，但服务可能已经停止；按
   `systemd_before` 幂等恢复注册链接、enabled/active 状态，清理目标临时资产并标记
@@ -303,6 +302,22 @@ operation unit 固定使用 `StandardInput=null`，不取得 SSH 的 controlling
 - 主机重启会终止 `/run` 中的临时 worker，不承诺跨重启自动继续。下次 lkit 调用按
   本节事务阶段恢复；
 - 明确 `service.manager: none` 且不触碰 systemd 的操作保持 inline。
+
+### daemon 自动恢复
+
+安装了 lkit 常驻服务（`lkit self-service install`）后，daemon 每 2 秒尝试以
+非阻塞方式获取安装锁；锁空闲且存在未完成事务时，执行与 CLI 完全相同的本节恢复
+语义（见[`lkit self-service`](../commands/self-service.md)）：
+
+- CLI 进程因 SSH 断开、崩溃或 `SIGKILL` 消失后，遗留事务由 daemon 自动接管：
+  失败激活回滚（含 `.lkb` 配置级回滚）、中断恢复、卸载前向完成均按本节规则执行，
+  不再依赖下一次 lkit 调用或 systemd worker 存活；
+- daemon 恢复目标固定为自身所在安装根；`service.manager: none` 环境同样生效
+  （恢复路径不依赖 systemd）；
+- 网络接管 `awaiting_network_confirmation` / `finalizing` / `rolling_back` 阶段
+  保持人工处理（`lkit network confirm|rollback`），daemon 不代替确认；
+- 并发安全：CLI 命令整个操作期间持有安装锁，daemon 获取失败即跳过本周期；
+  daemon 收到 `SIGTERM` 时先完成当前周期再退出，不中断进行中的恢复。
 
 `test-support` 运行时可选择 `execution: inline` 或 `systemd_worker`。生产构建不提供该
 开关；凡进入本节 systemd 托管边界的命令都固定使用 worker。

@@ -173,6 +173,6 @@ async fn run_command(
         Commands::Software(args) => commands::software::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
         Commands::SelfService(args) => commands::self_service::run(&args),
-        Commands::Daemon(args) => daemon::run(&args),
+        Commands::Daemon(args) => daemon::run(&args).await,
     }
 }

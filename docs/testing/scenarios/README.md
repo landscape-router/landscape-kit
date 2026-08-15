@@ -39,6 +39,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 主机换源 | `MIR-01` 至 `MIR-07` | [mirror.md](functional/mirror.md) |
 | 常用软件安装 | `SFT-01` 至 `SFT-06` | [software.md](functional/software.md) |
 | lkit 自服务 | `SS-01` 至 `SS-04` | [self-service.md](functional/self-service.md) |
+| daemon 自动恢复 | `DAE-01` 至 `DAE-04` | [daemon.md](functional/daemon.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 
