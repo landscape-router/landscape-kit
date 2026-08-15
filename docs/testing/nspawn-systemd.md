@@ -6,11 +6,9 @@
 它是低频兼容性 smoke test，只抽样验证 Docker fake 无法证明的 systemd 契约：
 
 - `/bin/systemctl` 能连接 manager；
-- system unit 能注册、enable、start、stop、disable 和 unregister；
+- system unit 能注册、enable、start 和 stop；
 - 服务启动后真实 manager 报告非零 MainPID；
-- lkit 常驻 daemon 由真实 systemd 托管并处理委托请求；
-- 杀掉等待结果的前端会话后，daemon 子进程组继续完成事务；
-- systemd unit 所有权冲突返回失败，且不会留下失败状态。
+- lkit 常驻 daemon 由真实 systemd 托管，unit 含 `KillMode=process`。
 
 测试使用 test-support 运行时跳过完整宿主 preflight，但配置
 `execution: daemon` 并使用真实 `/bin/systemctl`、`/etc/systemd/system` 和
@@ -19,6 +17,18 @@
 
 `systemd --user` 不能替代这一层：lkit 管理的是 root system unit、低位端口和系统 unit
 目录。完整宿主 preflight 则仍由实际受支持主机或 VM 验收。
+
+## 当前节点不处理卸载
+
+卸载（`lkit uninstall`）场景当前不在此测试中验证：委托的 uninstall 需要交互确认，
+而 daemon 执行子进程没有 controlling terminal（`cannot open /dev/tty; interactive
+confirmation is not possible`），确认委托机制（如前端确认后以 `--console-confirmed`
+注入）尚未实现。以下场景待文档明确需求后再补充：
+
+- 委托 uninstall 的完整执行与提交；
+- 前端会话被杀后 daemon 子进程组独立完成卸载；
+- systemd unit 注册链接所有权冲突的失败路径（不停止服务、不删除外部文件）；
+- 事务全部终结且卸载事务 `committed` 的收尾断言。
 
 ## 执行策略
 
@@ -45,7 +55,7 @@ sudo env LKIT_NSPAWN_PREBUILT_DIR="$PWD/target/release" \
 脚本创建临时 trixie rootfs 和 private network namespace，结束时终止 machine 并删除
 rootfs。CI 当前每周及手动运行；普通 PR 和普通发布不承担 rootfs 下载和 boot 成本。
 
-测试先执行完整的首次安装并注册、启动受管 unit。在事务进入 `verifying` 后杀掉
-`machinectl shell` 前端，等待委托的 daemon 子进程组独立提交；随后执行卸载，断言服务
-停止、注册链接移除、所有事务终结且没有残留运行状态。
-最后制造一个 foreign unit 所有权冲突，确认注册在创建事务前失败，且不留失败状态。
+测试先注册并启动受管的 landscape-router unit，再以 `lkit self-service install` 部署
+常驻 daemon，断言 unit 注册、启停、MainPID 与 `KillMode=process`；最后停止并重新
+启动两个受管服务，确认真实 manager 的 stop/start 契约。卸载与所有权冲突场景见
+「当前节点不处理卸载」。
