@@ -1,41 +1,34 @@
+pub(crate) use super::super::manager::{Availability, ServiceManager, ServiceManagerKind};
 use super::super::plan::InstallError;
-use super::super::systemd::{self, Availability, Systemd};
-use super::super::transaction::{Registration, RegistrationKind, SystemdBefore};
 
 /// 服务管理模式选择。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ManagerChoice {
-    /// 未指定:systemd 可用则使用,明确不是 systemd init 时使用 none,
-    /// 看似 systemd 但环境损坏时失败。
+    /// 未指定:当前服务管理器可用则使用,明确未检测到任何后端时使用 none,
+    /// 看似使用当前后端但环境损坏时失败。
     Auto,
     /// 显式要求 systemd,不可用或环境损坏时失败。
     Systemd,
-    /// 显式要求无 systemd,只管理文件和事务。
+    /// 显式要求无服务管理器,只管理文件和事务。
     None,
 }
 
-/// 实际选择的服务管理模式。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ServiceManager {
-    Systemd,
-    None,
-}
-
+/// 根据选择与后端可用性决定实际使用的服务管理器。
 pub(crate) fn select_manager(
     choice: ManagerChoice,
-    systemd: &Systemd,
-) -> Result<ServiceManager, InstallError> {
+    manager: &dyn ServiceManager,
+) -> Result<ServiceManagerKind, InstallError> {
     match choice {
-        ManagerChoice::None => Ok(ServiceManager::None),
-        ManagerChoice::Systemd => match systemd.probe() {
-            Availability::Available { .. } => Ok(ServiceManager::Systemd),
+        ManagerChoice::None => Ok(ServiceManagerKind::None),
+        ManagerChoice::Systemd => match manager.probe() {
+            Availability::Available { .. } => Ok(ServiceManagerKind::Systemd),
             availability => Err(InstallError::Systemd(format!(
                 "--service-manager systemd requested but systemd is not available: {availability:?}"
             ))),
         },
-        ManagerChoice::Auto => match systemd.probe() {
-            Availability::Available { .. } => Ok(ServiceManager::Systemd),
-            Availability::NotSystemdInit => Ok(ServiceManager::None),
+        ManagerChoice::Auto => match manager.probe() {
+            Availability::Available { .. } => Ok(ServiceManagerKind::Systemd),
+            Availability::NotDetected => Ok(ServiceManagerKind::None),
             availability => Err(InstallError::Systemd(format!(
                 "the host appears to run systemd but it is damaged: {availability:?}"
             ))),
@@ -43,30 +36,11 @@ pub(crate) fn select_manager(
     }
 }
 
-pub(crate) fn capture_systemd_before(systemd: &Systemd) -> Result<SystemdBefore, InstallError> {
-    let (kind, target) = match systemd::query_registration(systemd)? {
-        systemd::Registration::Missing => (RegistrationKind::Missing, None),
-        systemd::Registration::Symlink { target } => (
-            RegistrationKind::Symlink,
-            Some(target.display().to_string()),
-        ),
-        systemd::Registration::Conflict { file_type } => {
-            return Err(InstallError::Systemd(format!(
-                "cannot take over {}: {file_type} ownership conflict",
-                systemd::UNIT_NAME
-            )));
-        }
-    };
-    Ok(SystemdBefore {
-        registration: Registration { kind, target },
-        enabled: systemd::is_enabled(systemd)?,
-        active: systemd::is_active(systemd)?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::service::systemd::Systemd;
 
     #[test]
     fn auto_rejects_damaged_systemd_environment() {

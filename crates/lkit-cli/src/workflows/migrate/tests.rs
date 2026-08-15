@@ -483,6 +483,7 @@ async fn migrates_in_systemd_mode_with_legacy_unit_adoption() {
             log_path: root.join("fixture.log"),
             call_log: None,
             systemd_version: "252.fixture".into(),
+            spawn_units: Vec::new(),
         })
         .unwrap(),
     )
@@ -601,6 +602,7 @@ async fn systemd_mode_rolls_back_and_restores_legacy_unit_on_activation_failure(
             log_path: root.join("fixture.log"),
             call_log: None,
             systemd_version: "252.fixture".into(),
+            spawn_units: Vec::new(),
         })
         .unwrap(),
     )

@@ -16,6 +16,7 @@ use crate::interaction::presentation::{
     InterruptGuard, OPERATIONS_DIR, PRESENTATION_EVENTS_ENV, operation_screen,
 };
 use crate::network::config::NetworkPlan;
+use crate::service::manager::ServiceManager;
 use crate::service::systemd::{Availability, Systemd};
 
 use self::interrupt::{interrupt_worker, wait_for_result};
@@ -39,6 +40,7 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Software(_) => false,
         Commands::Backup(_) => false,
+        Commands::SelfService(_) | Commands::Daemon(_) => false,
         Commands::Network(args) => {
             matches!(args.action, NetworkAction::Rollback { automatic: false })
         }
@@ -96,6 +98,8 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Check(_) => return false,
         Commands::SetMirror(_) => None,
         Commands::Software(_) => None,
+        Commands::SelfService(_) => None,
+        Commands::Daemon(_) => None,
         Commands::Install(args) => args.test_runtime.as_deref(),
         Commands::Migrate(args) => args.test_runtime.as_deref(),
         Commands::Switch(args) => args.test_runtime.as_deref(),

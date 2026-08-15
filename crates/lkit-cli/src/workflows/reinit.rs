@@ -4,6 +4,7 @@ use super::artifacts::{WEBSERVER_BINARY, hash_str};
 use super::backup;
 use super::export;
 use super::health::{DocsProbe, HealthOptions, StartupOptions};
+use super::manager::{ManagedService, ServiceManager};
 use super::pipeline;
 use super::plan::InstallError;
 use super::restore::{restore_previous_data, write_file_atomic};
@@ -12,7 +13,6 @@ use super::root::InstallRoot;
 use super::state::{
     self, InitStatus, InitializationState, InstallState, ServiceState, StateServiceManager,
 };
-use super::systemd::Systemd;
 use super::transaction::{Phase, TransactionFile};
 use crate::deployment::runtime::InstallRuntime;
 use crate::interaction::credentials::Credentials;
@@ -63,7 +63,7 @@ pub(crate) enum ReinitOutcome {
 pub(crate) async fn reinit_installation<P: DocsProbe>(
     root: &InstallRoot,
     state: &InstallState,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     credentials: &Credentials,
     network: &NetworkPlan,
     args: &ReinitArgs,
@@ -102,13 +102,16 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
     super::transaction::persist(root, &transaction)?;
 
     let unit_sha = {
-        transaction.systemd_before = Some(pipeline::capture_systemd_before(systemd)?);
+        transaction.systemd_before = Some(pipeline::capture_before(
+            manager,
+            ManagedService::LandscapeRouter,
+        )?);
         let backup_dir = root
             .canonical
             .join("backups")
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
-        let _ = super::resolv::backup(&systemd.resolv_conf, &backup_dir)?;
+        let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
         transaction.resolv_conf_backup = Some(format!(
             "backups/{}/host/resolv.conf",
             transaction.transaction_id
@@ -130,11 +133,15 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
     let result: Result<(), InstallError> = async {
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
         operation_progress(OperationPhase::Stopping, Some((2, 4)));
-        super::systemd::stop_and_wait(systemd, || {
-            super::systemd::active_state(systemd)
-                .map(|value| value != "active")
-                .unwrap_or(true)
-        })?;
+        manager.stop_and_wait(
+            ManagedService::LandscapeRouter,
+            &(|| {
+                manager
+                    .active_state(ManagedService::LandscapeRouter)
+                    .map(|value| value != "active")
+                    .unwrap_or(true)
+            }),
+        )?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         operation_progress(OperationPhase::Activating, Some((3, 4)));
         activated = true;
@@ -148,10 +155,10 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             0o600,
         )?;
         crate::network::takeover::clear_selected_lan_addresses(network, &runtime.ip_command)?;
-        super::systemd::start(systemd)?;
+        manager.start(ManagedService::LandscapeRouter)?;
         super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
         operation_progress(OperationPhase::Verifying, Some((4, 4)));
-        let pid = super::systemd::main_pid(systemd)?;
+        let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
                 "reinit did not produce a main pid after start".into(),
@@ -161,7 +168,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             ports: &options.health.ports,
             expected_pid: pid,
             docs: &options.health.docs,
-            unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+            unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
             init_required: true,
             data_dir: &data,
             startup_timeout: options.health.startup_timeout,
@@ -198,7 +205,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             pending_network_address: network.management_address().map(|address| address.address),
         }),
         Err(error) if activated => {
-            match rollback_reinit(root, &transaction, systemd, options.health).await {
+            match rollback_reinit(root, &transaction, manager, options.health).await {
                 Ok(()) => Ok(ReinitOutcome::RolledBack { version }),
                 Err(rollback_error) => {
                     eprintln!(
@@ -219,17 +226,20 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             if !activated {
                 let mut systemd_restored = true;
                 if let Some(before) = &transaction.systemd_before {
-                    let unit_origin = root.canonical.join("service/landscape-router.service");
-                    let restore_error =
-                        super::systemd::restore_systemd_before(systemd, before, &unit_origin)
-                            .and_then(|()| {
-                                if let Some(backup_path) = &transaction.resolv_conf_backup {
-                                    let backup_dir = root.canonical.join(backup_path);
-                                    super::resolv::restore(&systemd.resolv_conf, &backup_dir)
-                                } else {
-                                    Ok(())
-                                }
-                            });
+                    let unit_origin = root
+                        .canonical
+                        .join("service")
+                        .join(manager.service_name(ManagedService::LandscapeRouter));
+                    let restore_error = manager
+                        .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
+                        .and_then(|()| {
+                            if let Some(backup_path) = &transaction.resolv_conf_backup {
+                                let backup_dir = root.canonical.join(backup_path);
+                                super::resolv::restore(manager.resolv_conf(), &backup_dir)
+                            } else {
+                                Ok(())
+                            }
+                        });
                     if let Err(restore_error) = restore_error {
                         systemd_restored = false;
                         eprintln!(
@@ -403,11 +413,11 @@ fn version_from_state(state: &InstallState) -> Result<semver::Version, InstallEr
 pub(crate) async fn rollback_reinit<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
-    let result = rollback_reinit_inner(root, transaction, systemd, health).await;
+    let result = rollback_reinit_inner(root, transaction, manager, health).await;
     if result.is_err() {
         let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
     }
@@ -419,17 +429,21 @@ pub(crate) async fn rollback_reinit<P: DocsProbe>(
 pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
-    super::systemd::stop_and_wait(systemd, || {
-        super::systemd::active_state(systemd)
-            .map(|value| value != "active")
-            .unwrap_or(true)
-    })?;
+    manager.stop_and_wait(
+        ManagedService::LandscapeRouter,
+        &(|| {
+            manager
+                .active_state(ManagedService::LandscapeRouter)
+                .map(|value| value != "active")
+                .unwrap_or(true)
+        }),
+    )?;
     if let Some(backup_path) = &transaction.resolv_conf_backup {
         let backup_dir = root.canonical.join(backup_path);
-        super::resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+        super::resolv::restore(manager.resolv_conf(), &backup_dir)?;
     }
     let tx_dir = root
         .canonical
@@ -438,8 +452,8 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     restore_previous_data(&data, &previous_data)?;
-    super::systemd::start(systemd)?;
-    let pid = super::systemd::main_pid(systemd)?;
+    manager.start(ManagedService::LandscapeRouter)?;
+    let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
     if pid == 0 {
         return Err(InstallError::Systemd(
             "restored service did not produce a main pid".into(),
@@ -449,7 +463,7 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
         ports: &health.ports,
         expected_pid: pid,
         docs: &health.docs,
-        unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+        unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
         init_required: true,
         data_dir: &data,
         startup_timeout: health.startup_timeout,

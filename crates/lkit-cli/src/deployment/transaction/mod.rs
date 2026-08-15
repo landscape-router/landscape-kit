@@ -13,7 +13,10 @@ use uuid::Uuid;
 
 use super::plan::InstallError;
 use super::root::InstallRoot;
-use super::systemd::Systemd;
+pub(crate) use crate::service::manager::{
+    Registration, RegistrationKind, ServiceBefore, ServiceManager,
+    ServiceManagerKind as TransactionServiceManager,
+};
 
 pub(crate) use self::cleanup::{
     cleanup_failed_first_install, cleanup_uncommitted_network_install,
@@ -89,22 +92,6 @@ impl Phase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum TransactionServiceManager {
-    Systemd,
-    None,
-}
-
-impl TransactionServiceManager {
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            Self::Systemd => "systemd",
-            Self::None => "none",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BackupRef {
     pub backup_id: String,
@@ -116,13 +103,6 @@ pub(crate) struct BackupRef {
 pub(crate) struct StaticBackupRef {
     pub path: String,
     pub target: String,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct SystemdBefore {
-    pub registration: Registration,
-    pub enabled: bool,
-    pub active: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -167,19 +147,6 @@ pub(crate) struct NetworkTakeoverTransaction {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct Registration {
-    pub kind: RegistrationKind,
-    pub target: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum RegistrationKind {
-    Missing,
-    Symlink,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct TransactionFile {
     pub schema_version: u64,
     pub transaction_id: String,
@@ -202,7 +169,7 @@ pub(crate) struct TransactionFile {
     #[serde(default)]
     pub no_backup: bool,
     pub static_backup: Option<StaticBackupRef>,
-    pub systemd_before: Option<SystemdBefore>,
+    pub systemd_before: Option<ServiceBefore>,
     pub resolv_conf_backup: Option<String>,
     #[serde(default)]
     pub network_takeover: Option<NetworkTakeoverTransaction>,
@@ -381,7 +348,7 @@ impl TransactionFile {
         root: &InstallRoot,
         from: TransactionServiceManager,
         to: TransactionServiceManager,
-        systemd_before: SystemdBefore,
+        systemd_before: ServiceBefore,
     ) -> Result<Self, InstallError> {
         let transaction_id = Uuid::now_v7().to_string();
         let now = Utc::now();
@@ -622,7 +589,7 @@ pub(crate) fn find_committed_operation(
 pub(crate) async fn recover_interrupted<P: super::health::DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &super::health::HealthOptions<P>,
 ) -> Result<(), InstallError> {
     recovery::recover_interrupted(root, transaction, systemd, health).await

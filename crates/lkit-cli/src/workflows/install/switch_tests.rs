@@ -4,6 +4,7 @@ use std::time::Duration;
 use super::super::health::PortCheck;
 use super::super::repository::provider_for;
 use super::super::repository::test_server::{TestResponse, TestServer};
+use crate::service::systemd::Systemd;
 use std::os::unix::fs::PermissionsExt;
 
 use super::first_install_tests::{

@@ -9,6 +9,7 @@ pub mod reconcile;
 pub mod reinit;
 pub mod repair;
 pub mod restore;
+pub mod self_service;
 pub mod service_manager;
 pub mod set_mirror;
 pub mod software;
@@ -28,6 +29,7 @@ pub use reconcile::Reconcile;
 pub use reinit::Reinit;
 pub use repair::Repair;
 pub use restore::Restore;
+pub use self_service::SelfService;
 pub use service_manager::ServiceManager;
 pub use set_mirror::SetMirror;
 pub use software::Software;
@@ -52,4 +54,6 @@ pub enum Commands {
     SetMirror(SetMirror),
     Software(Software),
     Uninstall(Uninstall),
+    SelfService(SelfService),
+    Daemon(crate::daemon::Daemon),
 }

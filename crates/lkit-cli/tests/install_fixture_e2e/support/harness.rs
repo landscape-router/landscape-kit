@@ -109,6 +109,7 @@ esac
                 "log_path": world.path("landscape.log"),
                 "call_log": world.path("systemctl-calls.jsonl"),
                 "systemd_version": "252.fixture",
+                "spawn_units": ["lkit.service"],
             }),
         );
 

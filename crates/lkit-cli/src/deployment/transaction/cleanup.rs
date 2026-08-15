@@ -1,21 +1,24 @@
 use std::path::Path;
 
+use super::super::manager::{ManagedService, ServiceManager};
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
-use super::super::systemd::Systemd;
 use super::{Operation, Phase, TransactionFile};
 
 pub(crate) fn cleanup_failed_first_install(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     if let Some(before) = &transaction.systemd_before {
-        let unit_origin = root.canonical.join("service/landscape-router.service");
-        super::super::systemd::restore_systemd_before(systemd, before, &unit_origin)?;
+        let unit_origin = root
+            .canonical
+            .join("service")
+            .join(manager.service_name(ManagedService::LandscapeRouter));
+        manager.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
             let backup_dir = root.canonical.join(backup_path);
-            super::super::resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+            super::super::resolv::restore(manager.resolv_conf(), &backup_dir)?;
         }
     }
     if let Some(target_release) = transaction.target_release.as_deref() {
@@ -78,15 +81,18 @@ pub(crate) fn cleanup_uncommitted_network_install(
 pub(crate) fn restore_uncommitted_network_systemd(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     validate_network_takeover_rollback(root, transaction)?;
     if let Some(before) = &transaction.systemd_before {
-        let unit_origin = root.canonical.join("service/landscape-router.service");
-        super::super::systemd::restore_systemd_before(systemd, before, &unit_origin)?;
+        let unit_origin = root
+            .canonical
+            .join("service")
+            .join(manager.service_name(ManagedService::LandscapeRouter));
+        manager.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
             let backup_dir = root.canonical.join(backup_path);
-            super::super::resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+            super::super::resolv::restore(manager.resolv_conf(), &backup_dir)?;
         }
     }
     Ok(())

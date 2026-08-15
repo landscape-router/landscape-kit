@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::health::{self, HealthOptions, HttpsDocsProbe, PortCheck};
+use super::manager::ServiceManager;
 use super::plan::InstallError;
 #[cfg(feature = "test-support")]
 use super::process::Protocol;
@@ -29,7 +30,7 @@ pub(crate) struct InstallRuntime {
     pub selinux_config_path: PathBuf,
     pub network_confirm_timeout: Duration,
     pub test_runtime_path: Option<PathBuf>,
-    pub systemd: Systemd,
+    pub service_manager: Box<dyn ServiceManager + Send + Sync>,
     pub export_base_url: String,
     pub health_base_url: String,
     pub(crate) health_ports: Vec<PortCheck>,
@@ -50,7 +51,7 @@ impl InstallRuntime {
             selinux_config_path: PathBuf::from("/etc/selinux/config"),
             network_confirm_timeout: Duration::from_secs(600),
             test_runtime_path: None,
-            systemd: Systemd::host(),
+            service_manager: Box::new(Systemd::host()),
             export_base_url: "https://127.0.0.1:6443".into(),
             health_base_url: "https://127.0.0.1:6443".into(),
             health_ports: health::default_port_checks(),
@@ -148,13 +149,13 @@ impl TestRuntimeConfig {
             selinux_config_path: self.selinux_config_path,
             network_confirm_timeout: Duration::from_millis(self.network_confirm_timeout_ms),
             test_runtime_path: Some(source_path.to_path_buf()),
-            systemd: Systemd {
+            service_manager: Box::new(Systemd {
                 systemctl: self.systemd.systemctl,
                 system_unit_dir: self.systemd.system_unit_dir,
                 run_systemd_dir: self.systemd.run_systemd_dir,
                 pid1_is_systemd: self.systemd.pid1_is_systemd,
                 resolv_conf: self.systemd.resolv_conf,
-            },
+            }),
             export_base_url: self.export_base_url,
             health_base_url: self.health.base_url,
             health_ports: vec![

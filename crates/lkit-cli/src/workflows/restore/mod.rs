@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use super::artifacts::{hash_file, hash_str};
 use super::backup::{BackupMetadata, create_secure_dir, extract_lkb, verify_lkb};
 use super::health::{DocsProbe, HealthOptions, StartupOptions};
+use super::manager::{ManagedService, ServiceManager};
 use super::pipeline;
 use super::plan::InstallError;
 use super::rollback as rollback_util;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateServiceManager};
-use super::systemd::Systemd;
 use super::transaction::{BackupRef, Phase, TransactionFile};
 use crate::interaction::presentation::{OperationPhase, operation_progress};
 
@@ -63,7 +63,7 @@ pub(crate) struct RestoreOptions<'a, P: DocsProbe> {
 pub(crate) async fn restore_version<P: DocsProbe>(
     root: &InstallRoot,
     state: &InstallState,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     args: &RestoreArgs,
     options: &RestoreOptions<'_, P>,
 ) -> Result<RestoreOutcome, InstallError> {
@@ -138,13 +138,16 @@ pub(crate) async fn restore_version<P: DocsProbe>(
     super::transaction::persist(root, &transaction)?;
 
     let unit_sha = if is_systemd {
-        transaction.systemd_before = Some(pipeline::capture_systemd_before(systemd)?);
+        transaction.systemd_before = Some(pipeline::capture_before(
+            manager,
+            ManagedService::LandscapeRouter,
+        )?);
         let backup_dir = root
             .canonical
             .join("backups")
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
-        let _ = super::resolv::backup(&systemd.resolv_conf, &backup_dir)?;
+        let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
         transaction.resolv_conf_backup = Some(format!(
             "backups/{}/host/resolv.conf",
             transaction.transaction_id
@@ -176,11 +179,15 @@ pub(crate) async fn restore_version<P: DocsProbe>(
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             operation_progress(OperationPhase::Stopping, Some((2, steps)));
-            super::systemd::stop_and_wait(systemd, || {
-                super::systemd::active_state(systemd)
-                    .map(|value| value != "active")
-                    .unwrap_or(true)
-            })?;
+            manager.stop_and_wait(
+                ManagedService::LandscapeRouter,
+                &(|| {
+                    manager
+                        .active_state(ManagedService::LandscapeRouter)
+                        .map(|value| value != "active")
+                        .unwrap_or(true)
+                }),
+            )?;
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
         {
             // 非交互模式的「外部实例已停止」确认由 `--yes` 覆盖(见 confirm_restore)。
@@ -220,15 +227,15 @@ pub(crate) async fn restore_version<P: DocsProbe>(
         write_file_atomic(&data.join("landscape_init.toml"), &init_config, 0o600)?;
         rollback_util::restore_current(root, &format!("releases/{target_version}"))?;
         if is_systemd {
-            super::systemd::register(
-                systemd,
+            manager.register(
+                ManagedService::LandscapeRouter,
                 &root.canonical.join("service/landscape-router.service"),
             )?;
-            super::systemd::enable(systemd)?;
-            super::systemd::start(systemd)?;
+            manager.enable(ManagedService::LandscapeRouter)?;
+            manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
             operation_progress(OperationPhase::Verifying, Some((4, steps)));
-            let pid = super::systemd::main_pid(systemd)?;
+            let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(
                     "service did not produce a main pid after start".into(),
@@ -238,7 +245,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
                 ports: &options.health.ports,
                 expected_pid: pid,
                 docs: &options.health.docs,
-                unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+                unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
                 init_required: true,
                 data_dir: &data,
                 startup_timeout: options.health.startup_timeout,
@@ -261,7 +268,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             backup_id: metadata.backup_id,
         }),
         Err(error) if is_systemd && activated => {
-            match rollback_restore(root, &transaction, systemd, options.health).await {
+            match rollback_restore(root, &transaction, manager, options.health).await {
                 Ok(()) => Ok(RestoreOutcome::RolledBack {
                     version: from_version,
                 }),
@@ -286,17 +293,20 @@ pub(crate) async fn restore_version<P: DocsProbe>(
                 // 先按 systemd_before 恢复 unit 注册与 enabled/active 状态,再标记 failed。
                 let mut systemd_restored = true;
                 if let Some(before) = &transaction.systemd_before {
-                    let unit_origin = root.canonical.join("service/landscape-router.service");
-                    let restore_error =
-                        super::systemd::restore_systemd_before(systemd, before, &unit_origin)
-                            .and_then(|()| {
-                                if let Some(backup_path) = &transaction.resolv_conf_backup {
-                                    let backup_dir = root.canonical.join(backup_path);
-                                    super::resolv::restore(&systemd.resolv_conf, &backup_dir)
-                                } else {
-                                    Ok(())
-                                }
-                            });
+                    let unit_origin = root
+                        .canonical
+                        .join("service")
+                        .join(manager.service_name(ManagedService::LandscapeRouter));
+                    let restore_error = manager
+                        .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
+                        .and_then(|()| {
+                            if let Some(backup_path) = &transaction.resolv_conf_backup {
+                                let backup_dir = root.canonical.join(backup_path);
+                                super::resolv::restore(manager.resolv_conf(), &backup_dir)
+                            } else {
+                                Ok(())
+                            }
+                        });
                     if let Err(restore_error) = restore_error {
                         systemd_restored = false;
                         eprintln!(
@@ -375,6 +385,7 @@ mod tests {
         StateServiceManager, WebserverAsset,
     };
     use super::*;
+    use crate::service::systemd::Systemd;
 
     use super::super::backup as lkb;
     use super::super::export;

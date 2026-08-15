@@ -85,9 +85,13 @@ pub async fn run(args: &Uninstall) -> ExitCode {
         }
     };
     if let Some(transaction) = unfinished {
-        if let Err(error) =
-            transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
-                .await
+        if let Err(error) = transaction::recover_interrupted(
+            &normalized,
+            &transaction,
+            runtime.service_manager.as_ref(),
+            &health,
+        )
+        .await
         {
             eprintln!("uninstall: {error}");
             return exit_code(&error);
@@ -138,7 +142,7 @@ pub async fn run(args: &Uninstall) -> ExitCode {
     match crate::workflows::uninstall::uninstall_installation(
         &normalized,
         &state,
-        &runtime.systemd,
+        runtime.service_manager.as_ref(),
         &args,
         &options,
     )

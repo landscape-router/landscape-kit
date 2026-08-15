@@ -1,9 +1,9 @@
 use super::health::{DocsProbe, HealthOptions, StartupOptions};
+use super::manager::{Availability, ManagedService, ServiceManager};
 use super::pipeline;
 use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::state::{InitStatus, InstallState, ServiceState, StateServiceManager};
-use super::systemd::{self, Availability, Systemd};
 use super::transaction::{Phase, TransactionFile, TransactionServiceManager};
 
 /// service manager 迁移入口。迁移只改变 Landscape 的进程管理方式,
@@ -13,7 +13,7 @@ pub(crate) async fn migrate_service_manager<P: DocsProbe>(
     root: &InstallRoot,
     state: &InstallState,
     target: TransactionServiceManager,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
     confirm: &dyn Fn(&str) -> Result<bool, InstallError>,
 ) -> Result<(), InstallError> {
@@ -26,10 +26,10 @@ pub(crate) async fn migrate_service_manager<P: DocsProbe>(
     }
     match (from, target) {
         (TransactionServiceManager::Systemd, TransactionServiceManager::None) => {
-            migrate_to_none(root, state, systemd).await
+            migrate_to_none(root, state, manager).await
         }
         (TransactionServiceManager::None, TransactionServiceManager::Systemd) => {
-            migrate_to_systemd(root, state, systemd, health, confirm).await
+            migrate_to_systemd(root, state, manager, health, confirm).await
         }
         _ => unreachable!("migration directions are covered by the match above"),
     }
@@ -40,11 +40,14 @@ pub(crate) async fn migrate_service_manager<P: DocsProbe>(
 async fn migrate_to_none(
     root: &InstallRoot,
     state: &InstallState,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
-    pipeline::verify_unit_ownership(root, systemd)?;
-    let before = pipeline::capture_systemd_before(systemd)?;
-    let origin = root.canonical.join("service/landscape-router.service");
+    pipeline::verify_unit_ownership(root, manager)?;
+    let before = pipeline::capture_before(manager, ManagedService::LandscapeRouter)?;
+    let origin = root
+        .canonical
+        .join("service")
+        .join(manager.service_name(ManagedService::LandscapeRouter));
     let transaction = TransactionFile::new_service_migration(
         root,
         TransactionServiceManager::Systemd,
@@ -55,14 +58,18 @@ async fn migrate_to_none(
     let result: Result<(), InstallError> = (|| {
         super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
-        super::systemd::stop_and_wait(systemd, || {
-            systemd::active_state(systemd)
-                .map(|state| state != "active")
-                .unwrap_or(true)
-        })?;
+        manager.stop_and_wait(
+            ManagedService::LandscapeRouter,
+            &(|| {
+                manager
+                    .active_state(ManagedService::LandscapeRouter)
+                    .map(|state| state != "active")
+                    .unwrap_or(true)
+            }),
+        )?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
-        systemd::disable(systemd)?;
-        systemd::unregister(systemd, &origin)?;
+        manager.disable(ManagedService::LandscapeRouter)?;
+        manager.unregister(ManagedService::LandscapeRouter, &origin)?;
         let mut updated = state.clone();
         updated.service = ServiceState {
             manager: StateServiceManager::None,
@@ -93,18 +100,20 @@ async fn migrate_to_none(
             );
             Ok(())
         }
-        Err(error) => match systemd::restore_systemd_before(systemd, &before, &origin) {
-            Ok(()) => {
-                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
-                Err(error)
+        Err(error) => {
+            match manager.restore_before(ManagedService::LandscapeRouter, &before, &origin) {
+                Ok(()) => {
+                    let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+                    Err(error)
+                }
+                Err(restore_error) => {
+                    let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+                    Err(InstallError::Systemd(format!(
+                        "{error}; additionally restoring the managed service state failed: {restore_error}; manual recovery is required"
+                    )))
+                }
             }
-            Err(restore_error) => {
-                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
-                Err(InstallError::Systemd(format!(
-                    "{error}; additionally restoring the managed service state failed: {restore_error}; manual recovery is required"
-                )))
-            }
-        },
+        }
     }
 }
 
@@ -114,11 +123,11 @@ async fn migrate_to_none(
 async fn migrate_to_systemd<P: DocsProbe>(
     root: &InstallRoot,
     state: &InstallState,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
     confirm: &dyn Fn(&str) -> Result<bool, InstallError>,
 ) -> Result<(), InstallError> {
-    if !matches!(systemd.probe(), Availability::Available { .. }) {
+    if !matches!(manager.probe(), Availability::Available { .. }) {
         return Err(InstallError::Systemd(
             "--service-manager systemd requested but systemd is not available".into(),
         ));
@@ -143,8 +152,11 @@ async fn migrate_to_systemd<P: DocsProbe>(
         )));
     }
 
-    let before = pipeline::capture_systemd_before(systemd)?;
-    let origin = root.canonical.join("service/landscape-router.service");
+    let before = pipeline::capture_before(manager, ManagedService::LandscapeRouter)?;
+    let origin = root
+        .canonical
+        .join("service")
+        .join(manager.service_name(ManagedService::LandscapeRouter));
     let mut transaction = TransactionFile::new_service_migration(
         root,
         TransactionServiceManager::None,
@@ -160,21 +172,26 @@ async fn migrate_to_systemd<P: DocsProbe>(
             .join("backups")
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
-        let _ = super::resolv::backup(&systemd.resolv_conf, &backup_dir)?;
+        let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
         transaction.resolv_conf_backup = Some(format!(
             "backups/{}/host/resolv.conf",
             transaction.transaction_id
         ));
-        let unit_sha = pipeline::write_unit_origin(root, &systemd::render_unit(&root.canonical))?;
+        let unit_sha = pipeline::write_unit_origin(
+            root,
+            manager,
+            ManagedService::LandscapeRouter,
+            &manager.render_definition(ManagedService::LandscapeRouter, &root.canonical)?,
+        )?;
         super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
 
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         changed = true;
-        systemd::register(systemd, &origin)?;
-        systemd::enable(systemd)?;
-        systemd::start(systemd)?;
+        manager.register(ManagedService::LandscapeRouter, &origin)?;
+        manager.enable(ManagedService::LandscapeRouter)?;
+        manager.start(ManagedService::LandscapeRouter)?;
         super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
-        let pid = systemd::main_pid(systemd)?;
+        let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
                 "service did not produce a main pid after start".into(),
@@ -185,7 +202,7 @@ async fn migrate_to_systemd<P: DocsProbe>(
             ports: &health.ports,
             expected_pid: pid,
             docs: &health.docs,
-            unit_state: Some(&(|| systemd::active_state(systemd).ok())),
+            unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
             init_required: initialization_pending,
             data_dir: &root.canonical.join("data"),
             startup_timeout: health.startup_timeout,
@@ -234,8 +251,8 @@ async fn migrate_to_systemd<P: DocsProbe>(
         }
         Err(error) => {
             if changed {
-                let _ = systemd::stop(systemd);
-                match systemd::restore_systemd_before(systemd, &before, &origin) {
+                let _ = manager.stop(ManagedService::LandscapeRouter);
+                match manager.restore_before(ManagedService::LandscapeRouter, &before, &origin) {
                     Ok(()) => {}
                     Err(restore_error) => {
                         let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
@@ -247,7 +264,7 @@ async fn migrate_to_systemd<P: DocsProbe>(
                 if let Some(backup_path) = &transaction.resolv_conf_backup {
                     let backup_dir = root.canonical.join(backup_path);
                     if let Err(restore_error) =
-                        super::resolv::restore(&systemd.resolv_conf, &backup_dir)
+                        super::resolv::restore(manager.resolv_conf(), &backup_dir)
                     {
                         let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
                         return Err(InstallError::Systemd(format!(
@@ -280,6 +297,7 @@ mod tests {
         StateServiceManager, WebserverAsset,
     };
     use super::*;
+    use crate::service::systemd::Systemd;
 
     const PAYLOAD: &[u8] = b"landscape webserver payload";
 

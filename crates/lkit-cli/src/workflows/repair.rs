@@ -6,13 +6,13 @@ use super::artifacts::{WEBSERVER_BINARY, hash_str};
 use super::backup;
 use super::export;
 use super::health::{DocsProbe, StartupOptions};
+use super::manager::{ManagedService, ServiceManager};
 use super::pipeline::{self, SwitchOptions};
 use super::plan::InstallError;
 use super::repository::{Architecture, Release, ReleaseProvider};
 use super::rollback;
 use super::root::InstallRoot;
 use super::state::{InitStatus, InstallState, StateArchitecture, StateServiceManager};
-use super::systemd::Systemd;
 use super::transaction::{Phase, StaticBackupRef, TransactionFile};
 
 #[derive(Debug)]
@@ -132,7 +132,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
     root: &InstallRoot,
     provider: &ReleaseProvider,
     state: &InstallState,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     options: &SwitchOptions<'_, P>,
 ) -> Result<RepairOutcome, InstallError> {
     let architecture = architecture_from_state(state);
@@ -190,13 +190,16 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
         transaction.backup = Some(backup_ref);
 
         let unit_sha = if is_systemd {
-            transaction.systemd_before = Some(super::pipeline::capture_systemd_before(systemd)?);
+            transaction.systemd_before = Some(super::pipeline::capture_before(
+                manager,
+                ManagedService::LandscapeRouter,
+            )?);
             let backup_dir = root
                 .canonical
                 .join("backups")
                 .join(&transaction.transaction_id)
                 .join("host/resolv.conf");
-            let _ = super::resolv::backup(&systemd.resolv_conf, &backup_dir)?;
+            let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
             transaction.resolv_conf_backup = Some(format!(
                 "backups/{}/host/resolv.conf",
                 transaction.transaction_id
@@ -213,11 +216,15 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
 
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
-            super::systemd::stop_and_wait(systemd, || {
-                super::systemd::active_state(systemd)
-                    .map(|state| state != "active")
-                    .unwrap_or(true)
-            })?;
+            manager.stop_and_wait(
+                ManagedService::LandscapeRouter,
+                &(|| {
+                    manager
+                        .active_state(ManagedService::LandscapeRouter)
+                        .map(|state| state != "active")
+                        .unwrap_or(true)
+                }),
+            )?;
         } else {
             let accepted = (options.confirm)(
                 "stop your Landscape instance with your own process manager, then confirm",
@@ -233,9 +240,9 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
         replace_binary(&current_binary, &new_binary_dir.join(WEBSERVER_BINARY))?;
 
         if is_systemd {
-            super::systemd::start(systemd)?;
+            manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
-            let pid = super::systemd::main_pid(systemd)?;
+            let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(
                     "service did not produce a main pid after start".into(),
@@ -245,7 +252,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
                 ports: &options.health.ports,
                 expected_pid: pid,
                 docs: &options.health.docs,
-                unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+                unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
                 init_required: false,
                 data_dir: &root.canonical.join("data"),
                 startup_timeout: options.health.startup_timeout,
@@ -270,7 +277,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
     match result {
         Ok(()) => Ok(RepairOutcome::Committed),
         Err(error) if is_systemd && activated => {
-            match rollback::rollback_switch(root, &transaction, state, systemd, options.health)
+            match rollback::rollback_switch(root, &transaction, state, manager, options.health)
                 .await
             {
                 Ok(()) => Ok(RepairOutcome::RolledBack),
@@ -377,6 +384,7 @@ fn tx_dir(root: &InstallRoot, transaction: &TransactionFile) -> std::path::PathB
 
 #[cfg(test)]
 mod tests {
+    use crate::service::systemd::Systemd;
     use std::collections::HashMap;
 
     use super::super::health::HealthOptions;

@@ -1,0 +1,2 @@
+self_service.installed = "lkit 常驻服务已注册、启用并正在运行"
+self_service.removed = "lkit 常驻服务已停止并移除"

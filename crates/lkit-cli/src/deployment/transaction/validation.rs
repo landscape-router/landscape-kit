@@ -461,7 +461,7 @@ mod tests {
     use super::*;
 
     use super::super::{
-        BackupRef, Registration, StaticBackupRef, SystemdBefore, TransactionServiceManager,
+        BackupRef, Registration, ServiceBefore, StaticBackupRef, TransactionServiceManager,
         find_unfinished,
     };
     use crate::deployment::root::InstallRoot;
@@ -554,7 +554,7 @@ mod tests {
         transaction.from_service_manager = Some(TransactionServiceManager::Systemd);
         transaction.target_service_manager = Some(TransactionServiceManager::None);
         assert!(validate_transaction(&transaction).is_err());
-        transaction.systemd_before = Some(SystemdBefore {
+        transaction.systemd_before = Some(ServiceBefore {
             registration: Registration {
                 kind: RegistrationKind::Missing,
                 target: None,

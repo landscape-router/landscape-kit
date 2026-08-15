@@ -9,6 +9,7 @@ pub(crate) use super::artifacts::{
 };
 use super::credentials::Credentials;
 use super::health::{self, DocsProbe, HealthOptions};
+use super::manager::{ManagedService, ServiceManager};
 use super::plan::{InstallError, TargetVersion};
 pub(crate) use super::preflight::run_preflight;
 use super::repository::{Architecture, ProviderKind, Release, ReleaseProvider};
@@ -16,7 +17,6 @@ use super::resolv;
 use super::root::InstallRoot;
 use super::state::{InitStatus, InitializationState, ServiceState, StateServiceManager};
 pub(crate) use super::switch::{SwitchArgs, SwitchOptions, SwitchOutcome, switch_version};
-use super::systemd::{self, Systemd};
 use super::transaction::Phase;
 use crate::deployment::runtime::InstallRuntime;
 
@@ -25,9 +25,10 @@ mod manager;
 mod state;
 mod unit;
 
+pub(crate) use super::manager::capture_before;
 use init_config::write_init_config;
 pub(crate) use init_config::{activate_current, build_init_config, parse_stable_version};
-pub(crate) use manager::{ManagerChoice, ServiceManager, capture_systemd_before, select_manager};
+pub(crate) use manager::{ManagerChoice, ServiceManagerKind, select_manager};
 use state::{UnitActivation, build_state};
 pub(crate) use state::{
     architecture_from_state, build_switched_state, check_initialization, verify_current_backend,
@@ -36,7 +37,7 @@ pub(crate) use state::{
 pub(crate) use unit::{reference_command, write_unit_origin};
 pub(crate) struct FirstInstallOutcome {
     pub release: Release,
-    pub manager: ServiceManager,
+    pub manager: ServiceManagerKind,
     pub pending_network_confirmation: bool,
     pub pending_network_address: Option<std::net::Ipv4Addr>,
 }
@@ -47,7 +48,7 @@ pub(crate) async fn first_install<P: DocsProbe>(
     target: &TargetVersion,
     credentials: &Credentials,
     manager_choice: ManagerChoice,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health_options: &HealthOptions<P>,
 ) -> Result<FirstInstallOutcome, InstallError> {
     first_install_impl(
@@ -56,7 +57,7 @@ pub(crate) async fn first_install<P: DocsProbe>(
         target,
         credentials,
         manager_choice,
-        systemd,
+        manager,
         health_options,
         None,
         None,
@@ -70,7 +71,7 @@ pub(crate) async fn first_install_with_network<P: DocsProbe>(
     target: &TargetVersion,
     credentials: &Credentials,
     manager_choice: ManagerChoice,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health_options: &HealthOptions<P>,
     network: &crate::network::config::NetworkPlan,
     runtime: &InstallRuntime,
@@ -81,7 +82,7 @@ pub(crate) async fn first_install_with_network<P: DocsProbe>(
         target,
         credentials,
         manager_choice,
-        systemd,
+        manager,
         health_options,
         Some(network),
         Some(runtime),
@@ -95,7 +96,7 @@ async fn first_install_impl<P: DocsProbe>(
     target: &TargetVersion,
     credentials: &Credentials,
     manager_choice: ManagerChoice,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health_options: &HealthOptions<P>,
     network: Option<&crate::network::config::NetworkPlan>,
     runtime: Option<&InstallRuntime>,
@@ -112,8 +113,8 @@ async fn first_install_impl<P: DocsProbe>(
             .ok_or(InstallError::NoStableVersion)?,
         TargetVersion::Version(version) => provider.release(version, architecture).await?,
     };
-    let manager = select_manager(manager_choice, systemd)?;
-    if network.is_some() && manager != ServiceManager::Systemd {
+    let selected_manager = select_manager(manager_choice, manager)?;
+    if network.is_some() && selected_manager != ServiceManagerKind::Systemd {
         return Err(InstallError::ParameterUsage(
             "network takeover requires the systemd service manager".into(),
         ));
@@ -143,15 +144,20 @@ async fn first_install_impl<P: DocsProbe>(
         );
         let init_config = build_init_config(&release.version, credentials, network)?;
         write_init_config(root, &init_config)?;
-        let activation = if manager == ServiceManager::Systemd {
-            let before = capture_systemd_before(systemd)?;
+        let activation = if selected_manager == ServiceManagerKind::Systemd {
+            let before = capture_before(manager, ManagedService::LandscapeRouter)?;
             let backup_dir = root
                 .canonical
                 .join("backups")
                 .join(&transaction.transaction_id)
                 .join("host/resolv.conf");
-            let _ = resolv::backup(&systemd.resolv_conf, &backup_dir)?;
-            let unit_sha = write_unit_origin(root, &systemd::render_unit(&root.canonical))?;
+            let _ = resolv::backup(manager.resolv_conf(), &backup_dir)?;
+            let unit_sha = write_unit_origin(
+                root,
+                manager,
+                ManagedService::LandscapeRouter,
+                &manager.render_definition(ManagedService::LandscapeRouter, &root.canonical)?,
+            )?;
             transaction.systemd_before = Some(before);
             transaction.resolv_conf_backup = Some(format!(
                 "backups/{}/host/resolv.conf",
@@ -175,7 +181,7 @@ async fn first_install_impl<P: DocsProbe>(
                 })?;
                 crate::network::takeover::arm_recovery(root, takeover, runtime)?;
                 super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
-                crate::network::takeover::stop_host_services(takeover, systemd)?;
+                crate::network::takeover::stop_host_services(takeover, manager)?;
                 crate::network::takeover::clear_selected_lan_addresses(
                     &takeover.plan,
                     &runtime.ip_command,
@@ -218,15 +224,15 @@ async fn first_install_impl<P: DocsProbe>(
         };
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         activate_current(root, &release.version)?;
-        if manager == ServiceManager::Systemd {
-            systemd::register(
-                systemd,
+        if selected_manager == ServiceManagerKind::Systemd {
+            manager.register(
+                ManagedService::LandscapeRouter,
                 &root.canonical.join("service/landscape-router.service"),
             )?;
-            systemd::enable(systemd)?;
-            systemd::start(systemd)?;
+            manager.enable(ManagedService::LandscapeRouter)?;
+            manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
-            let pid = systemd::main_pid(systemd)?;
+            let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(
                     "service did not produce a main pid after start".into(),
@@ -236,7 +242,7 @@ async fn first_install_impl<P: DocsProbe>(
                 ports: &health_options.ports,
                 expected_pid: pid,
                 docs: &health_options.docs,
-                unit_state: Some(&(|| systemd::active_state(systemd).ok())),
+                unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
                 init_required: true,
                 data_dir: &root.canonical.join("data"),
                 startup_timeout: health_options.startup_timeout,
@@ -260,7 +266,7 @@ async fn first_install_impl<P: DocsProbe>(
     match result {
         Ok((release, pending_network)) => Ok(FirstInstallOutcome {
             release,
-            manager,
+            manager: selected_manager,
             pending_network_confirmation: pending_network,
             pending_network_address: pending_network
                 .then(|| {
@@ -275,10 +281,10 @@ async fn first_install_impl<P: DocsProbe>(
             if let Some(takeover) = transaction.network_takeover.as_ref() {
                 let _ = super::transaction::mark_phase(root, &transaction, Phase::RollingBack);
                 let cleanup =
-                    super::transaction::cleanup_failed_first_install(root, &transaction, systemd)
+                    super::transaction::cleanup_failed_first_install(root, &transaction, manager)
                         .and_then(|()| {
                             crate::network::takeover::cleanup_failed_takeover(
-                                root, takeover, systemd,
+                                root, takeover, manager,
                             )
                         });
                 if let Err(cleanup_error) = cleanup {
@@ -292,7 +298,7 @@ async fn first_install_impl<P: DocsProbe>(
                     return Err(error);
                 }
             } else if let Err(cleanup_error) =
-                super::transaction::cleanup_failed_first_install(root, &transaction, systemd)
+                super::transaction::cleanup_failed_first_install(root, &transaction, manager)
             {
                 eprintln!(
                     "install: {}",

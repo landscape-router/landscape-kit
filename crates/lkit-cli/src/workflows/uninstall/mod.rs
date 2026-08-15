@@ -4,16 +4,16 @@ use super::artifacts::WEBSERVER_BINARY;
 use super::backup;
 use super::export;
 use super::health::{DocsProbe, HealthOptions};
+use super::manager::{ManagedService, ServiceManager};
 use super::pipeline;
 use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateArchitecture, StateServiceManager};
-use super::systemd::Systemd;
 use super::transaction::{Phase, TransactionFile};
 use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 pub(crate) use self::cleanup::{cleanup_runtime_dirs, host_network_services_masked};
-use self::cleanup::{deactivate_systemd, purge_install_root, remove_managed_contents};
+use self::cleanup::{deactivate, purge_install_root, remove_managed_contents};
 
 /// 网络接管可能停止/disable/mask 的宿主网络服务,用于卸载前的接管特征警告。
 const NETWORK_SERVICE_UNITS: [&str; 4] = [
@@ -59,7 +59,7 @@ pub(crate) enum UninstallOutcome {
 pub(crate) async fn uninstall_installation<P: DocsProbe>(
     root: &InstallRoot,
     state: &InstallState,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     args: &UninstallArgs,
     options: &UninstallOptions<'_, P>,
 ) -> Result<UninstallOutcome, InstallError> {
@@ -68,7 +68,7 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
     let version = pipeline::parse_stable_version(&state.active_version).map_err(|error| {
         InstallError::CorruptedState(format!("invalid active version: {error}"))
     })?;
-    let masked_host_network = host_network_services_masked(systemd);
+    let masked_host_network = host_network_services_masked(manager);
 
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
     confirm_uninstall(options, args, &version, masked_host_network)?;
@@ -94,13 +94,16 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
     super::transaction::persist(root, &transaction)?;
 
     if is_systemd {
-        transaction.systemd_before = Some(pipeline::capture_systemd_before(systemd)?);
+        transaction.systemd_before = Some(pipeline::capture_before(
+            manager,
+            ManagedService::LandscapeRouter,
+        )?);
         let backup_dir = root
             .canonical
             .join("backups")
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
-        let _ = super::resolv::backup(&systemd.resolv_conf, &backup_dir)?;
+        let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
         transaction.resolv_conf_backup = Some(format!(
             "backups/{}/host/resolv.conf",
             transaction.transaction_id
@@ -115,7 +118,7 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             operation_progress(OperationPhase::Stopping, Some((2, steps)));
-            deactivate_systemd(systemd, root)?;
+            deactivate(manager, root)?;
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
         {
             // 非交互模式的「外部实例已停止」确认由 `--yes` 覆盖(见 confirm_uninstall)。
@@ -166,10 +169,10 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
 pub(crate) fn complete_uninstall(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     if transaction.systemd_before.is_some() {
-        deactivate_systemd(systemd, root)?;
+        deactivate(manager, root)?;
     }
     remove_managed_contents(
         root,
@@ -296,6 +299,7 @@ async fn create_protection_backup<P: DocsProbe>(
 
 #[cfg(test)]
 mod tests {
+    use crate::service::systemd::Systemd;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 

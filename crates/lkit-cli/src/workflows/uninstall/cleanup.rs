@@ -4,24 +4,33 @@ use super::NETWORK_SERVICE_UNITS;
 use super::UninstallArgs;
 use crate::deployment::plan::InstallError;
 use crate::deployment::root::InstallRoot;
-use crate::service::systemd::{self, Registration, Systemd};
+use crate::service::manager::{ManagedService, ServiceManager, SystemRegistration};
+use crate::service::systemd;
 
-/// 幂等停止、disable 并注销受管 systemd 服务,最后执行 daemon-reload。
+/// 幂等停止、disable 并注销受管服务,最后执行定义刷新。
 /// 注册链接缺失视为已注销;指向其他目标的链接属于所有权冲突,阻断。
-pub(super) fn deactivate_systemd(
-    systemd: &Systemd,
+pub(super) fn deactivate(
+    manager: &dyn ServiceManager,
     root: &InstallRoot,
 ) -> Result<(), InstallError> {
-    if systemd::is_active(systemd)? {
-        systemd::stop_and_wait(systemd, || {
-            systemd::active_state(systemd)
-                .map(|value| value != "active")
-                .unwrap_or(true)
-        })?;
+    let service = ManagedService::LandscapeRouter;
+    if manager.is_active(service)? {
+        manager.stop_and_wait(
+            service,
+            &(|| {
+                manager
+                    .active_state(service)
+                    .map(|value| value != "active")
+                    .unwrap_or(true)
+            }),
+        )?;
     }
-    let origin = root.canonical.join("service/landscape-router.service");
-    match systemd::query_registration(systemd)? {
-        Registration::Symlink { target } => {
+    let origin = root
+        .canonical
+        .join("service")
+        .join(manager.service_name(service));
+    match manager.query_registration(service)? {
+        SystemRegistration::Symlink { target } => {
             let origin_canonical = origin.canonicalize().map_err(InstallError::Io)?;
             if target != origin_canonical {
                 return Err(InstallError::Systemd(format!(
@@ -29,20 +38,20 @@ pub(super) fn deactivate_systemd(
                     target.display()
                 )));
             }
-            if systemd::is_enabled(systemd)? {
-                systemd::disable(systemd)?;
+            if manager.is_enabled(service)? {
+                manager.disable(service)?;
             }
-            systemd::unregister(systemd, &origin)?;
+            manager.unregister(service, &origin)?;
         }
-        Registration::Missing => {}
-        Registration::Conflict { file_type } => {
+        SystemRegistration::Missing => {}
+        SystemRegistration::Conflict { file_type } => {
             return Err(InstallError::Systemd(format!(
                 "cannot unregister {}: {file_type} ownership conflict",
-                systemd::UNIT_NAME
+                manager.service_name(service)
             )));
         }
     }
-    systemd::daemon_reload(systemd)?;
+    manager.refresh()?;
     Ok(())
 }
 
@@ -108,7 +117,10 @@ fn remove_path_if_present(path: &Path) -> Result<(), InstallError> {
 /// 检测宿主网络服务是否呈现网络接管特征(被停止、disable 或 mask)。
 /// 只读探测,不修改系统状态;结果用于卸载前警告,不阻断。
 /// 探测失败时按无接管特征处理(警告是尽力而为,不应阻断卸载)。
-pub(crate) fn host_network_services_masked(systemd: &Systemd) -> bool {
+pub(crate) fn host_network_services_masked(manager: &dyn ServiceManager) -> bool {
+    let Ok(systemd) = systemd::downcast(manager) else {
+        return false;
+    };
     NETWORK_SERVICE_UNITS.iter().any(|unit| {
         systemd::inspect_host_service(systemd, unit)
             .map(|before| {
@@ -125,6 +137,7 @@ pub(crate) fn host_network_services_masked(systemd: &Systemd) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::service::systemd::Systemd;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 

@@ -136,9 +136,13 @@ pub async fn run(args: &Reinit) -> ExitCode {
             );
             return ExitCode::from(1);
         }
-        if let Err(error) =
-            transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
-                .await
+        if let Err(error) = transaction::recover_interrupted(
+            &normalized,
+            &transaction,
+            runtime.service_manager.as_ref(),
+            &health,
+        )
+        .await
         {
             eprintln!("reinit: {error}");
             return exit_code(&error);
@@ -164,7 +168,8 @@ pub async fn run(args: &Reinit) -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    if !crate::workflows::uninstall::host_network_services_masked(&runtime.systemd) {
+    if !crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref())
+    {
         eprintln!(
             "reinit: {}",
             crate::tr!(crate::keys::REINIT_REQUIRES_NETWORK_TAKEOVER)
@@ -223,7 +228,7 @@ pub async fn run(args: &Reinit) -> ExitCode {
     match crate::workflows::reinit::reinit_installation(
         &normalized,
         &state,
-        &runtime.systemd,
+        runtime.service_manager.as_ref(),
         &credentials,
         &network_plan,
         &args,

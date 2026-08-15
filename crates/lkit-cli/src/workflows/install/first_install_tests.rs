@@ -5,6 +5,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use super::super::health::PortCheck;
+use crate::service::manager::ServiceManagerKind;
+use crate::service::systemd::Systemd;
 
 use sha2::{Digest, Sha256};
 
@@ -310,7 +312,7 @@ async fn auto_selects_none_without_systemd() {
     )
     .await
     .unwrap();
-    assert_eq!(outcome.manager, ServiceManager::None);
+    assert_eq!(outcome.manager, ServiceManagerKind::None);
     let state = super::super::state::load_state(&root).unwrap().unwrap();
     assert_eq!(state.service.manager, StateServiceManager::None);
     assert_eq!(state.initialization.status, InitStatus::Pending);
@@ -427,7 +429,7 @@ pub(crate) async fn assert_systemd_first_install(choice: ManagerChoice, case: &s
     .await
     .unwrap();
     watcher.join().unwrap();
-    assert_eq!(outcome.manager, ServiceManager::Systemd);
+    assert_eq!(outcome.manager, ServiceManagerKind::Systemd);
 
     assert!(dir.join("units/landscape-router.service").is_symlink());
     let unit_origin = root.canonical.join("service/landscape-router.service");

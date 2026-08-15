@@ -275,7 +275,7 @@ async fn run_first_install(
             &plan.target,
             &credentials,
             manager_choice,
-            &runtime.systemd,
+            runtime.service_manager.as_ref(),
             &health_options,
             network,
             runtime,
@@ -288,7 +288,7 @@ async fn run_first_install(
             &plan.target,
             &credentials,
             manager_choice,
-            &runtime.systemd,
+            runtime.service_manager.as_ref(),
             &health_options,
         )
         .await
@@ -313,7 +313,7 @@ async fn run_first_install(
                 );
             }
             match outcome.manager {
-                pipeline::ServiceManager::Systemd => {
+                crate::service::manager::ServiceManagerKind::Systemd => {
                     println!(
                         "install: {}",
                         crate::tr!(crate::keys::MANAGE_SYSTEMD_UNIT_REGISTERED)
@@ -342,7 +342,7 @@ async fn run_first_install(
                         );
                     }
                 }
-                pipeline::ServiceManager::None => {
+                crate::service::manager::ServiceManagerKind::None => {
                     println!(
                         "install: {}",
                         crate::tr!(crate::keys::MANAGE_INITIALIZATION_PENDING)
@@ -453,8 +453,13 @@ async fn execute(
                 transaction.phase.key()
             )));
         }
-        transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
-            .await?;
+        transaction::recover_interrupted(
+            &normalized,
+            &transaction,
+            runtime.service_manager.as_ref(),
+            &health,
+        )
+        .await?;
     }
     let loaded = state::load_state(&normalized)?;
     let presence = if loaded.is_some() {

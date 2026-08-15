@@ -57,14 +57,7 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         [show, property, value, unit]
             if show == "show" && property == "--property=MainPID" && value == "--value" =>
         {
-            println!(
-                "{}",
-                if unit == UNIT_NAME {
-                    active_pid(config).unwrap_or(0)
-                } else {
-                    0
-                }
-            );
+            println!("{}", active_pid(config, unit).unwrap_or(0));
         }
         [show, property, value, unit]
             if show == "show" && property == "--property=LoadState" && value == "--value" =>
@@ -150,14 +143,17 @@ fn ensure_installed(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
 }
 
 fn start(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
-    if unit != UNIT_NAME {
+    if !should_spawn(config, unit) {
         return write_marker(&active_path(config, unit), b"active\n");
     }
-    if active_pid(config).is_some() {
+    if active_pid(config, unit).is_some() {
         return Ok(());
     }
-    remove_if_exists(&pid_path(config))?;
-    let command = exec_start(&config.unit_dir.join(UNIT_NAME))?;
+    let state = unit_state_dir(config, unit);
+    std::fs::create_dir_all(&state)
+        .with_context(|| format!("create unit state dir {}", state.display()))?;
+    remove_if_exists(&pid_path(config, unit))?;
+    let command = exec_start(&config.unit_dir.join(unit))?;
     let executable = command
         .first()
         .context("unit ExecStart does not contain an executable")?;
@@ -165,10 +161,12 @@ fn start(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
     let error_log = log.try_clone().context("clone fixture log file")?;
     let mut child_command = Command::new(executable);
     child_command.args(&command[1..]);
-    if let Some(path) = &config.landscape_config {
-        child_command.env(FIXTURE_CONFIG_ENV, path);
-    } else {
-        child_command.env_remove(FIXTURE_CONFIG_ENV);
+    if unit == UNIT_NAME {
+        if let Some(path) = &config.landscape_config {
+            child_command.env(FIXTURE_CONFIG_ENV, path);
+        } else {
+            child_command.env_remove(FIXTURE_CONFIG_ENV);
+        }
     }
     // A real systemd service is outside the invoking SSH/PTY session. Keep the
     // fixture process alive when the command terminal disappears as well.
@@ -186,34 +184,16 @@ fn start(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
         .stderr(Stdio::from(error_log))
         .spawn()
         .with_context(|| format!("start fixture service with {command:?}"))?;
-    write_pid(config, child.id())
+    write_pid(config, unit, child.id())
 }
 
 fn stop(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
-    if unit != UNIT_NAME {
-        // 任意 unit:`stop` 移除 active 标记;若测试预置了 `main.pid`
-        // (模拟 systemd 管理的真实进程),同时信号并等待进程退出。
-        let state = unit_state_dir(config, unit);
-        if let Ok(content) = std::fs::read_to_string(state.join(PID_FILE))
-            && let Ok(pid) = content.trim().parse::<u32>()
-            && process_alive(pid)
-        {
-            signal(pid, libc::SIGTERM)?;
-            let started = Instant::now();
-            while process_alive(pid) && started.elapsed() < Duration::from_secs(5) {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if process_alive(pid) {
-                signal(pid, libc::SIGKILL)?;
-            }
-        }
-        return remove_if_exists(&active_path(config, unit));
-    }
-    let Some(pid) = read_pid(config) else {
-        remove_if_exists(&pid_path(config))?;
-        return Ok(());
-    };
-    if process_alive(pid) {
+    let state = unit_state_dir(config, unit);
+    let pid = std::fs::read_to_string(state.join(PID_FILE))
+        .ok()
+        .and_then(|content| content.trim().parse::<u32>().ok())
+        .filter(|pid| process_alive(*pid));
+    if let Some(pid) = pid {
         signal(pid, libc::SIGTERM)?;
         let started = Instant::now();
         while process_alive(pid) && started.elapsed() < Duration::from_secs(5) {
@@ -223,7 +203,8 @@ fn stop(config: &SystemctlFixtureConfig, unit: &str) -> Result<()> {
             signal(pid, libc::SIGKILL)?;
         }
     }
-    remove_if_exists(&pid_path(config))
+    remove_if_exists(&pid_path(config, unit))?;
+    remove_if_exists(&active_path(config, unit))
 }
 
 fn exec_start(unit_path: &Path) -> Result<Vec<String>> {
@@ -267,8 +248,8 @@ fn append_call_log(config: &SystemctlFixtureConfig, args: &[String]) -> Result<(
     writeln!(log).context("append systemctl call")
 }
 
-fn write_pid(config: &SystemctlFixtureConfig, pid: u32) -> Result<()> {
-    let path = pid_path(config);
+fn write_pid(config: &SystemctlFixtureConfig, unit: &str, pid: u32) -> Result<()> {
+    let path = pid_path(config, unit);
     let tmp = path.with_extension("tmp");
     let mut file = std::fs::File::create(&tmp)
         .with_context(|| format!("create temporary PID file {}", tmp.display()))?;
@@ -278,13 +259,13 @@ fn write_pid(config: &SystemctlFixtureConfig, pid: u32) -> Result<()> {
         .with_context(|| format!("commit fixture PID file {}", path.display()))
 }
 
-fn active_pid(config: &SystemctlFixtureConfig) -> Option<u32> {
-    let pid = read_pid(config)?;
+fn active_pid(config: &SystemctlFixtureConfig, unit: &str) -> Option<u32> {
+    let pid = read_pid(config, unit)?;
     process_alive(pid).then_some(pid)
 }
 
-fn read_pid(config: &SystemctlFixtureConfig) -> Option<u32> {
-    std::fs::read_to_string(pid_path(config))
+fn read_pid(config: &SystemctlFixtureConfig, unit: &str) -> Option<u32> {
+    std::fs::read_to_string(pid_path(config, unit))
         .ok()?
         .trim()
         .parse()
@@ -315,8 +296,8 @@ fn load_state(config: &SystemctlFixtureConfig, unit: &str) -> &'static str {
 }
 
 fn unit_is_active(config: &SystemctlFixtureConfig, unit: &str) -> bool {
-    if unit == UNIT_NAME {
-        active_pid(config).is_some()
+    if should_spawn(config, unit) {
+        active_pid(config, unit).is_some()
     } else {
         active_path(config, unit).is_file()
     }
@@ -346,8 +327,12 @@ fn masked_path(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
     unit_state_dir(config, unit).join(MASKED_FILE)
 }
 
-fn pid_path(config: &SystemctlFixtureConfig) -> PathBuf {
-    config.state_dir.join(PID_FILE)
+fn pid_path(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
+    unit_state_dir(config, unit).join(PID_FILE)
+}
+
+fn should_spawn(config: &SystemctlFixtureConfig, unit: &str) -> bool {
+    unit == UNIT_NAME || config.spawn_units.iter().any(|name| name == unit)
 }
 
 fn write_marker(path: &Path, content: &[u8]) -> Result<()> {

@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub(crate) mod health;
+pub(crate) mod manager;
 pub(crate) mod preflight;
 pub(crate) mod process;
 pub(crate) mod resolv;

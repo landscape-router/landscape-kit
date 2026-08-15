@@ -3,6 +3,7 @@ mod check;
 mod cli;
 mod commands;
 mod console;
+mod daemon;
 mod deployment;
 mod i18n;
 mod interaction;
@@ -171,5 +172,7 @@ async fn run_command(
         Commands::SetMirror(args) => commands::set_mirror::run(&args),
         Commands::Software(args) => commands::software::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
+        Commands::SelfService(args) => commands::self_service::run(&args),
+        Commands::Daemon(args) => daemon::run(&args),
     }
 }

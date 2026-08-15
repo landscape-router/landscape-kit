@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use super::super::health::DocsProbe;
+use super::super::manager::ServiceManager;
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 use super::super::systemd::{self, Availability, Systemd};

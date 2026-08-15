@@ -125,8 +125,13 @@ pub(crate) async fn create_manual_backup(
     let health = runtime.health_options()?;
     let unfinished = transaction::find_unfinished(root)?;
     if let Some(transaction) = unfinished
-        && let Err(error) =
-            transaction::recover_interrupted(root, &transaction, &runtime.systemd, &health).await
+        && let Err(error) = transaction::recover_interrupted(
+            root,
+            &transaction,
+            runtime.service_manager.as_ref(),
+            &health,
+        )
+        .await
     {
         return Err(error);
     }

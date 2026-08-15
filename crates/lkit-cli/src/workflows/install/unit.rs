@@ -3,17 +3,24 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 
 use super::super::artifacts::hash_str;
+use super::super::manager::{ManagedService, ServiceManager};
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
-use super::super::systemd;
 
-/// 写入受管 unit 原件(0600,原子替换),返回其 SHA-256。
-pub(crate) fn write_unit_origin(root: &InstallRoot, content: &str) -> Result<String, InstallError> {
-    systemd::validate_unit(content, &root.canonical)?;
+/// 写入受管服务定义原件(0600,原子替换),返回其 SHA-256。
+/// 写入前用当前后端校验定义仍满足安全不变量。
+pub(crate) fn write_unit_origin(
+    root: &InstallRoot,
+    manager: &dyn ServiceManager,
+    service: ManagedService,
+    content: &str,
+) -> Result<String, InstallError> {
+    manager.validate_definition(service, content, &root.canonical)?;
     let service_dir = root.canonical.join("service");
     std::fs::create_dir_all(&service_dir).map_err(InstallError::Io)?;
-    let path = service_dir.join("landscape-router.service");
-    let tmp = service_dir.join(".landscape-router.service.tmp");
+    let name = manager.service_name(service);
+    let path = service_dir.join(name);
+    let tmp = service_dir.join(format!(".{name}.tmp"));
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)

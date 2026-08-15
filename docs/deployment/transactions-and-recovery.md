@@ -120,7 +120,9 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 
 `systemd_before` 和 `resolv_conf_backup` 都是必填但可为 `null` 的字段。普通无 systemd 事务两者必须为 null；需要注册、停止、启动或重启 Landscape 的 systemd 事务，以及任一 `service_migration`，必须在首次修改 systemd 或运行状态前记录 `systemd_before`。需要启动或重启 Landscape 的事务还必须先创建 `resolv_conf_backup`。
 
-`systemd_before` 固定记录事务开始前的服务状态：
+`systemd_before` 固定记录事务开始前的服务状态（JSON 键名保持兼容；Rust 侧类型为
+`ServiceBefore`,由 [`ServiceManager`](../service/manager.md) 的
+`capture_before` 捕获,后续后端接入时结构不变）：
 
 ```json
 {

@@ -73,7 +73,11 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 发现 `/root/.landscape-router` 等旧手工部署数据时，`install` 不迁移它，并拒绝可能覆盖或端口冲突的部署；迁移使用独立的 `lkit migrate` 流程，见
 [`lkit migrate`](../commands/migrate.md)。
 
-## systemd 集成
+## 服务管理器集成
+
+`lkit` 通过 [`ServiceManager` trait](manager.md) 操作 init 系统。当前唯一实现后端
+是 systemd,本文所述可用性判定、unit 路径与内容均针对该后端;其他后端接入时
+只改变定义渲染与生命周期操作的实现,不改变工作流语义。
 
 ### 可用性判断
 
@@ -153,7 +157,8 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 - 不启动 Landscape；
 - 不停止或向 Landscape 发送信号；
-- 不调用 OpenRC、runit、s6、容器运行时或用户脚本；
+- 不调用 OpenRC、runit、s6、容器运行时或用户脚本(未来接入这些后端时,由
+  `ServiceManager` trait 定义统一的注册、启停与状态语义,工作流行为不变)；
 - 激活后不等待用户启动；
 - 不执行端口、PID、`/api/docs`、初始化锁或稳定观察检查；
 - 是否启动、何时启动以及如何判断健康完全由用户负责。

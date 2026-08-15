@@ -68,7 +68,7 @@ async fn run_installed_inner(
             &plan.root,
             &state,
             target,
-            &runtime.systemd,
+            runtime.service_manager.as_ref(),
             &health,
             &|prompt| crate::interaction::interactive::confirm(prompt),
         )
@@ -114,7 +114,7 @@ async fn run_installed_inner(
             &plan.root,
             &provider,
             &state,
-            &runtime.systemd,
+            runtime.service_manager.as_ref(),
             &switch_options,
         )
         .await
@@ -204,7 +204,7 @@ async fn run_installed_inner(
                 &pipeline::SwitchArgs {
                     allow_no_backup: args.allow_no_backup,
                 },
-                &runtime.systemd,
+                runtime.service_manager.as_ref(),
                 &switch_options,
             )
             .await
@@ -284,7 +284,7 @@ async fn run_installed_inner(
         &plan.root,
         &state,
         provider_override,
-        &runtime.systemd,
+        runtime.service_manager.as_ref(),
     )
     .await?;
     println!(
@@ -337,7 +337,7 @@ async fn same_version_install(
     root: &crate::deployment::root::InstallRoot,
     state: &crate::deployment::state::InstallState,
     provider_override: Option<crate::deployment::plan::ProviderSpec>,
-    systemd: &crate::service::systemd::Systemd,
+    systemd: &dyn crate::service::manager::ServiceManager,
 ) -> Result<(), plan::InstallError> {
     pipeline::verify_current_backend(root, state)?;
     pipeline::check_initialization(root, state)?;
@@ -346,7 +346,11 @@ async fn same_version_install(
     if state.service.manager == StateServiceManager::Systemd {
         let origin = root.canonical.join("service/landscape-router.service");
         let content = std::fs::read_to_string(&origin).map_err(plan::InstallError::Io)?;
-        crate::service::systemd::validate_unit(&content, &root.canonical)?;
+        systemd.validate_definition(
+            crate::service::manager::ManagedService::LandscapeRouter,
+            &content,
+            &root.canonical,
+        )?;
         let actual = pipeline::hash_str(&content);
         let changed = state.service.definition_sha256.as_deref() != Some(actual.as_str());
         if changed {

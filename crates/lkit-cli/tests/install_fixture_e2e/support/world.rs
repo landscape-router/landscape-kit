@@ -34,13 +34,15 @@ impl TestWorld {
 impl Drop for TestWorld {
     fn drop(&mut self) {
         if self.systemctl_config.is_file() {
-            let _ = Command::new(SYSTEMCTL_FIXTURE)
-                .env(
-                    lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-                    &self.systemctl_config,
-                )
-                .args(["stop", "landscape-router.service"])
-                .output();
+            for unit in ["landscape-router.service", "lkit.service"] {
+                let _ = Command::new(SYSTEMCTL_FIXTURE)
+                    .env(
+                        lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+                        &self.systemctl_config,
+                    )
+                    .args(["stop", unit])
+                    .output();
+            }
         }
         let _ = std::fs::remove_dir_all(&self.root);
     }

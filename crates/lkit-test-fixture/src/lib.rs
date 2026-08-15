@@ -114,6 +114,10 @@ pub struct SystemctlFixtureConfig {
     pub call_log: Option<PathBuf>,
     #[serde(default = "default_systemd_version")]
     pub systemd_version: String,
+    /// 需要真实拉起的 unit 名列表(如 `lkit.service`);未列出的 unit 只维护
+    /// state 标记,不启动真实进程。
+    #[serde(default)]
+    pub spawn_units: Vec<String>,
 }
 
 impl SystemctlFixtureConfig {

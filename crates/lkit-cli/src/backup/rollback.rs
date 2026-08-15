@@ -9,8 +9,8 @@ use super::health::{self, DocsProbe, HealthOptions, StartupOptions};
 use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::state::{self, InstallState, StateServiceManager};
-use super::systemd::Systemd;
 use super::transaction::{Phase, TransactionFile};
+use crate::service::manager::{ManagedService, ServiceManager};
 use crate::service::resolv;
 
 /// 切换前写入事务备份目录的旧状态快照文件名。
@@ -62,17 +62,21 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
     snapshot: &InstallState,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
     let is_systemd = snapshot.service.manager == StateServiceManager::Systemd;
     if is_systemd {
-        super::systemd::stop_and_wait(systemd, || {
-            super::systemd::active_state(systemd)
-                .map(|state| state != "active")
-                .unwrap_or(true)
-        })?;
+        systemd.stop_and_wait(
+            ManagedService::LandscapeRouter,
+            &(|| {
+                systemd
+                    .active_state(ManagedService::LandscapeRouter)
+                    .map(|state| state != "active")
+                    .unwrap_or(true)
+            }),
+        )?;
     }
     let tx_dir = root
         .canonical
@@ -109,13 +113,13 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
 
     let state = build_restored_state(root, transaction, snapshot, &metadata, &restore_dir)?;
     if is_systemd {
-        super::systemd::register(
-            systemd,
+        systemd.register(
+            ManagedService::LandscapeRouter,
             &root.canonical.join("service/landscape-router.service"),
         )?;
-        super::systemd::enable(systemd)?;
-        super::systemd::start(systemd)?;
-        let pid = super::systemd::main_pid(systemd)?;
+        systemd.enable(ManagedService::LandscapeRouter)?;
+        systemd.start(ManagedService::LandscapeRouter)?;
+        let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
                 "restored service did not produce a main pid".into(),
@@ -125,7 +129,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             ports: &health.ports,
             expected_pid: pid,
             docs: &health.docs,
-            unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+            unit_state: Some(&(|| systemd.active_state(ManagedService::LandscapeRouter).ok())),
             init_required: true,
             data_dir: &data,
             startup_timeout: health.startup_timeout,
@@ -156,29 +160,36 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
     previous: &InstallState,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
     let is_systemd = previous.service.manager == StateServiceManager::Systemd;
     let mut was_active = false;
     if is_systemd {
-        super::systemd::stop_and_wait(systemd, || {
-            super::systemd::active_state(systemd)
-                .map(|state| state != "active")
-                .unwrap_or(true)
-        })?;
+        systemd.stop_and_wait(
+            ManagedService::LandscapeRouter,
+            &(|| {
+                systemd
+                    .active_state(ManagedService::LandscapeRouter)
+                    .map(|state| state != "active")
+                    .unwrap_or(true)
+            }),
+        )?;
         let before = transaction.systemd_before.as_ref().ok_or_else(|| {
             InstallError::CorruptedTransaction(
                 "no-backup switch transaction is missing systemd_before".into(),
             )
         })?;
         was_active = before.active;
-        let unit_origin = root.canonical.join("service/landscape-router.service");
-        super::systemd::restore_systemd_registration(systemd, before, &unit_origin)?;
+        let unit_origin = root
+            .canonical
+            .join("service")
+            .join(systemd.service_name(ManagedService::LandscapeRouter));
+        systemd.restore_registration(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
             let backup_dir = root.canonical.join(backup_path);
-            resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+            resolv::restore(systemd.resolv_conf(), &backup_dir)?;
         }
     }
     let previous_current = transaction.previous_current.as_deref().ok_or_else(|| {
@@ -189,8 +200,8 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     restore_current(root, previous_current)?;
 
     if is_systemd && was_active {
-        super::systemd::start(systemd)?;
-        let pid = super::systemd::main_pid(systemd)?;
+        systemd.start(ManagedService::LandscapeRouter)?;
+        let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
                 "restored service did not produce a main pid".into(),
@@ -201,7 +212,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
             ports: &health.ports,
             expected_pid: pid,
             docs: &health.docs,
-            unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+            unit_state: Some(&(|| systemd.active_state(ManagedService::LandscapeRouter).ok())),
             init_required: true,
             data_dir: &data,
             startup_timeout: health.startup_timeout,
@@ -410,6 +421,7 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::systemd::Systemd;
 
     struct AlwaysHealthy;
 

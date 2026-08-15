@@ -1,15 +1,15 @@
 use std::path::Path;
 
 use super::super::health::{DocsProbe, HealthOptions};
+use super::super::manager::{ManagedService, ServiceManager};
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
-use super::super::systemd::Systemd;
 use super::{self as transaction, Operation, Phase, TransactionFile};
 
 pub(crate) async fn recover_interrupted<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     match transaction.operation {
@@ -69,7 +69,7 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
 fn recover_migrate(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     match transaction.phase {
         Phase::Preparing => {
@@ -101,7 +101,7 @@ fn recover_migrate(
 async fn recover_reinit<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     if matches!(
@@ -124,7 +124,7 @@ async fn recover_reinit<P: DocsProbe>(
             restore_pre_activation_systemd(root, transaction, systemd)?;
             if let Some(backup_path) = &transaction.resolv_conf_backup {
                 let backup_dir = root.canonical.join(backup_path);
-                super::super::resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+                super::super::resolv::restore(systemd.resolv_conf(), &backup_dir)?;
             }
             let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
             transaction::mark_phase(root, transaction, Phase::Failed)?;
@@ -147,7 +147,7 @@ async fn recover_reinit<P: DocsProbe>(
 fn recover_uninstall(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     match transaction.phase {
         Phase::Preparing => {
@@ -175,7 +175,7 @@ fn recover_uninstall(
 async fn recover_restore<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     match transaction.phase {
@@ -211,7 +211,7 @@ async fn recover_restore<P: DocsProbe>(
 async fn recover_repair<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     match transaction.phase {
@@ -246,7 +246,7 @@ async fn recover_repair<P: DocsProbe>(
 async fn recover_binary_repair<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     let snapshot = super::super::rollback::read_state_snapshot(root, &transaction.transaction_id)?;
@@ -293,7 +293,7 @@ fn recover_static_repair(
 fn recover_migration(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     match transaction.phase {
         Phase::Preparing => {
@@ -309,9 +309,12 @@ fn recover_migration(
             let before = transaction.systemd_before.as_ref().ok_or_else(|| {
                 corrupted("service migration transaction is missing systemd_before".into())
             })?;
-            let unit_origin = root.canonical.join("service/landscape-router.service");
+            let unit_origin = root
+                .canonical
+                .join("service")
+                .join(systemd.service_name(ManagedService::LandscapeRouter));
             if let Err(restore_error) =
-                super::super::systemd::restore_systemd_before(systemd, before, &unit_origin)
+                systemd.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
             {
                 let _ = transaction::mark_phase(root, transaction, Phase::Failed);
                 return Err(restore_error);
@@ -319,7 +322,7 @@ fn recover_migration(
             if let Some(backup_path) = &transaction.resolv_conf_backup {
                 let backup_dir = root.canonical.join(backup_path);
                 if let Err(restore_error) =
-                    super::super::resolv::restore(&systemd.resolv_conf, &backup_dir)
+                    super::super::resolv::restore(systemd.resolv_conf(), &backup_dir)
                 {
                     let _ = transaction::mark_phase(root, transaction, Phase::Failed);
                     return Err(restore_error);
@@ -357,7 +360,7 @@ fn restore_binary(saved: &Path, target: &Path) -> Result<(), InstallError> {
 async fn recover_switch<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     match transaction.phase {
@@ -463,13 +466,16 @@ fn restore_current_link(root: &InstallRoot, target: &str) -> Result<(), InstallE
 fn restore_pre_activation_systemd(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    systemd: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     let Some(before) = transaction.systemd_before.as_ref() else {
         return Ok(());
     };
-    let unit_origin = root.canonical.join("service/landscape-router.service");
-    super::super::systemd::restore_systemd_before(systemd, before, &unit_origin)
+    let unit_origin = root
+        .canonical
+        .join("service")
+        .join(systemd.service_name(ManagedService::LandscapeRouter));
+    systemd.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
 }
 
 /// 首次安装失败清理:恢复 systemd 注册与 enabled/active 状态、恢复
@@ -482,8 +488,10 @@ fn corrupted(reason: String) -> InstallError {
 mod tests {
     use super::*;
 
+    use crate::service::systemd::Systemd;
+
     use super::super::{
-        BackupRef, NetworkTakeoverTransaction, Registration, RegistrationKind, SystemdBefore,
+        BackupRef, NetworkTakeoverTransaction, Registration, RegistrationKind, ServiceBefore,
         TransactionServiceManager, begin, find_unfinished, load_transaction_file, mark_phase,
     };
     use chrono::Utc;
@@ -821,7 +829,7 @@ mod tests {
     fn recovers_service_migration_transaction_in_preparing() {
         let temp = temp_root("migration-recover");
         let root = new_root(&temp);
-        let before = SystemdBefore {
+        let before = ServiceBefore {
             registration: Registration {
                 kind: RegistrationKind::Missing,
                 target: None,

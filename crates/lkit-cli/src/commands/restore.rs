@@ -85,9 +85,13 @@ pub async fn run(args: &Restore) -> ExitCode {
         }
     };
     if let Some(transaction) = unfinished {
-        if let Err(error) =
-            transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
-                .await
+        if let Err(error) = transaction::recover_interrupted(
+            &normalized,
+            &transaction,
+            runtime.service_manager.as_ref(),
+            &health,
+        )
+        .await
         {
             eprintln!("restore: {error}");
             return exit_code(&error);
@@ -128,7 +132,7 @@ pub async fn run(args: &Restore) -> ExitCode {
     match crate::workflows::restore::restore_version(
         &normalized,
         &state,
-        &runtime.systemd,
+        runtime.service_manager.as_ref(),
         &args,
         &options,
     )

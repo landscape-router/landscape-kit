@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use super::super::manager::ServiceManager;
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 use super::super::systemd::{self, Systemd};
@@ -11,10 +12,10 @@ use super::super::transaction::{HostServiceBefore, Phase, TransactionFile};
 pub(crate) fn rollback_migrate(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     super::super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
-    let result = rollback_migrate_inner(root, transaction, systemd);
+    let result = rollback_migrate_inner(root, transaction, manager);
     if result.is_err() {
         let _ = super::super::transaction::mark_phase(root, transaction, Phase::Failed);
     }
@@ -24,8 +25,9 @@ pub(crate) fn rollback_migrate(
 fn rollback_migrate_inner(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    let systemd = systemd::downcast(manager)?;
     // 注销/停止新受管 unit(事务前为未注册,幂等),恢复 resolv.conf,
     // 移除本次创建的 release、current、初始化文件与状态文件。
     super::super::transaction::cleanup_failed_first_install(root, transaction, systemd)?;
@@ -41,8 +43,9 @@ fn rollback_migrate_inner(
 pub(crate) fn restore_legacy_unit(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    let systemd = systemd::downcast(manager)?;
     let Some(before) = &transaction.legacy_unit else {
         return Ok(());
     };

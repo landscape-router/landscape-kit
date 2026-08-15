@@ -1,12 +1,17 @@
+use std::any::Any;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub(crate) use super::manager::{
+    Availability, ManagedService, Registration, RegistrationKind, ServiceBefore, ServiceManager,
+    ServiceManagerKind, SystemRegistration,
+};
 use super::plan::InstallError;
 use super::transaction::HostServiceBefore;
-use super::transaction::{RegistrationKind, SystemdBefore};
 
 pub(crate) const UNIT_NAME: &str = "landscape-router.service";
+pub(crate) const LKIT_DAEMON_UNIT_NAME: &str = "lkit.service";
 pub(crate) const SYSTEM_UNIT_DIR: &str = "/etc/systemd/system";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,22 +33,127 @@ impl Systemd {
             resolv_conf: PathBuf::from(super::resolv::RESOLV_CONF),
         }
     }
+}
 
-    pub(crate) fn probe(&self) -> Availability {
+impl ServiceManager for Systemd {
+    fn kind(&self) -> ServiceManagerKind {
+        ServiceManagerKind::Systemd
+    }
+
+    fn probe(&self) -> Availability {
         probe(self, &self.run_systemd_dir, self.pid1_is_systemd)
+    }
+
+    fn service_name(&self, service: ManagedService) -> &str {
+        match service {
+            ManagedService::LandscapeRouter => UNIT_NAME,
+            ManagedService::LkitDaemon => LKIT_DAEMON_UNIT_NAME,
+        }
+    }
+
+    fn render_definition(
+        &self,
+        service: ManagedService,
+        canonical_root: &Path,
+    ) -> Result<String, InstallError> {
+        match service {
+            ManagedService::LandscapeRouter => Ok(render_unit(canonical_root)),
+            ManagedService::LkitDaemon => Ok(render_lkit_daemon_unit(canonical_root)),
+        }
+    }
+
+    fn validate_definition(
+        &self,
+        service: ManagedService,
+        content: &str,
+        canonical_root: &Path,
+    ) -> Result<(), InstallError> {
+        match service {
+            ManagedService::LandscapeRouter => validate_unit(content, canonical_root),
+            ManagedService::LkitDaemon => validate_lkit_daemon_unit(content, canonical_root),
+        }
+    }
+
+    fn query_registration(
+        &self,
+        service: ManagedService,
+    ) -> Result<SystemRegistration, InstallError> {
+        query_registration_at(self, self.service_name(service))
+    }
+
+    fn register(&self, service: ManagedService, origin: &Path) -> Result<(), InstallError> {
+        register_at(self, self.service_name(service), origin)
+    }
+
+    fn unregister(&self, service: ManagedService, origin: &Path) -> Result<(), InstallError> {
+        unregister_at(self, self.service_name(service), origin)
+    }
+
+    fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError> {
+        is_enabled_at(self, self.service_name(service))
+    }
+
+    fn enable(&self, service: ManagedService) -> Result<(), InstallError> {
+        enable_at(self, self.service_name(service))
+    }
+
+    fn disable(&self, service: ManagedService) -> Result<(), InstallError> {
+        disable_at(self, self.service_name(service))
+    }
+
+    fn is_active(&self, service: ManagedService) -> Result<bool, InstallError> {
+        is_active_at(self, self.service_name(service))
+    }
+
+    fn active_state(&self, service: ManagedService) -> Result<String, InstallError> {
+        active_state_at(self, self.service_name(service))
+    }
+
+    fn start(&self, service: ManagedService) -> Result<(), InstallError> {
+        start_at(self, self.service_name(service))
+    }
+
+    fn stop(&self, service: ManagedService) -> Result<(), InstallError> {
+        stop_at(self, self.service_name(service))
+    }
+
+    fn restart(&self, service: ManagedService) -> Result<(), InstallError> {
+        unit_command(self, "restart", self.service_name(service))
+    }
+
+    fn refresh(&self) -> Result<(), InstallError> {
+        daemon_reload(self)
+    }
+
+    fn main_pid(&self, service: ManagedService) -> Result<u32, InstallError> {
+        main_pid_at(self, self.service_name(service))
+    }
+
+    fn restore_registration(
+        &self,
+        service: ManagedService,
+        before: &ServiceBefore,
+        origin: &Path,
+    ) -> Result<(), InstallError> {
+        restore_registration_at(self, self.service_name(service), before, origin)
+    }
+
+    fn resolv_conf(&self) -> &Path {
+        &self.resolv_conf
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Availability {
-    /// 满足全部可用性条件。
-    Available { version: String },
-    /// PID 1 不是 systemd。
-    NotSystemdInit,
-    /// `systemctl` 缺失或不可执行。
-    MissingSystemctl,
-    /// 看似 systemd 但无法连接 manager,属于环境损坏。
-    Unreachable(String),
+/// 从 trait 对象向下转型到 systemd 后端。只用于显式要求 systemd 的操作
+/// (network takeover、旧部署迁移),调用方必须先通过 probe 保证可用。
+pub(crate) fn downcast(manager: &dyn ServiceManager) -> Result<&Systemd, InstallError> {
+    manager
+        .as_any()
+        .downcast_ref::<Systemd>()
+        .ok_or_else(|| systemd_error("operation requires the systemd service manager".into()))
 }
 
 /// 可用性判断。`run_systemd_dir` 注入用于测试;默认 `/run/systemd/system`。
@@ -53,16 +163,20 @@ pub(crate) fn probe(
     pid1_is_systemd: bool,
 ) -> Availability {
     if !pid1_is_systemd {
-        return Availability::NotSystemdInit;
+        return Availability::NotDetected;
     }
     if !run_systemd_dir.is_dir() {
-        return Availability::NotSystemdInit;
+        return Availability::NotDetected;
     }
     if !systemd.systemctl.is_file() {
-        return Availability::MissingSystemctl;
+        return Availability::Unavailable(
+            "the systemctl binary is missing on a host running systemd".into(),
+        );
     }
     if !is_executable(&systemd.systemctl) {
-        return Availability::MissingSystemctl;
+        return Availability::Unavailable(
+            "the systemctl binary is not executable on a host running systemd".into(),
+        );
     }
     match run_systemctl(systemd, &["show", "--property=Version"], None) {
         Ok((_, output)) => {
@@ -73,7 +187,7 @@ pub(crate) fn probe(
                 .to_string();
             Availability::Available { version }
         }
-        Err(_) => Availability::Unreachable(
+        Err(_) => Availability::Unavailable(
             "systemctl show --property=Version cannot connect to the systemd manager".into(),
         ),
     }
@@ -86,7 +200,7 @@ pub(crate) fn pid1_is_systemd() -> bool {
         .unwrap_or(false)
 }
 
-/// 渲染受管 unit 原件内容。`ExecStart` 使用真实绝对路径。
+/// 渲染受管 Landscape unit 原件内容。`ExecStart` 使用真实绝对路径。
 pub(crate) fn render_unit(canonical_root: &Path) -> String {
     format!(
         "[Unit]\n\
@@ -99,6 +213,26 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
          User=root\n\
          Restart=always\n\
          LimitMEMLOCK=infinity\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
+        canonical_root.display()
+    )
+}
+
+/// 渲染 lkit 常驻服务 unit 原件内容。二进制约定为
+/// `<install-root>/service/lkit`(与网络接管恢复二进制同目录约定)。
+pub(crate) fn render_lkit_daemon_unit(canonical_root: &Path) -> String {
+    format!(
+        "[Unit]\n\
+         Description=Lkit daemon\n\
+         After=network-online.target\n\
+         Wants=network-online.target\n\
+         \n\
+         [Service]\n\
+         ExecStart={0}/service/lkit daemon --config-dir {0}/data\n\
+         User=root\n\
+         Restart=always\n\
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
@@ -131,16 +265,32 @@ fn parse_unit(content: &str) -> Result<Vec<(String, String)>, InstallError> {
 
 /// 校验 unit 原件是否满足受管安全不变量:
 /// - 可解析;
-/// - `ExecStart` 恰好指向本安装根目录的 `current/landscape-webserver`,
-///   且 `--config-dir` 和 `--web` 分别指向 `data` 与 `current/static`;
-/// - `User=root`、`Restart=always`、`LimitMEMLOCK=infinity`、`WantedBy=multi-user.target`;
+/// - `ExecStart` 恰好指向本安装根目录的受管命令;
+/// - `User=root`、`Restart=always`、`WantedBy=multi-user.target`;
+/// - Landscape 额外要求 `LimitMEMLOCK=infinity`;
 /// - 不包含明显的凭据内容。
 pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), InstallError> {
-    let entries = parse_unit(content)?;
-    let root = canonical_root.display();
-    let expected_exec = format!(
-        "{root}/current/landscape-webserver --config-dir {root}/data --web {root}/current/static"
+    let expected = format!(
+        "{0}/current/landscape-webserver --config-dir {0}/data --web {0}/current/static",
+        canonical_root.display()
     );
+    validate_definition(content, expected, true)
+}
+
+fn validate_lkit_daemon_unit(content: &str, canonical_root: &Path) -> Result<(), InstallError> {
+    let expected = format!(
+        "{0}/service/lkit daemon --config-dir {0}/data",
+        canonical_root.display()
+    );
+    validate_definition(content, expected, false)
+}
+
+fn validate_definition(
+    content: &str,
+    expected_exec: String,
+    require_memlock: bool,
+) -> Result<(), InstallError> {
+    let entries = parse_unit(content)?;
     let mut exec_start: Option<&str> = None;
     let mut user: Option<&str> = None;
     let mut restart: Option<&str> = None;
@@ -178,7 +328,7 @@ pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), 
     if restart != Some("always") {
         return Err(systemd_error("unit Restart must be always".into()));
     }
-    if memlock != Some("infinity") {
+    if require_memlock && memlock != Some("infinity") {
         return Err(systemd_error("unit LimitMEMLOCK must be infinity".into()));
     }
     if wanted_by != Some("multi-user.target") {
@@ -189,28 +339,22 @@ pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), 
     Ok(())
 }
 
-/// 系统注册链接的状态。
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Registration {
-    /// 不存在注册链接。
-    Missing,
-    /// 指向受管原件的符号链接,记录原始目标。
-    Symlink { target: PathBuf },
-    /// 普通文件或其他无法证明归属的内容,属于所有权冲突。
-    Conflict { file_type: String },
-}
-
-pub(crate) fn query_registration(systemd: &Systemd) -> Result<Registration, InstallError> {
-    let path = systemd.system_unit_dir.join(UNIT_NAME);
+fn query_registration_at(
+    systemd: &Systemd,
+    unit: &str,
+) -> Result<SystemRegistration, InstallError> {
+    let path = systemd.system_unit_dir.join(unit);
     match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Registration::Missing),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(SystemRegistration::Missing)
+        }
         Err(error) => Err(InstallError::Io(error)),
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
                 let target = std::fs::read_link(&path).map_err(InstallError::Io)?;
-                Ok(Registration::Symlink { target })
+                Ok(SystemRegistration::Symlink { target })
             } else {
-                Ok(Registration::Conflict {
+                Ok(SystemRegistration::Conflict {
                     file_type: format!("{:?}", metadata.file_type()),
                 })
             }
@@ -220,15 +364,15 @@ pub(crate) fn query_registration(systemd: &Systemd) -> Result<Registration, Inst
 
 /// 创建系统注册链接(指向受管原件),使用临时链接加原子 rename。
 /// 已存在相同目标链接时视为已注册;其他内容属于所有权冲突。
-pub(crate) fn register(systemd: &Systemd, unit_origin: &Path) -> Result<(), InstallError> {
+fn register_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), InstallError> {
     let unit_origin = unit_origin.canonicalize().map_err(InstallError::Io)?;
-    let path = systemd.system_unit_dir.join(UNIT_NAME);
-    match query_registration(systemd)? {
-        Registration::Symlink { target } if target == unit_origin => {
+    let path = systemd.system_unit_dir.join(unit);
+    match query_registration_at(systemd, unit)? {
+        SystemRegistration::Symlink { target } if target == unit_origin => {
             daemon_reload(systemd)?;
             return Ok(());
         }
-        Registration::Missing => {}
+        SystemRegistration::Missing => {}
         _ => {
             return Err(systemd_error(format!(
                 "{} is an ownership conflict; refusing to overwrite",
@@ -236,7 +380,7 @@ pub(crate) fn register(systemd: &Systemd, unit_origin: &Path) -> Result<(), Inst
             )));
         }
     }
-    let tmp = systemd.system_unit_dir.join(format!(".{UNIT_NAME}.tmp"));
+    let tmp = systemd.system_unit_dir.join(format!(".{unit}.tmp"));
     let _ = std::fs::remove_file(&tmp);
     symlink(&unit_origin, &tmp).map_err(InstallError::Io)?;
     std::fs::rename(&tmp, &path).map_err(|error| {
@@ -247,14 +391,14 @@ pub(crate) fn register(systemd: &Systemd, unit_origin: &Path) -> Result<(), Inst
 }
 
 /// 移除系统注册链接(仅当它指向受管原件),并执行 daemon-reload。
-pub(crate) fn unregister(systemd: &Systemd, unit_origin: &Path) -> Result<(), InstallError> {
+fn unregister_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), InstallError> {
     let unit_origin = unit_origin.canonicalize().map_err(InstallError::Io)?;
-    let path = systemd.system_unit_dir.join(UNIT_NAME);
-    match query_registration(systemd)? {
-        Registration::Symlink { target } if target == unit_origin => {
+    let path = systemd.system_unit_dir.join(unit);
+    match query_registration_at(systemd, unit)? {
+        SystemRegistration::Symlink { target } if target == unit_origin => {
             std::fs::remove_file(&path).map_err(InstallError::Io)?;
         }
-        Registration::Missing => return Ok(()),
+        SystemRegistration::Missing => return Ok(()),
         _ => {
             return Err(systemd_error(format!(
                 "{} is an ownership conflict; refusing to remove",
@@ -265,8 +409,8 @@ pub(crate) fn unregister(systemd: &Systemd, unit_origin: &Path) -> Result<(), In
     daemon_reload(systemd)
 }
 
-pub(crate) fn is_enabled(systemd: &Systemd) -> Result<bool, InstallError> {
-    let output = systemctl_output(systemd, &["is-enabled", UNIT_NAME])?;
+fn is_enabled_at(systemd: &Systemd, unit: &str) -> Result<bool, InstallError> {
+    let output = systemctl_output(systemd, &["is-enabled", unit])?;
     let state = String::from_utf8_lossy(&output.stdout);
     match state.trim() {
         "enabled" | "enabled-runtime" | "linked" | "linked-runtime" | "alias" => Ok(true),
@@ -275,47 +419,37 @@ pub(crate) fn is_enabled(systemd: &Systemd) -> Result<bool, InstallError> {
         // systemd 252 对缺失 unit 将错误写入 stderr 且以非零退出,
         // stdout 为空;管理器可达性由 probe 保证,这里表示未启用。
         "" => Ok(false),
-        value => Err(query_error(
-            systemd,
-            &["is-enabled", UNIT_NAME],
-            &output,
-            value,
-        )),
+        value => Err(query_error(systemd, &["is-enabled", unit], &output, value)),
     }
 }
 
-pub(crate) fn is_active(systemd: &Systemd) -> Result<bool, InstallError> {
-    let output = systemctl_output(systemd, &["is-active", UNIT_NAME])?;
+fn is_active_at(systemd: &Systemd, unit: &str) -> Result<bool, InstallError> {
+    let output = systemctl_output(systemd, &["is-active", unit])?;
     let state = String::from_utf8_lossy(&output.stdout);
     match state.trim() {
         "active" | "reloading" => Ok(true),
         "inactive" | "failed" | "activating" | "deactivating" | "maintenance" | "unknown" => {
             Ok(false)
         }
-        value => Err(query_error(
-            systemd,
-            &["is-active", UNIT_NAME],
-            &output,
-            value,
-        )),
+        value => Err(query_error(systemd, &["is-active", unit], &output, value)),
     }
 }
 
 /// 查询 unit 的 ActiveState(`active`/`inactive`/`activating`/`failed`)。
-pub(crate) fn active_state(systemd: &Systemd) -> Result<String, InstallError> {
+fn active_state_at(systemd: &Systemd, unit: &str) -> Result<String, InstallError> {
     let (_, output) = run_systemctl(
         systemd,
-        &["show", "--property=ActiveState", "--value", UNIT_NAME],
+        &["show", "--property=ActiveState", "--value", unit],
         None,
     )?;
     Ok(output.trim().to_string())
 }
 
 /// 查询 unit 的 MainPID(未运行时为 0)。
-pub(crate) fn main_pid(systemd: &Systemd) -> Result<u32, InstallError> {
+fn main_pid_at(systemd: &Systemd, unit: &str) -> Result<u32, InstallError> {
     let (_, output) = run_systemctl(
         systemd,
-        &["show", "--property=MainPID", "--value", UNIT_NAME],
+        &["show", "--property=MainPID", "--value", unit],
         None,
     )?;
     output
@@ -324,20 +458,20 @@ pub(crate) fn main_pid(systemd: &Systemd) -> Result<u32, InstallError> {
         .map_err(|_| systemd_error(format!("invalid MainPID output {:?}", output.trim())))
 }
 
-pub(crate) fn enable(systemd: &Systemd) -> Result<(), InstallError> {
-    run_systemctl(systemd, &["enable", UNIT_NAME], None).map(|_| ())
+fn enable_at(systemd: &Systemd, unit: &str) -> Result<(), InstallError> {
+    run_systemctl(systemd, &["enable", unit], None).map(|_| ())
 }
 
-pub(crate) fn disable(systemd: &Systemd) -> Result<(), InstallError> {
-    run_systemctl(systemd, &["disable", UNIT_NAME], None).map(|_| ())
+fn disable_at(systemd: &Systemd, unit: &str) -> Result<(), InstallError> {
+    run_systemctl(systemd, &["disable", unit], None).map(|_| ())
 }
 
-pub(crate) fn start(systemd: &Systemd) -> Result<(), InstallError> {
-    run_systemctl(systemd, &["start", UNIT_NAME], None).map(|_| ())
+fn start_at(systemd: &Systemd, unit: &str) -> Result<(), InstallError> {
+    run_systemctl(systemd, &["start", unit], None).map(|_| ())
 }
 
-pub(crate) fn stop(systemd: &Systemd) -> Result<(), InstallError> {
-    run_systemctl(systemd, &["stop", UNIT_NAME], None).map(|_| ())
+fn stop_at(systemd: &Systemd, unit: &str) -> Result<(), InstallError> {
+    run_systemctl(systemd, &["stop", unit], None).map(|_| ())
 }
 
 pub(crate) fn daemon_reload(systemd: &Systemd) -> Result<(), InstallError> {
@@ -456,24 +590,6 @@ fn validate_unit_name(unit: &str) -> Result<(), InstallError> {
         return Err(systemd_error(format!("invalid systemd unit name {unit:?}")));
     }
     Ok(())
-}
-
-/// 停止服务并确认受管进程退出。`wait_for_exit` 返回进程是否已退出,
-/// 注入用于测试;默认实现检查 PID 1 的 unit 状态。
-pub(crate) fn stop_and_wait(
-    systemd: &Systemd,
-    wait_for_exit: impl Fn() -> bool,
-) -> Result<(), InstallError> {
-    stop(systemd)?;
-    for _ in 0..30 {
-        if wait_for_exit() {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    Err(systemd_error(
-        "unit did not exit within the timeout after stop".into(),
-    ))
 }
 
 /// 从 ExecStart 值中提取 `--config-dir` 指向的目录,支持 `--config-dir <path>`
@@ -613,60 +729,48 @@ pub(crate) fn fragment_path(systemd: &Systemd, unit: &str) -> Result<String, Ins
 /// 恢复注册链接与 enabled/active 状态,并执行 daemon-reload。
 /// 期望状态为「不存在」的恢复(未注册/未启用/未运行)采用宽容路径,
 /// 已经处于期望状态时不视为失败;期望状态为「存在」的恢复失败则报错。
-pub(crate) fn restore_systemd_before(
+fn restore_registration_at(
     systemd: &Systemd,
-    before: &SystemdBefore,
-    unit_origin: &Path,
-) -> Result<(), InstallError> {
-    restore_systemd_registration(systemd, before, unit_origin)?;
-    if before.active {
-        start(systemd)?;
-    } else if is_active(systemd).unwrap_or(false) {
-        stop(systemd)?;
-    }
-    Ok(())
-}
-
-/// 只恢复注册链接与 enabled 状态,不改变 active 状态,并执行 daemon-reload。
-/// 回滚流程要求先恢复注册、再恢复 current/data、最后才启动服务,
-/// 避免旧服务在失败版本或部分数据上启动。
-pub(crate) fn restore_systemd_registration(
-    systemd: &Systemd,
-    before: &SystemdBefore,
+    unit: &str,
+    before: &ServiceBefore,
     unit_origin: &Path,
 ) -> Result<(), InstallError> {
     match &before.registration.kind {
-        RegistrationKind::Missing => unregister(systemd, unit_origin)?,
+        RegistrationKind::Missing => unregister_at(systemd, unit, unit_origin)?,
         RegistrationKind::Symlink => {
             if matches!(
-                query_registration(systemd)?,
-                Registration::Symlink { target }
+                query_registration_at(systemd, unit)?,
+                SystemRegistration::Symlink { target }
                     if target == unit_origin.canonicalize().map_err(InstallError::Io)?
             ) {
-                std::fs::remove_file(systemd.system_unit_dir.join(UNIT_NAME))
+                std::fs::remove_file(systemd.system_unit_dir.join(unit))
                     .map_err(InstallError::Io)?;
             }
             let target = before.registration.target.as_deref().ok_or_else(|| {
                 systemd_error("symlink registration is missing its target".into())
             })?;
-            restore_registration_link(systemd, Path::new(target))?;
+            restore_registration_link_at(systemd, unit, Path::new(target))?;
         }
     }
     if before.enabled {
-        enable(systemd)?;
-    } else if is_enabled(systemd).unwrap_or(false) {
-        disable(systemd)?;
+        enable_at(systemd, unit)?;
+    } else if is_enabled_at(systemd, unit).unwrap_or(false) {
+        disable_at(systemd, unit)?;
     }
     daemon_reload(systemd)
 }
 
 /// 创建指向任意目标的注册链接(原子替换),所有权冲突时拒绝。
-fn restore_registration_link(systemd: &Systemd, target: &Path) -> Result<(), InstallError> {
+fn restore_registration_link_at(
+    systemd: &Systemd,
+    unit: &str,
+    target: &Path,
+) -> Result<(), InstallError> {
     let target = target.canonicalize().map_err(InstallError::Io)?;
-    let path = systemd.system_unit_dir.join(UNIT_NAME);
-    match query_registration(systemd)? {
-        Registration::Symlink { target: existing } if existing == target => return Ok(()),
-        Registration::Missing => {}
+    let path = systemd.system_unit_dir.join(unit);
+    match query_registration_at(systemd, unit)? {
+        SystemRegistration::Symlink { target: existing } if existing == target => return Ok(()),
+        SystemRegistration::Missing => {}
         _ => {
             return Err(systemd_error(format!(
                 "{} is an ownership conflict; refusing to overwrite",
@@ -674,7 +778,7 @@ fn restore_registration_link(systemd: &Systemd, target: &Path) -> Result<(), Ins
             )));
         }
     }
-    let tmp = systemd.system_unit_dir.join(format!(".{UNIT_NAME}.tmp"));
+    let tmp = systemd.system_unit_dir.join(format!(".{unit}.tmp"));
     let _ = std::fs::remove_file(&tmp);
     symlink(&target, &tmp).map_err(InstallError::Io)?;
     std::fs::rename(&tmp, &path).map_err(|error| {
@@ -796,17 +900,17 @@ mod tests {
         );
         assert_eq!(
             probe(&systemd, &dir.join("run"), false),
-            Availability::NotSystemdInit
+            Availability::NotDetected
         );
         assert_eq!(
             probe(&systemd, &dir.join("missing"), true),
-            Availability::NotSystemdInit
+            Availability::NotDetected
         );
         std::fs::remove_file(&fake).unwrap();
-        assert_eq!(
+        assert!(matches!(
             probe(&systemd, &dir.join("run"), true),
-            Availability::MissingSystemctl
-        );
+            Availability::Unavailable(_)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -830,6 +934,18 @@ mod tests {
     }
 
     #[test]
+    fn renders_and_validates_lkit_daemon_unit() {
+        let root = Path::new("/srv/landscape");
+        let content = render_lkit_daemon_unit(root);
+        assert!(validate_lkit_daemon_unit(&content, root).is_ok());
+
+        let tampered = content.replace("/srv/landscape", "/srv/other");
+        assert!(validate_lkit_daemon_unit(&tampered, root).is_err());
+
+        assert!(validate_unit(&content, root).is_err());
+    }
+
+    #[test]
     fn registration_lifecycle() {
         let dir = temp_dir("reg");
         let systemd = fake_systemd(&dir);
@@ -839,31 +955,38 @@ mod tests {
         std::fs::write(&origin, render_unit(Path::new("/srv/landscape"))).unwrap();
         let fake = fake_systemctl(&dir, "#!/bin/sh\nexit 0\n");
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let service = ManagedService::LandscapeRouter;
 
-        assert_eq!(query_registration(&systemd).unwrap(), Registration::Missing);
-        register(&systemd, &origin).unwrap();
         assert_eq!(
-            query_registration(&systemd).unwrap(),
-            Registration::Symlink {
+            systemd.query_registration(service).unwrap(),
+            SystemRegistration::Missing
+        );
+        systemd.register(service, &origin).unwrap();
+        assert_eq!(
+            systemd.query_registration(service).unwrap(),
+            SystemRegistration::Symlink {
                 target: origin.canonicalize().unwrap()
             }
         );
-        register(&systemd, &origin).unwrap();
+        systemd.register(service, &origin).unwrap();
 
         let conflict = dir.join("units/landscape-router.service");
         std::fs::remove_file(&conflict).unwrap();
         std::fs::write(&conflict, "plain file\n").unwrap();
         assert!(matches!(
-            query_registration(&systemd).unwrap(),
-            Registration::Conflict { .. }
+            systemd.query_registration(service).unwrap(),
+            SystemRegistration::Conflict { .. }
         ));
-        assert!(register(&systemd, &origin).is_err());
-        assert!(unregister(&systemd, &origin).is_err());
+        assert!(systemd.register(service, &origin).is_err());
+        assert!(systemd.unregister(service, &origin).is_err());
 
         std::fs::remove_file(&conflict).unwrap();
-        register(&systemd, &origin).unwrap();
-        unregister(&systemd, &origin).unwrap();
-        assert_eq!(query_registration(&systemd).unwrap(), Registration::Missing);
+        systemd.register(service, &origin).unwrap();
+        systemd.unregister(service, &origin).unwrap();
+        assert_eq!(
+            systemd.query_registration(service).unwrap(),
+            SystemRegistration::Missing
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -880,11 +1003,12 @@ case "$*" in
 esac
 "#;
         fake_systemctl(&dir, behavior);
-        assert!(is_enabled(&systemd).unwrap());
-        assert!(is_active(&systemd).unwrap());
-        assert_eq!(active_state(&systemd).unwrap(), "active");
-        assert!(enable(&systemd).is_err());
-        assert!(stop(&systemd).is_err());
+        let service = ManagedService::LandscapeRouter;
+        assert!(systemd.is_enabled(service).unwrap());
+        assert!(systemd.is_active(service).unwrap());
+        assert_eq!(systemd.active_state(service).unwrap(), "active");
+        assert!(systemd.enable(service).is_err());
+        assert!(systemd.stop(service).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -902,8 +1026,9 @@ case "$*" in
 esac
 "#,
         );
-        assert!(!is_enabled(&systemd).unwrap());
-        assert!(!is_active(&systemd).unwrap());
+        let service = ManagedService::LandscapeRouter;
+        assert!(!systemd.is_enabled(service).unwrap());
+        assert!(!systemd.is_active(service).unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -912,11 +1037,12 @@ esac
         let dir = temp_dir("stop");
         let systemd = fake_systemd(&dir);
         fake_systemctl(&dir, "#!/bin/sh\nexit 0\n");
-        if let Err(error) = stop_and_wait(&systemd, || true) {
+        let service = ManagedService::LandscapeRouter;
+        if let Err(error) = systemd.stop_and_wait(service, &(|| true)) {
             panic!("stop_and_wait failed: {error:?}");
         }
         assert!(matches!(
-            stop_and_wait(&systemd, || false),
+            systemd.stop_and_wait(service, &(|| false)),
             Err(InstallError::Systemd(_))
         ));
         let _ = std::fs::remove_dir_all(&dir);

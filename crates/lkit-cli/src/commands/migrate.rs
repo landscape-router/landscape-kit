@@ -87,9 +87,13 @@ pub async fn run(args: &Migrate) -> ExitCode {
         }
     };
     if let Some(transaction) = unfinished
-        && let Err(error) =
-            transaction::recover_interrupted(&normalized, &transaction, &runtime.systemd, &health)
-                .await
+        && let Err(error) = transaction::recover_interrupted(
+            &normalized,
+            &transaction,
+            runtime.service_manager.as_ref(),
+            &health,
+        )
+        .await
     {
         eprintln!("migrate: {error}");
         return exit_code(&error);
@@ -130,8 +134,13 @@ pub async fn run(args: &Migrate) -> ExitCode {
         console_confirmed: args.console_confirmed,
         repository: super::manage::repository_override(&args.repository),
     };
-    match crate::workflows::migrate::migrate_version(&normalized, &runtime.systemd, &args, &options)
-        .await
+    match crate::workflows::migrate::migrate_version(
+        &normalized,
+        runtime.service_manager.as_ref(),
+        &args,
+        &options,
+    )
+    .await
     {
         Ok(MigrateOutcome::Committed { version, backup_id }) => {
             println!(

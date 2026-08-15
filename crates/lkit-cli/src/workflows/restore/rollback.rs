@@ -5,14 +5,12 @@ use chrono::Utc;
 use super::super::health::{
     DocsProbe, HealthOptions, StartupOptions, observe_stable, wait_for_startup,
 };
+use super::super::manager::{ManagedService, ServiceManager};
 use super::super::plan::InstallError;
 use super::super::resolv;
 use super::super::rollback as rollback_util;
 use super::super::root::InstallRoot;
 use super::super::state::{self, StateServiceManager};
-use super::super::systemd::{
-    Systemd, active_state, main_pid, restore_systemd_registration, start, stop_and_wait,
-};
 use super::super::transaction::{Phase, TransactionFile, mark_phase};
 
 /// restore 失败回滚:优先用事务目录中的旧 `data/`、previous-state、
@@ -28,11 +26,11 @@ use super::super::transaction::{Phase, TransactionFile, mark_phase};
 pub(crate) async fn rollback_restore<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     mark_phase(root, transaction, Phase::RollingBack)?;
-    let result = rollback_restore_inner(root, transaction, systemd, health).await;
+    let result = rollback_restore_inner(root, transaction, manager, health).await;
     if result.is_err() {
         let _ = mark_phase(root, transaction, Phase::Failed);
     }
@@ -42,24 +40,28 @@ pub(crate) async fn rollback_restore<P: DocsProbe>(
 async fn rollback_restore_inner<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     let snapshot = rollback_util::read_state_snapshot(root, &transaction.transaction_id)?;
     let is_systemd = snapshot.service.manager == StateServiceManager::Systemd;
     if is_systemd {
-        stop_and_wait(systemd, || {
-            active_state(systemd)
-                .map(|value| value != "active")
-                .unwrap_or(true)
-        })?;
+        manager.stop_and_wait(
+            ManagedService::LandscapeRouter,
+            &(|| {
+                manager
+                    .active_state(ManagedService::LandscapeRouter)
+                    .map(|value| value != "active")
+                    .unwrap_or(true)
+            }),
+        )?;
     }
     if let Some(before) = &transaction.systemd_before {
         let unit_origin = root.canonical.join("service/landscape-router.service");
-        restore_systemd_registration(systemd, before, &unit_origin)?;
+        manager.restore_registration(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
             let backup_dir = root.canonical.join(backup_path);
-            resolv::restore(&systemd.resolv_conf, &backup_dir)?;
+            resolv::restore(manager.resolv_conf(), &backup_dir)?;
         }
     }
 
@@ -87,8 +89,8 @@ async fn rollback_restore_inner<P: DocsProbe>(
             .as_ref()
             .is_some_and(|before| before.active);
         if is_systemd && was_active {
-            start(systemd)?;
-            let pid = main_pid(systemd)?;
+            manager.start(ManagedService::LandscapeRouter)?;
+            let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(
                     "restored service did not produce a main pid".into(),
@@ -98,7 +100,7 @@ async fn rollback_restore_inner<P: DocsProbe>(
                 ports: &health.ports,
                 expected_pid: pid,
                 docs: &health.docs,
-                unit_state: Some(&(|| active_state(systemd).ok())),
+                unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
                 init_required: true,
                 data_dir: &data,
                 startup_timeout: health.startup_timeout,
@@ -116,9 +118,9 @@ async fn rollback_restore_inner<P: DocsProbe>(
     } else {
         // 事务现场损坏(previous-data 与 data 均不存在):只能使用保护快照或报损坏。
         if transaction.backup.is_some() {
-            rollback_util::rollback_switch(root, transaction, &snapshot, systemd, health).await
+            rollback_util::rollback_switch(root, transaction, &snapshot, manager, health).await
         } else {
-            rollback_util::rollback_no_backup(root, transaction, &snapshot, systemd, health).await
+            rollback_util::rollback_no_backup(root, transaction, &snapshot, manager, health).await
         }
     }
 }

@@ -8,6 +8,7 @@ use super::backup as lkb;
 use super::backup::extract_lkb;
 use super::export;
 use super::health::{DocsProbe, HealthOptions, StartupOptions};
+use super::manager::{ManagedService, ServiceManager, ServiceManagerKind};
 use super::pipeline;
 use super::plan::{InstallError, RepositoryChoice};
 use super::process::{self, Process};
@@ -45,13 +46,13 @@ pub(crate) enum MigrateManager {
 }
 
 impl MigrateManager {
-    fn resolve(self, systemd: &Systemd) -> Result<super::pipeline::ServiceManager, InstallError> {
+    fn resolve(self, manager: &dyn ServiceManager) -> Result<ServiceManagerKind, InstallError> {
         let choice = match self {
             Self::Auto => super::pipeline::ManagerChoice::Auto,
             Self::Systemd => super::pipeline::ManagerChoice::Systemd,
             Self::None => super::pipeline::ManagerChoice::None,
         };
-        super::pipeline::select_manager(choice, systemd)
+        super::pipeline::select_manager(choice, manager)
     }
 }
 
@@ -99,13 +100,15 @@ pub(crate) enum MigrateOutcome {
 /// 旧实例的停止与恢复与安装在同一事务内,失败自动回滚避免断连。
 pub(crate) async fn migrate_version<P: DocsProbe>(
     root: &InstallRoot,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
     args: &MigrateArgs,
     options: &MigrateOptions<'_, P>,
 ) -> Result<MigrateOutcome, InstallError> {
+    // 旧部署识别与 unit 操作是 systemd 专属能力;不可用时代理到前台进程确认路径。
+    let systemd = systemd::downcast(manager)?;
     let source = validate_source_dir(&args.config_dir)?;
-    let manager = args.manager.resolve(systemd)?;
-    let is_systemd = manager == super::pipeline::ServiceManager::Systemd;
+    let manager_kind = args.manager.resolve(manager)?;
+    let is_systemd = manager_kind == ServiceManagerKind::Systemd;
 
     // 导出配置要求旧实例运行中;运行实例同时提供后端版本与二进制来源。
     let instance = identify_running_instance(&source, options.probe_ports)?;
@@ -151,7 +154,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
         super::transaction::persist(root, &transaction)?;
 
         // ---- 确认:备份已完成,展示迁移计划 ----
-        confirm_migrate(options, args, &source, &version, manager)?;
+        confirm_migrate(options, args, &source, &version, manager_kind)?;
 
         super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
 
@@ -159,13 +162,16 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
         stopping_started = true;
         if is_systemd {
-            transaction.systemd_before = Some(super::pipeline::capture_systemd_before(systemd)?);
+            transaction.systemd_before = Some(super::pipeline::capture_before(
+                manager,
+                ManagedService::LandscapeRouter,
+            )?);
             let backup_dir = root
                 .canonical
                 .join("backups")
                 .join(&transaction.transaction_id)
                 .join("host/resolv.conf");
-            let _ = super::resolv::backup(&systemd.resolv_conf, &backup_dir)?;
+            let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
             transaction.resolv_conf_backup = Some(format!(
                 "backups/{}/host/resolv.conf",
                 transaction.transaction_id
@@ -213,16 +219,20 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
 
         // ---- verifying(systemd):注册、启动与健康检查 ----
         let unit_sha = if is_systemd {
-            let unit_sha =
-                super::pipeline::write_unit_origin(root, &systemd::render_unit(&root.canonical))?;
-            super::systemd::register(
-                systemd,
+            let unit_sha = super::pipeline::write_unit_origin(
+                root,
+                manager,
+                ManagedService::LandscapeRouter,
+                &manager.render_definition(ManagedService::LandscapeRouter, &root.canonical)?,
+            )?;
+            manager.register(
+                ManagedService::LandscapeRouter,
                 &root.canonical.join("service/landscape-router.service"),
             )?;
-            super::systemd::enable(systemd)?;
-            super::systemd::start(systemd)?;
+            manager.enable(ManagedService::LandscapeRouter)?;
+            manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
-            let pid = super::systemd::main_pid(systemd)?;
+            let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(
                     "service did not produce a main pid after start".into(),
@@ -232,7 +242,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
                 ports: &options.health.ports,
                 expected_pid: pid,
                 docs: &options.health.docs,
-                unit_state: Some(&(|| super::systemd::active_state(systemd).ok())),
+                unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
                 init_required: true,
                 data_dir: &data,
                 startup_timeout: options.health.startup_timeout,
@@ -555,7 +565,7 @@ fn confirm_migrate<P: DocsProbe>(
     args: &MigrateArgs,
     source: &Path,
     version: &semver::Version,
-    manager: super::pipeline::ServiceManager,
+    manager: ServiceManagerKind,
 ) -> Result<(), InstallError> {
     if args.console_confirmed {
         return Ok(());
@@ -572,10 +582,7 @@ fn confirm_migrate<P: DocsProbe>(
         crate::keys::MIGRATE_CONFIRM_PLAN,
         source = source.display(),
         version = version,
-        manager = match manager {
-            super::pipeline::ServiceManager::Systemd => "systemd",
-            super::pipeline::ServiceManager::None => "none",
-        }
+        manager = manager.key()
     ))?;
     if !accepted {
         return Err(InstallError::UserRefused(

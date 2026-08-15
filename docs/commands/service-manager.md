@@ -7,6 +7,10 @@ lkit service-manager systemd [--install-dir <PATH>]
 lkit service-manager none [--install-dir <PATH>]
 ```
 
+服务管理器操作通过 [`ServiceManager` trait](../service/manager.md) 抽象；
+v1 只实现 systemd 后端，`--service-manager` 可选值固定为 `systemd` 或 `none`，
+未来后端接入后扩展该选项。
+
 ## Service manager 迁移
 
 service manager 迁移只改变 Landscape 的进程管理方式，不下载版本资产、不修改 `current`、

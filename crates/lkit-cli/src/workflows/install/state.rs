@@ -3,6 +3,7 @@ use std::os::unix::fs::MetadataExt;
 use chrono::Utc;
 
 use super::super::artifacts::{BuiltRelease, WEBSERVER_BINARY, hash_file};
+use super::super::manager::{ManagedService, ServiceManager, SystemRegistration};
 use super::super::plan::InstallError;
 use super::super::repository::{Architecture, Release};
 use super::super::root::InstallRoot;
@@ -10,7 +11,6 @@ use super::super::state::{
     ArchiveAsset, Assets, InitStatus, InitializationState, InstallState, STATE_LAYOUT_VERSION,
     STATE_SCHEMA_VERSION, ServiceState, StateArchitecture, StateServiceManager, WebserverAsset,
 };
-use super::super::systemd::{self, Systemd};
 
 /// 提交到状态中的初始化与服务信息。
 pub(super) struct UnitActivation {
@@ -110,18 +110,21 @@ pub(crate) fn verify_current_backend(
     Ok(())
 }
 
-/// 验证受管 unit 原件仍满足安全不变量,且系统注册链接仍指向该原件。
+/// 验证受管服务定义原件仍满足安全不变量,且系统注册链接仍指向该原件。
 /// 系统注册链接缺失、指向其他目标或为普通文件时属于所有权冲突,不能自动修复。
 pub(crate) fn verify_unit_ownership(
     root: &InstallRoot,
-    systemd: &Systemd,
+    manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
-    let origin = root.canonical.join("service/landscape-router.service");
+    let origin = root
+        .canonical
+        .join("service")
+        .join(manager.service_name(ManagedService::LandscapeRouter));
     let content = std::fs::read_to_string(&origin).map_err(InstallError::Io)?;
-    systemd::validate_unit(&content, &root.canonical)?;
+    manager.validate_definition(ManagedService::LandscapeRouter, &content, &root.canonical)?;
     let origin_canonical = origin.canonicalize().map_err(InstallError::Io)?;
-    match systemd::query_registration(systemd)? {
-        systemd::Registration::Symlink { target } if target == origin_canonical => Ok(()),
+    match manager.query_registration(ManagedService::LandscapeRouter)? {
+        SystemRegistration::Symlink { target } if target == origin_canonical => Ok(()),
         other => Err(InstallError::Systemd(format!(
             "the system registration link is not owned by the managed unit origin: {other:?}"
         ))),

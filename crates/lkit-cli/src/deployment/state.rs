@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use super::plan::InstallError;
 use super::root::InstallRoot;
 
+/// 安装状态中序列化的服务管理器后端标识。
+pub(crate) use crate::service::manager::ServiceManagerKind as StateServiceManager;
+
 pub(crate) const INSTALL_STATE_RELATIVE: &str = "state/install-state.json";
 pub(crate) const STATE_SCHEMA_VERSION: u64 = 1;
 pub(crate) const STATE_LAYOUT_VERSION: u64 = 1;
@@ -76,13 +79,6 @@ pub(crate) struct ServiceState {
     pub verified: bool,
     pub definition_path: Option<String>,
     pub definition_sha256: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum StateServiceManager {
-    Systemd,
-    None,
 }
 
 pub(crate) fn load_state(root: &InstallRoot) -> Result<Option<InstallState>, InstallError> {
