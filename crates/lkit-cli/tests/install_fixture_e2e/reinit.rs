@@ -106,6 +106,169 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
     );
 }
 
+/// REI-01:无有效状态(未安装现场)时拒绝,退出码 2,不写任何文件。
+#[test]
+fn reinit_rejects_without_an_installation() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reinit-not-installed", "healthy", 10_000);
+
+    let output = harness
+        .command()
+        .args(["reinit", "--admin-user", "admin", "--password-file"])
+        .arg(&harness.password)
+        .args(["--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "reinit without an installation must be a usage error\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("install-state.json"),
+        "the refusal must explain the missing installation\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !harness.state_path().exists(),
+        "no state may be created by a rejected reinit"
+    );
+}
+
+/// REI-01:宿主网络服务未接管时拒绝,退出码 2,不创建 reinit 事务。
+#[test]
+fn reinit_rejects_when_network_is_not_taken_over() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reinit-no-takeover", "healthy", 10_000);
+    assert_success(&harness.run());
+
+    let output = harness
+        .command()
+        .args(["reinit", "--admin-user", "admin", "--password-file"])
+        .arg(&harness.password)
+        .args(["--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "reinit without network takeover must be a usage error\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("接管"),
+        "the refusal must explain the missing takeover\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let has_reinit_transaction = std::fs::read_dir(harness.transactions_dir())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .any(|entry| {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(entry.path()).unwrap())
+                .unwrap()["operation"]
+                == "reinit"
+        });
+    assert!(
+        !has_reinit_transaction,
+        "a rejected reinit must not create a transaction"
+    );
+    assert!(
+        harness.state_path().exists(),
+        "the existing installation state must be untouched"
+    );
+}
+
+/// REI-02:交互确认拒绝时先于任何修改返回(退出码 1),不创建事务、不创建
+/// `.lkb`、不停止服务、不改写数据。
+#[test]
+fn reinit_refused_confirmation_leaves_no_side_effects() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reinit-refused", "healthy", 10_000);
+    harness.seed_host_services();
+    let output = harness.run_takeover();
+    assert!(
+        output.status.success(),
+        "takeover install failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_success(&harness.network_command(&["confirm"]));
+
+    let backups_before = std::fs::read_dir(harness.backups_dir()).unwrap().count();
+    let init_path = harness.install_root.join("data/landscape_init.toml");
+    let init_before = std::fs::read_to_string(&init_path).unwrap();
+    let new_password = harness.world.path("reinit-refused-password");
+    std::fs::write(&new_password, b"NewSecret456\n").unwrap();
+    std::fs::set_permissions(&new_password, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    // 网络计划向导后,第一个确认(重配置计划)输入 no 拒绝。
+    let mut pty = Pty::open();
+    pty.master.write_all(b"1\n1\n\n\n\nno\n").unwrap();
+    let refused = Command::new(LKIT)
+        .env(
+            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+            &harness.world.systemctl_config,
+        )
+        .env("LKIT_TERRITORY", &harness.territory)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+        .args(["reinit", "--admin-user", "admin", "--password-file"])
+        .arg(&new_password)
+        .args(["--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "a refused reinit must fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        std::fs::read_dir(harness.backups_dir()).unwrap().count(),
+        backups_before,
+        "a refused reinit must not create a protection .lkb"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&init_path).unwrap(),
+        init_before,
+        "a refused reinit must not touch the data directory"
+    );
+    let has_reinit_transaction = std::fs::read_dir(harness.transactions_dir())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .any(|entry| {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(entry.path()).unwrap())
+                .unwrap()["operation"]
+                == "reinit"
+        });
+    assert!(
+        !has_reinit_transaction,
+        "a refused reinit must not create a transaction"
+    );
+    let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
+    assert_eq!(
+        String::from_utf8_lossy(&active.stdout).trim(),
+        "active",
+        "the service must keep running after a refused reinit"
+    );
+}
+
 #[test]
 fn reinit_rollback_restores_previous_data() {
     if !e2e_enabled() {
