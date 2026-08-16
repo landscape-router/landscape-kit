@@ -293,6 +293,30 @@ mod tests {
     }
 
     #[test]
+    fn apt_source_file_uses_tencent_and_huawei_mirror() {
+        let (paths, root) = test_paths();
+        let guard = TestPathsGuard::set(paths);
+        let host = Host {
+            family: Family::Ubuntu,
+            codename: Some("noble".into()),
+        };
+        super::write_apt_source(&host, DockerSource::Tencent).unwrap();
+        let list = fs::read_to_string(root.join("etc/apt/sources.list.d/docker.list")).unwrap();
+        assert!(
+            list.contains("https://mirrors.cloud.tencent.com/docker-ce/linux/ubuntu noble stable"),
+            "got: {list}"
+        );
+        super::write_apt_source(&host, DockerSource::Huawei).unwrap();
+        let list = fs::read_to_string(root.join("etc/apt/sources.list.d/docker.list")).unwrap();
+        assert!(
+            list.contains("https://mirrors.huaweicloud.com/docker-ce/linux/ubuntu noble stable"),
+            "got: {list}"
+        );
+        drop(guard);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn apt_source_requires_codename() {
         let (paths, root) = test_paths();
         let guard = TestPathsGuard::set(paths);

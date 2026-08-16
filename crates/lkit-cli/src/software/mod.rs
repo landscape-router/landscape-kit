@@ -54,6 +54,10 @@ pub(crate) enum DockerSource {
     Official,
     /// 阿里云镜像
     Aliyun,
+    /// 腾讯云镜像
+    Tencent,
+    /// 华为云镜像
+    Huawei,
     /// 清华 TUNA 镜像
     Tuna,
     /// 中科大 USTC 镜像
@@ -61,14 +65,23 @@ pub(crate) enum DockerSource {
 }
 
 impl DockerSource {
-    pub(crate) fn all() -> [Self; 4] {
-        [Self::Official, Self::Aliyun, Self::Tuna, Self::Ustc]
+    pub(crate) fn all() -> [Self; 6] {
+        [
+            Self::Official,
+            Self::Aliyun,
+            Self::Tencent,
+            Self::Huawei,
+            Self::Tuna,
+            Self::Ustc,
+        ]
     }
 
     pub(crate) fn label(self) -> String {
         match self {
             Self::Official => crate::tr!(crate::keys::SOFTWARE_SOURCE_OFFICIAL),
             Self::Aliyun => crate::tr!(crate::keys::SOFTWARE_SOURCE_ALIYUN),
+            Self::Tencent => crate::tr!(crate::keys::SOFTWARE_SOURCE_TENCENT),
+            Self::Huawei => crate::tr!(crate::keys::SOFTWARE_SOURCE_HUAWEI),
             Self::Tuna => crate::tr!(crate::keys::SOFTWARE_SOURCE_TUNA),
             Self::Ustc => crate::tr!(crate::keys::SOFTWARE_SOURCE_USTC),
         }
@@ -79,6 +92,8 @@ impl DockerSource {
         match self {
             Self::Official => "https://download.docker.com",
             Self::Aliyun => "https://mirrors.aliyun.com/docker-ce",
+            Self::Tencent => "https://mirrors.cloud.tencent.com/docker-ce",
+            Self::Huawei => "https://mirrors.huaweicloud.com/docker-ce",
             Self::Tuna => "https://mirrors.tuna.tsinghua.edu.cn/docker-ce",
             Self::Ustc => "https://mirrors.ustc.edu.cn/docker-ce",
         }

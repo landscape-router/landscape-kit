@@ -63,5 +63,5 @@ main.uninstall_keep_data_help = "Only uninstall the service and programs, keepin
 main.software_about = "Install common software"
 main.software_list_about = "List common software with installed status"
 main.software_install_about = "Install a common software"
-main.software_source_help = "Source to install from: official, aliyun, tuna or ustc"
+main.software_source_help = "Source to install from: official, aliyun, tencent, huawei, tuna or ustc"
 main.software_yes_help = "Skip the interactive confirmation"

@@ -25,7 +25,7 @@ pub enum SoftwareAction {
 pub struct SoftwareInstall {
     /// Software to install: docker
     pub software: software::Software,
-    /// Source to install from: official, aliyun, tuna or ustc
+    /// Source to install from: official, aliyun, tencent, huawei, tuna or ustc
     #[arg(long, value_enum, value_name = "SOURCE")]
     pub source: Option<DockerSource>,
     /// Skip the interactive confirmation

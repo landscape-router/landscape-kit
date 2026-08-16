@@ -1,6 +1,8 @@
 software.docker = "Docker"
 software.source_official = "Official repository"
 software.source_aliyun = "Aliyun mirror"
+software.source_tencent = "Tencent Cloud mirror"
+software.source_huawei = "Huawei Cloud mirror"
 software.source_tuna = "Tsinghua TUNA mirror"
 software.source_ustc = "USTC mirror"
 software.os_release_unreadable = "the host version cannot be read from %{path}"

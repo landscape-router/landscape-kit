@@ -1,6 +1,8 @@
 software.docker = "Docker"
 software.source_official = "官方仓库"
 software.source_aliyun = "阿里云镜像"
+software.source_tencent = "腾讯云镜像"
+software.source_huawei = "华为云镜像"
 software.source_tuna = "清华 TUNA 镜像"
 software.source_ustc = "中科大 USTC 镜像"
 software.os_release_unreadable = "无法从 %{path} 读取主机版本"

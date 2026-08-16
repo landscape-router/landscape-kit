@@ -25,8 +25,8 @@
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[`software::docker` 测试](../../../../crates/lkit-cli/src/software/docker.rs)
-- 说明：TUNA（Ubuntu jammy）与阿里云（Rocky 主版本号从 `9.3` 取 `9`）写入的
-  仓库文件 URL 指向对应镜像主机，其余字段不变。
+- 说明：TUNA（Ubuntu jammy）、腾讯云与华为云（Ubuntu noble）与阿里云（Rocky 主
+  版本号从 `9.3` 取 `9`）写入的仓库文件 URL 指向对应镜像主机，其余字段不变。
 
 ## SFT-03
 
@@ -61,9 +61,10 @@
 - 证据：[`console::tests::software`](../../../../crates/lkit-cli/src/console/tests/software.rs)
 - 说明：菜单导航（未安装/已安装均可到达 Software）、面板渲染（主机摘要、Docker 行与
   状态）、行选择边界（单行钳制）、确认层打开/关闭、来源循环切换（Space/Right 前进、
-  Left 后退，Official→Aliyun→TUNA→USTC 闭环）、确认层与安装进度弹窗渲染（阶段文案
-  与 Gauge）。CLI 解析测试覆盖 `software list`、`software install docker [--source ...]`、
-  未知软件与非法来源拒绝、裸命令交互模式。
+  Left 后退，Official→阿里云→腾讯云→华为云→TUNA→USTC 闭环）、确认层渲染（来源行
+  高亮与切换提示文案）与安装进度弹窗渲染（阶段文案与 Gauge）。CLI 解析测试覆盖
+  `software list`、`software install docker [--source ...]`、未知软件与非法来源拒绝、
+  裸命令交互模式。
 
 ## SFT-06
 

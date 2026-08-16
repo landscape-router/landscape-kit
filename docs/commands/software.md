@@ -5,7 +5,7 @@
 
 ```text
 lkit software list
-lkit software install docker [--source official|aliyun|tuna|ustc] [--yes]
+lkit software install docker [--source official|aliyun|tencent|huawei|tuna|ustc] [--yes]
 ```
 
 无参数且连接终端时进入交互选择：先列出软件（含安装状态）供选择，再选择安装来源并
@@ -23,9 +23,10 @@ software: common software for Debian:
 
 ## 安装来源
 
-`--source` 可选 `official`（Docker 官方仓库）、`aliyun`（阿里云镜像）、`tuna`
-（清华 TUNA 镜像）或 `ustc`（中科大 USTC 镜像）。未指定且交互时先选择来源；
-`--non-interactive` 未指定来源属于参数使用错误。
+`--source` 可选 `official`（Docker 官方仓库）、`aliyun`（阿里云镜像）、`tencent`
+（腾讯云镜像）、`huawei`（华为云镜像）、`tuna`（清华 TUNA 镜像）或 `ustc`（中科大
+USTC 镜像）。未指定且交互时先选择来源；`--non-interactive` 未指定来源属于参数
+使用错误。
 
 ## 支持范围
 

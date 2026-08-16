@@ -249,6 +249,7 @@ pub(crate) const CONSOLE_SOFTWARE_SOURCE_ROW: &str = "console.software_source_ro
 pub(crate) const CONSOLE_SOFTWARE_CONFIRM_TITLE: &str = "console.software_confirm_title";
 pub(crate) const CONSOLE_SOFTWARE_CONFIRM_QUESTION: &str = "console.software_confirm_question";
 pub(crate) const CONSOLE_SOFTWARE_CONFIRM_ENTER: &str = "console.software_confirm_enter";
+pub(crate) const CONSOLE_SOFTWARE_CONFIRM_SWITCH: &str = "console.software_confirm_switch";
 pub(crate) const CONSOLE_SOFTWARE_CONFIRM_ESC: &str = "console.software_confirm_esc";
 pub(crate) const CONSOLE_SOFTWARE_INSTALLING: &str = "console.software_installing";
 pub(crate) const CONSOLE_SOFTWARE_PHASE_PREPARING: &str = "console.software_phase_preparing";

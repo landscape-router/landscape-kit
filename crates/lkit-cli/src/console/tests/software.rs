@@ -127,6 +127,8 @@ fn software_confirmation_source_cycles_with_space_and_left() {
 
     for expected in [
         DockerSource::Aliyun,
+        DockerSource::Tencent,
+        DockerSource::Huawei,
         DockerSource::Tuna,
         DockerSource::Ustc,
         DockerSource::Official,
@@ -164,6 +166,7 @@ fn software_confirmation_dialog_renders() {
     assert!(content.contains("Install Docker"));
     assert!(content.contains("Source"));
     assert!(content.contains("Tsinghua TUNA mirror"));
+    assert!(content.contains("Press Space or"));
     assert!(content.contains("Press Enter to install"));
 }
 

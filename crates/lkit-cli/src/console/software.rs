@@ -359,13 +359,18 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
             ),
             Span::raw("  "),
             Span::styled(
-                confirm.source.label(),
+                format!("◀ {} ▶", confirm.source.label()),
                 Style::default()
-                    .fg(Color::Cyan)
+                    .bg(Color::Blue)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
         ]),
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_SOFTWARE_CONFIRM_SWITCH),
+            Style::default().fg(Color::Yellow),
+        ),
         Line::raw(""),
     ];
     // 来源行命中区：点击切换来源。
