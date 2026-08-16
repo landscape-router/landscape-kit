@@ -43,10 +43,10 @@ impl DelegateError {
     }
 }
 
-pub(crate) fn should_delegate(command: &Commands) -> bool {
-    if unsafe { libc::geteuid() } != 0 || test_runtime_is_inline(command) {
-        return false;
-    }
+/// 委托命令清单(与 docs/deployment/transactions-and-recovery.md 的
+/// 「委托命令清单」保持一致):所有需要改变 init 系统或 Landscape 运行态的
+/// 命令都由常驻 daemon 执行;只读与地盘内命令直接执行。
+pub(crate) fn delegates(command: &Commands) -> bool {
     match command {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Software(_) => false,
@@ -55,7 +55,6 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         Commands::Network(args) => {
             matches!(args.action, NetworkAction::Rollback { automatic: false })
         }
-        // 所有需要改变 init 系统或 Landscape 运行态的命令都由常驻 daemon 执行。
         Commands::Install(_)
         | Commands::Migrate(_)
         | Commands::Switch(_)
@@ -65,6 +64,13 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         | Commands::Reinit(_)
         | Commands::Uninstall(_) => true,
     }
+}
+
+pub(crate) fn should_delegate(command: &Commands) -> bool {
+    if unsafe { libc::geteuid() } != 0 || test_runtime_is_inline(command) {
+        return false;
+    }
+    delegates(command)
 }
 
 #[cfg(feature = "test-support")]
@@ -279,3 +285,52 @@ fn cleanup_files(paths: &[&Path]) {
 
 pub(crate) use self::executor::execute_request;
 pub(crate) use self::protocol::{read_network_plan, string_args};
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+    use crate::cli::Cli;
+
+    fn delegates_for(args: &[&str]) -> bool {
+        let mut cli_args = vec!["lkit"];
+        cli_args.extend_from_slice(args);
+        let cli = Cli::try_parse_from(cli_args).unwrap();
+        delegates(cli.command.as_ref().unwrap())
+    }
+
+    #[test]
+    fn delegates_state_changing_commands() {
+        for args in [
+            &["install", "--version", "1.2.3"][..],
+            &["migrate", "--from", "/etc/landscape"][..],
+            &["switch", "--version", "2.0.0"][..],
+            &["update"][..],
+            &["repair", "binary"][..],
+            &["restore", "--backup", "x"][..],
+            &["reinit"][..],
+            &["uninstall", "--yes"][..],
+            &["network", "rollback"][..],
+        ] {
+            assert!(delegates_for(args), "expected delegation for {args:?}");
+        }
+    }
+
+    #[test]
+    fn does_not_delegate_read_only_commands() {
+        for args in [
+            &["check"][..],
+            &["reconcile"][..],
+            &["set-mirror", "tuna"][..],
+            &["software", "list"][..],
+            &["backup", "create"][..],
+            &["self", "install"][..],
+            &["daemon"][..],
+            &["network", "status"][..],
+            &["network", "confirm"][..],
+        ] {
+            assert!(!delegates_for(args), "unexpected delegation for {args:?}");
+        }
+    }
+}

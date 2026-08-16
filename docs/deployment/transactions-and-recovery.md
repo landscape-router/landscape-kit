@@ -159,7 +159,9 @@ lkit 地盘。
 - 记录阶段变化、外部命令结果、已脱敏 URL、HTTP 状态、文件路径、摘要和恢复动作；
 - 不记录密码、初始化 TOML 内容、API token、Authorization header、证书私钥或 URL query/fragment；
 - 日志写入失败时不得开始或继续修改运行状态；
-- 日志随事务永久保留（位于 lkit 地盘，卸载 landscape 不删除），失败恢复输出必须引用该路径；
+- 日志随事务保留（位于 lkit 地盘，卸载 landscape 不删除；卸载完成后本根的
+  事务与日志一起清理，见[卸载语义](../commands/uninstall.md)），失败恢复输出
+  必须引用该路径；
 - 在 lkit 地盘和事务尚未创建前发生的错误只输出到终端，不另行落盘。
 
 首次安装的 `from_version` 和 `previous_current` 可以为 `null`。事务对象允许未知字段并忽略，以便向后兼容；已定义字段缺失、类型错误或组合不满足上述 operation 规则时，事务损坏。事务不得保存密码、初始化 TOML 内容、API token 或预签名 URL。
@@ -176,7 +178,8 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 - 同一台主机只能存在一个未结束事务（lkit 地盘全局唯一）；
 - `committed` 和 `rolled_back` 是正常终态；
 - `failed` 是异常终态，阻断新事务；
-- 历史事务文件保留用于审计。
+- 历史事务文件保留用于审计；卸载成功会清理本安装根的事务与日志（见
+  [卸载语义](../commands/uninstall.md)），其他根的历史不受影响；
 
 事务文件无法读取、JSON 无法解析、Schema 不支持、必填字段缺失、阶段非法或路径逃逸
 各自基准目录时，必须停止并报告事务状态损坏。不得猜测阶段、重命名损坏文件、创建替代
@@ -264,6 +267,33 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命令明确失败
 （退出码 `2`）并提示运行 `lkit self install`。daemon 由 init 系统
 托管（systemd / OpenRC / sysvinit 受管服务），因此不再依赖临时 systemd unit。
+
+### 委托命令清单
+
+委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
+权威定义是 `daemon_worker::delegates`（lkit-cli 源码），本清单与之保持一致：
+
+| 委托给 daemon 执行 | 直接执行 |
+|---|---|
+| `install` | `check` |
+| `migrate` | `reconcile` |
+| `switch` | `set-mirror` |
+| `update` | `software` |
+| `repair` | `backup` |
+| `restore` | `self` |
+| `reinit` | `daemon` |
+| `uninstall` | `network status` / `network confirm` |
+| `network rollback`（手工调用） | `network rollback --automatic` 之外的自动回滚路径 |
+
+委托命令在以下两种情形改为直接执行（内联）：
+
+- 调用者不是 root（`geteuid() != 0`）；
+- 命令携带 `--test-runtime`（仅 test-support 构建存在；测试与容器脚本用它
+  注入 fake systemd/运行时，绕过 daemon 依赖）。
+
+`lkit network rollback --automatic`（timer/boot 自动回滚）位于独立恢复路径，
+不委托；只有手工 `lkit network rollback` 走 daemon，避免 NetworkManager 或
+`networking.service` 恢复后当前 `br_lan` SSH 断开而中止回滚。
 
 CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
 （schema_version 2，含原始参数、最终环境与工作目录、结果路径、cancel 路径、
