@@ -929,6 +929,7 @@ assert_latest_phase committed
 # 全局 unit 只能属于一个安装根;先 uninstall 主安装根释放注册链接与端口
 # (保留 data、config.toml 与 backups,后续场景不再使用该根)。
 lkit uninstall --yes
+config_sha_before=$(sha256sum "$territory_root/config.toml" | awk '{print $1}')
 run_install "$install_root_latest" \
   --repository "$public_base" \
   --admin-user admin \
@@ -944,8 +945,8 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     state = json.load(stream)
 assert "repository" not in state, state.get("repository")
 PY
-[[ ! -e "$territory_root/config.toml" ]] \
-  || fail "install must not create config.toml"
+[[ $(sha256sum "$territory_root/config.toml" | awk '{print $1}') == "$config_sha_before" ]] \
+  || fail "install must not modify config.toml"
 write_repository_config "$territory_root"
 assert_service_identity "$install_root_latest"
 # ---------------------------------------------------------------- S8 中断事务恢复
