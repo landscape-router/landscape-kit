@@ -205,7 +205,8 @@ esac
                 lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
                 &self.world.systemctl_config,
             )
-            .env("LKIT_TERRITORY", &self.territory);
+            .env("LKIT_TERRITORY", &self.territory)
+            .env("LKIT_GLOBAL_DIR", self.host.join("usr/local"));
         command
     }
 

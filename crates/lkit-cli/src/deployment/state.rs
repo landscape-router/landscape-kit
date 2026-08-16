@@ -139,6 +139,41 @@ pub(crate) fn discover_landscape_root() -> Result<Option<InstallRoot>, InstallEr
     Ok(Some(root))
 }
 
+/// 状态缺失时,从未完成事务记录的根发现 landscape 安装根。网络接管待确认阶段
+/// 尚未提交状态,`network status/confirm/rollback` 必须从事务发现根;daemon 的
+/// 周期恢复同样依赖此回退。没有未完成事务时返回 `Ok(None)`。
+pub(crate) fn discover_landscape_root_from_unfinished_transaction()
+-> Result<Option<InstallRoot>, InstallError> {
+    let dir = super::layout::territory_transactions_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(InstallError::Io)?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(transaction) =
+            serde_json::from_slice::<super::transaction::TransactionFile>(&content)
+        else {
+            continue;
+        };
+        if transaction.phase.is_terminal() {
+            continue;
+        }
+        let root =
+            super::root::normalize_install_root(Path::new(&transaction.canonical_install_root))?;
+        return Ok(Some(root));
+    }
+    Ok(None)
+}
+
 pub(crate) fn validate_state(state: &InstallState) -> Result<(), InstallError> {
     if state.schema_version != STATE_SCHEMA_VERSION {
         return Err(corrupted(format!(

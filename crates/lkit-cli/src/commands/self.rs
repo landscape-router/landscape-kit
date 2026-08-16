@@ -37,6 +37,32 @@ pub(crate) const LKIT_BINARY: &str = "/usr/local/bin/lkit";
 /// 全局 unit 原件目录。
 pub(crate) const LKIT_UNIT_ORIGIN_DIR: &str = "/usr/local/lib/lkit";
 
+/// 测试钩子:环境变量 `LKIT_GLOBAL_DIR` 存在时把 `/usr/local` 重映射到该目录
+/// (fixture 世界用,文档不公开),否则用真实的全局位置。
+fn global_dir() -> Option<&'static Path> {
+    let value = std::env::var("LKIT_GLOBAL_DIR").ok()?;
+    if value.is_empty() {
+        return None;
+    }
+    Some(Path::new(Box::leak(value.into_boxed_str())))
+}
+
+/// CLI 二进制固定位置(由 install.sh 安装,self 命令只读不删)。
+fn lkit_binary() -> PathBuf {
+    match global_dir() {
+        Some(dir) => dir.join("bin/lkit"),
+        None => PathBuf::from(LKIT_BINARY),
+    }
+}
+
+/// 全局 unit 原件目录。
+fn unit_origin_dir() -> PathBuf {
+    match global_dir() {
+        Some(dir) => dir.join("lib/lkit"),
+        None => PathBuf::from(LKIT_UNIT_ORIGIN_DIR),
+    }
+}
+
 const GITHUB_API_ROOT: &str = "https://api.github.com";
 const RELEASES_DOWNLOAD_ROOT: &str =
     "https://github.com/landscape-router/landscape-kit/releases/download";
@@ -123,18 +149,18 @@ fn require_systemd(runtime: &InstallRuntime) -> Result<&Systemd, InstallError> {
 fn install(runtime: &InstallRuntime) -> Result<(), InstallError> {
     let systemd = require_systemd(runtime)?;
     let service = ManagedService::LkitDaemon;
-    let binary = Path::new(LKIT_BINARY);
-    if !is_executable(binary) {
+    let binary = lkit_binary();
+    if !is_executable(&binary) {
         return Err(InstallError::ParameterUsage(format!(
             "{} is missing or not executable; install lkit through install.sh first",
             binary.display()
         )));
     }
-    let origin_dir = Path::new(LKIT_UNIT_ORIGIN_DIR);
-    std::fs::create_dir_all(origin_dir).map_err(InstallError::Io)?;
+    let origin_dir = unit_origin_dir();
+    std::fs::create_dir_all(&origin_dir).map_err(InstallError::Io)?;
     let origin = origin_dir.join(systemd.service_name(service));
-    let content = systemd.render_definition(service, binary)?;
-    systemd.validate_definition(service, &content, binary)?;
+    let content = systemd.render_definition(service, &binary)?;
+    systemd.validate_definition(service, &content, &binary)?;
     write_unit_origin(&origin, &content)?;
     let result = (|| -> Result<(), InstallError> {
         systemd.register(service, &origin)?;
@@ -190,12 +216,12 @@ fn remove(runtime: &InstallRuntime) -> Result<(), InstallError> {
     if systemd.is_enabled(service).unwrap_or(false) {
         let _ = systemd.disable(service);
     }
-    let origin = Path::new(LKIT_UNIT_ORIGIN_DIR).join(systemd.service_name(service));
+    let origin = unit_origin_dir().join(systemd.service_name(service));
     if let Err(error) = systemd.unregister(service, &origin) {
         eprintln!("self: {error}");
     }
     remove_file_if_present(&origin)?;
-    remove_empty_dir_if_present(Path::new(LKIT_UNIT_ORIGIN_DIR))?;
+    remove_empty_dir_if_present(&unit_origin_dir())?;
     println!("self: {}", crate::tr!(crate::keys::SELF_REMOVED));
     Ok(())
 }
@@ -267,7 +293,7 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
     validate_network_url(&asset_url)?;
     let asset = Asset::checked(asset_url, checksum, asset.size, AssetEncoding::Identity)?;
 
-    let binary = Path::new(LKIT_BINARY);
+    let binary = lkit_binary();
     let parent = binary.parent().ok_or_else(|| {
         InstallError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -284,7 +310,7 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         // 自检:替换前对下载的二进制执行 `lkit --version`。
         let output = Command::new(&staged).arg("--version").output()?;
         verify_version_output(&output)?;
-        install_staged_binary(&staged, binary)?;
+        install_staged_binary(&staged, &binary)?;
         Ok::<(), InstallError>(())
     }
     .await;

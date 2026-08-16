@@ -12,7 +12,7 @@ fn self_installs_and_removes_the_lkit_service() {
     if !e2e_enabled() {
         return;
     }
-    let _guard = E2E_LOCK.lock().unwrap();
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("self", "healthy", 30_000);
     harness.seed_global_lkit_binary();
 
@@ -26,8 +26,9 @@ fn self_installs_and_removes_the_lkit_service() {
 
     let origin = harness.host.join("usr/local/lib/lkit/lkit.service");
     let unit = std::fs::read_to_string(&origin).unwrap();
+    let expected_exec = harness.host.join("usr/local/bin/lkit");
     assert!(
-        unit.contains("ExecStart=/usr/local/bin/lkit daemon"),
+        unit.contains(&format!("ExecStart={} daemon", expected_exec.display())),
         "unit ExecStart must point at the global lkit binary: {unit}"
     );
     assert!(unit.contains("User=root"));
@@ -92,7 +93,7 @@ fn self_install_rejects_unavailable_systemd() {
     if !e2e_enabled() {
         return;
     }
-    let _guard = E2E_LOCK.lock().unwrap();
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("self-reject", "healthy", 30_000);
     harness.seed_global_lkit_binary();
 

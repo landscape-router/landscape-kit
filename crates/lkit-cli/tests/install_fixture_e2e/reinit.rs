@@ -65,7 +65,7 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
         harness.service_log()
     );
     assert_eq!(
-        transaction_of_operation(&harness.transactions_dir(), "reinit")["phase"],
+        transaction_of_operation(&harness.territory, "reinit")["phase"],
         "awaiting_network_confirmation",
         "reinit must always enter the network confirmation window"
     );
@@ -94,7 +94,7 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
         serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
     assert_eq!(
-        transaction_of_operation(&harness.transactions_dir(), "reinit")["phase"],
+        transaction_of_operation(&harness.territory, "reinit")["phase"],
         "committed"
     );
     assert!(
@@ -136,7 +136,7 @@ fn reinit_rollback_restores_previous_data() {
 
     let rollback = harness.network_command(&["rollback"]);
     assert_success(&rollback);
-    let transaction = transaction_of_operation(&harness.transactions_dir(), "reinit");
+    let transaction = transaction_of_operation(&harness.territory, "reinit");
     assert_eq!(transaction["phase"], "rolled_back");
     assert_eq!(transaction["operation"], "reinit");
     let restored =

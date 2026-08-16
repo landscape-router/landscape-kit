@@ -198,13 +198,17 @@ async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
             crate::keys::TAKEOVER_NETWORK_COMMANDS_REQUIRE_ROOT
         )));
     }
+    // 待确认的接管安装还没有提交状态:状态缺失时从未完成事务发现根。
     let normalized = match state::discover_landscape_root()? {
         Some(root) => root,
-        None => {
-            return Err(InstallError::ParameterUsage(
-                "no installed landscape found; run `lkit install` first".into(),
-            ));
-        }
+        None => match state::discover_landscape_root_from_unfinished_transaction()? {
+            Some(root) => root,
+            None => {
+                return Err(InstallError::ParameterUsage(
+                    "no installed landscape found; run `lkit install` first".into(),
+                ));
+            }
+        },
     };
     let root = normalized;
     let _lock = lock::acquire_install_lock()?;

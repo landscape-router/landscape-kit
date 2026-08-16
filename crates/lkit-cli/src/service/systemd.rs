@@ -220,10 +220,11 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
     )
 }
 
-/// 渲染 lkit 常驻服务 unit 原件内容。二进制为全局 `/usr/local/bin/lkit`,
-/// unit 原件位于 `/usr/local/lib/lkit/lkit.service`,不复制到任何安装根;
-/// `canonical_root` 对本服务无意义,仅保持 trait 签名。
-pub(crate) fn render_lkit_daemon_unit(_canonical_root: &Path) -> String {
+/// 渲染 lkit 常驻服务 unit 原件内容。二进制为全局 `/usr/local/bin/lkit`
+/// (fixture 世界经 `LKIT_GLOBAL_DIR` 重映射),unit 原件位于
+/// `/usr/local/lib/lkit/lkit.service`,不复制到任何安装根;`canonical_root`
+/// 参数携带该二进制路径,与 `self install` 校验的是同一个路径。
+pub(crate) fn render_lkit_daemon_unit(binary: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Lkit daemon\n\
@@ -231,13 +232,14 @@ pub(crate) fn render_lkit_daemon_unit(_canonical_root: &Path) -> String {
          Wants=network-online.target\n\
          \n\
          [Service]\n\
-         ExecStart=/usr/local/bin/lkit daemon\n\
+         ExecStart={} daemon\n\
          User=root\n\
          Restart=always\n\
          KillMode=process\n\
          \n\
          [Install]\n\
-         WantedBy=multi-user.target\n"
+         WantedBy=multi-user.target\n",
+        binary.display()
     )
 }
 
@@ -280,9 +282,9 @@ pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), 
     validate_definition(content, expected, true, false)
 }
 
-fn validate_lkit_daemon_unit(content: &str, _canonical_root: &Path) -> Result<(), InstallError> {
-    let expected = "/usr/local/bin/lkit daemon";
-    validate_definition(content, expected.into(), false, true)
+fn validate_lkit_daemon_unit(content: &str, binary: &Path) -> Result<(), InstallError> {
+    let expected = format!("{} daemon", binary.display());
+    validate_definition(content, expected, false, true)
 }
 
 fn validate_definition(
@@ -941,19 +943,19 @@ mod tests {
 
     #[test]
     fn renders_and_validates_lkit_daemon_unit() {
-        let root = Path::new("/srv/landscape");
-        let content = render_lkit_daemon_unit(root);
+        let binary = Path::new("/usr/local/bin/lkit");
+        let content = render_lkit_daemon_unit(binary);
         assert!(content.contains("ExecStart=/usr/local/bin/lkit daemon"));
         assert!(!content.contains("/srv/landscape"));
-        assert!(validate_lkit_daemon_unit(&content, root).is_ok());
+        assert!(validate_lkit_daemon_unit(&content, binary).is_ok());
 
         let tampered = content.replace("/usr/local/bin/lkit", "/usr/local/bin/other");
-        assert!(validate_lkit_daemon_unit(&tampered, root).is_err());
+        assert!(validate_lkit_daemon_unit(&tampered, binary).is_err());
 
         let without_kill_mode = content.replace("KillMode=process\n", "");
-        assert!(validate_lkit_daemon_unit(&without_kill_mode, root).is_err());
+        assert!(validate_lkit_daemon_unit(&without_kill_mode, binary).is_err());
 
-        assert!(validate_unit(&content, root).is_err());
+        assert!(validate_unit(&content, binary).is_err());
     }
 
     #[test]

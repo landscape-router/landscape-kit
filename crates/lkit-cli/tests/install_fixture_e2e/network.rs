@@ -26,7 +26,8 @@ fn network_takeover_confirms_from_any_ssh_session() {
         !harness.state_path().exists(),
         "a takeover install must not commit state before confirmation"
     );
-    let transaction = read_only_transaction(&harness.transactions_dir());
+    eprintln!("DEBUG FIRST READ");
+    let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "awaiting_network_confirmation");
     assert_eq!(
         transaction["network_takeover"]["plan"]["mode"]["mode"],
@@ -99,7 +100,8 @@ fn network_takeover_confirms_from_any_ssh_session() {
         !harness.config_path().exists(),
         "network confirm must not create config.toml"
     );
-    let transaction = read_only_transaction(&harness.transactions_dir());
+    eprintln!("DEBUG SECOND READ");
+    let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "committed");
     assert!(
         std::fs::read_dir(harness.host.join("units"))
@@ -130,7 +132,8 @@ fn console_blocks_on_pending_network_takeover() {
         "takeover install failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let transaction = read_only_transaction(&harness.transactions_dir());
+    eprintln!("DEBUG FIRST READ");
+    let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "awaiting_network_confirmation");
 
     let mut pty = Pty::open();
@@ -178,7 +181,7 @@ fn automatic_network_rollback_restores_host_services() {
         "takeover install failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let pending = read_only_transaction(&harness.transactions_dir());
+    let pending = read_only_transaction(&harness.territory);
     let recovery_units = [
         pending["network_takeover"]["rollback_service"]
             .as_str()
@@ -205,7 +208,7 @@ fn automatic_network_rollback_restores_host_services() {
     assert!(!harness.state_path().exists());
     assert!(!harness.install_root.join("current").exists());
     assert!(!harness.install_root.join("data").exists());
-    let transaction = read_only_transaction(&harness.transactions_dir());
+    let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "rolled_back");
     assert_host_services_restored(
         &harness,
@@ -244,7 +247,7 @@ fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
 
     let rollback = harness.network_command(&["rollback", "--automatic"]);
     assert_eq!(rollback.status.code(), Some(6));
-    let transaction = read_only_transaction(&harness.transactions_dir());
+    let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "failed");
     assert_eq!(
         std::fs::read_link(&current).unwrap(),
@@ -275,7 +278,7 @@ fn network_takeover_supports_ifupdown_without_network_manager() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let pending = read_only_transaction(&harness.transactions_dir());
+    let pending = read_only_transaction(&harness.territory);
     let host_services = pending["network_takeover"]["host_services"]
         .as_array()
         .unwrap();

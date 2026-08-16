@@ -15,7 +15,7 @@ fn daemon_recovers_an_interrupted_install_transaction() {
     if !e2e_enabled() {
         return;
     }
-    let _guard = E2E_LOCK.lock().unwrap();
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("daemon-recover", "healthy", 30_000);
     let canonical = prepare_interrupted_install(&harness);
 
@@ -52,10 +52,11 @@ fn daemon_defers_while_the_install_lock_is_held() {
     if !e2e_enabled() {
         return;
     }
-    let _guard = E2E_LOCK.lock().unwrap();
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("daemon-lock", "healthy", 30_000);
     prepare_interrupted_install(&harness);
 
+    std::fs::create_dir_all(harness.run_dir()).unwrap();
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

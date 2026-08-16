@@ -132,6 +132,7 @@ fn migrate_command(harness: &InstallHarness, source: &Path) -> Command {
             lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
             &harness.world.systemctl_config,
         )
+        .env("LKIT_TERRITORY", &harness.territory)
         .args(["migrate", "--non-interactive", "--yes", "--from"])
         .arg(source)
         .args(["--repository"])
