@@ -19,7 +19,36 @@ struct InitWorld {
     tool_dir: PathBuf,
 }
 
+/// 等待上一个持锁测试残留的 lkit daemon 进程退出。openrc/sysvinit 后端以
+/// `/proc` 全局命令行为准判定 active(见 `pid_of_command`),并行测试序列里
+/// 上一个测试以 SIGTERM 停止的 daemon 尚未退出时会被误判为本安装根的 active
+/// 服务,导致 install 误走 restart。
+fn wait_for_foreign_daemons_to_exit() {
+    for _ in 0..100 {
+        let leftover = std::fs::read_dir("/proc").unwrap().flatten().find(|entry| {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<i64>() else {
+                return false;
+            };
+            if pid <= 1 {
+                return false;
+            }
+            let Ok(content) = std::fs::read(entry.path().join("cmdline")) else {
+                return false;
+            };
+            String::from_utf8_lossy(&content)
+                .replace('\0', " ")
+                .contains("daemon --config-dir")
+        });
+        if leftover.is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("leftover lkit daemon processes did not exit");
+}
+
 fn setup(name: &str, kind: &str) -> InitWorld {
+    wait_for_foreign_daemons_to_exit();
     let world = TestWorld::new(name);
     let install_root = world.path("install");
     std::fs::create_dir_all(&install_root).unwrap();

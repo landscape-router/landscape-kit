@@ -192,7 +192,7 @@ fn is_executable(path: &Path) -> bool {
 
 fn render_router_script(canonical_root: &Path) -> String {
     format!(
-        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          landscape-router\n# Required-Start:    $network\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       Landscape webserver reverse proxy\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile /run/landscape-router.pid --background \\\n      --exec {}/current/landscape-webserver -- --config-dir {}/data --web {}/current/static\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile /run/landscape-router.pid\n    ;;\n  restart)\n    $0 stop\n    $0 start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
+        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          landscape-router\n# Required-Start:    $network\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       Landscape webserver reverse proxy\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile /run/landscape-router.pid --background \\\n      --exec {}/current/landscape-webserver -- --config-dir {}/data --web {}/current/static\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile /run/landscape-router.pid\n    ;;\n  restart)\n    sh \"$0\" stop\n    sh \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
         shell_quote(&canonical_root.display().to_string()),
         shell_quote(&canonical_root.display().to_string()),
         shell_quote(&canonical_root.display().to_string()),
@@ -201,7 +201,7 @@ fn render_router_script(canonical_root: &Path) -> String {
 
 fn render_lkit_script(canonical_root: &Path) -> String {
     format!(
-        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          lkit\n# Required-Start:    $network\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       lkit resident daemon\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile {}/run/lkit.pid --background \\\n      --exec {}/service/lkit -- daemon --config-dir {}/data\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile {}/run/lkit.pid\n    ;;\n  restart)\n    $0 stop\n    $0 start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
+        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          lkit\n# Required-Start:    $network\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       lkit resident daemon\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile {}/run/lkit.pid --background \\\n      --exec {}/service/lkit -- daemon --config-dir {}/data\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile {}/run/lkit.pid\n    ;;\n  restart)\n    sh \"$0\" stop\n    sh \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
         shell_quote(&canonical_root.display().to_string()),
         shell_quote(&canonical_root.display().to_string()),
         shell_quote(&canonical_root.display().to_string()),
