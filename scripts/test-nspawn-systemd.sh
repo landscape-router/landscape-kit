@@ -436,7 +436,7 @@ machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
 machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
 machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -9 || true'
-machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
+machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; if [ -f /root/.lkit/state/install-state.json ]; then echo "== S-2 diagnostics: cli stdout/stderr:"; cat /tmp/s2.out /tmp/s2.err; echo "== S-2 diagnostics: daemon journal:"; journalctl -u lkit.service --no-pager -n 80; echo "== S-2 diagnostics: operations dir:"; ls -la /run/lkit/operations; exit 1; fi'
 machine_shell "! systemctl is-active --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 
