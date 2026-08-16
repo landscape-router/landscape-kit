@@ -121,7 +121,7 @@ printf 'version = "1.0.0"\nadmin_user = "admin"\nadmin_pass = "Secret123"\n' \
   >"$install_root/data/landscape_init.toml"
 chmod 0600 "$install_root/data/landscape_init.toml"
 printf 'tok-1234567890abcdef\n' >"$install_root/data/landscape_api_token"
-chmod 0600 "$install_root/data/landscape_api_token"
+chmod 0400 "$install_root/data/landscape_api_token"
 
 # 预置受管 unit 原件与系统注册链接(state 与真实 systemd 一致,内容与
 # render_unit 完全一致;注册与启动在 machine 起来后由真实 systemd 完成)。
@@ -326,7 +326,7 @@ PY
     >"$install_root/data/landscape_init.toml"
   chmod 0600 "$install_root/data/landscape_init.toml"
   printf 'tok-1234567890abcdef\n' >"$install_root/data/landscape_api_token"
-  chmod 0600 "$install_root/data/landscape_api_token"
+  chmod 0400 "$install_root/data/landscape_api_token"
   cat >"$install_root/service/landscape-router.service" <<'UNIT'
 [Unit]
 Description=Landscape Router
