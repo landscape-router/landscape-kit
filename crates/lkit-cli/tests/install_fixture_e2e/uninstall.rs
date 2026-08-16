@@ -71,4 +71,33 @@ fn uninstalls_an_existing_installation_through_full_cli() {
         .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"))
         .count();
     assert_eq!(lkb_count, 1, "the uninstall protection backup must be kept");
+
+    let leftover_transactions: Vec<_> = std::fs::read_dir(harness.transactions_dir())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect();
+    assert!(
+        leftover_transactions.is_empty(),
+        "transactions of the uninstalled root must be purged, found: {leftover_transactions:?}"
+    );
+
+    let again = harness
+        .command()
+        .args(["uninstall", "--non-interactive", "--yes", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_eq!(
+        again.status.code(),
+        Some(2),
+        "a second uninstall must be rejected with exit 2\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&again.stdout),
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains("install-state.json"),
+        "a second uninstall must explain the missing installation\nstderr:\n{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
 }
