@@ -10,11 +10,11 @@ fn main() {
 /// 都触发重编译与宏重新展开。
 fn emit_locale_watch(path: &Path) {
     println!("cargo:rerun-if-changed={}", path.display());
-    if path.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.flatten() {
-                emit_locale_watch(&entry.path());
-            }
+    if path.is_dir()
+        && let Ok(entries) = std::fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            emit_locale_watch(&entry.path());
         }
     }
 }
