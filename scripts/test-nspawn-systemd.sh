@@ -258,6 +258,23 @@ machine_shell() {
     /bin/bash -lc "$1"
 }
 
+# 与 machine_shell 相同,但 scope 使用 `KillMode=process`:命令退出后后台
+# 子进程继续存活(模拟脱离 systemd-run 会话的前端 CLI 进程,与 lkit.service
+# 的 KillMode 语义一致),供前端断开/取消场景使用。
+machine_shell_bg() {
+  if [[ $LKIT_NSPAWN_DEBUG == 1 ]]; then
+    echo ">> machine(bg): $1" >&2
+  fi
+  timeout "$LKIT_NSPAWN_CMD_TIMEOUT" systemd-run \
+    --machine "$machine" \
+    --wait \
+    --pipe \
+    --collect \
+    --quiet \
+    --property=KillMode=process \
+    /bin/bash -lc "$1"
+}
+
 system_bus_ready=false
 for _ in $(seq 1 100); do
   if machine_shell "true" >/dev/null 2>&1; then
@@ -411,7 +428,8 @@ machine_shell "test \"\$(find /root/.lkit/backups -name '*.lkb' | wc -l)\" -ge 1
 # S-2 前端断开:请求写入后 SIGKILL 前端,daemon 脱离会话独立完成卸载。
 echo "== worker S-2: the daemon finishes after the frontend disconnects"
 restore_scene
-machine_shell 'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
+machine_shell_bg \
+  'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
 machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
 machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -9 || true'
 machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
@@ -422,7 +440,8 @@ machine_shell "systemctl is-active --quiet lkit.service"
 # 子进程组,下个周期前向完成中断的卸载(恢复语义)。
 echo "== worker S-3: Ctrl+C cancels the delegated operation and the daemon recovers"
 restore_scene
-machine_shell 'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
+machine_shell_bg \
+  'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
 machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
 machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -INT || true'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; grep -qx 130 /tmp/s3.exit'
