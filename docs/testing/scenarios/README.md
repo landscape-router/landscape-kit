@@ -58,9 +58,7 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
    daemon 未注册仅更新 CLI），当前无任何测试；
 2. [`UP-02`](functional/update.md#up-02)、[`UP-03`](functional/update.md#up-03)：
    `lkit update` 确认后实际升级执行（latest 与固定版本）；
-3. [`REI-01`](functional/reinit.md#rei-01)、[`REI-02`](functional/reinit.md#rei-02)、
-   [`REI-08`](functional/reinit.md#rei-08)：reinit 拒绝路径、凭据先收集零副作用、
-   激活/健康检查失败回滚（退出码 `5`/`6`）；
+3. [`REI-08`](functional/reinit.md#rei-08)：reinit 激活/健康检查失败回滚（退出码 `5`/`6`）；
 4. [`UNI-08`](functional/uninstall.md#uni-08)、[`UNI-11`](functional/uninstall.md#uni-11)：
    网络接管特征警告后继续卸载、未安装/状态损坏拒绝卸载；
 5. [`SW-03`](functional/switch.md#sw-03)、[`SW-10`](functional/switch.md#sw-10)：

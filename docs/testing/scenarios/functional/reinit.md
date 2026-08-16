@@ -5,22 +5,22 @@
 **reinit 拒绝未安装、非 systemd 或未接管的安装**
 
 - 测试层：CLI fixture E2E
-- 状态：`待补充`
-- 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../crates/lkit-cli/src/commands/reinit.rs)
-- 说明：无有效状态返回参数错误；宿主网络服务未接管返回参数错误，
-  不创建事务、不写文件。
-- 缺口：commands/reinit.rs 的拒绝分支（未安装/非 systemd/未接管，退出码 `2`）无
-  命令层测试。
+- 状态：`部分覆盖`
+- 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../crates/lkit-cli/src/commands/reinit.rs)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/reinit.rs)
+- 说明：无有效状态返回参数错误（退出码 `2`，不写任何文件）；宿主网络服务未接管
+  返回参数错误（退出码 `2`，不创建 reinit 事务、状态不动）。
+- 缺口：非 systemd manager（退出码 `2`）拒绝分支无命令层测试。
 
 ## REI-02
 
 **凭据与网络计划先于任何修改收集,拒绝确认时不落盘**
 
 - 测试层：CLI fixture E2E
-- 状态：`待补充`
-- 证据：[网络重配置](../../../network/reinit.md)、[网络发现](../../../../crates/lkit-cli/src/network/discovery.rs)
-- 说明：拒绝或非交互缺少 `--yes` 时不创建事务、不创建 `.lkb`、不停止服务,退出码 `2`。
-- 缺口：凭据与网络计划先于事务创建的收集顺序与拒绝零副作用无测试。
+- 状态：`已覆盖`
+- 证据：[网络重配置](../../../network/reinit.md)、[网络发现](../../../../crates/lkit-cli/src/network/discovery.rs)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/reinit.rs)
+- 说明：凭据与网络计划在事务创建前收集；交互确认拒绝（退出码 `1`）或非交互缺少
+  `--yes`（参数错误退出码 `2`）时不创建事务、不创建 `.lkb`、不停止服务、
+  不改写数据。
 
 ## REI-03
 
