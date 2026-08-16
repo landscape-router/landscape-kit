@@ -138,7 +138,7 @@ fn uninstall_confirms_network_takeover_before_continuing() {
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
     pty.read_until("type yes to continue", std::time::Duration::from_secs(60));
-    pty.master.write_all(b"yes\n").unwrap();
+    pty.master.write_all(b"yes\nyes\n").unwrap();
     let prompt = pty
         .read_until("host network services", std::time::Duration::from_secs(60))
         .replace('\x1b', "");
@@ -146,7 +146,7 @@ fn uninstall_confirms_network_takeover_before_continuing() {
         prompt.contains("NetworkManager"),
         "the confirmation must describe the masked host services:\n{prompt}"
     );
-    pty.master.write_all(b"yes\nyes\n").unwrap();
+    pty.master.write_all(b"yes\n").unwrap();
     let status = child.wait().unwrap();
     assert!(
         status.success(),
