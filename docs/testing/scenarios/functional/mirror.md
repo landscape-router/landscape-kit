@@ -10,8 +10,8 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[`mirror::detect` 测试](../../../../crates/lkit-cli/src/mirror/detect.rs)、[`set-mirror --list`](../../../commands/mirror.md)
-- 说明：覆盖 Debian/Ubuntu（含 VERSION 行解析代号）、CentOS 7 与 Stream、Fedora、
-  Rocky、AlmaLinux、Arch；不支持发行版与不可读 os-release 报错。
+- 说明：覆盖 Debian/Ubuntu（含 VERSION 行解析代号）、Fedora、Rocky、AlmaLinux、
+  Arch；不支持发行版与不可读 os-release 报错。
 
 ## MIR-02
 
@@ -61,7 +61,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 - 状态：`已覆盖`
 - 证据：[`mirror::dnf::parse` 测试](../../../../crates/lkit-cli/src/mirror/dnf/parse.rs)
 - 说明：覆盖 `# baseurl=` 解注释与重写、mirrorlist/metalink 注释、Fedora/EPEL、
-  CentOS 7/Stream、Rocky、Alma 主机映射、官方反向恢复、自定义主机不动、
+  Rocky、Alma 主机映射、官方反向恢复、自定义主机不动、
   已识别镜像之间互转；已处于目标镜像/官方状态时 `apply` 为成功 no-op（不保留备份），
   没有任何可识别 URL 且未处于目标时报错。
 
@@ -132,7 +132,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
   `ports.ubuntu.com`/`/ubuntu-ports`（含 CD 源兜底）；
   Fedora 覆盖 `#baseurl=` 解注释、metalink 注释与 fedora/epel 映射（占位主机先 sed
   为规范官方主机）；Arch 验证 mirrorlist 整体重新生成（恰好一个 Server）。
-- 缺口：CentOS 7/Stream、Rocky、AlmaLinux 尚未纳入容器矩阵（机制相同，
+- 缺口：Rocky、AlmaLinux 尚未纳入容器矩阵（机制相同，
   可在 compose 列表扩充）。
 
 ## MIR-10

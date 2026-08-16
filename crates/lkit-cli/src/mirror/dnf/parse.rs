@@ -6,8 +6,6 @@ use super::super::{Family, MirrorName, mirror_host};
 /// 各家族官方主机到镜像路径的映射。`from` 是官方 URL 中主机+路径的起始，
 fn dnf_paths(family: Family) -> &'static [(&'static str, &'static str)] {
     match family {
-        Family::Centos7 => &[("mirror.centos.org/centos", "centos")],
-        Family::CentosStream => &[("mirror.stream.centos.org", "centos-stream")],
         Family::Fedora => &[
             ("download.fedoraproject.org/pub/epel", "epel"),
             ("download.fedoraproject.org/pub/fedora", "fedora"),
@@ -199,10 +197,10 @@ mod tests {
         let content = concat!(
             "name=global\n",
             "[baseos]\n",
-            "baseurl=http://mirror.stream.centos.org/$stream/BaseOS/$basearch/os/\n",
+            "baseurl=http://dl.rockylinux.org/$contentdir/$releasever/BaseOS/$basearch/os/\n",
             "[appstream]\n",
-            "mirrorlist=https://mirrorlist.centos.org/?repo=appstream\n",
-            "#baseurl=http://mirror.stream.centos.org/$stream/AppStream/$basearch/os/\n",
+            "mirrorlist=https://mirrorlist.rockylinux.org/mirrorlist?repo=appstream-$releasever\n",
+            "#baseurl=http://dl.rockylinux.org/$contentdir/$releasever/AppStream/$basearch/os/\n",
         );
         let blocks = parse_blocks(content);
         assert_eq!(blocks.len(), 3);
@@ -212,43 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn rewrites_centos_stream_to_tuna_and_disables_mirrorlist() {
-        let content = concat!(
-            "[baseos]\n",
-            "name=CentOS Stream $releasever - BaseOS\n",
-            "#baseurl=http://mirror.stream.centos.org/$stream/BaseOS/$basearch/os/\n",
-            "metalink=https://mirrors.centos.org/metalink?repo=centos-baseos-$stream\n",
-            "[appstream]\n",
-            "name=CentOS Stream $releasever - AppStream\n",
-            "mirrorlist=https://mirrorlist.centos.org/?repo=appstream\n",
-            "#baseurl=http://mirror.stream.centos.org/$stream/AppStream/$basearch/os/\n",
-        );
-        let rewritten = rewrite(content, Family::CentosStream, MirrorName::Tuna).unwrap();
-        assert!(rewritten.content.contains(
-            "baseurl=http://mirrors.tuna.tsinghua.edu.cn/centos-stream/$stream/BaseOS/$basearch/os/"
-        ));
-        assert!(
-            rewritten
-                .content
-                .contains("#lkit-mirror: metalink=https://mirrors.centos.org/metalink")
-        );
-        assert!(
-            rewritten
-                .content
-                .contains("#lkit-mirror: mirrorlist=https://mirrorlist.centos.org/")
-        );
-        assert!(!rewritten.content.contains("mirror.stream.centos.org"));
-        assert_eq!(rewritten.skipped_repositories, 0);
-    }
-
-    #[test]
     fn skips_blocks_without_baseurl() {
         let content = concat!(
             "[extras]\n",
             "name=Extra\n",
-            "mirrorlist=https://mirrorlist.centos.org/?repo=extras\n",
+            "mirrorlist=https://mirrorlist.rockylinux.org/mirrorlist?repo=extras-$releasever\n",
         );
-        let rewritten = rewrite(content, Family::Centos7, MirrorName::Aliyun);
+        let rewritten = rewrite(content, Family::Rocky, MirrorName::Aliyun);
         assert!(
             rewritten.is_none(),
             "no baseurl anywhere means no file change"
@@ -259,16 +227,14 @@ mod tests {
     fn leaves_commented_sections_untouched() {
         let content = concat!(
             "[baseos]\n",
-            "#baseurl=http://mirror.stream.centos.org/$stream/BaseOS/$basearch/os/\n",
+            "#baseurl=http://dl.rockylinux.org/$contentdir/$releasever/BaseOS/$basearch/os/\n",
             "# [disabled]\n",
             "# baseurl=https://repo.internal.example.com/disabled/os/\n",
         );
-        let rewritten = rewrite(content, Family::CentosStream, MirrorName::Tuna).unwrap();
-        assert!(
-            rewritten.content.contains(
-                "baseurl=http://mirrors.tuna.tsinghua.edu.cn/centos-stream/$stream/BaseOS/"
-            )
-        );
+        let rewritten = rewrite(content, Family::Rocky, MirrorName::Tuna).unwrap();
+        assert!(rewritten.content.contains(
+            "baseurl=http://mirrors.tuna.tsinghua.edu.cn/rockylinux/$releasever/BaseOS/"
+        ));
         assert!(
             rewritten.content.contains(
                 "# [disabled]\n# baseurl=https://repo.internal.example.com/disabled/os/\n"
@@ -325,26 +291,24 @@ mod tests {
     }
 
     #[test]
-    fn official_restores_centos7_host() {
+    fn official_restores_rocky_host() {
         let content = concat!(
-            "[base]\n",
-            "baseurl=https://mirrors.aliyun.com/centos/$releasever/os/$basearch/\n",
+            "[baseos]\n",
+            "baseurl=https://mirrors.aliyun.com/rockylinux/$releasever/BaseOS/$basearch/os/\n",
         );
-        let rewritten = rewrite(content, Family::Centos7, MirrorName::Official).unwrap();
-        assert!(
-            rewritten
-                .content
-                .contains("baseurl=https://mirror.centos.org/centos/$releasever/os/$basearch/")
-        );
+        let rewritten = rewrite(content, Family::Rocky, MirrorName::Official).unwrap();
+        assert!(rewritten.content.contains(
+            "baseurl=https://dl.rockylinux.org/$contentdir/$releasever/BaseOS/$basearch/os/"
+        ));
     }
 
     #[test]
     fn leaves_custom_hosts_untouched() {
         let content = concat!(
             "[custom]\n",
-            "baseurl=https://repo.example.com/centos/$releasever/os/$basearch/\n",
+            "baseurl=https://repo.example.com/rockylinux/$releasever/BaseOS/$basearch/os/\n",
         );
-        let rewritten = rewrite(content, Family::Centos7, MirrorName::Tuna);
+        let rewritten = rewrite(content, Family::Rocky, MirrorName::Tuna);
         assert!(
             rewritten.is_none(),
             "no known official host means no change"
@@ -355,9 +319,9 @@ mod tests {
     fn mirror_on_mirror_is_a_noop() {
         let content = concat!(
             "[baseos]\n",
-            "baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-stream/$stream/BaseOS/$basearch/os/\n",
+            "baseurl=https://mirrors.tuna.tsinghua.edu.cn/rockylinux/$releasever/BaseOS/$basearch/os/\n",
         );
-        let rewritten = rewrite(content, Family::CentosStream, MirrorName::Tuna);
+        let rewritten = rewrite(content, Family::Rocky, MirrorName::Tuna);
         assert!(rewritten.is_none());
     }
 
@@ -365,20 +329,20 @@ mod tests {
     fn switches_between_recognized_mirrors() {
         let content = concat!(
             "[baseos]\n",
-            "baseurl=https://mirrors.ustc.edu.cn/centos-stream/$stream/BaseOS/$basearch/os/\n",
+            "baseurl=https://mirrors.ustc.edu.cn/rockylinux/$releasever/BaseOS/$basearch/os/\n",
             "[appstream]\n",
-            "baseurl=https://mirrors.ustc.edu.cn/centos-stream/$stream/AppStream/$basearch/os/\n",
+            "baseurl=https://mirrors.ustc.edu.cn/rockylinux/$releasever/AppStream/$basearch/os/\n",
         );
-        let rewritten = rewrite(content, Family::CentosStream, MirrorName::Aliyun).unwrap();
+        let rewritten = rewrite(content, Family::Rocky, MirrorName::Aliyun).unwrap();
         assert!(
             rewritten
                 .content
-                .contains("baseurl=https://mirrors.aliyun.com/centos-stream/$stream/BaseOS/")
+                .contains("baseurl=https://mirrors.aliyun.com/rockylinux/$releasever/BaseOS/")
         );
         assert!(
             rewritten
                 .content
-                .contains("baseurl=https://mirrors.aliyun.com/centos-stream/$stream/AppStream/")
+                .contains("baseurl=https://mirrors.aliyun.com/rockylinux/$releasever/AppStream/")
         );
         assert!(!rewritten.content.contains("mirrors.ustc.edu.cn"));
     }

@@ -54,15 +54,6 @@ pub(crate) fn detect_from(path: &Path) -> Result<Host, MirrorError> {
         "debian" => Family::Debian,
         "ubuntu" => Family::Ubuntu,
         "fedora" => Family::Fedora,
-        "centos" => {
-            // CentOS 7 使用 yum/旧仓库布局，Stream 8+ 使用新布局。
-            let version = os_release_version(path).unwrap_or_default();
-            if version.starts_with('7') {
-                Family::Centos7
-            } else {
-                Family::CentosStream
-            }
-        }
         "rocky" => Family::Rocky,
         "almalinux" => Family::Alma,
         "arch" => Family::Arch,
@@ -78,15 +69,6 @@ pub(crate) fn detect_from(path: &Path) -> Result<Host, MirrorError> {
         _ => None,
     };
     Ok(Host { family, codename })
-}
-
-fn os_release_version(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    content.lines().find_map(|line| {
-        let rest = line.trim().strip_prefix("VERSION_ID=")?;
-        let value = rest.trim().trim_matches('"');
-        (!value.is_empty()).then(|| value.to_string())
-    })
 }
 
 #[cfg(test)]
@@ -138,20 +120,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_centos7_by_version_prefix() {
-        let path = write_os_release("ID=\"centos\"\nVERSION_ID=\"7\"\n");
-        assert_eq!(detect_from(&path).unwrap().family, Family::Centos7);
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-
-    #[test]
-    fn detects_centos_stream_without_version() {
-        let path = write_os_release("ID=\"centos\"\nVERSION_ID=\"9\"\n");
-        assert_eq!(detect_from(&path).unwrap().family, Family::CentosStream);
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-
-    #[test]
     fn detects_other_families() {
         for (id, expected) in [
             ("fedora", Family::Fedora),
@@ -167,9 +135,11 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_distributions() {
-        let path = write_os_release("ID=alpine\n");
-        assert!(detect_from(&path).is_err());
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        for id in ["alpine", "centos"] {
+            let path = write_os_release(&format!("ID={id}\n"));
+            assert!(detect_from(&path).is_err(), "{id} must be rejected");
+            let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        }
     }
 
     #[test]

@@ -22,9 +22,7 @@ pub(crate) trait SourcesBackend {
 pub(crate) fn backend(host: &Host) -> Box<dyn SourcesBackend> {
     match host.family {
         Family::Debian | Family::Ubuntu => Box::new(apt::AptBackend::new(host)),
-        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
-            Box::new(dnf::DnfBackend::new(host))
-        }
+        Family::Fedora | Family::Rocky | Family::Alma => Box::new(dnf::DnfBackend::new(host)),
         Family::Arch => Box::new(pacman::PacmanBackend),
     }
 }

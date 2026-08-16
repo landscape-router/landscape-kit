@@ -1,7 +1,7 @@
 # `lkit set-mirror`
 
-切换当前主机的 Linux 软件包管理器软件源（换源）。支持 apt（Debian/Ubuntu）、dnf/yum
-（Fedora、CentOS 7、CentOS Stream、Rocky、AlmaLinux）与 pacman（Arch Linux），预置
+切换当前主机的 Linux 软件包管理器软件源（换源）。支持 apt（Debian/Ubuntu）、dnf
+（Fedora、Rocky、AlmaLinux）与 pacman（Arch Linux），预置
 清华 TUNA、阿里云、中科大 USTC 与六所大学镜像（南大 NJU、上交 SJTU、浙大 ZJU、
 兰大 LZU、北外 BFSU、华科 HUST）和官方源恢复。
 
@@ -44,7 +44,7 @@ lkit set-mirror --restore [--yes]
 | --- | --- | --- |
 | Debian | apt | `/etc/apt/sources.list`、`/etc/apt/sources.list.d/*`（含 deb822 `.sources`；兜底时可能新建 `sources.list.d/lkit-mirror.list`） |
 | Ubuntu | apt | 同上 |
-| Fedora、CentOS 7、CentOS Stream、Rocky、AlmaLinux | dnf/yum | `/etc/yum.repos.d/*.repo` |
+| Fedora、Rocky、AlmaLinux | dnf | `/etc/yum.repos.d/*.repo` |
 | Arch | pacman | `/etc/pacman.d/mirrorlist` |
 
 不支持的其他发行版（如 Alpine）直接报错，不修改任何文件。检测失败同样报错阻断。
@@ -100,9 +100,7 @@ dnf/yum 按仓库块（`[section]`）解析：
 - 只转换包含 `baseurl=`（含被注释的 `# baseurl=`）的块：解注释并重写官方主机，
   同时把 `mirrorlist=`/`metalink=` 行注释掉（前缀 `#lkit-mirror: `）；
 - Fedora：`download.fedoraproject.org/pub/fedora` 与 `.../pub/epel` 映射到镜像；
-- CentOS 7：`mirror.centos.org/centos`；CentOS Stream：`mirror.stream.centos.org`
-  映射到镜像的 `centos-stream`；Rocky：`dl.rockylinux.org/$contentdir`；AlmaLinux：
-  `repo.almalinux.org/almalinux`；
+- Rocky：`dl.rockylinux.org/$contentdir`；AlmaLinux：`repo.almalinux.org/almalinux`；
 - 没有 `baseurl=` 的仓库块原样保留并计入跳过统计，避免把仓库改成空配置；
 - 自定义主机 URL 不受影响；已识别的九个公共镜像（TUNA、阿里云、USTC、NJU、SJTU、
   ZJU、LZU、BFSU、HUST）之间可互转，选择其中一个时其余镜像的 URL 一并替换为所选

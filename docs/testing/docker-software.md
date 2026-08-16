@@ -8,7 +8,7 @@
 联网下载 docker-ce 软件包与 GPG key。
 
 覆盖发行版（每个发行版覆盖一个安装来源；TUNA 对 docker-ce 仓库存在地域/UA 过滤
-（非 CN 流量 403），USTC 只同步 apt 家族（fedora/centos 404），因此真实安装矩阵
+（非 CN 流量 403），USTC 只同步 apt 家族（fedora 404），因此真实安装矩阵
 使用官方源、阿里云与 USTC 源，TUNA 的 URL 映射由单元测试与换源 E2E 覆盖）：
 
 | 容器镜像 | 家族 | 来源 | 覆盖点 |

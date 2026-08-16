@@ -25,7 +25,7 @@
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[`software::docker` 测试](../../../../crates/lkit-cli/src/software/docker.rs)
-- 说明：TUNA（Ubuntu jammy）与阿里云（CentOS 7 主版本号从 `7.9.2009` 取 `7`）写入的
+- 说明：TUNA（Ubuntu jammy）与阿里云（Rocky 主版本号从 `9.3` 取 `9`）写入的
   仓库文件 URL 指向对应镜像主机，其余字段不变。
 
 ## SFT-03
@@ -86,6 +86,6 @@
   验证调用契约；安装前验证 `--non-interactive` 无 `--source` 报用法错误。CI 在
   x86_64 与 aarch64 runner 上运行，aarch64 自动覆盖 arm64 仓库架构分支。
 - 缺口：TUNA 的 docker-ce 仓库存在地域/UA 过滤（非 CN 流量 403）、USTC 只同步
-  apt 家族（fedora/centos 404），未纳入真实安装矩阵（URL 映射由单元测试覆盖）；
-  CentOS 7/Stream、Rocky、AlmaLinux 尚未纳入容器矩阵；真实 dockerd 启动由宿主
+  apt 家族（fedora 404），未纳入真实安装矩阵（URL 映射由单元测试覆盖）；
+  Rocky、AlmaLinux 尚未纳入容器矩阵；真实 dockerd 启动由宿主
   验收负责。

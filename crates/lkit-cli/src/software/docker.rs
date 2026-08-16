@@ -13,7 +13,7 @@ const APT_PACKAGES: [&str; 5] = [
     "docker-compose-plugin",
 ];
 
-/// dnf/yum 家族（Fedora/RHEL 系）安装 docker-ce 的软件包列表。
+/// dnf 家族（Fedora/RHEL 系）安装 docker-ce 的软件包列表。
 const DNF_PACKAGES: [&str; 5] = [
     "docker-ce",
     "docker-ce-cli",
@@ -34,9 +34,7 @@ pub(crate) fn install(
 ) -> Result<(), SoftwareError> {
     match host.family {
         Family::Debian | Family::Ubuntu => install_apt(host, source, stream, phase),
-        Family::Fedora | Family::Centos7 | Family::CentosStream | Family::Rocky | Family::Alma => {
-            install_dnf(host, source, stream, phase)
-        }
+        Family::Fedora | Family::Rocky | Family::Alma => install_dnf(host, source, stream, phase),
         Family::Arch => install_pacman(stream, phase),
     }
 }
@@ -95,7 +93,7 @@ fn write_apt_source(host: &Host, source: DockerSource) -> Result<(), SoftwareErr
         .map_err(|error| SoftwareError::Message(error.to_string()))
 }
 
-/// dnf/yum（Fedora/CentOS/Rocky/AlmaLinux）：写入 `/etc/yum.repos.d/docker-ce.repo`，
+/// dnf（Fedora/Rocky/AlmaLinux）：写入 `/etc/yum.repos.d/docker-ce.repo`，
 /// 安装软件包后启用服务。
 fn install_dnf(
     host: &Host,
@@ -106,14 +104,9 @@ fn install_dnf(
     phase(InstallPhase::Preparing);
     write_dnf_repo(host, source)?;
     phase(InstallPhase::InstallingPackages);
-    let manager = if host.family == Family::Centos7 {
-        "yum"
-    } else {
-        "dnf"
-    };
     let mut args: Vec<&str> = vec!["install", "-y"];
     args.extend(DNF_PACKAGES);
-    run_command(manager, &args, stream)?;
+    run_command("dnf", &args, stream)?;
     finish(stream, phase)
 }
 
@@ -338,16 +331,16 @@ mod tests {
         let guard = TestPathsGuard::set(paths);
         write_source(
             &root.join("os-release"),
-            "ID=\"centos\"\nVERSION_ID=\"7.9.2009\"\n",
+            "ID=\"rocky\"\nVERSION_ID=\"9.3\"\n",
         );
         let host = Host {
-            family: Family::Centos7,
+            family: Family::Rocky,
             codename: None,
         };
         super::write_dnf_repo(&host, DockerSource::Aliyun).unwrap();
         let repo = fs::read_to_string(root.join("etc/yum.repos.d/docker-ce.repo")).unwrap();
         assert!(
-            repo.contains("https://mirrors.aliyun.com/docker-ce/linux/centos/7/$basearch/stable")
+            repo.contains("https://mirrors.aliyun.com/docker-ce/linux/rocky/9/$basearch/stable")
         );
         drop(guard);
         let _ = fs::remove_dir_all(&root);

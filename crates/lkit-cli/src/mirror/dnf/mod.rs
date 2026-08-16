@@ -9,7 +9,7 @@ use super::{ApplyReport, Family, Host, MirrorError, MirrorName, backup_dir, path
 
 pub(crate) mod parse;
 
-/// dnf/yum 家族（Fedora、CentOS 7/Stream、Rocky、AlmaLinux）软件源后端。
+/// dnf 家族（Fedora、Rocky、AlmaLinux）软件源后端。
 pub(crate) struct DnfBackend {
     family: Family,
 }

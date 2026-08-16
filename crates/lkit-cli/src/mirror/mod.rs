@@ -208,8 +208,6 @@ pub(crate) enum Family {
     Debian,
     Ubuntu,
     Fedora,
-    Centos7,
-    CentosStream,
     Rocky,
     Alma,
     Arch,
@@ -221,8 +219,6 @@ impl Family {
             Self::Debian => crate::tr!(crate::keys::mirror::FAMILY_DEBIAN),
             Self::Ubuntu => crate::tr!(crate::keys::mirror::FAMILY_UBUNTU),
             Self::Fedora => crate::tr!(crate::keys::mirror::FAMILY_FEDORA),
-            Self::Centos7 => crate::tr!(crate::keys::mirror::FAMILY_CENTOS7),
-            Self::CentosStream => crate::tr!(crate::keys::mirror::FAMILY_CENTOS_STREAM),
             Self::Rocky => crate::tr!(crate::keys::mirror::FAMILY_ROCKY),
             Self::Alma => crate::tr!(crate::keys::mirror::FAMILY_ALMA),
             Self::Arch => crate::tr!(crate::keys::mirror::FAMILY_ARCH),
@@ -234,8 +230,6 @@ impl Family {
             Self::Debian => "debian",
             Self::Ubuntu => "ubuntu",
             Self::Fedora => "fedora",
-            Self::Centos7 => "centos7",
-            Self::CentosStream => "centos-stream",
             Self::Rocky => "rocky",
             Self::Alma => "alma",
             Self::Arch => "arch",
@@ -245,7 +239,7 @@ impl Family {
     pub(crate) fn package_manager(self) -> &'static str {
         match self {
             Self::Debian | Self::Ubuntu => "apt",
-            Self::Fedora | Self::Centos7 | Self::CentosStream | Self::Rocky | Self::Alma => "dnf",
+            Self::Fedora | Self::Rocky | Self::Alma => "dnf",
             Self::Arch => "pacman",
         }
     }

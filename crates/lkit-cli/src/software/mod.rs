@@ -233,8 +233,6 @@ pub(crate) fn docker_family_slug(family: Family) -> &'static str {
         Family::Debian => "debian",
         Family::Ubuntu => "ubuntu",
         Family::Fedora => "fedora",
-        Family::Centos7 => "centos",
-        Family::CentosStream => "centos-stream",
         Family::Rocky => "rocky",
         Family::Alma => "almalinux",
         Family::Arch => "arch",
