@@ -23,19 +23,17 @@ fn network_takeover_confirms_from_any_ssh_session() {
         harness.service_log()
     );
     assert!(
-        !harness
-            .install_root
-            .join("state/install-state.json")
-            .exists()
+        !harness.state_path().exists(),
+        "a takeover install must not commit state before confirmation"
     );
-    let transaction = read_only_transaction(&harness.install_root);
+    let transaction = read_only_transaction(&harness.transactions_dir());
     assert_eq!(transaction["phase"], "awaiting_network_confirmation");
     assert_eq!(
         transaction["network_takeover"]["plan"]["mode"]["mode"],
         "routed_lan"
     );
     assert!(
-        !harness.install_root.join("config.toml").exists(),
+        !harness.config_path().exists(),
         "the repository record must not be written before network confirmation"
     );
 
@@ -94,16 +92,14 @@ fn network_takeover_confirms_from_any_ssh_session() {
         "pre\n",
         "confirmation removed the WAN address managed by the static plan"
     );
-    let state: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
     assert!(
-        !harness.install_root.join("config.toml").exists(),
+        !harness.config_path().exists(),
         "network confirm must not create config.toml"
     );
-    let transaction = read_only_transaction(&harness.install_root);
+    let transaction = read_only_transaction(&harness.transactions_dir());
     assert_eq!(transaction["phase"], "committed");
     assert!(
         std::fs::read_dir(harness.host.join("units"))
@@ -134,13 +130,13 @@ fn console_blocks_on_pending_network_takeover() {
         "takeover install failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let transaction = read_only_transaction(&harness.install_root);
+    let transaction = read_only_transaction(&harness.transactions_dir());
     assert_eq!(transaction["phase"], "awaiting_network_confirmation");
 
     let mut pty = Pty::open();
     let mut command = Command::new(LKIT);
     attach_pty(&mut command, &pty);
-    command.env("LKIT_INSTALL_DIR", &harness.install_root);
+    command.env("LKIT_TERRITORY", &harness.territory);
     let mut child = command.spawn().unwrap();
     let entered = pty.read_until(
         "Network takeover awaiting confirmation",
@@ -182,7 +178,7 @@ fn automatic_network_rollback_restores_host_services() {
         "takeover install failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let pending = read_only_transaction(&harness.install_root);
+    let pending = read_only_transaction(&harness.transactions_dir());
     let recovery_units = [
         pending["network_takeover"]["rollback_service"]
             .as_str()
@@ -206,15 +202,10 @@ fn automatic_network_rollback_restores_host_services() {
     assert!(harness.install_root.join("data").exists());
     let rollback = harness.network_command(&["rollback", "--automatic"]);
     assert_success(&rollback);
-    assert!(
-        !harness
-            .install_root
-            .join("state/install-state.json")
-            .exists()
-    );
+    assert!(!harness.state_path().exists());
     assert!(!harness.install_root.join("current").exists());
     assert!(!harness.install_root.join("data").exists());
-    let transaction = read_only_transaction(&harness.install_root);
+    let transaction = read_only_transaction(&harness.transactions_dir());
     assert_eq!(transaction["phase"], "rolled_back");
     assert_host_services_restored(
         &harness,
@@ -253,7 +244,7 @@ fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
 
     let rollback = harness.network_command(&["rollback", "--automatic"]);
     assert_eq!(rollback.status.code(), Some(6));
-    let transaction = read_only_transaction(&harness.install_root);
+    let transaction = read_only_transaction(&harness.transactions_dir());
     assert_eq!(transaction["phase"], "failed");
     assert_eq!(
         std::fs::read_link(&current).unwrap(),
@@ -284,7 +275,7 @@ fn network_takeover_supports_ifupdown_without_network_manager() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let pending = read_only_transaction(&harness.install_root);
+    let pending = read_only_transaction(&harness.transactions_dir());
     let host_services = pending["network_takeover"]["host_services"]
         .as_array()
         .unwrap();
@@ -333,7 +324,7 @@ fn network_takeover_rejects_other_active_network_manager() {
         "preflight check failed: unknown network manager systemd-networkd.service is active"
     ));
     assert!(
-        !harness.install_root.join("transactions").exists(),
+        !harness.transactions_dir().exists(),
         "preflight created a transaction before rejecting an unknown manager"
     );
 }

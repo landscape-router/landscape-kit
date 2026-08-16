@@ -14,18 +14,17 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
     assert_success(&harness.run());
 
     // 预置有效配置后,update 渠道选择的首个默认选项是配置中的"当前来源"。
-    let config_path = harness.install_root.join("config.toml");
+    let config_path = harness.config_path();
     let preset = format!(
         "schema_version = 1\n\n[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
         harness.repository.base_url
     );
-    std::fs::create_dir_all(&harness.install_root).unwrap();
     std::fs::write(&config_path, &preset).unwrap();
 
-    let state_path = harness.install_root.join("state/install-state.json");
+    let state_path = harness.state_path();
     let original_state = std::fs::read(&state_path).unwrap();
     let original_current = std::fs::read_link(harness.install_root.join("current")).unwrap();
-    let original_transaction_count = transaction_count(&harness.install_root);
+    let original_transaction_count = transaction_count(&harness.territory);
 
     let mut default_tty = Pty::open();
     default_tty.master.write_all(b"\n").unwrap();
@@ -83,7 +82,7 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
         original_current
     );
     assert_eq!(
-        transaction_count(&harness.install_root),
+        transaction_count(&harness.territory),
         original_transaction_count
     );
     let requests = newer_repository.request_paths();
@@ -174,6 +173,13 @@ fn explicit_non_interactive_mode_ignores_available_tty() {
     assert!(pty.echo_enabled());
 }
 
+fn bare_console_command() -> (Command, TestWorld) {
+    let world = TestWorld::new("bare-console");
+    let mut command = Command::new(LKIT);
+    command.env("LKIT_TERRITORY", world.path("territory"));
+    (command, world)
+}
+
 #[test]
 fn bare_lkit_console_restores_terminal_on_exit() {
     if !e2e_enabled() {
@@ -181,7 +187,7 @@ fn bare_lkit_console_restores_terminal_on_exit() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut pty = Pty::open();
-    let mut command = Command::new(LKIT);
+    let (mut command, _world) = bare_console_command();
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
     let entered = pty.read_until("Landscape Kit", Duration::from_secs(5));
@@ -219,7 +225,7 @@ fn ctrl_c_leaves_bare_lkit_console_and_restores_terminal() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut pty = Pty::open();
-    let mut command = Command::new(LKIT);
+    let (mut command, _world) = bare_console_command();
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
     let entered = pty.read_until("Landscape Kit", Duration::from_secs(5));

@@ -165,10 +165,8 @@ fn migrates_manual_deployment_through_full_cli() {
         "non-interactive output contains terminal control sequences"
     );
 
-    let state: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(
         state["active_version"], VERSION,
         "migration must not upgrade"
@@ -188,7 +186,7 @@ fn migrates_manual_deployment_through_full_cli() {
         std::fs::read_to_string(harness.install_root.join("data/landscape_init.toml")).unwrap(),
         format!("version = \"{VERSION}\"\n")
     );
-    let lkb_count = std::fs::read_dir(harness.install_root.join("backups"))
+    let lkb_count = std::fs::read_dir(harness.backups_dir())
         .unwrap()
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"))
@@ -286,10 +284,5 @@ fn migrate_rolls_back_and_restores_legacy_unit_on_activation_failure() {
     assert!(!harness.install_root.join("releases").join(VERSION).exists());
     assert!(!harness.install_root.join("data").exists());
     assert!(!harness.install_root.join("current").exists());
-    assert!(
-        !harness
-            .install_root
-            .join("state/install-state.json")
-            .exists()
-    );
+    assert!(!harness.state_path().exists());
 }

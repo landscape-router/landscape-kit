@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
-pub(crate) fn read_only_transaction(install_root: &Path) -> serde_json::Value {
-    let paths: Vec<PathBuf> = std::fs::read_dir(install_root.join("transactions"))
+/// 读取 lkit 地盘 `transactions/` 下的唯一事务文件。
+pub(crate) fn read_only_transaction(territory: &Path) -> serde_json::Value {
+    let paths: Vec<PathBuf> = std::fs::read_dir(territory.join("transactions"))
         .unwrap()
         .filter_map(|entry| {
             let path = entry.unwrap().path();
@@ -12,9 +13,9 @@ pub(crate) fn read_only_transaction(install_root: &Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(&paths[0]).unwrap()).unwrap()
 }
 
-/// 在已有多个事务(如接管安装 + reinit)的安装根目录中按 operation 查找事务。
-pub(crate) fn transaction_of_operation(install_root: &Path, operation: &str) -> serde_json::Value {
-    let paths: Vec<PathBuf> = std::fs::read_dir(install_root.join("transactions"))
+/// 在已有多个事务(如接管安装 + reinit)的地盘 transactions/ 中按 operation 查找事务。
+pub(crate) fn transaction_of_operation(territory: &Path, operation: &str) -> serde_json::Value {
+    let paths: Vec<PathBuf> = std::fs::read_dir(territory.join("transactions"))
         .unwrap()
         .filter_map(|entry| {
             let path = entry.unwrap().path();
@@ -32,8 +33,8 @@ pub(crate) fn transaction_of_operation(install_root: &Path, operation: &str) -> 
     found.unwrap_or_else(|| panic!("no {operation} transaction found"))
 }
 
-pub(crate) fn transaction_count(install_root: &Path) -> usize {
-    std::fs::read_dir(install_root.join("transactions"))
+pub(crate) fn transaction_count(territory: &Path) -> usize {
+    std::fs::read_dir(territory.join("transactions"))
         .unwrap()
         .filter_map(Result::ok)
         .count()

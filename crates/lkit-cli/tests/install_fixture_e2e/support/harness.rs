@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use super::ports::TestPorts;
@@ -11,6 +11,9 @@ use super::{
 
 pub(crate) struct InstallHarness {
     pub(crate) world: TestWorld,
+    /// lkit 地盘:config/state/transactions/backups/logs/run 全部位于此处,
+    /// 通过 `LKIT_TERRITORY` 指向。landscape 安装根是独立目录 `install_root`。
+    pub(crate) territory: PathBuf,
     pub(crate) install_root: PathBuf,
     pub(crate) host: PathBuf,
     pub(crate) runtime_config: PathBuf,
@@ -22,11 +25,13 @@ pub(crate) struct InstallHarness {
 impl InstallHarness {
     pub(crate) fn new(name: &str, scenario: &str, startup_timeout_ms: u64) -> Self {
         let world = TestWorld::new(name);
+        let territory = world.path("territory");
         let install_root = world.path("install");
         let host = world.path("host");
         let unit_dir = host.join("units");
         let run_systemd_dir = host.join("run/systemd/system");
         let systemd_state = host.join("systemd-state");
+        std::fs::create_dir_all(&territory).unwrap();
         std::fs::create_dir_all(&unit_dir).unwrap();
         std::fs::create_dir_all(&run_systemd_dir).unwrap();
         std::fs::create_dir_all(&systemd_state).unwrap();
@@ -155,6 +160,7 @@ esac
         let repository = RepositoryServer::start(repository_files());
         Self {
             world,
+            territory,
             install_root,
             host,
             runtime_config,
@@ -164,12 +170,58 @@ esac
         }
     }
 
-    pub(crate) fn run(&self) -> Output {
-        Command::new(LKIT)
+    /// lkit 地盘路径:config/state/transactions/backups/logs/run。
+    pub(crate) fn state_path(&self) -> PathBuf {
+        self.territory.join("state/install-state.json")
+    }
+
+    pub(crate) fn config_path(&self) -> PathBuf {
+        self.territory.join("config.toml")
+    }
+
+    pub(crate) fn transactions_dir(&self) -> PathBuf {
+        self.territory.join("transactions")
+    }
+
+    pub(crate) fn backups_dir(&self) -> PathBuf {
+        self.territory.join("backups")
+    }
+
+    pub(crate) fn logs_dir(&self) -> PathBuf {
+        self.territory.join("logs")
+    }
+
+    pub(crate) fn run_dir(&self) -> PathBuf {
+        self.territory.join("run")
+    }
+
+    /// 统一的 lkit 命令构造点:注入 fake systemctl 配置与指向 fixture 世界的
+    /// `LKIT_TERRITORY`。除 install/migrate(显式传 `--install-dir`)外,
+    /// 所有命令都经由此处且不接收 install-dir,从地盘状态发现 landscape 根。
+    pub(crate) fn command(&self) -> Command {
+        let mut command = Command::new(LKIT);
+        command
             .env(
                 lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
                 &self.world.systemctl_config,
             )
+            .env("LKIT_TERRITORY", &self.territory);
+        command
+    }
+
+    /// fixture 世界里的全局 lkit 二进制 `/usr/local/bin/lkit`:`lkit self install`
+    /// 校验它可执行,daemon unit 的 `ExecStart` 直接引用它。
+    pub(crate) fn seed_global_lkit_binary(&self) {
+        let dir = self.host.join("usr/local/bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let binary = dir.join("lkit");
+        if !binary.exists() {
+            std::os::unix::fs::symlink(LKIT, &binary).unwrap();
+        }
+    }
+
+    pub(crate) fn run(&self) -> Output {
+        self.command()
             .args([
                 "install",
                 "--non-interactive",
@@ -189,12 +241,8 @@ esac
     }
 
     pub(crate) fn password_prompt_command(&self, pty: &Pty) -> Command {
-        let mut command = Command::new(LKIT);
+        let mut command = self.command();
         command
-            .env(
-                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-                &self.world.systemctl_config,
-            )
             .args([
                 "install",
                 "--version",
@@ -211,15 +259,9 @@ esac
     }
 
     pub(crate) fn update_command(&self) -> Command {
-        let mut command = Command::new(LKIT);
+        let mut command = self.command();
         command
-            .env(
-                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-                &self.world.systemctl_config,
-            )
             .arg("update")
-            .arg("--install-dir")
-            .arg(&self.install_root)
             .arg("--test-runtime")
             .arg(&self.runtime_config);
         command
@@ -250,11 +292,7 @@ esac
     pub(crate) fn run_takeover(&self) -> Output {
         let mut pty = Pty::open();
         pty.master.write_all(b"1\n1\n\n\n\n").unwrap();
-        Command::new(LKIT)
-            .env(
-                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-                &self.world.systemctl_config,
-            )
+        self.command()
             .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
             .args([
                 "install",
@@ -275,19 +313,53 @@ esac
     }
 
     pub(crate) fn network_command(&self, action: &[&str]) -> Output {
-        Command::new(LKIT)
-            .env(
-                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-                &self.world.systemctl_config,
-            )
+        self.command()
             .env("SSH_CONNECTION", "203.0.113.9 41000 10.1.1.105 22")
             .arg("network")
             .args(action)
-            .arg("--install-dir")
-            .arg(&self.install_root)
             .arg("--test-runtime")
             .arg(&self.runtime_config)
             .output()
             .unwrap()
     }
+}
+
+/// 写一份可被 `read_state` 接受的有效安装状态(用于无真实安装的命令路径,
+/// 如 daemon 恢复现场的根发现)。`canonical_install_root` 指向 `install_root`。
+pub(crate) fn write_valid_state_at(state_path: &Path, install_root: &Path, active_version: &str) {
+    std::fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+    let state = serde_json::json!({
+        "schema_version": 1,
+        "layout_version": 2,
+        "install_root": install_root.display().to_string(),
+        "canonical_install_root": install_root.display().to_string(),
+        "active_version": active_version,
+        "assets": {
+            "webserver": {
+                "architecture": "x86_64",
+                "sha256": "a".repeat(64),
+                "size": 10,
+            },
+            "static_archive": {
+                "sha256": "b".repeat(64),
+                "size": 20,
+            },
+        },
+        "initialization": {
+            "status": "complete",
+            "lock_present": true,
+            "initialized_at": "2026-08-01T16:30:00Z",
+        },
+        "service": {
+            "manager": "systemd",
+            "registered": true,
+            "enabled": true,
+            "verified": true,
+            "definition_path": "service/landscape-router.service",
+            "definition_sha256": "c".repeat(64),
+        },
+        "last_transaction_id": null,
+        "committed_at": "2026-08-01T16:30:00Z",
+    });
+    write_json(state_path, &state);
 }

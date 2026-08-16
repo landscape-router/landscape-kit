@@ -16,10 +16,9 @@ fn run_reinit(harness: &InstallHarness, password: &Path) -> Output {
             lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
             &harness.world.systemctl_config,
         )
+        .env("LKIT_TERRITORY", &harness.territory)
         .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
-        .args(["reinit", "--install-dir"])
-        .arg(&harness.install_root)
-        .args(["--admin-user", "admin", "--password-file"])
+        .args(["reinit", "--admin-user", "admin", "--password-file"])
         .arg(password)
         .args(["--test-runtime"])
         .arg(&harness.runtime_config)
@@ -51,9 +50,7 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
         ],
     );
 
-    let backups_before = std::fs::read_dir(harness.install_root.join("backups"))
-        .unwrap()
-        .count();
+    let backups_before = std::fs::read_dir(harness.backups_dir()).unwrap().count();
     let new_password = harness.world.path("reinit-password");
     std::fs::write(&new_password, b"NewSecret456\n").unwrap();
     std::fs::set_permissions(&new_password, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -68,20 +65,15 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
         harness.service_log()
     );
     assert_eq!(
-        transaction_of_operation(&harness.install_root, "reinit")["phase"],
+        transaction_of_operation(&harness.transactions_dir(), "reinit")["phase"],
         "awaiting_network_confirmation",
         "reinit must always enter the network confirmation window"
     );
     assert!(
-        harness
-            .install_root
-            .join("state/install-state.json")
-            .exists(),
+        harness.state_path().exists(),
         "the pending state must be written before confirmation"
     );
-    let backups_after = std::fs::read_dir(harness.install_root.join("backups"))
-        .unwrap()
-        .count();
+    let backups_after = std::fs::read_dir(harness.backups_dir()).unwrap().count();
     assert!(
         backups_after > backups_before,
         "reinit must create a protection .lkb backup"
@@ -98,13 +90,11 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
     );
 
     assert_success(&harness.network_command(&["confirm"]));
-    let state: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
     assert_eq!(
-        transaction_of_operation(&harness.install_root, "reinit")["phase"],
+        transaction_of_operation(&harness.transactions_dir(), "reinit")["phase"],
         "committed"
     );
     assert!(
@@ -146,7 +136,7 @@ fn reinit_rollback_restores_previous_data() {
 
     let rollback = harness.network_command(&["rollback"]);
     assert_success(&rollback);
-    let transaction = transaction_of_operation(&harness.install_root, "reinit");
+    let transaction = transaction_of_operation(&harness.transactions_dir(), "reinit");
     assert_eq!(transaction["phase"], "rolled_back");
     assert_eq!(transaction["operation"], "reinit");
     let restored =
@@ -162,10 +152,8 @@ fn reinit_rollback_restores_previous_data() {
             .is_file(),
         "the restored data must contain the original database"
     );
-    let state: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
     assert!(
         std::fs::read_dir(harness.host.join("units"))

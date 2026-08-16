@@ -1,6 +1,5 @@
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 
 use super::support::*;
 
@@ -25,10 +24,8 @@ fn installs_and_verifies_fixture_through_full_cli() {
         "non-interactive output contains terminal control sequences"
     );
 
-    let state: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
     assert_eq!(state["initialization"]["status"], "complete");
     assert_eq!(state["service"]["manager"], "systemd");
@@ -38,7 +35,7 @@ fn installs_and_verifies_fixture_through_full_cli() {
         "install-state.json must not record the repository source"
     );
     assert!(
-        !harness.install_root.join("config.toml").exists(),
+        !harness.config_path().exists(),
         "lkit must not create config.toml on first install"
     );
     assert!(
@@ -90,6 +87,46 @@ fn installs_and_verifies_fixture_through_full_cli() {
     );
 }
 
+/// 单实例约束(docs/deployment/layout-and-state.md):lkit 地盘已有有效安装状态时,
+/// 再次 `install` 返回参数错误 `2` 并提示先卸载,不创建第二套安装、不改动现场。
+#[test]
+fn install_rejects_an_existing_installation() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("second-install", "healthy", 10_000);
+    assert_success(&harness.run());
+    let state_before = std::fs::read(harness.state_path()).unwrap();
+    let transactions_before = transaction_count(&harness.territory);
+
+    let output = harness.run();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a second install must be rejected as a usage error\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("uninstall"),
+        "the rejection must hint at `lkit uninstall`:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(harness.state_path()).unwrap(),
+        state_before,
+        "the second install must not touch the recorded state"
+    );
+    assert_eq!(
+        transaction_count(&harness.territory),
+        transactions_before,
+        "the second install must not create a transaction"
+    );
+    let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
+    assert_eq!(String::from_utf8_lossy(&active.stdout).trim(), "active");
+}
+
 #[test]
 fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     if !e2e_enabled() {
@@ -98,7 +135,7 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("config-corrupt", "healthy", 10_000);
     assert_success(&harness.run());
-    let config_path = harness.install_root.join("config.toml");
+    let config_path = harness.config_path();
     assert!(
         !config_path.exists(),
         "first install must not create config.toml"
@@ -108,14 +145,9 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     let original_bytes = std::fs::read(&config_path).unwrap();
 
     // 普通 reconcile 不读取配置,损坏配置不影响它。
-    let reconcile = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let reconcile = harness
+        .command()
         .arg("reconcile")
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -131,14 +163,9 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
         vec!["switch", "--version", VERSION],
         vec!["repair", "static"],
     ] {
-        let blocked = Command::new(LKIT)
-            .env(
-                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-                &harness.world.systemctl_config,
-            )
+        let blocked = harness
+            .command()
             .args(&args)
-            .arg("--install-dir")
-            .arg(&harness.install_root)
             .arg("--test-runtime")
             .arg(&harness.runtime_config)
             .output()
@@ -158,15 +185,10 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
 
     let mut update_tty = Pty::open();
     update_tty.master.write_all(b"\n").unwrap();
-    let blocked = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let blocked = harness
+        .command()
         .env("LKIT_INTERNAL_DAEMON_TTY", &update_tty.slave_path)
         .arg("update")
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -184,16 +206,11 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     );
 
     // 显式来源完全绕过损坏配置,且不修改原文件字节。
-    let bypass = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let bypass = harness
+        .command()
         .arg("reconcile")
         .arg("--repository")
         .arg(&harness.repository.base_url)
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -209,17 +226,12 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
         "explicit bypass must not modify the config file"
     );
 
-    let bypass_repair = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let bypass_repair = harness
+        .command()
         .arg("repair")
         .arg("static")
         .arg("--repository")
         .arg(&harness.repository.base_url)
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -236,14 +248,9 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     );
 
     std::fs::remove_file(&config_path).unwrap();
-    let fixed = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let fixed = harness
+        .command()
         .arg("reconcile")
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -262,19 +269,15 @@ fn preset_config_drives_first_install_without_writes() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("config-preset", "healthy", 10_000);
-    let config_path = harness.install_root.join("config.toml");
+    let config_path = harness.config_path();
     let preset = format!(
         "schema_version = 1\n\n[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
         harness.repository.base_url
     );
-    std::fs::create_dir_all(&harness.install_root).unwrap();
     std::fs::write(&config_path, &preset).unwrap();
 
-    let output = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let output = harness
+        .command()
         .args([
             "install",
             "--non-interactive",
@@ -301,10 +304,8 @@ fn preset_config_drives_first_install_without_writes() {
         preset.as_bytes(),
         "first install must leave the preset config untouched"
     );
-    let state: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(harness.install_root.join("state/install-state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
     assert!(
         state.get("repository").is_none(),
@@ -327,29 +328,23 @@ fn explicit_repository_bypasses_preset_config_without_modifying_it() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("config-bypass", "healthy", 10_000);
-    let config_path = harness.install_root.join("config.toml");
+    let config_path = harness.config_path();
     let other = RepositoryServer::start(repository_files_for(VERSION));
     let preset = format!(
         "schema_version = 1\n\n[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
         other.base_url
     );
-    std::fs::create_dir_all(&harness.install_root).unwrap();
     std::fs::write(&config_path, &preset).unwrap();
 
     assert_success(&harness.run());
 
     // 同版本诊断使用显式来源,完全绕过配置:预设的 other 服务器不应收到任何请求,
     // 配置字节保持不变;诊断基于安装记录核对显式来源的资产身份。
-    let reconcile = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let reconcile = harness
+        .command()
         .arg("reconcile")
         .arg("--repository")
         .arg(&harness.repository.base_url)
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -383,16 +378,11 @@ fn explicit_repository_bypasses_preset_config_without_modifying_it() {
         );
         files
     });
-    let refused = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let refused = harness
+        .command()
         .arg("reconcile")
         .arg("--repository")
         .arg(&drifted.base_url)
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -418,25 +408,20 @@ fn latest_without_a_stable_channel_fails_instead_of_false_success() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("latest-no-stable", "healthy", 10_000);
     assert_success(&harness.run());
-    let transactions_before = transaction_count(&harness.install_root);
+    let transactions_before = transaction_count(&harness.territory);
 
     // 指向一个没有 stable 渠道的仓库:latest 解析返回 None,必须报错而不是静默成功。
     let mut files = repository_files_for(VERSION);
     files.remove("/channels/stable.json");
     let empty = RepositoryServer::start(files);
 
-    let output = Command::new(LKIT)
-        .env(
-            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
-            &harness.world.systemctl_config,
-        )
+    let output = harness
+        .command()
         .arg("switch")
         .arg("--version")
         .arg("latest")
         .arg("--repository")
         .arg(&empty.base_url)
-        .arg("--install-dir")
-        .arg(&harness.install_root)
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
@@ -459,7 +444,7 @@ fn latest_without_a_stable_channel_fails_instead_of_false_success() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(
-        transaction_count(&harness.install_root),
+        transaction_count(&harness.territory),
         transactions_before,
         "switch must not create a transaction"
     );
@@ -497,10 +482,8 @@ fn cleans_up_after_fixture_health_failure() {
             .exists()
     );
     assert!(
-        !harness
-            .install_root
-            .join("state/install-state.json")
-            .exists()
+        !harness.state_path().exists(),
+        "a failed first install must not leave install-state.json"
     );
     assert_eq!(
         std::fs::read(harness.host.join("resolv.conf")).unwrap(),

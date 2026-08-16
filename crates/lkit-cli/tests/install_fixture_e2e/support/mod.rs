@@ -9,7 +9,7 @@ mod repo;
 mod transactions;
 pub(crate) mod world;
 
-pub(crate) use self::harness::InstallHarness;
+pub(crate) use self::harness::{InstallHarness, write_valid_state_at};
 pub(crate) use self::pty::{Pty, attach_pty};
 pub(crate) use self::repo::{RepositoryServer, repository_files, repository_files_for};
 pub(crate) use self::transactions::{
