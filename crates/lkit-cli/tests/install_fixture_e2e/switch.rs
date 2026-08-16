@@ -3,11 +3,10 @@ use std::time::Duration;
 
 use super::support::*;
 
-/// SW-03:目标版本已经 active 时拒绝创建无意义事务
-/// (`workflows/switch.rs` 的 `SWITCH_TARGET_VERSION_ALREADY_ACTIVE`),
-/// 退出码 2,不创建 switch 事务,服务保持运行。
+/// SW-03:切换目标等于当前 active version 时不创建事务——existing 路径直接
+/// 验证当前安装并返回 0(与 `lkit update` 的"已是最新"一致)。
 #[test]
-fn switch_rejects_an_already_active_target_version() {
+fn switch_to_the_active_version_verifies_without_a_transaction() {
     if !e2e_enabled() {
         return;
     }
@@ -23,12 +22,16 @@ fn switch_rejects_an_already_active_target_version() {
         .arg(&harness.runtime_config)
         .output()
         .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(2),
-        "switching to the active version must be a usage error\nstdout:\n{}\nstderr:\n{}",
+    assert!(
+        output.status.success(),
+        "switching to the active version must verify the current installation\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("already installed and verified"),
+        "the output must explain that the version is already active\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
     );
     let has_switch_transaction = std::fs::read_dir(harness.transactions_dir())
         .unwrap()
@@ -41,7 +44,7 @@ fn switch_rejects_an_already_active_target_version() {
         });
     assert!(
         !has_switch_transaction,
-        "a rejected switch must not create a transaction"
+        "switching to the active version must not create a transaction"
     );
     let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
     assert_eq!(
@@ -74,7 +77,7 @@ fn switch_ignores_allow_no_backup_while_the_service_runs() {
         .arg(&harness.runtime_config);
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
-    let prompt = pty.read_until("警告", Duration::from_secs(60));
+    let prompt = pty.read_until("warning", Duration::from_secs(60));
     assert!(
         prompt.contains("--allow-no-backup"),
         "the warning must mention the ignored flag:\n{prompt}"

@@ -80,9 +80,10 @@
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[reinit 工作流](../../../../crates/lkit-cli/src/workflows/reinit.rs)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/reinit.rs)
-- 说明：健康检查注入失败（base_url 指向不可达端口）→ 自动回滚退出码 `5`、
-  原 data 恢复、服务恢复运行、事务不进入确认窗口；回滚失败保留现场、事务标记
-  `failed`、返回 `6`（`RollbackFailed` 分支无注入测试）。
+- 说明：健康检查注入失败（base_url 指向不可达端口）→ 激活失败自动回滚；注入
+  同时使回滚后的健康检查失败，验证 `RollbackFailed` 分支（退出码 `6`、事务标记
+  `failed`）：数据在健康检查前已恢复（`landscape_init.toml` 复原）、事务不进入
+  确认窗口。注入只作用于激活阶段时走 `RolledBack` 分支（退出码 `5`）。
 - 缺口：激活/健康检查失败自动回滚（退出码 `5`）与回滚失败（退出码 `6`）无 fixture
   注入场景；switch/restore 的同类回滚测试不覆盖 reinit。
 

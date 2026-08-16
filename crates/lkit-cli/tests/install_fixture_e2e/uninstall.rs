@@ -137,12 +137,16 @@ fn uninstall_confirms_network_takeover_before_continuing() {
         .arg(&harness.runtime_config);
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
-    let prompt = pty.read_until("宿主网络服务", std::time::Duration::from_secs(60));
+    pty.read_until("type yes to continue", std::time::Duration::from_secs(60));
+    pty.master.write_all(b"yes\n").unwrap();
+    let prompt = pty
+        .read_until("host network services", std::time::Duration::from_secs(60))
+        .replace('\x1b', "");
     assert!(
         prompt.contains("NetworkManager"),
         "the confirmation must describe the masked host services:\n{prompt}"
     );
-    pty.master.write_all(b"yes\nyes\nyes\n").unwrap();
+    pty.master.write_all(b"yes\nyes\n").unwrap();
     let status = child.wait().unwrap();
     assert!(
         status.success(),
@@ -162,7 +166,9 @@ fn uninstall_rejects_corrupted_installation_state() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("uninstall-corrupted", "healthy", 10_000);
     assert_success(&harness.run());
-    let config_before = std::fs::read_to_string(harness.config_path()).unwrap();
+    let config_path = harness.config_path();
+    std::fs::write(&config_path, b"[repository]\n").unwrap();
+    let config_before = std::fs::read_to_string(&config_path).unwrap();
     std::fs::write(harness.state_path(), b"{not valid json").unwrap();
 
     let output = harness
@@ -178,7 +184,7 @@ fn uninstall_rejects_corrupted_installation_state() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        std::fs::read_to_string(harness.config_path()).unwrap(),
+        std::fs::read_to_string(&config_path).unwrap(),
         config_before,
         "a rejected uninstall must not touch config.toml"
     );

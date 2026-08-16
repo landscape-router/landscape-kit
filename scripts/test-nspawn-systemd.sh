@@ -94,6 +94,13 @@ release=$install_root/releases/1.0.0
 mkdir -p "$release/static" "$install_root/data" "$install_root/service" "$rootfs/root/.lkit/state"
 install -m 0755 "$prebuilt_dir/landscape-webserver" "$release/landscape-webserver"
 ln -s releases/1.0.0 "$install_root/current"
+python3 - "$release/static.zip" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    archive.writestr("static/index.html", "<h1>nspawn fixture</h1>")
+PY
 cat >"$release/static/lkit-fixture.json" <<'JSON'
 {
   "schema_version": 1,
@@ -113,6 +120,8 @@ JSON
 printf 'version = "1.0.0"\nadmin_user = "admin"\nadmin_pass = "Secret123"\n' \
   >"$install_root/data/landscape_init.toml"
 chmod 0600 "$install_root/data/landscape_init.toml"
+printf 'tok-1234567890abcdef\n' >"$install_root/data/landscape_api_token"
+chmod 0600 "$install_root/data/landscape_api_token"
 
 # 预置受管 unit 原件与系统注册链接(state 与真实 systemd 一致,内容与
 # render_unit 完全一致;注册与启动在 machine 起来后由真实 systemd 完成)。
@@ -137,12 +146,14 @@ ln -s /var/lib/lkit-nspawn/landscape/service/landscape-router.service \
 
 webserver_sha=$(sha256sum "$release/landscape-webserver" | awk '{print $1}')
 webserver_size=$(stat -c '%s' "$release/landscape-webserver")
+static_sha=$(sha256sum "$release/static.zip" | awk '{print $1}')
+static_size=$(stat -c '%s' "$release/static.zip")
 unit_sha=$(sha256sum "$install_root/service/landscape-router.service" | awk '{print $1}')
-python3 - "$rootfs/root/.lkit/state/install-state.json" "$webserver_sha" "$webserver_size" "$unit_sha" <<'PY'
+python3 - "$rootfs/root/.lkit/state/install-state.json" "$webserver_sha" "$webserver_size" "$static_sha" "$static_size" "$unit_sha" <<'PY'
 import json
 import sys
 
-path, webserver_sha, webserver_size, unit_sha = sys.argv[1:]
+path, webserver_sha, webserver_size, static_sha, static_size, unit_sha = sys.argv[1:]
 root = "/var/lib/lkit-nspawn/landscape"
 state = {
     "schema_version": 1,
@@ -157,7 +168,7 @@ state = {
             "sha256": webserver_sha,
             "size": int(webserver_size),
         },
-        "static_archive": {"sha256": "0" * 64, "size": 1},
+        "static_archive": {"sha256": static_sha, "size": int(static_size)},
     },
     "initialization": {
         "status": "pending",
@@ -300,7 +311,22 @@ machine_shell "test -f /root/.lkit/run/lkit.pid"
 # 不受前端会话影响。每个场景后通过 restore_scene 恢复可卸载现场。
 
 restore_scene() {
-  mkdir -p "$install_root/service"
+  mkdir -p "$install_root/releases/1.0.0/static" "$install_root/data" "$install_root/service"
+  install -m 0755 "$prebuilt_dir/landscape-webserver" \
+    "$install_root/releases/1.0.0/landscape-webserver"
+  python3 - "$install_root/releases/1.0.0/static.zip" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    archive.writestr("static/index.html", "<h1>nspawn fixture</h1>")
+PY
+  ln -sfn releases/1.0.0 "$install_root/current"
+  printf 'version = "1.0.0"\nadmin_user = "admin"\nadmin_pass = "Secret123"\n' \
+    >"$install_root/data/landscape_init.toml"
+  chmod 0600 "$install_root/data/landscape_init.toml"
+  printf 'tok-1234567890abcdef\n' >"$install_root/data/landscape_api_token"
+  chmod 0600 "$install_root/data/landscape_api_token"
   cat >"$install_root/service/landscape-router.service" <<'UNIT'
 [Unit]
 Description=Landscape Router
@@ -319,11 +345,11 @@ UNIT
   chmod 0600 "$install_root/service/landscape-router.service"
   ln -sfn /var/lib/lkit-nspawn/landscape/service/landscape-router.service \
     "$rootfs/etc/systemd/system/landscape-router.service"
-  python3 - "$rootfs/root/.lkit/state/install-state.json" "$webserver_sha" "$webserver_size" "$unit_sha" <<'PY'
+  python3 - "$rootfs/root/.lkit/state/install-state.json" "$webserver_sha" "$webserver_size" "$static_sha" "$static_size" "$unit_sha" <<'PY'
 import json
 import sys
 
-path, webserver_sha, webserver_size, unit_sha = sys.argv[1:]
+path, webserver_sha, webserver_size, static_sha, static_size, unit_sha = sys.argv[1:]
 root = "/var/lib/lkit-nspawn/landscape"
 state = {
     "schema_version": 1,
@@ -338,7 +364,7 @@ state = {
             "sha256": webserver_sha,
             "size": int(webserver_size),
         },
-        "static_archive": {"sha256": "0" * 64, "size": 1},
+        "static_archive": {"sha256": static_sha, "size": int(static_size)},
     },
     "initialization": {
         "status": "pending",

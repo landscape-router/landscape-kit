@@ -23,14 +23,15 @@
 
 ## SW-03
 
-**目标版本已经 active 时拒绝创建无意义事务**
+**切换目标等于当前 active version 时不创建无意义事务**
 
-- 测试层：Rust workflow/CLI
+- 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/switch.rs)
-- 说明：`workflows/switch.rs` 的 `SWITCH_TARGET_VERSION_ALREADY_ACTIVE` 保护：
-  切换目标等于当前 active version → 参数错误退出码 `2`、不创建 switch 事务、
-  服务保持运行。
+- 说明：existing 路径在目标版本等于当前 active version 时不进入 switch 流水线，
+  直接验证当前安装并返回 `0`（与 `lkit update` 的"已是最新"一致），不创建
+  switch 事务、不下载资产、服务保持运行。`switch_version` 内部的
+  `SWITCH_TARGET_VERSION_ALREADY_ACTIVE` 是防御性保护，正常 CLI 路径不可达。
 
 ## SW-04
 

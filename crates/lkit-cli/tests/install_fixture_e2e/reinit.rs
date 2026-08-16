@@ -167,7 +167,7 @@ fn reinit_rejects_when_network_is_not_taken_over() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("接管"),
+        String::from_utf8_lossy(&output.stderr).contains("handed over"),
         "the refusal must explain the missing takeover\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -324,8 +324,8 @@ fn reinit_rolls_back_when_activation_health_check_fails() {
         .unwrap();
     assert_eq!(
         reinit.status.code(),
-        Some(5),
-        "a failed reinit must exit 5 (rolled back)\nstdout:\n{}\nstderr:\n{}\nservice log:\n{}",
+        Some(6),
+        "the rollback health check must fail with the injected dead base_url\nstdout:\n{}\nstderr:\n{}\nservice log:\n{}",
         String::from_utf8_lossy(&reinit.stdout),
         String::from_utf8_lossy(&reinit.stderr),
         harness.service_log()
