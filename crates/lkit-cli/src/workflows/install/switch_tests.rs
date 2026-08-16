@@ -1062,6 +1062,156 @@ async fn switches_and_rolls_back_via_lkb_on_health_failure() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+struct FailingDocs;
+
+impl DocsProbe for FailingDocs {
+    async fn docs_ok(&self) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn switch_rollback_failure_returns_rollback_failed_and_preserves_diagnostics() {
+    use std::net::{TcpListener, UdpSocket};
+
+    // RB-06:激活验证失败触发 `.lkb` 回滚,回滚自身的健康检查也失败时
+    // 返回 RollbackFailed(命令层映射退出码 6),事务标记 `failed` 且诊断
+    // 现场保留。探测恒失败,事件驱动,不依赖墙钟。
+    let (server, root, provider) = start_switch_repository(
+        "e2e-switch-rollback-failed",
+        "1.2.3",
+        "1.3.0",
+        b"webserver 1.3.0 payload",
+    );
+    let dir = std::env::temp_dir().join(format!(
+        "lkit-pipeline-test-rollback-failed-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let tcp1 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp2 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp3 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let ports = vec![
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp1.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp2.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Tcp,
+            port: tcp3.local_addr().unwrap().port(),
+        },
+        PortCheck {
+            protocol: super::super::process::Protocol::Udp,
+            port: udp.local_addr().unwrap().port(),
+        },
+    ];
+    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    init_watcher(root.canonical.join("data"), stop.clone());
+
+    let install_options = HealthOptions {
+        docs: FakeDocs,
+        ports: ports.clone(),
+        startup_timeout: Duration::from_secs(5),
+        stable_duration: Duration::from_millis(100),
+    };
+    first_install(
+        &root,
+        &provider,
+        &TargetVersion::Version(version()),
+        &credentials(),
+        &systemd,
+        &install_options,
+    )
+    .await
+    .unwrap();
+    let state = super::super::state::load_state(&root).unwrap().unwrap();
+    assert_eq!(state.active_version, "1.2.3");
+
+    let options = HealthOptions {
+        docs: FailingDocs,
+        ports: ports.clone(),
+        startup_timeout: Duration::from_secs(2),
+        stable_duration: Duration::from_millis(100),
+    };
+    let target = provider
+        .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
+        .await
+        .unwrap();
+    let outcome = switch_version(
+        &root,
+        &state,
+        target,
+        &SwitchArgs {
+            allow_no_backup: false,
+        },
+        &systemd,
+        &switch_options(&server.base, &options, true),
+    )
+    .await
+    .unwrap();
+    let SwitchOutcome::RollbackFailed { version, reason } = outcome else {
+        panic!("expected rollback failed switch, got {outcome:?}");
+    };
+    assert_eq!(version.to_string(), "1.2.3");
+    assert!(!reason.is_empty());
+
+    let tx = load_transaction_json(&root);
+    assert_eq!(
+        tx["phase"], "failed",
+        "a failed rollback must leave the transaction in the failed phase"
+    );
+    assert_eq!(tx["operation"], "switch");
+    let tx_dir = root
+        .canonical
+        .join("transactions")
+        .join(tx["transaction_id"].as_str().unwrap());
+    assert!(
+        tx_dir.join("failed-data").is_dir(),
+        "the interrupted data must be preserved for manual recovery"
+    );
+    assert!(
+        tx_dir.join("replaced-release").is_dir(),
+        "the failed target release must be preserved for manual recovery"
+    );
+    assert!(
+        tx_dir.join("restore").is_dir(),
+        "the extracted .lkb must be preserved for manual recovery"
+    );
+    assert!(
+        root.canonical
+            .join("backups")
+            .join(tx["transaction_id"].as_str().unwrap())
+            .join("host/resolv.conf")
+            .is_dir()
+    );
+    assert_eq!(
+        std::fs::read_link(root.canonical.join("current")).unwrap(),
+        std::path::PathBuf::from("releases/1.2.3"),
+        "the current link is restored before the rollback health check"
+    );
+    assert!(
+        super::super::transaction::find_unfinished(&root)
+            .unwrap()
+            .is_none()
+    );
+
+    drop(tcp1);
+    drop(tcp2);
+    drop(tcp3);
+    drop(udp);
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::fs::remove_dir_all(&root.install_root);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn network_takeover_requires_an_empty_data_directory() {
     let dir = temp_root("network-data-empty");

@@ -546,6 +546,29 @@ mod tests {
         }
     }
 
+    struct FailingDocs;
+
+    impl DocsProbe for FailingDocs {
+        async fn docs_ok(&self) -> bool {
+            false
+        }
+    }
+
+    /// 以落盘二进制作为阶段信号:激活验证期间二进制是修复后的可信内容
+    /// (探测失败),回滚从 `.lkb` 重建后恢复为漂移内容(探测成功)。
+    /// 事件驱动,不依赖墙钟,消除并行负载下的时序竞态。
+    struct RepairedBinaryDocs {
+        binary: std::path::PathBuf,
+    }
+
+    impl DocsProbe for RepairedBinaryDocs {
+        async fn docs_ok(&self) -> bool {
+            std::fs::read(&self.binary)
+                .map(|bytes| bytes == DRIFTED_PAYLOAD)
+                .unwrap_or(false)
+        }
+    }
+
     fn none_health() -> HealthOptions<FakeDocs> {
         HealthOptions {
             docs: FakeDocs,
@@ -553,6 +576,33 @@ mod tests {
             startup_timeout: std::time::Duration::from_secs(5),
             stable_duration: std::time::Duration::from_millis(100),
         }
+    }
+
+    fn failing_health<P: DocsProbe>(docs: P) -> HealthOptions<P> {
+        HealthOptions {
+            docs,
+            ports: Vec::new(),
+            startup_timeout: std::time::Duration::from_secs(2),
+            stable_duration: std::time::Duration::from_millis(100),
+        }
+    }
+
+    /// 初始化 watcher:模拟运行中的后端在 `landscape_init.toml` 落盘后
+    /// 创建 `landscape_init.lock` 与 `landscape.toml`(回滚健康检查要求)。
+    fn init_watcher(
+        data_dir: std::path::PathBuf,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let watcher_stop = stop.clone();
+        std::thread::spawn(move || {
+            while !watcher_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if data_dir.join("landscape_init.toml").is_file() {
+                    let _ = std::fs::write(data_dir.join("landscape_init.lock"), b"");
+                    let _ = std::fs::write(data_dir.join("landscape.toml"), b"");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
     }
 
     static YES: fn(&str) -> Result<bool, InstallError> = |_| Ok(true);
@@ -566,6 +616,19 @@ mod tests {
             root.canonical.join("current"),
         )
         .unwrap();
+    }
+
+    fn load_transaction_json(root: &InstallRoot) -> serde_json::Value {
+        let entries: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        let path = entries
+            .iter()
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .expect("the transaction json must exist");
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
     }
 
     #[tokio::test]
@@ -822,6 +885,287 @@ esac
                 .exists(),
             "repair must not create config.toml"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn binary_repair_rolls_back_when_activation_fails() {
+        let static_zip = build_static_zip("<h1>page</h1>");
+        let (static_sha, static_size) = sha256_bytes(&static_zip);
+        let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>page</h1>");
+        let server = TestServer::start(move |path| {
+            match path {
+            "/api/v1/system/config/export" => TestResponse::ok(
+                br#"{"data":{"filename":"landscape_init_v1.2.3.toml","version":"1.2.3","content":"version = \"1.2.3\"\n"}}"#
+                    .to_vec(),
+            ),
+            other => match files.get(other) {
+                Some(body) => TestResponse::ok(body.clone()),
+                None => TestResponse::status(404, "Not Found", Vec::new()),
+            },
+        }
+        });
+        let root = temp_root("binary-repair-rollback");
+        let install_root = InstallRoot {
+            install_root: root.clone(),
+            canonical: root.clone(),
+        };
+        let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
+        activate_version(&install_root, "1.2.3");
+        let fake_dir = root.join("fake-systemd");
+        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
+        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
+        std::fs::write(fake_dir.join("state"), b"active").unwrap();
+        let script = fake_dir.join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+STATE_FILE="{}"
+case "$*" in
+  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
+  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
+  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
+  "show --property=MainPID --value landscape-router.service") echo {};;
+  "is-enabled landscape-router.service") echo enabled;;
+  "is-active landscape-router.service") cat "$STATE_FILE";;
+  *) exit 0;;
+esac
+"#,
+                fake_dir.join("state").display(),
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let systemd = Systemd {
+            systemctl: script,
+            system_unit_dir: fake_dir.join("units"),
+            run_systemd_dir: fake_dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: fake_dir.join("resolv.conf"),
+        };
+        std::fs::create_dir_all(install_root.canonical.join("service")).unwrap();
+        std::fs::write(
+            install_root
+                .canonical
+                .join("service/landscape-router.service"),
+            b"[Unit]\nDescription=Landscape Router\n",
+        )
+        .unwrap();
+        std::fs::write(
+            install_root.canonical.join("releases/1.2.3/static.zip"),
+            &static_zip,
+        )
+        .unwrap();
+        let binary = install_root
+            .canonical
+            .join("releases/1.2.3/landscape-webserver");
+        std::fs::write(&binary, DRIFTED_PAYLOAD).unwrap();
+        std::fs::create_dir_all(install_root.canonical.join("data")).unwrap();
+        std::fs::write(install_root.canonical.join("data/landscape_init.lock"), b"").unwrap();
+        std::fs::write(install_root.canonical.join("data/landscape.toml"), b"").unwrap();
+        let state = install_state(
+            &install_root,
+            StateServiceManager::Systemd,
+            InitStatus::Complete,
+            &static_sha,
+            static_size,
+        );
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        init_watcher(install_root.canonical.join("data"), stop.clone());
+        // 修复前 `.lkb` 保留漂移二进制;激活验证失败后回滚从 `.lkb` 重建,
+        // 探测恢复为漂移内容后通过,与 `repairs_drifted_backend_with_systemd`
+        // 共用修复前二进制存档断言。
+        let health = failing_health(RepairedBinaryDocs {
+            binary: binary.clone(),
+        });
+        static TOKEN: fn() -> Result<String, InstallError> = || Ok("tok".into());
+        let options = SwitchOptions {
+            export_base_url: server.base.clone(),
+            token: &TOKEN,
+            confirm: &YES,
+            health: &health,
+        };
+        let outcome = repair_binary(&install_root, &provider, &state, &systemd, &options)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, RepairOutcome::RolledBack),
+            "expected rolled back repair, got {outcome:?}"
+        );
+
+        assert_eq!(
+            std::fs::read(&binary).unwrap(),
+            DRIFTED_PAYLOAD,
+            "the pre-repair binary must be restored from the .lkb"
+        );
+        assert_eq!(
+            std::fs::read_link(install_root.canonical.join("current")).unwrap(),
+            std::path::PathBuf::from("releases/1.2.3")
+        );
+        let state = super::super::state::load_state(&install_root)
+            .unwrap()
+            .unwrap();
+        let (drifted_sha, _) = sha256_bytes(DRIFTED_PAYLOAD);
+        assert_eq!(state.assets.webserver.sha256, drifted_sha);
+        let tx = load_transaction_json(&install_root);
+        assert_eq!(tx["phase"], "rolled_back");
+        assert_eq!(tx["operation"], "repair");
+        assert!(tx["backup"].is_object());
+        assert!(
+            super::super::transaction::find_unfinished(&install_root)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !install_root
+                .canonical
+                .join(super::super::config::CONFIG_FILE)
+                .exists(),
+            "repair must not create config.toml"
+        );
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn binary_repair_rollback_failure_returns_rollback_failed() {
+        let static_zip = build_static_zip("<h1>page</h1>");
+        let (static_sha, static_size) = sha256_bytes(&static_zip);
+        let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>page</h1>");
+        let server = TestServer::start(move |path| {
+            match path {
+            "/api/v1/system/config/export" => TestResponse::ok(
+                br#"{"data":{"filename":"landscape_init_v1.2.3.toml","version":"1.2.3","content":"version = \"1.2.3\"\n"}}"#
+                    .to_vec(),
+            ),
+            other => match files.get(other) {
+                Some(body) => TestResponse::ok(body.clone()),
+                None => TestResponse::status(404, "Not Found", Vec::new()),
+            },
+        }
+        });
+        let root = temp_root("binary-repair-rollback-failed");
+        let install_root = InstallRoot {
+            install_root: root.clone(),
+            canonical: root.clone(),
+        };
+        let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
+        activate_version(&install_root, "1.2.3");
+        let fake_dir = root.join("fake-systemd");
+        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
+        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
+        std::fs::write(fake_dir.join("state"), b"active").unwrap();
+        let script = fake_dir.join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+STATE_FILE="{}"
+case "$*" in
+  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
+  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
+  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
+  "show --property=MainPID --value landscape-router.service") echo {};;
+  "is-enabled landscape-router.service") echo enabled;;
+  "is-active landscape-router.service") cat "$STATE_FILE";;
+  *) exit 0;;
+esac
+"#,
+                fake_dir.join("state").display(),
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let systemd = Systemd {
+            systemctl: script,
+            system_unit_dir: fake_dir.join("units"),
+            run_systemd_dir: fake_dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: fake_dir.join("resolv.conf"),
+        };
+        std::fs::create_dir_all(install_root.canonical.join("service")).unwrap();
+        std::fs::write(
+            install_root
+                .canonical
+                .join("service/landscape-router.service"),
+            b"[Unit]\nDescription=Landscape Router\n",
+        )
+        .unwrap();
+        std::fs::write(
+            install_root.canonical.join("releases/1.2.3/static.zip"),
+            &static_zip,
+        )
+        .unwrap();
+        let binary = install_root
+            .canonical
+            .join("releases/1.2.3/landscape-webserver");
+        std::fs::write(&binary, DRIFTED_PAYLOAD).unwrap();
+        std::fs::create_dir_all(install_root.canonical.join("data")).unwrap();
+        std::fs::write(install_root.canonical.join("data/landscape_init.lock"), b"").unwrap();
+        std::fs::write(install_root.canonical.join("data/landscape.toml"), b"").unwrap();
+        let state = install_state(
+            &install_root,
+            StateServiceManager::Systemd,
+            InitStatus::Complete,
+            &static_sha,
+            static_size,
+        );
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        init_watcher(install_root.canonical.join("data"), stop.clone());
+        // 探测恒失败:激活验证失败触发回滚,回滚自身的健康检查同样失败,
+        // 返回人工恢复结果;事务保持 `failed` 且诊断目录保留。
+        let health = failing_health(FailingDocs);
+        static TOKEN: fn() -> Result<String, InstallError> = || Ok("tok".into());
+        let options = SwitchOptions {
+            export_base_url: server.base.clone(),
+            token: &TOKEN,
+            confirm: &YES,
+            health: &health,
+        };
+        let outcome = repair_binary(&install_root, &provider, &state, &systemd, &options)
+            .await
+            .unwrap();
+        let RepairOutcome::RollbackFailed { reason } = outcome else {
+            panic!("expected rollback failed repair, got {outcome:?}");
+        };
+        assert!(!reason.is_empty());
+
+        let tx = load_transaction_json(&install_root);
+        assert_eq!(
+            tx["phase"], "failed",
+            "a failed rollback must leave the transaction in the failed phase"
+        );
+        assert_eq!(tx["operation"], "repair");
+        let tx_dir = install_root
+            .canonical
+            .join("transactions")
+            .join(tx["transaction_id"].as_str().unwrap());
+        assert!(
+            tx_dir.join("failed-data").is_dir(),
+            "the interrupted data must be preserved for manual recovery"
+        );
+        assert!(
+            tx_dir.join("replaced-release").is_dir(),
+            "the repaired release must be preserved for manual recovery"
+        );
+        assert!(
+            tx_dir.join("repaired-binary").is_file(),
+            "the pre-repair binary must be preserved for manual recovery"
+        );
+        assert_eq!(
+            std::fs::read(&binary).unwrap(),
+            DRIFTED_PAYLOAD,
+            "the release rebuilt from the .lkb stays in place"
+        );
+        assert!(
+            super::super::transaction::find_unfinished(&install_root)
+                .unwrap()
+                .is_none()
+        );
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = std::fs::remove_dir_all(&root);
     }
 
