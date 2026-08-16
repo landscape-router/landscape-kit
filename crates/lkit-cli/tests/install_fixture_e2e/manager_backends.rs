@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::support::world::TestWorld;
-use super::support::{E2E_LOCK, LKIT, assert_success, write_json};
+use super::support::{E2E_LOCK, LKIT, assert_success, e2e_enabled, write_json};
 
 const INIT_FIXTURE: &str = env!("CARGO_BIN_EXE_lkit-test-init");
 
@@ -256,6 +256,9 @@ fn assert_installed(harness: &InitWorld, kind: &str) {
 
 #[test]
 fn self_service_installs_and_removes_daemon_on_openrc() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = setup("manager-openrc", "openrc");
 
@@ -280,6 +283,9 @@ fn self_service_installs_and_removes_daemon_on_openrc() {
 
 #[test]
 fn self_service_installs_and_removes_daemon_on_sysvinit() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = setup("manager-sysvinit", "sysvinit");
 

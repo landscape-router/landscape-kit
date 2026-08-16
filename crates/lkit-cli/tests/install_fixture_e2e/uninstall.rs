@@ -4,6 +4,9 @@ use super::support::*;
 
 #[test]
 fn uninstalls_an_existing_installation_through_full_cli() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("uninstall", "healthy", 10_000);
     assert_success(&harness.run());

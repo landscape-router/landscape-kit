@@ -145,6 +145,9 @@ fn migrate_command(harness: &InstallHarness, source: &Path) -> Command {
 
 #[test]
 fn migrates_manual_deployment_through_full_cli() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("migrate", "healthy", 10_000);
     let (source, _old_instance) = start_manual_install(&harness);
@@ -223,6 +226,9 @@ fn migrates_manual_deployment_through_full_cli() {
 
 #[test]
 fn migrate_rolls_back_and_restores_legacy_unit_on_activation_failure() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("migrate-rollback", "healthy", 10_000);
     let (source, _old_instance) = start_manual_install(&harness);

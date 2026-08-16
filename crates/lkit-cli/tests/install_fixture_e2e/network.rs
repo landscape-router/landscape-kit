@@ -7,6 +7,9 @@ use super::support::*;
 
 #[test]
 fn network_takeover_confirms_from_any_ssh_session() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-confirm", "healthy", 10_000);
     harness.seed_host_services();
@@ -115,6 +118,9 @@ fn network_takeover_confirms_from_any_ssh_session() {
 
 #[test]
 fn console_blocks_on_pending_network_takeover() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     if unsafe { libc::geteuid() } != 0 {
         // 非 root 下控制台快照显示 RootRequired，不进入阻塞屏。
@@ -164,6 +170,9 @@ fn console_blocks_on_pending_network_takeover() {
 
 #[test]
 fn automatic_network_rollback_restores_host_services() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-rollback", "healthy", 10_000);
     harness.seed_host_services();
@@ -229,6 +238,9 @@ fn automatic_network_rollback_restores_host_services() {
 
 #[test]
 fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-rollback-failure", "healthy", 10_000);
     harness.seed_host_services();
@@ -258,6 +270,9 @@ fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
 
 #[test]
 fn network_takeover_supports_ifupdown_without_network_manager() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-ifupdown", "healthy", 10_000);
     harness.seed_host_service("networking.service");
@@ -305,6 +320,9 @@ fn network_takeover_supports_ifupdown_without_network_manager() {
 
 #[test]
 fn network_takeover_rejects_other_active_network_manager() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-unknown-manager", "healthy", 10_000);
     harness.seed_host_service("systemd-networkd.service");

@@ -27,6 +27,31 @@ cargo test -p lkit-cli <module-filter>
   on every push and as a PR check via `.github/workflows/test-e2e.yml`, not locally before each
   commit. To run it manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
 
+### Testing Hygiene
+
+Unit tests must be free of real system side effects. Everything that cannot run in an
+isolated temporary directory belongs in the e2e fixture suite (CI) or the container-based
+scripts under `scripts/`, never in unit tests.
+
+- Unit tests may only touch temporary directories; lkit's fixed territory `/root/.lkit/` is
+  reachable only through `deployment::layout`'s `LKIT_TERRITORY` env override
+  (see `test_territory()` in `crates/lkit-cli/src/deployment/layout.rs`). Never write to
+  `/root/.lkit`, `/etc/systemd`, `/usr/local`, or any real host path in a unit test.
+- Never spawn real processes (`lkit daemon`, `landscape-webserver`, `systemctl`, ...), bind
+  ports, or drive real systemd/network state from unit tests. Use the fake managers and
+  fixtures the codebase already provides.
+- System-level scenarios that cannot be isolated (real daemon deployment, network takeover,
+  service manager backends) belong in `crates/lkit-cli/tests/install_fixture_e2e/`, which
+  runs only in CI or containers: every test there starts with an `e2e_enabled()` gate and
+  requires the `LKIT_E2E=1` environment variable to actually run.
+- When verifying locally, always scope unit tests to the `lkit` binary and an exact module:
+  `cargo test -p lkit-cli --features test-support --bin lkit <module-filter>`. Do not use
+  bare `cargo test -p lkit-cli --features test-support <filter>` and do not use substring
+  filters like `daemon::` that also match e2e fixture test names — running the fixture
+  suite on a host without a container can hang and leak daemon/webserver processes.
+- Never run the e2e fixture suite (`--test install_fixture_e2e`) or the container scripts
+  locally as part of normal development; CI owns them.
+
 ## Project Layout
 
 - `crates/` — Cargo workspace members: `lkit-cli` (the `lkit` binary), `lkit-publish`, `lkit-repository`, `lkit-test-fixture`.

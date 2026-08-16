@@ -6,6 +6,9 @@ use super::support::*;
 
 #[test]
 fn installs_and_verifies_fixture_through_full_cli() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("first-install", "healthy", 10_000);
     let output = harness.run();
@@ -89,6 +92,9 @@ fn installs_and_verifies_fixture_through_full_cli() {
 
 #[test]
 fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("config-corrupt", "healthy", 10_000);
     assert_success(&harness.run());
@@ -251,6 +257,9 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
 
 #[test]
 fn preset_config_drives_first_install_without_writes() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("config-preset", "healthy", 10_000);
     let config_path = harness.install_root.join("config.toml");
@@ -313,6 +322,9 @@ fn preset_config_drives_first_install_without_writes() {
 
 #[test]
 fn explicit_repository_bypasses_preset_config_without_modifying_it() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("config-bypass", "healthy", 10_000);
     let config_path = harness.install_root.join("config.toml");
@@ -400,6 +412,9 @@ fn explicit_repository_bypasses_preset_config_without_modifying_it() {
 
 #[test]
 fn latest_without_a_stable_channel_fails_instead_of_false_success() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("latest-no-stable", "healthy", 10_000);
     assert_success(&harness.run());
@@ -452,6 +467,9 @@ fn latest_without_a_stable_channel_fails_instead_of_false_success() {
 
 #[test]
 fn cleans_up_after_fixture_health_failure() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("health-failure", "health_error", 2_500);
     let output = harness.run();

@@ -1,7 +1,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
-use super::support::{E2E_LOCK, InstallHarness, LKIT, assert_success, systemctl};
+use super::support::{E2E_LOCK, InstallHarness, LKIT, assert_success, e2e_enabled, systemctl};
 
 /// lkit 自装服务垂直切片:`self-service install` 复制当前二进制到
 /// `<root>/service/lkit`,通过 fake systemctl 真实拉起 `lkit daemon`,
@@ -9,6 +9,9 @@ use super::support::{E2E_LOCK, InstallHarness, LKIT, assert_success, systemctl};
 /// `self-service remove` 停止并注销服务、删除二进制。
 #[test]
 fn self_installs_and_removes_the_lkit_service() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap();
     let harness = InstallHarness::new("self-service", "healthy", 30_000);
     let root = &harness.install_root;
@@ -115,6 +118,9 @@ fn self_installs_and_removes_the_lkit_service() {
 /// 参数错误路径:systemd 不可用时返回退出码 2,不写任何文件。
 #[test]
 fn self_install_rejects_unavailable_systemd() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap();
     let harness = InstallHarness::new("self-service-reject", "healthy", 30_000);
     let root = &harness.install_root;

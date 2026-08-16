@@ -55,6 +55,8 @@ jobs:
         run: cargo build --locked
 
       - name: Run Rust tests
+        env:
+          LKIT_E2E: "1"
         run: cargo test --features test-support
 
       - name: Check installer scripts

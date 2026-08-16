@@ -34,4 +34,6 @@ jobs:
       - name: Build workspace
         run: cargo build --locked --workspace --features test-support
       - name: Run fixture e2e tests
+        env:
+          LKIT_E2E: "1"
         run: cargo test --locked -p lkit-cli --features test-support --test install_fixture_e2e

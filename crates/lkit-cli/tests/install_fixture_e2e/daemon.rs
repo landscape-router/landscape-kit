@@ -2,7 +2,7 @@ use std::os::fd::AsRawFd;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::support::{E2E_LOCK, InstallHarness, LKIT, VERSION};
+use super::support::{E2E_LOCK, InstallHarness, LKIT, VERSION, e2e_enabled};
 
 /// daemon 周期恢复:CLI 进程消失后遗留的未完成事务由 daemon 自动按
 /// `recover_interrupted` 语义恢复(SSH 断开、崩溃等场景的续跑/回滚)。
@@ -10,6 +10,9 @@ use super::support::{E2E_LOCK, InstallHarness, LKIT, VERSION};
 /// 激活中途),断言 daemon 完成清理并标记 `failed`。
 #[test]
 fn daemon_recovers_an_interrupted_install_transaction() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap();
     let harness = InstallHarness::new("daemon-recover", "healthy", 30_000);
     let canonical = prepare_interrupted_install(&harness);
@@ -44,6 +47,9 @@ fn daemon_recovers_an_interrupted_install_transaction() {
 /// 锁释放后下一个周期才执行恢复。
 #[test]
 fn daemon_defers_while_the_install_lock_is_held() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap();
     let harness = InstallHarness::new("daemon-lock", "healthy", 30_000);
     let canonical = prepare_interrupted_install(&harness);

@@ -29,6 +29,9 @@ fn run_reinit(harness: &InstallHarness, password: &Path) -> Output {
 
 #[test]
 fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("reinit", "healthy", 10_000);
     harness.seed_host_services();
@@ -115,6 +118,9 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
 
 #[test]
 fn reinit_rollback_restores_previous_data() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("reinit-rollback", "healthy", 10_000);
     harness.seed_host_services();

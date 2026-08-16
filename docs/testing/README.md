@@ -14,6 +14,11 @@ systemd 只承担协议与进程托管的薄集成验证。
 | systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、systemd worker、前端断连 |
 | QEMU 网络接管 | `scripts/test-qemu-network-takeover.sh` | GitHub-hosted x86_64 KVM、双 virtio 网卡 | 相关 PR、main、每周、手动 | 真实宿主网络服务、br_lan SSH 确认、未确认重启回滚 |
 
+fixture E2E 套件（`tests/install_fixture_e2e`）会在宿主机上部署真实服务并生成真实进程，
+只有显式设置 `LKIT_E2E=1` 时才执行；本地误跑（如被 `daemon::` 这类子串过滤器匹配）
+会在宿主机挂起并泄漏进程，CI 的两个入口（`test-e2e.yml`、`release-lkit.yml`）都已设置
+该变量。
+
 ## 核心功能测试
 
 Docker 功能 E2E 使用 `test-support` 构建，并显式配置：

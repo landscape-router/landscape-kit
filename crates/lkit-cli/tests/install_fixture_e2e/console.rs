@@ -6,6 +6,9 @@ use super::support::*;
 
 #[test]
 fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("update-interaction", "healthy", 10_000);
     assert_success(&harness.run());
@@ -131,6 +134,9 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
 
 #[test]
 fn ctrl_c_during_password_restores_terminal_echo() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("password-sigint", "healthy", 10_000);
     let mut pty = Pty::open();
@@ -149,6 +155,9 @@ fn ctrl_c_during_password_restores_terminal_echo() {
 
 #[test]
 fn explicit_non_interactive_mode_ignores_available_tty() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("explicit-non-interactive", "healthy", 10_000);
     let mut pty = Pty::open();
@@ -167,6 +176,9 @@ fn explicit_non_interactive_mode_ignores_available_tty() {
 
 #[test]
 fn bare_lkit_console_restores_terminal_on_exit() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut pty = Pty::open();
     let mut command = Command::new(LKIT);
@@ -202,6 +214,9 @@ fn bare_lkit_console_restores_terminal_on_exit() {
 
 #[test]
 fn ctrl_c_leaves_bare_lkit_console_and_restores_terminal() {
+    if !e2e_enabled() {
+        return;
+    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut pty = Pty::open();
     let mut command = Command::new(LKIT);
