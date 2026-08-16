@@ -3,8 +3,10 @@ set -euo pipefail
 
 # 真实 systemd 契约验证:在 systemd-nspawn 中部署 lkit 常驻 daemon
 # (`lkit self install`),验证真实 manager 的注册、启停、MainPID 与
-# `KillMode=process` 契约。卸载场景当前不处理(见 docs/testing/nspawn-systemd.md),
-# 由 OpenRC/sysvinit 后端 fixture E2E 覆盖的委托执行边界不在此重复。
+# `KillMode=process` 契约;随后以真实委托(CLI 写请求 → daemon 认领 → 子进程
+# 执行 → 结果回收)验证 worker 能力:提交、前端断开后独立完成、Ctrl+C 取消、
+# daemon 未运行拒绝、LKIT_LANG 转发。由 OpenRC/sysvinit 后端 fixture E2E 覆盖
+# 的委托执行边界不在此重复。
 #
 # 每条 machine_shell 命令都有超时(LKIT_NSPAWN_CMD_TIMEOUT,默认 120s),卡住
 # 的步骤会在约 2 分钟内失败并输出诊断,而不是空等到 workflow 超时。
@@ -291,7 +293,123 @@ machine_shell "systemctl start lkit.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 machine_shell "test -f /root/.lkit/run/lkit.pid"
 
-# 当前节点不处理卸载:委托的 uninstall 需要交互确认,而 daemon 子进程没有
-# 终端(`cannot open /dev/tty`),确认委托机制尚未实现。所有权冲突、前端断开后
-# daemon 独立完成卸载等场景待文档明确需求后再补。
-echo "PASS: systemd-nspawn real-systemd registration and lifecycle"
+# ============ worker 委托能力验证 ============
+# daemon(真实 systemd 服务)认领委托请求、以子进程执行真实 systemd 操作、
+# 响应取消并写回结果;CLI 侧转发输出并回收退出码。以下场景基于"卸载一次
+# 安装"展开:uninstall 是委托命令,子进程以 --internal-daemon-worker 内联执行,
+# 不受前端会话影响。每个场景后通过 restore_scene 恢复可卸载现场。
+
+restore_scene() {
+  mkdir -p "$install_root/service"
+  cat >"$install_root/service/landscape-router.service" <<'UNIT'
+[Unit]
+Description=Landscape Router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/var/lib/lkit-nspawn/landscape/current/landscape-webserver --config-dir /var/lib/lkit-nspawn/landscape/data --web /var/lib/lkit-nspawn/landscape/current/static
+User=root
+Restart=always
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  chmod 0600 "$install_root/service/landscape-router.service"
+  ln -sfn /var/lib/lkit-nspawn/landscape/service/landscape-router.service \
+    "$rootfs/etc/systemd/system/landscape-router.service"
+  python3 - "$rootfs/root/.lkit/state/install-state.json" "$webserver_sha" "$webserver_size" "$unit_sha" <<'PY'
+import json
+import sys
+
+path, webserver_sha, webserver_size, unit_sha = sys.argv[1:]
+root = "/var/lib/lkit-nspawn/landscape"
+state = {
+    "schema_version": 1,
+    "layout_version": 2,
+    "install_root": root,
+    "canonical_install_root": root,
+    "active_version": "1.0.0",
+    "repository": {"kind": "github", "location": "ThisSeanZhang/landscape"},
+    "assets": {
+        "webserver": {
+            "architecture": "x86_64",
+            "sha256": webserver_sha,
+            "size": int(webserver_size),
+        },
+        "static_archive": {"sha256": "0" * 64, "size": 1},
+    },
+    "initialization": {
+        "status": "pending",
+        "lock_present": False,
+        "initialized_at": None,
+    },
+    "service": {
+        "manager": "systemd",
+        "registered": True,
+        "enabled": True,
+        "verified": True,
+        "definition_path": "/var/lib/lkit-nspawn/landscape/service/landscape-router.service",
+        "definition_sha256": unit_sha,
+    },
+    "last_transaction_id": None,
+    "committed_at": "2026-08-02T00:00:00Z",
+}
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(state, stream, indent=2)
+    stream.write("\n")
+PY
+  chmod 0600 "$rootfs/root/.lkit/state/install-state.json"
+  machine_shell "systemctl daemon-reload"
+  machine_shell "systemctl enable --quiet landscape-router.service"
+  machine_shell "systemctl start landscape-router.service"
+  machine_shell "systemctl is-active --quiet landscape-router.service"
+}
+
+# S-1 委托提交与结果回收:CLI 写请求、daemon 认领、子进程完成真实卸载、结果回。
+echo "== worker S-1: a delegated uninstall commits through the daemon"
+machine_shell \
+  "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json"
+machine_shell "test ! -f /root/.lkit/state/install-state.json"
+machine_shell "test ! -L /etc/systemd/system/landscape-router.service"
+machine_shell "test ! -e /var/lib/lkit-nspawn/landscape/current"
+machine_shell "! systemctl is-active --quiet landscape-router.service"
+machine_shell "systemctl is-active --quiet lkit.service"
+machine_shell "test \"\$(find /root/.lkit/backups -name '*.lkb' | wc -l)\" -ge 1"
+
+# S-2 前端断开:请求写入后 SIGKILL 前端,daemon 脱离会话独立完成卸载。
+echo "== worker S-2: the daemon finishes after the frontend disconnects"
+restore_scene
+machine_shell 'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
+machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
+machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -9 || true'
+machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
+machine_shell "! systemctl is-active --quiet landscape-router.service"
+machine_shell "systemctl is-active --quiet lkit.service"
+
+# S-3 Ctrl+C 取消:前端 SIGINT → CLI 返回 130 并写 cancel 文件;daemon 终止
+# 子进程组,下个周期前向完成中断的卸载(恢复语义)。
+echo "== worker S-3: Ctrl+C cancels the delegated operation and the daemon recovers"
+restore_scene
+machine_shell 'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
+machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
+machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -INT || true'
+machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; grep -qx 130 /tmp/s3.exit'
+machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
+machine_shell "systemctl is-active --quiet lkit.service"
+
+# S-4 daemon 未运行:委托请求必须拒绝(退出码 2)而不是卡住。
+echo "== worker S-4: delegation refuses when the daemon is stopped"
+machine_shell "systemctl stop lkit.service"
+machine_shell 'if /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s4.out 2>/tmp/s4.err; then exit 1; else [ "$?" -eq 2 ] || exit 1; fi'
+machine_shell 'grep -q "daemon is not running" /tmp/s4.err'
+machine_shell "systemctl start lkit.service"
+machine_shell "systemctl is-active --quiet lkit.service"
+
+# S-5 语言转发:CLI 的 LKIT_LANG 进入委托请求,worker 子进程使用同一语言输出。
+echo "== worker S-5: LKIT_LANG=zh reaches the delegated worker"
+machine_shell 'LKIT_LANG=zh /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5.out 2>/tmp/s5.err; [ "$?" -eq 2 ] || exit 1'
+machine_shell 'grep -q "install-state.json" /tmp/s5.err'
+
+echo "PASS: systemd-nspawn real-systemd registration, lifecycle and worker delegation"

@@ -44,16 +44,13 @@
 ## 委托端到端链路（worker）覆盖现状
 
 `daemon_worker` 的委托请求链路（CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
-当前只有 5 个薄单测（委托清单、worker flag 注入、凭据文件权限、完成消息），
-核心流程无直接测试：
+单测只有 5 个薄用例（委托清单、worker flag 注入、凭据文件权限、完成消息）；fixture
+E2E 全部以 `--test-runtime` 内联执行，从不走真实委托。真实形态的端到端验证在
+[systemd-nspawn 兼容性 smoke](../systemd-smoke.md#sys-03)（`scripts/test-nspawn-systemd.sh`，
+仅 CI/手动运行）：编译好的 lkit 进入真实 systemd 容器，`self install` 由 systemd
+托管 daemon，CLI 以真实委托执行卸载——覆盖提交与结果回收（S-1）、前端断开后
+daemon 独立完成（S-2）、Ctrl+C 取消 + daemon 恢复（S-3）、daemon 未运行拒绝
+（S-4）、`LKIT_LANG` 转发（S-5）。
 
-- `delegate()` 请求文件生命周期、executor 认领与子进程管理（setpgid/O_NOCTTY/
-  输出转发/结果 JSON 原子提交）、wait 轮询/取消/超时均无单测；
-- fixture E2E 全部以 `--test-runtime` 内联执行，**从不走真实委托**；
-- 委托端到端全仓库只有 systemd-nspawn SYS-03 一处覆盖，且只测提交路径。
-
-计划（仅 CI 运行，不支持本地手动跑）：在 `install_fixture_e2e` 增加真实委托端到端
-测试——CLI 不带 `--test-runtime`（root + 无 test_runtime 即走真实委托）、spawn 的
-测试 daemon、真实 `/run/lkit/operations` 路径，覆盖：委托提交、取消（SIGTERM→SIGKILL
-→130）、前端断开后 daemon 子进程组继续完成、`LKIT_LANG` 环境转发、daemon 未运行
-报错。该测试需要 root，仅由 CI（`LKIT_E2E=1`）运行。
+`delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底（`CANCEL_GRACE_POLLS`
+超时后强杀）仍无直接测试。

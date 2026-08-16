@@ -27,7 +27,9 @@
 
 - 测试层：systemd-nspawn
 - 状态：`低频 smoke`
-- 说明：当前 smoke 直接验证提交路径；断连后的回滚路径不属于当前抽样范围，见 [nspawn 兼容性 smoke](../nspawn-systemd.md)。
+- 证据：[nspawn 兼容性 smoke](../nspawn-systemd.md)
+- 说明：smoke 覆盖委托提交（S-1）、前端断开后 daemon 独立完成（S-2）、Ctrl+C
+  取消与 daemon 恢复（S-3）、daemon 未运行拒绝（S-4）、`LKIT_LANG` 转发（S-5）。
 
 ## SYS-04
 

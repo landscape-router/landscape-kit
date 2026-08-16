@@ -69,10 +69,10 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
    回滚失败（`6`）分支。
 
 **委托端到端链路**（daemon worker：CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
-全仓库只有 systemd-nspawn SYS-03 一处抽样且仅覆盖提交路径；计划在 fixture E2E 增加
-真实委托测试（仅 CI 运行，不支持本地手动跑），覆盖提交、取消（SIGTERM→SIGKILL→130）、
-前端断开后继续完成、`LKIT_LANG` 转发与 daemon 未运行报错，见
-[daemon.md](functional/daemon.md#委托端到端链路worker覆盖现状)。
+由 systemd-nspawn 兼容性 smoke 在真实 systemd 下覆盖：委托提交与结果回收、
+前端断开后 daemon 独立完成、Ctrl+C 取消 + daemon 恢复、daemon 未运行拒绝、
+`LKIT_LANG` 转发（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
+`delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底仍无直接测试。
 
 发布流程性 smoke（`PUB-08` 生产 RustFS 真实发布后安装、
 `LKR-01`/`LKR-04` 首次真实 Release 与公开安装）依赖发布环境，维持低频标注。
