@@ -547,9 +547,9 @@ fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_runtime(args: &SelfCommand) -> Result<InstallRuntime, InstallError> {
+fn resolve_runtime(_args: &SelfCommand) -> Result<InstallRuntime, InstallError> {
     #[cfg(feature = "test-support")]
-    if let Some(path) = test_runtime(args) {
+    if let Some(path) = test_runtime(_args) {
         return InstallRuntime::from_test_file(path);
     }
     Ok(InstallRuntime::production())

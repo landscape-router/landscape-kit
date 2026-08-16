@@ -21,6 +21,11 @@ name = "lkit-test-systemctl"
 path = "src/bin/lkit-test-systemctl.rs"
 required-features = ["test-support"]
 
+[[bin]]
+name = "lkit-test-init"
+path = "src/bin/lkit-test-init.rs"
+required-features = ["test-support"]
+
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }

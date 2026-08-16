@@ -17,7 +17,9 @@
 //! 获取失败说明有活动命令,跳过本周期。网络接管待确认阶段保持人工
 //! `lkit network confirm|rollback`,daemon 不代替用户确认。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "test-support")]
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 
