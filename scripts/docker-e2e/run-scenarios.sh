@@ -114,19 +114,25 @@ assert_service_identity() {
 
 latest_transaction() {
   local root=${1:-$territory_root}
-  find "$root/transactions" -maxdepth 1 -type f -name '*.json' -printf '%T@ %p\n' \
+  local dir=$root/transactions
+  [[ -d "$dir" ]] || return 0
+  find "$dir" -maxdepth 1 -type f -name '*.json' -printf '%T@ %p\n' \
     | sort -n | tail -n1 | cut -d' ' -f2-
 }
 
 latest_backup() {
   local root=${1:-$territory_root}
-  find "$root/backups" -maxdepth 1 -type f -name '*.lkb' -printf '%T@ %p\n' \
+  local dir=$root/backups
+  [[ -d "$dir" ]] || return 0
+  find "$dir" -maxdepth 1 -type f -name '*.lkb' -printf '%T@ %p\n' \
     | sort -n | tail -n1 | cut -d' ' -f2-
 }
 
 lkb_count() {
   local root=${1:-$territory_root}
-  find "$root/backups" -maxdepth 1 -type f -name '*.lkb' 2>/dev/null | wc -l
+  local dir=$root/backups
+  [[ -d "$dir" ]] || { echo 0; return 0; }
+  find "$dir" -maxdepth 1 -type f -name '*.lkb' 2>/dev/null | wc -l
 }
 
 assert_latest_phase() {
