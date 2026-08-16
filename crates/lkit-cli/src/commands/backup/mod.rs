@@ -30,13 +30,13 @@ pub struct Backup {
 pub enum BackupAction {
     /// 创建手工 minimal 备份
     Create(BackupCreate),
-    /// 列出安装根目录下的备份
+    /// 列出 lkit 地盘备份目录下的备份
     List(BackupList),
     /// 展示备份 metadata 与边界
     Show(BackupShow),
     /// 完整校验备份
     Verify(BackupVerify),
-    /// 删除安装根目录下的备份
+    /// 删除 lkit 地盘备份目录下的备份
     Delete(BackupDelete),
 }
 
@@ -62,7 +62,7 @@ pub struct BackupList {
 
 #[derive(Debug, Args)]
 pub struct BackupShow {
-    /// 安装根目录 `backups/` 下的备份 ID
+    /// lkit 地盘备份目录下的备份 ID
     #[arg(long, value_name = "ID", conflicts_with = "file")]
     pub backup: Option<String>,
     /// 外部复制的 `.lkb` 文件路径
@@ -75,7 +75,7 @@ pub struct BackupShow {
 
 #[derive(Debug, Args)]
 pub struct BackupVerify {
-    /// 安装根目录 `backups/` 下的备份 ID
+    /// lkit 地盘备份目录下的备份 ID
     #[arg(long, value_name = "ID", conflicts_with = "file")]
     pub backup: Option<String>,
     /// 外部复制的 `.lkb` 文件路径
@@ -88,7 +88,7 @@ pub struct BackupVerify {
 
 #[derive(Debug, Args)]
 pub struct BackupDelete {
-    /// 安装根目录 `backups/` 下的备份 ID
+    /// lkit 地盘备份目录下的备份 ID
     #[arg(long, value_name = "ID")]
     pub backup: String,
     /// 非交互模式确认删除

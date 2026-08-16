@@ -246,6 +246,7 @@ fn update_load_config_offers_current_source_and_reports_corruption() {
     let dir = std::env::temp_dir().join(format!("lkit-console-config-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    let _guard = crate::deployment::layout::test_territory(&dir);
     let install_dir = dir.display().to_string();
 
     let mut app = update_ready_app();

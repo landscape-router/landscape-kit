@@ -285,7 +285,44 @@ fn pending_takeover_snapshot_is_detected_from_transaction() {
     let temp = std::env::temp_dir().join(format!("lkit-console-pending-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp);
     std::fs::create_dir_all(&temp).unwrap();
+    let territory = temp.join("territory");
+    std::fs::create_dir_all(&territory).unwrap();
+    let _guard = crate::deployment::layout::test_territory(&territory);
     let root = crate::deployment::root::normalize_install_root(&temp).unwrap();
+    let state = crate::deployment::state::InstallState {
+        schema_version: 1,
+        layout_version: 2,
+        install_root: root.canonical.display().to_string(),
+        canonical_install_root: root.canonical.display().to_string(),
+        active_version: "1.2.3".into(),
+        assets: crate::deployment::state::Assets {
+            webserver: crate::deployment::state::WebserverAsset {
+                architecture: crate::deployment::state::StateArchitecture::X86_64,
+                sha256: "a".repeat(64),
+                size: 1,
+            },
+            static_archive: crate::deployment::state::ArchiveAsset {
+                sha256: "b".repeat(64),
+                size: 1,
+            },
+        },
+        initialization: crate::deployment::state::InitializationState {
+            status: crate::deployment::state::InitStatus::Complete,
+            lock_present: true,
+            initialized_at: Some(chrono::Utc::now()),
+        },
+        service: crate::deployment::state::ServiceState {
+            manager: crate::deployment::state::StateServiceManager::Systemd,
+            registered: true,
+            enabled: true,
+            verified: true,
+            definition_path: Some("service/landscape-router.service".into()),
+            definition_sha256: Some("c".repeat(64)),
+        },
+        last_transaction_id: None,
+        committed_at: Some(chrono::Utc::now()),
+    };
+    crate::deployment::state::write_state(&root, &state).unwrap();
     let mut transaction = crate::deployment::transaction::TransactionFile::new_install(
         &root,
         &semver::Version::new(1, 0, 0),
@@ -383,7 +420,10 @@ fn pending_takeover_enter_confirm_executes_network_confirm() {
     ));
     assert_eq!(args[0], "network");
     assert_eq!(args[1], "confirm");
-    assert!(args.contains(&"--install-dir".to_string()));
+    assert!(
+        !args.iter().any(|argument| argument == "--install-dir"),
+        "network confirm must not forward --install-dir"
+    );
 }
 
 #[test]

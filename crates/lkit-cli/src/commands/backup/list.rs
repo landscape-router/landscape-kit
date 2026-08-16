@@ -82,7 +82,7 @@ pub(super) fn run_list(_args: &BackupList) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// 读取安装根目录 `backups/` 下的 `.lkb` 文件并完整校验,按创建时间降序排列。
+/// 读取 lkit 地盘备份目录下的 `.lkb` 文件并完整校验,按创建时间降序排列。
 /// 目录缺失时返回空列表;校验失败的条目 metadata 为 `None`(视为损坏)。
 /// 临时目录或解包写入失败等环境错误直接返回,不得把全部备份误报为损坏。
 pub(crate) fn list_backups(

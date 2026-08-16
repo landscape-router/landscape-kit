@@ -78,7 +78,7 @@ pub(super) fn run_delete(args: &BackupDelete) -> ExitCode {
     }
 }
 
-/// 删除安装根目录 `backups/` 下的备份：ID 必须已通过格式校验，目标必须是
+/// 删除 lkit 地盘备份目录下的备份：ID 必须已通过格式校验，目标必须是
 /// root 所有、权限不宽于 `0600` 的普通文件（不跟随符号链接）。CLI 与
 /// 交互控制台共用。
 pub(crate) fn delete_backup(_root: &InstallRoot, backup_id: &str) -> Result<(), InstallError> {
