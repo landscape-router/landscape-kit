@@ -265,14 +265,18 @@ machine_shell_bg() {
   if [[ $LKIT_NSPAWN_DEBUG == 1 ]]; then
     echo ">> machine(bg): $1" >&2
   fi
+  set +e
   timeout "$LKIT_NSPAWN_CMD_TIMEOUT" systemd-run \
     --machine "$machine" \
     --wait \
     --pipe \
     --collect \
-    --quiet \
     --property=KillMode=process \
     /bin/bash -lc "$1"
+  bg_status=$?
+  set -e
+  echo "machine_shell_bg exit: $bg_status" >&2
+  return "$bg_status"
 }
 
 system_bus_ready=false
