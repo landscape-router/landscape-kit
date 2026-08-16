@@ -1,6 +1,8 @@
 pub(crate) const MIRROR_TUNA: &str = "mirror.tuna";
 pub(crate) const MIRROR_ALIYUN: &str = "mirror.aliyun";
 pub(crate) const MIRROR_USTC: &str = "mirror.ustc";
+pub(crate) const MIRROR_TENCENT: &str = "mirror.tencent";
+pub(crate) const MIRROR_HUAWEI: &str = "mirror.huawei";
 pub(crate) const MIRROR_NJU: &str = "mirror.nju";
 pub(crate) const MIRROR_SJTU: &str = "mirror.sjtu";
 pub(crate) const MIRROR_ZJU: &str = "mirror.zju";
@@ -19,6 +21,9 @@ pub(crate) const MIRROR_DISTRO_UNSUPPORTED: &str = "mirror.distro_unsupported";
 pub(crate) const MIRROR_NO_SOURCE_FILES: &str = "mirror.no_source_files";
 pub(crate) const MIRROR_NO_OFFICIAL_SOURCE: &str = "mirror.no_official_source";
 pub(crate) const MIRROR_NO_BACKUP: &str = "mirror.no_backup";
+pub(crate) const MIRROR_STATUS_AVAILABLE: &str = "mirror.status_available";
+pub(crate) const MIRROR_STATUS_UNAVAILABLE: &str = "mirror.status_unavailable";
+pub(crate) const MIRROR_STATUS_UNKNOWN: &str = "mirror.status_unknown";
 
 pub(crate) const SET_MIRROR_REQUIRES_ARGS: &str = "set_mirror.requires_args";
 pub(crate) const SET_MIRROR_ROOT_REQUIRED: &str = "set_mirror.root_required";
@@ -48,3 +53,7 @@ pub(crate) const SET_MIRROR_ISSUE_STANZA_WITHOUT_URIS: &str =
     "set_mirror.issue_stanza_without_uris";
 pub(crate) const SET_MIRROR_LIST_HEADER: &str = "set_mirror.list_header";
 pub(crate) const SET_MIRROR_SHOW_HEADER: &str = "set_mirror.show_header";
+pub(crate) const SET_MIRROR_MIRROR_UNAVAILABLE: &str = "set_mirror.mirror_unavailable";
+pub(crate) const SET_MIRROR_AVAILABILITY_UNKNOWN: &str = "set_mirror.availability_unknown";
+pub(crate) const SET_MIRROR_SKIPPED_UNAVAILABLE: &str = "set_mirror.skipped_unavailable";
+pub(crate) const SET_MIRROR_ALL_UNAVAILABLE: &str = "set_mirror.all_unavailable";

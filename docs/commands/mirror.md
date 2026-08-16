@@ -1,9 +1,11 @@
 # `lkit set-mirror`
 
 切换当前主机的 Linux 软件包管理器软件源（换源）。支持 apt（Debian/Ubuntu）、dnf
-（Fedora、Rocky、AlmaLinux）与 pacman（Arch Linux），预置
-清华 TUNA、阿里云、中科大 USTC 与六所大学镜像（南大 NJU、上交 SJTU、浙大 ZJU、
-兰大 LZU、北外 BFSU、华科 HUST）和官方源恢复。
+（Fedora、Rocky、AlmaLinux）与 pacman（Arch Linux），预置官方源、中科大 USTC、
+腾讯云、华为云、阿里云与六所大学镜像（南大 NJU、上交 SJTU、浙大 ZJU、兰大 LZU、
+华科 HUST、北外 BFSU）以及清华 TUNA。展示顺序即友好程度：官方源第一（默认选中），
+其余按镜像站对自动化下载的宽容度排列——中科大 USTC 最开放，清华 TUNA 反爬限制
+最多垫底。
 
 ```text
 lkit set-mirror <MIRROR> [--yes] [--replace-security]
@@ -13,10 +15,36 @@ lkit set-mirror --check
 lkit set-mirror --restore [--yes]
 ```
 
-`MIRROR` 为 `tuna`、`aliyun`、`ustc`、`nju`、`sjtu`、`zju`、`lzu`、`bfsu`、`hust` 或
-`official`。无参数且连接终端时进入交互选择：
+`MIRROR` 为 `official`、`ustc`、`tencent`、`huawei`、`aliyun`、`nju`、`sjtu`、`zju`、
+`lzu`、`hust`、`bfsu` 或 `tuna`。无参数且连接终端时进入交互选择：
 先检测发行版，再列出可用镜像供选择，确认后执行。`--non-interactive` 且无参数时报参数
 使用错误（退出码 `2`）。
+
+## 镜像可用性探测
+
+换源前会并行探测每个镜像站是否提供**当前发行版**的仓库（HEAD 请求，每个 URL 超时
+2 秒，`Official` 恒可用不探测）：
+
+| 家族 | 探测目标 |
+| --- | --- |
+| Debian | `<镜像>/debian/dists/<代号>/Release` |
+| Ubuntu | `<镜像>/ubuntu/dists/<代号>/Release`（ports 架构走 `/ubuntu-ports/...`） |
+| Fedora | `<镜像>/fedora/linux/releases/<主版本>/Everything/<架构>/os/repodata/repomd.xml`（即换源后实际写入的 URL；部分镜像站如 USTC 用 301 兼容该路径） |
+| Rocky、AlmaLinux | `<镜像>/rockylinux|<镜像>/almalinux/<主版本>/BaseOS/<架构>/os/repodata/repomd.xml` |
+| Arch | `<镜像>/archlinux/core/os/<架构>/core.db` |
+
+探测结果分三档：
+
+- **可用**：命中 2xx/3xx（重定向已跟随），正常可换；
+- **不可用**：明确 404，说明该镜像没有镜像当前发行版——交互选择与控制台面板中
+  置灰（删除线）且不可选中，导航自动跳过；**显式指定该镜像时直接拒绝**并提示，
+  不修改任何文件；
+- **未知**：网络失败/超时/TLS 异常/403（如 WAF 拦截）等无法确认的情况——仍可选择，
+  但确认（CLI 的 `yes` 确认前 / 控制台确认层）会额外显示一行警告，提示换源可能失败。
+
+`--list` 在每个镜像后标注 `[可用]`/`[不可用]`/`[未知]`。探测是只读网络操作，
+不需要 root；结果在面板会话内缓存，重复进入不重新探测。离线时全部镜像按"未知"
+处理（可选用但确认时警告），不会因探测失败误伤。
 
 ## 格式检查
 
@@ -67,9 +95,9 @@ apt 换源先按源文件格式（one-line `sources.list` 与 deb822 `*.sources`
 - 不符合规范的行也尽力修复：一行里多出的 URL（重复粘贴、或误放在 components 位置）
   同样识别为 URI 一并重写，避免换源后"一半镜像一半官方"；缺 suites/components、
   括号不配对等无法安全猜测的行保持原样；
-- 除官方主机外，已识别的九个公共镜像（TUNA、阿里云、USTC、NJU、SJTU、ZJU、LZU、
-  BFSU、HUST）之间也可以互转：选择其中一个时，其余镜像的 URL 会一并替换为所选
-  镜像；自定义内网镜像等未识别主机不受影响；
+ - 除官方主机外，已识别的十一个公共镜像（USTC、腾讯云、华为云、阿里云、NJU、
+   SJTU、ZJU、LZU、HUST、BFSU、TUNA）之间也可以互转：选择其中一个时，其余镜像的
+   URL 会一并替换为所选镜像；自定义内网镜像等未识别主机不受影响；
 - Debian 的独立 security 仓库（`deb.debian.org/debian-security` 与
   `security.debian.org/debian-security`）默认**不替换**，保持官方源（安全补丁讲究
   时效，部分镜像站也不镜像 security）；需要一并替换时加 `--replace-security`。
@@ -102,9 +130,9 @@ dnf/yum 按仓库块（`[section]`）解析：
 - Fedora：`download.fedoraproject.org/pub/fedora` 与 `.../pub/epel` 映射到镜像；
 - Rocky：`dl.rockylinux.org/$contentdir`；AlmaLinux：`repo.almalinux.org/almalinux`；
 - 没有 `baseurl=` 的仓库块原样保留并计入跳过统计，避免把仓库改成空配置；
-- 自定义主机 URL 不受影响；已识别的九个公共镜像（TUNA、阿里云、USTC、NJU、SJTU、
-  ZJU、LZU、BFSU、HUST）之间可互转，选择其中一个时其余镜像的 URL 一并替换为所选
-  镜像。
+- 自定义主机 URL 不受影响；已识别的十一个公共镜像（USTC、腾讯云、华为云、阿里云、
+  NJU、SJTU、ZJU、LZU、HUST、BFSU、TUNA）之间可互转，选择其中一个时其余镜像的
+  URL 一并替换为所选镜像。
 
 pacman 直接生成新的 `mirrorlist`：注释头说明来源，随后是单个选中的
 `Server = https://<镜像>/archlinux/$repo/os/$arch`（官方源使用
@@ -139,7 +167,9 @@ pacman 直接生成新的 `mirrorlist`：注释头说明来源，随后是单个
 ## 控制台入口
 
 交互控制台（裸 `lkit`）侧栏新增“Mirror（换源）”面板：进入面板时检测发行版并显示
-主机摘要，提供十个镜像选项与“恢复备份的原软件源”动作；Enter 打开居中确认层，Debian
-主机确认层内有一行默认不勾选的“同时替换 security 仓库”开关（Space/←/→ 切换，
-也可点击），确认后在控制台内同步执行（与 CLI 相同的备份、重写与恢复语义），结果写入
-底栏。面板不依赖 Landscape 安装状态，未安装或已安装均可使用。
+主机摘要，后台并行探测镜像可用性（面板底部显示"正在检查镜像可用性……"，结果回填
+后不可用镜像置灰不可选），提供十二个镜像选项与“恢复备份的原软件源”动作；Enter 打开
+居中确认层，Debian 主机确认层内有一行默认不勾选的“同时替换 security 仓库”开关
+（Space/←/→ 切换，也可点击），探测为"未知"的镜像在确认层内额外显示一行警告，
+确认后在控制台内同步执行（与 CLI 相同的备份、重写与恢复语义），结果写入底栏。
+面板不依赖 Landscape 安装状态，未安装或已安装均可使用。

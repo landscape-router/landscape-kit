@@ -5,11 +5,11 @@ use clap::Args;
 use crate::interaction::interactive::Tty;
 use crate::interaction::plan;
 use crate::mirror::apt::parse::ParseIssueKind;
-use crate::mirror::{self, Family, Host, MirrorError, MirrorName};
+use crate::mirror::{self, Family, Host, MirrorError, MirrorName, MirrorStatus};
 
 #[derive(Debug, Args)]
 pub struct SetMirror {
-    /// Mirror to apply: tuna, aliyun, ustc, nju, sjtu, zju, lzu, bfsu, hust or official
+    /// Mirror to apply: official, ustc, tencent, huawei, aliyun, nju, sjtu, zju, lzu, hust, bfsu or tuna
     #[arg(value_enum, value_name = "MIRROR")]
     pub mirror: Option<MirrorName>,
     /// List available mirrors for this host
@@ -53,7 +53,10 @@ pub fn run(args: &SetMirror) -> ExitCode {
         return run_restore(&host, args.yes);
     }
     match args.mirror {
-        Some(mirror) => run_apply(&host, mirror, args.yes, args.replace_security),
+        Some(mirror) => {
+            let status = mirror::probe(&host, mirror);
+            run_apply(&host, mirror, args.yes, args.replace_security, status)
+        }
         None => run_interactive(&host),
     }
 }
@@ -66,8 +69,24 @@ fn list_mirrors(host: &Host) -> ExitCode {
             family = host.family.label()
         )
     );
+    let statuses = mirror::probe_all(host);
     for (index, mirror) in mirror::list_mirrors().into_iter().enumerate() {
-        println!("  {}. {} ({})", index + 1, mirror.label(), mirror.id());
+        let marker = match statuses
+            .get(&mirror)
+            .copied()
+            .unwrap_or(MirrorStatus::Unknown)
+        {
+            MirrorStatus::Available => crate::tr!(crate::keys::MIRROR_STATUS_AVAILABLE),
+            MirrorStatus::Unavailable => crate::tr!(crate::keys::MIRROR_STATUS_UNAVAILABLE),
+            MirrorStatus::Unknown => crate::tr!(crate::keys::MIRROR_STATUS_UNKNOWN),
+        };
+        println!(
+            "  {}. {} ({}) [{}]",
+            index + 1,
+            mirror.label(),
+            mirror.id(),
+            marker
+        );
     }
     ExitCode::SUCCESS
 }
@@ -89,7 +108,34 @@ fn show_sources(host: &Host) -> ExitCode {
     }
 }
 
-fn run_apply(host: &Host, mirror: MirrorName, yes: bool, replace_security: bool) -> ExitCode {
+fn run_apply(
+    host: &Host,
+    mirror: MirrorName,
+    yes: bool,
+    replace_security: bool,
+    status: MirrorStatus,
+) -> ExitCode {
+    match status {
+        MirrorStatus::Unavailable => {
+            return fail(crate::tr!(
+                crate::keys::SET_MIRROR_MIRROR_UNAVAILABLE,
+                mirror = mirror.label(),
+                family = host.family.label()
+            ));
+        }
+        MirrorStatus::Unknown => {
+            // 探测失败（离线/超时/TLS）：警告后继续，不阻断用户显式换源。
+            eprintln!(
+                "set-mirror: {}",
+                crate::tr!(
+                    crate::keys::SET_MIRROR_AVAILABILITY_UNKNOWN,
+                    mirror = mirror.label(),
+                    family = host.family.label()
+                )
+            );
+        }
+        MirrorStatus::Available => {}
+    }
     if let Err(error) = require_root() {
         return fail(error);
     }
@@ -285,14 +331,45 @@ fn run_interactive(host: &Host) -> ExitCode {
     if crate::interaction::interactive::is_non_interactive() {
         return fail_usage(crate::tr!(crate::keys::SET_MIRROR_REQUIRES_ARGS));
     }
+    let statuses = mirror::probe_all(host);
+    let selectable: Vec<MirrorName> = mirror::list_mirrors()
+        .into_iter()
+        .filter(|mirror| {
+            statuses
+                .get(mirror)
+                .copied()
+                .unwrap_or(MirrorStatus::Unknown)
+                != MirrorStatus::Unavailable
+        })
+        .collect();
+    let unavailable: Vec<String> = mirror::list_mirrors()
+        .into_iter()
+        .filter(|mirror| {
+            statuses
+                .get(mirror)
+                .copied()
+                .unwrap_or(MirrorStatus::Unknown)
+                == MirrorStatus::Unavailable
+        })
+        .map(|mirror| mirror.label())
+        .collect();
+    if !unavailable.is_empty() {
+        eprintln!(
+            "set-mirror: {}",
+            crate::tr!(
+                crate::keys::SET_MIRROR_SKIPPED_UNAVAILABLE,
+                mirrors = unavailable.join(", ")
+            )
+        );
+    }
     let mut tty = match Tty::open() {
         Ok(tty) => tty,
         Err(error) => return fail_install(&error),
     };
-    let options: Vec<String> = mirror::list_mirrors()
-        .into_iter()
-        .map(|mirror| mirror.label())
-        .collect();
+    let options: Vec<String> = selectable.iter().map(|mirror| mirror.label()).collect();
+    if options.is_empty() {
+        return fail(crate::tr!(crate::keys::SET_MIRROR_ALL_UNAVAILABLE));
+    }
     let selected = match tty.select_one(
         &crate::tr!(crate::keys::SET_MIRROR_SELECT_MIRROR),
         &options,
@@ -301,16 +378,20 @@ fn run_interactive(host: &Host) -> ExitCode {
         Ok(selected) => selected,
         Err(error) => return fail_install(&error),
     };
-    let mirror = mirror::list_mirrors()[selected];
+    let mirror = selectable[selected];
+    let status = statuses
+        .get(&mirror)
+        .copied()
+        .unwrap_or(MirrorStatus::Unknown);
     if mirror == MirrorName::Official {
         // 恢复官方源没有 security 选择：全部恢复为官方。
-        return run_apply(host, mirror, false, true);
+        return run_apply(host, mirror, false, true, status);
     }
     let replace_security = match select_security(&mut tty, host) {
         Ok(replace) => replace,
         Err(code) => return code,
     };
-    run_apply(host, mirror, false, replace_security)
+    run_apply(host, mirror, false, replace_security, status)
 }
 
 /// 询问是否同时替换 Debian 的独立 security 仓库，默认不替换。

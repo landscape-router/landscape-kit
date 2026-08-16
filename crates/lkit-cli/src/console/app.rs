@@ -167,6 +167,7 @@ impl ConsoleApp {
         self.update.poll(&mut self.notice);
         if self.menu() == Menu::Mirror {
             self.mirror.ensure_detected();
+            self.mirror.poll();
         }
         if self.menu() == Menu::Software {
             self.software.ensure_detected();
@@ -185,6 +186,9 @@ impl ConsoleApp {
         }
         if self.install_available() && !matches!(&self.preflight.state, PreflightState::NotRun) {
             self.preflight.restart();
+        }
+        if self.mirror.detected {
+            self.mirror.restart_probe();
         }
     }
 

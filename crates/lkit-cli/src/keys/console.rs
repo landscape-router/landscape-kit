@@ -238,6 +238,9 @@ pub(crate) const CONSOLE_MIRROR_CONFIRM_ENTER: &str = "console.mirror_confirm_en
 pub(crate) const CONSOLE_MIRROR_CONFIRM_ESC: &str = "console.mirror_confirm_esc";
 pub(crate) const CONSOLE_MIRROR_HINT_PANEL: &str = "console.mirror_hint_panel";
 pub(crate) const CONSOLE_MIRROR_HINT_CONFIRM: &str = "console.mirror_hint_confirm";
+pub(crate) const CONSOLE_MIRROR_PROBING: &str = "console.mirror_probing";
+pub(crate) const CONSOLE_MIRROR_CONFIRM_UNKNOWN_WARNING: &str =
+    "console.mirror_confirm_unknown_warning";
 pub(crate) const CONSOLE_SOFTWARE_MENU: &str = "console.software_menu";
 pub(crate) const CONSOLE_SOFTWARE_DETECTING: &str = "console.software_detecting";
 pub(crate) const CONSOLE_SOFTWARE_DETECT_FAILED: &str = "console.software_detect_failed";

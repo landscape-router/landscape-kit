@@ -24,7 +24,8 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
   是否注释、CD 源），再对命中的条目做 URI 片段级替换。覆盖 one-line 与 deb822
   格式（含 `[options]`、禁用行、多 URI 的 `URIs:` 行、注释）、Debian
   security/backports/ports 路径、Ubuntu `-ports` 先于 `ubuntu` 的替换顺序、镜像主机
-  不重复替换、主机名子串不误替换、已识别镜像（TUNA/阿里云/USTC）之间互转且自定义
+  不重复替换、主机名子串不误替换、已识别镜像（USTC/腾讯云/华为云/阿里云/NJU/SJTU/
+  ZJU/LZU/HUST/BFSU/TUNA 十一个）之间互转且自定义
   主机不受影响、Debian security 默认保留官方（`--replace-security` 才替换）、Ubuntu
   security 始终随主仓库替换；带显式端口或凭证的 URL 按归一化后的主机匹配重写（端口
   丢弃、凭证保留，IPv6 字面量除外）；不符合规范的一行多 URL（第二个 URL 落在
@@ -72,7 +73,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[`mirror::pacman` 测试](../../../../crates/lkit-cli/src/mirror/pacman/mod.rs)
-- 说明：四个镜像各生成恰好一个 `Server =` 行，模板含 `$repo/os/$arch`。
+- 说明：十二个镜像各生成恰好一个 `Server =` 行，模板含 `$repo/os/$arch`。
 
 ## MIR-05
 
@@ -150,3 +151,23 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
   的缺 URIs 报告在首字段行）；没有任何源文件时 `--check` 视为干净；`--check` 只读
   检查并逐行输出、有问题是退出码 `1`；`apply` 前同样先检查，无法识别的行字节级
   保留并在结果中提示数量。
+
+## MIR-11
+
+**镜像可用性探测：不可用不可选、未知确认时警告**
+
+- 测试层：Rust 单元 + 控制台测试
+- 状态：`已覆盖`
+- 证据：[`mirror::availability` 测试](../../../../crates/lkit-cli/src/mirror/availability.rs)、
+  [`console::tests::mirror`](../../../../crates/lkit-cli/src/console/tests/mirror.rs)
+- 说明：换源前并行 HEAD 探测每个镜像站上"当前发行版"的真实文件（Debian/Ubuntu
+  `dists/<代号>/Release`、Fedora 换源后实际写入的
+  `fedora/linux/releases/<主版本>/Everything/<架构>/os/repodata/repomd.xml`、
+  Rocky/AlmaLinux `repomd.xml`、Arch `core.db`；Ubuntu 按运行时架构选
+  `ubuntu-ports`；dnf 家族按 `VERSION_ID` 主版本构造路径）。纯函数 URL 构造单测
+  覆盖各家族与缺失输入（无代号/无 VERSION_ID → 未知）；`Official` 恒可用不探测。
+  明确 404 → 不可用：控制台面板置灰且导航/确认跳过、显式 `set-mirror` 直接拒绝；
+  网络失败/超时/TLS/403 → 未知：仍可选，确认层显示警告行；探测结果未就绪时全部
+  视为可用。`--list` 标注 `[可用]/[不可用]/[未知]`。
+- 缺口：真实网络探测（404/403/超时分支）依赖镜像站实况，未纳入自动化断言；
+  面板 worker 线程（探测中提示行）由状态注入测试覆盖，不发起真实请求。

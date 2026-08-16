@@ -1,9 +1,12 @@
 pub(crate) mod apt;
+pub(crate) mod availability;
 pub(crate) mod backend;
 pub(crate) mod common;
 pub(crate) mod detect;
 pub(crate) mod dnf;
 pub(crate) mod pacman;
+
+pub(crate) use availability::{MirrorStatus, probe, probe_all};
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -112,92 +115,106 @@ pub(crate) mod test_support {
 
 /// 已识别的公共镜像主机。换源时除官方 URL 外，这些主机之间的 URL 也会互相转换；
 /// 自定义内网镜像等未识别主机保持原样。
-pub(crate) const RECOGNIZED_MIRROR_HOSTS: [&str; 9] = [
-    "mirrors.tuna.tsinghua.edu.cn",
-    "mirrors.aliyun.com",
+pub(crate) const RECOGNIZED_MIRROR_HOSTS: [&str; 11] = [
     "mirrors.ustc.edu.cn",
+    "mirrors.cloud.tencent.com",
+    "mirrors.huaweicloud.com",
+    "mirrors.aliyun.com",
     "mirror.nju.edu.cn",
     "mirror.sjtu.edu.cn",
     "mirrors.zju.edu.cn",
     "mirror.lzu.edu.cn",
-    "mirrors.bfsu.edu.cn",
     "mirrors.hust.edu.cn",
+    "mirrors.bfsu.edu.cn",
+    "mirrors.tuna.tsinghua.edu.cn",
 ];
 
 /// 返回镜像主机；`Official` 没有镜像主机（反向映射回官方）。
 pub(crate) fn mirror_host(mirror: MirrorName) -> Option<&'static str> {
     match mirror {
-        MirrorName::Tuna => Some("mirrors.tuna.tsinghua.edu.cn"),
-        MirrorName::Aliyun => Some("mirrors.aliyun.com"),
         MirrorName::Ustc => Some("mirrors.ustc.edu.cn"),
+        MirrorName::Tencent => Some("mirrors.cloud.tencent.com"),
+        MirrorName::Huawei => Some("mirrors.huaweicloud.com"),
+        MirrorName::Aliyun => Some("mirrors.aliyun.com"),
         MirrorName::Nju => Some("mirror.nju.edu.cn"),
         MirrorName::Sjtu => Some("mirror.sjtu.edu.cn"),
         MirrorName::Zju => Some("mirrors.zju.edu.cn"),
         MirrorName::Lzu => Some("mirror.lzu.edu.cn"),
-        MirrorName::Bfsu => Some("mirrors.bfsu.edu.cn"),
         MirrorName::Hust => Some("mirrors.hust.edu.cn"),
+        MirrorName::Bfsu => Some("mirrors.bfsu.edu.cn"),
+        MirrorName::Tuna => Some("mirrors.tuna.tsinghua.edu.cn"),
         MirrorName::Official => None,
     }
 }
 
-/// 可切换的软件源镜像。
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+/// 可切换的软件源镜像。枚举与 [`MirrorName::all`] 的次序即交互选择/`--list`/
+/// 控制台面板的展示顺序：官方源第一，其余按镜像站对自动化下载的友好程度
+/// （宽松程度）排列——中科大 USTC 最开放，清华 TUNA 反爬限制最多垫底。
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, ValueEnum)]
 pub(crate) enum MirrorName {
-    Tuna,
-    Aliyun,
+    Official,
     Ustc,
+    Tencent,
+    Huawei,
+    Aliyun,
     Nju,
     Sjtu,
     Zju,
     Lzu,
-    Bfsu,
     Hust,
-    Official,
+    Bfsu,
+    Tuna,
 }
 
 impl MirrorName {
-    pub(crate) const fn all() -> [Self; 10] {
+    pub(crate) const fn all() -> [Self; 12] {
         [
-            Self::Tuna,
-            Self::Aliyun,
+            Self::Official,
             Self::Ustc,
+            Self::Tencent,
+            Self::Huawei,
+            Self::Aliyun,
             Self::Nju,
             Self::Sjtu,
             Self::Zju,
             Self::Lzu,
-            Self::Bfsu,
             Self::Hust,
-            Self::Official,
+            Self::Bfsu,
+            Self::Tuna,
         ]
     }
 
     pub(crate) fn id(self) -> &'static str {
         match self {
-            Self::Tuna => "tuna",
-            Self::Aliyun => "aliyun",
+            Self::Official => "official",
             Self::Ustc => "ustc",
+            Self::Tencent => "tencent",
+            Self::Huawei => "huawei",
+            Self::Aliyun => "aliyun",
             Self::Nju => "nju",
             Self::Sjtu => "sjtu",
             Self::Zju => "zju",
             Self::Lzu => "lzu",
-            Self::Bfsu => "bfsu",
             Self::Hust => "hust",
-            Self::Official => "official",
+            Self::Bfsu => "bfsu",
+            Self::Tuna => "tuna",
         }
     }
 
     pub(crate) fn label(self) -> String {
         match self {
-            Self::Tuna => crate::tr!(crate::keys::mirror::MIRROR_TUNA),
-            Self::Aliyun => crate::tr!(crate::keys::mirror::MIRROR_ALIYUN),
+            Self::Official => crate::tr!(crate::keys::mirror::MIRROR_OFFICIAL),
             Self::Ustc => crate::tr!(crate::keys::mirror::MIRROR_USTC),
+            Self::Tencent => crate::tr!(crate::keys::mirror::MIRROR_TENCENT),
+            Self::Huawei => crate::tr!(crate::keys::mirror::MIRROR_HUAWEI),
+            Self::Aliyun => crate::tr!(crate::keys::mirror::MIRROR_ALIYUN),
             Self::Nju => crate::tr!(crate::keys::mirror::MIRROR_NJU),
             Self::Sjtu => crate::tr!(crate::keys::mirror::MIRROR_SJTU),
             Self::Zju => crate::tr!(crate::keys::mirror::MIRROR_ZJU),
             Self::Lzu => crate::tr!(crate::keys::mirror::MIRROR_LZU),
-            Self::Bfsu => crate::tr!(crate::keys::mirror::MIRROR_BFSU),
             Self::Hust => crate::tr!(crate::keys::mirror::MIRROR_HUST),
-            Self::Official => crate::tr!(crate::keys::mirror::MIRROR_OFFICIAL),
+            Self::Bfsu => crate::tr!(crate::keys::mirror::MIRROR_BFSU),
+            Self::Tuna => crate::tr!(crate::keys::mirror::MIRROR_TUNA),
         }
     }
 }
@@ -276,7 +293,7 @@ pub(crate) fn detect_host() -> Result<Host, MirrorError> {
 }
 
 /// 列出当前主机可切换的镜像（公共镜像与官方源）。
-pub(crate) fn list_mirrors() -> [MirrorName; 10] {
+pub(crate) fn list_mirrors() -> [MirrorName; 12] {
     MirrorName::all()
 }
 

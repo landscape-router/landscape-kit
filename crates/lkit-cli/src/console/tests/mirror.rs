@@ -2,9 +2,10 @@ use super::super::mirror::*;
 use super::super::*;
 use super::support::*;
 use crate::i18n::Language;
-use crate::mirror::{Family, Host, MirrorName};
+use crate::mirror::{Family, Host, MirrorName, MirrorStatus};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use std::collections::HashMap;
 
 /// 面板就绪：进入 Mirror 菜单、聚焦面板并注入确定的主机身份。
 fn mirror_ready_app() -> ConsoleApp {
@@ -17,6 +18,17 @@ fn mirror_ready_app() -> ConsoleApp {
     }));
     app.mirror.detected = true;
     app
+}
+
+/// 注入探测结果：`nju` 不可用、`sjtu` 未知，其余可用。
+fn availability_with(nju: MirrorStatus, sjtu: MirrorStatus) -> HashMap<MirrorName, MirrorStatus> {
+    let mut statuses: HashMap<_, _> = MirrorName::all()
+        .into_iter()
+        .map(|mirror| (mirror, MirrorStatus::Available))
+        .collect();
+    statuses.insert(MirrorName::Nju, nju);
+    statuses.insert(MirrorName::Sjtu, sjtu);
+    statuses
 }
 
 /// Debian 主机（确认层显示 security 开关）。
@@ -94,7 +106,11 @@ fn mirror_panel_detection_failure_is_shown() {
 fn mirror_panel_up_down_moves_selection() {
     let mut app = mirror_ready_app();
     let mirrors = MirrorName::all().len();
-    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Tuna));
+    assert_eq!(
+        app.mirror.selected,
+        MirrorRow::Mirror(MirrorName::all()[0]),
+        "the first mirror in the list order is selected by default"
+    );
     for _ in 0..mirrors {
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     }
@@ -116,7 +132,7 @@ fn mirror_panel_up_down_moves_selection() {
     }
     assert_eq!(
         app.mirror.selected,
-        MirrorRow::Mirror(MirrorName::Tuna),
+        MirrorRow::Mirror(MirrorName::all()[0]),
         "clamped at the first mirror"
     );
 }
@@ -131,7 +147,7 @@ fn mirror_panel_enter_opens_apply_confirmation_and_esc_closes() {
     assert_eq!(
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
-            mirror: MirrorName::Tuna,
+            mirror: MirrorName::all()[0],
             replace_security: false,
         })
     );
@@ -326,7 +342,7 @@ fn mirror_rows_are_mouse_clickable() {
     // 在面板区域内找到第一行镜像的命中区。
     let mut first_row = None;
     for row in 4..12 {
-        if let Some(Hit::MirrorField(MirrorName::Tuna)) = app.hits.hit_at(40, row) {
+        if let Some(Hit::MirrorField(MirrorName::Official)) = app.hits.hit_at(40, row) {
             first_row = Some(row);
             break;
         }
@@ -335,18 +351,18 @@ fn mirror_rows_are_mouse_clickable() {
         panic!("no clickable mirror row found");
     };
     app.handle_mouse(mouse_click(40, row));
-    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Tuna));
+    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Official));
     assert!(matches!(
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
-            mirror: MirrorName::Tuna,
+            mirror: MirrorName::Official,
             replace_security: false,
         })
     ));
     app.mirror.confirming = None;
 
     app.handle_mouse(mouse_click(40, row + 1));
-    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Aliyun));
+    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Ustc));
     app.mirror.confirming = None;
 
     let restore_hit = (4..28).find(|row| {
@@ -360,4 +376,119 @@ fn mirror_rows_are_mouse_clickable() {
     app.handle_mouse(mouse_click(40, restore_row));
     assert_eq!(app.mirror.selected, MirrorRow::Restore);
     assert_eq!(app.mirror.confirming, Some(MirrorConfirm::Restore));
+}
+
+#[test]
+fn mirror_navigation_skips_unavailable_mirrors() {
+    let mut app = mirror_ready_app();
+    app.mirror.availability = Some(availability_with(
+        MirrorStatus::Unavailable,
+        MirrorStatus::Available,
+    ));
+    app.mirror.selected = MirrorRow::Mirror(MirrorName::Aliyun);
+    // 向下：NJU 不可用被跳过（阿里云 → SJTU）。
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Sjtu));
+    // 不可用行按 Enter：不打开确认层，底栏提示拒绝。
+    app.mirror.selected = MirrorRow::Mirror(MirrorName::Nju);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        app.mirror.confirming.is_none(),
+        "an unavailable mirror must not open the confirmation layer"
+    );
+    assert!(
+        app.notice.contains("does not provide"),
+        "unexpected notice: {}",
+        app.notice
+    );
+    // 恢复动作仍可达。
+    app.mirror.selected = MirrorRow::Mirror(MirrorName::Bfsu);
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(
+        app.mirror.selected,
+        MirrorRow::Mirror(MirrorName::Tuna),
+        "TUNA is the last mirror in the list order"
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.mirror.selected, MirrorRow::Restore);
+}
+
+#[test]
+fn mirror_panel_renders_status_markers() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = mirror_ready_app();
+    app.mirror.availability = Some(availability_with(
+        MirrorStatus::Unavailable,
+        MirrorStatus::Unknown,
+    ));
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("Nanjing University (unavailable)"),
+        "unavailable mirrors must be marked: {content}"
+    );
+    assert!(
+        content.contains("SJTU (unknown)"),
+        "unverifiable mirrors must be marked: {content}"
+    );
+    assert!(
+        content.contains("Tsinghua TUNA"),
+        "available mirrors stay unmarked: {content}"
+    );
+}
+
+#[test]
+fn mirror_confirm_dialog_warns_when_availability_is_unknown() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = mirror_ready_app();
+    app.mirror.availability = Some(availability_with(
+        MirrorStatus::Available,
+        MirrorStatus::Unknown,
+    ));
+    app.mirror.confirming = Some(MirrorConfirm::Apply {
+        mirror: MirrorName::Sjtu,
+        replace_security: false,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("availability could not be verified"),
+        "an unverifiable mirror must warn in the confirmation dialog: {content}"
+    );
+    // 已知可用的镜像不显示警告。
+    app.mirror.confirming = Some(MirrorConfirm::Apply {
+        mirror: MirrorName::Tuna,
+        replace_security: false,
+    });
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(!content.contains("availability could not be verified"));
+}
+
+#[test]
+fn mirror_probing_hint_is_shown_until_results_arrive() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = mirror_ready_app();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let before = terminal_content(&terminal);
+    assert!(!before.contains("Checking mirror availability"));
+    // 模拟探测 worker 启动中：probing 为 true 但结果未回填。
+    app.mirror.probing = true;
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let during = terminal_content(&terminal);
+    assert!(
+        during.contains("Checking mirror availability"),
+        "the probing hint must be shown while probing: {during}"
+    );
+    app.mirror.probing = false;
+    app.mirror.availability = Some(availability_with(
+        MirrorStatus::Available,
+        MirrorStatus::Available,
+    ));
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let after = terminal_content(&terminal);
+    assert!(!after.contains("Checking mirror availability"));
 }

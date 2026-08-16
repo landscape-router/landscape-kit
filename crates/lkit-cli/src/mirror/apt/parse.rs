@@ -437,7 +437,7 @@ pub(crate) fn runtime_arch() -> String {
 /// 是否属于 Ubuntu 官方 archive（`archive.ubuntu.com`）之外的架构。
 /// arm64/armhf、riscv64、ppc64el、s390x 的内容在 `ports.ubuntu.com`（路径
 /// `/ubuntu-ports`），合成/转换条目时必须选对仓库，否则 apt 找不到包。
-fn is_ports_arch(arch: &str) -> bool {
+pub(crate) fn is_ports_arch(arch: &str) -> bool {
     arch.starts_with("arm")
         || arch.starts_with("aarch64")
         || arch.starts_with("riscv")

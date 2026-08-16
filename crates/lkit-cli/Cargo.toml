@@ -39,7 +39,7 @@ futures-util = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 lkit-repository = { workspace = true }
-reqwest = { workspace = true, features = ["http2", "rustls-tls", "stream"] }
+reqwest = { workspace = true, features = ["blocking", "http2", "rustls-tls", "stream"] }
 rust-i18n = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
