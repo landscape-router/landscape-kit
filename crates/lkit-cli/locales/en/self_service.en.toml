@@ -1,2 +1,0 @@
-self_service.installed = "lkit daemon service is registered, enabled, and running"
-self_service.removed = "lkit daemon service was stopped and removed"

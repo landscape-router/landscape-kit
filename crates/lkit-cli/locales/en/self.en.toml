@@ -1,0 +1,5 @@
+self.installed = "lkit daemon is registered, enabled, and running"
+self.removed = "lkit daemon service was stopped and removed"
+self.upgraded = "lkit upgraded to %{version}"
+self.already_latest = "lkit is already at version %{version}"
+self.daemon_not_installed_hint = "the lkit daemon is not installed; run `lkit self install` to deploy it"

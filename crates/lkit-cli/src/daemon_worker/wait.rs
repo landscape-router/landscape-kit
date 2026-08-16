@@ -13,7 +13,6 @@ use super::protocol::{WaitOutcome, WorkerResult};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn wait_for_result(
-    install_root: &Path,
     result_path: &Path,
     stdout_path: &Path,
     stderr_path: &Path,
@@ -75,7 +74,7 @@ pub(super) fn wait_for_result(
             return Ok(WaitOutcome::Completed(code));
         }
 
-        if !daemon_is_running(install_root) {
+        if !daemon_is_running() {
             daemon_dead_polls = daemon_dead_polls.saturating_add(1);
             if daemon_dead_polls >= 10 {
                 return Err(format!(

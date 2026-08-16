@@ -128,27 +128,12 @@ async fn run_command(
             Commands::Reinit(reinit) => reinit.network_plan.take(),
             _ => None,
         };
-        let install_root = match daemon_worker::delegate_install_root(&command) {
-            Ok(Some(root)) => root,
-            Ok(None) => {
-                eprintln!(
-                    "install: {}",
-                    crate::tr!(
-                        keys::MAIN_UNABLE_DELEGATE_SYSTEMD,
-                        error = "cannot resolve the install root"
-                    )
-                );
-                return ExitCode::FAILURE;
-            }
-            Err(error) => return delegate_error_exit(&error),
-        };
         return match daemon_worker::delegate(
             &interrupt,
             args,
             interactive_password,
             network_plan,
             from_console,
-            &install_root,
         ) {
             Ok(code) => code,
             Err(error) => delegate_error_exit(&error),
@@ -170,7 +155,7 @@ async fn run_command(
         Commands::SetMirror(args) => commands::set_mirror::run(&args),
         Commands::Software(args) => commands::software::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
-        Commands::SelfService(args) => commands::self_service::run(&args),
+        Commands::Self_(args) => commands::lkit_self::run(&args).await,
         Commands::Daemon(args) => daemon::run(&args).await,
     }
 }

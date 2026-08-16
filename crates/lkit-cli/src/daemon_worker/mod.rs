@@ -51,7 +51,7 @@ pub(crate) fn should_delegate(command: &Commands) -> bool {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Software(_) => false,
         Commands::Backup(_) => false,
-        Commands::SelfService(_) | Commands::Daemon(_) => false,
+        Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Network(args) => {
             matches!(args.action, NetworkAction::Rollback { automatic: false })
         }
@@ -73,7 +73,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Check(_) => return false,
         Commands::SetMirror(_) => None,
         Commands::Software(_) => None,
-        Commands::SelfService(_) => None,
+        Commands::Self_(_) => None,
         Commands::Daemon(_) => None,
         Commands::Install(args) => args.test_runtime.as_deref(),
         Commands::Migrate(args) => args.test_runtime.as_deref(),
@@ -104,9 +104,9 @@ fn test_runtime_is_inline(_command: &Commands) -> bool {
     false
 }
 
-/// 目标安装根的常驻 daemon 是否运行中(pidfile 存在且进程存活)。
-pub(crate) fn daemon_is_running(install_root: &Path) -> bool {
-    let pidfile = install_root.join("run").join(crate::daemon::PIDFILE_NAME);
+/// 全局常驻 daemon 是否运行中(读 lkit 地盘 pidfile,进程存活即运行中)。
+pub(crate) fn daemon_is_running() -> bool {
+    let pidfile = crate::deployment::layout::territory_pidfile();
     let Ok(content) = std::fs::read_to_string(pidfile) else {
         return false;
     };
@@ -116,39 +116,6 @@ pub(crate) fn daemon_is_running(install_root: &Path) -> bool {
     crate::daemon::process_alive(pid)
 }
 
-/// 从命令参数解析委托目标安装根:仅 install/migrate 显式选择安装根,
-/// 其余命令从 lkit 地盘状态发现 landscape 根。
-pub(crate) fn delegate_install_root(command: &Commands) -> Result<Option<PathBuf>, DelegateError> {
-    match command_install_dir(command) {
-        Some(install_dir) => {
-            let selected = crate::deployment::plan::select_install_root(
-                Some(install_dir),
-                std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-            )
-            .map_err(|error| DelegateError::usage(error.to_string()))?;
-            crate::deployment::root::normalize_install_root(&selected)
-                .map(|root| Some(root.canonical))
-                .map_err(|error| DelegateError::infrastructure(error.to_string()))
-        }
-        None => {
-            let root = crate::deployment::state::discover_landscape_root()
-                .map_err(|error| DelegateError::infrastructure(error.to_string()))?
-                .ok_or_else(|| {
-                    DelegateError::usage("no installed landscape found; run `lkit install` first")
-                })?;
-            Ok(Some(root.canonical))
-        }
-    }
-}
-
-fn command_install_dir(command: &Commands) -> Option<&Path> {
-    match command {
-        Commands::Install(args) => args.install_dir.as_deref(),
-        Commands::Migrate(args) => args.install_dir.as_deref(),
-        _ => None,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn delegate(
     interrupt: &InterruptGuard,
@@ -156,14 +123,11 @@ pub(crate) fn delegate(
     interactive_password: Option<String>,
     network_plan: Option<NetworkPlan>,
     full_screen: bool,
-    install_root: &Path,
 ) -> Result<ExitCode, DelegateError> {
-    if !daemon_is_running(install_root) {
-        return Err(DelegateError::usage(format!(
-            "the lkit daemon is not running for install root {}; reinstall lkit to deploy it, or run `lkit self-service install --install-dir {}`",
-            install_root.display(),
-            install_root.display()
-        )));
+    if !daemon_is_running() {
+        return Err(DelegateError::usage(
+            "the lkit daemon is not running; deploy it with `lkit self install`",
+        ));
     }
     let operation = operation_screen(&args);
     let operation_id = Uuid::now_v7().to_string();
@@ -257,7 +221,6 @@ pub(crate) fn delegate(
     }
 
     let result = wait_for_result(
-        install_root,
         &result_path,
         &stdout_path,
         &stderr_path,

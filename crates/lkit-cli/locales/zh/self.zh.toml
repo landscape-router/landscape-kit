@@ -1,0 +1,5 @@
+self.installed = "lkit 常驻服务已注册、启用并正在运行"
+self.removed = "lkit 常驻服务已停止并移除"
+self.upgraded = "lkit 已升级到 %{version}"
+self.already_latest = "lkit 已是最新版本 %{version}"
+self.daemon_not_installed_hint = "lkit 常驻服务尚未安装;运行 `lkit self install` 部署"

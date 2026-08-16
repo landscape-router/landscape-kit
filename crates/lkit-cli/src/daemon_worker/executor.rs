@@ -170,20 +170,11 @@ mod tests {
 
     #[test]
     fn worker_args_injects_the_internal_worker_flag_before_the_subcommand() {
-        let request = ["uninstall", "--yes", "--install-dir", "/srv/landscape"]
+        let request = ["uninstall", "--yes"]
             .into_iter()
             .map(String::from)
             .collect::<Vec<_>>();
         let args = worker_args(&request);
-        assert_eq!(
-            args,
-            [
-                "--internal-daemon-worker",
-                "uninstall",
-                "--yes",
-                "--install-dir",
-                "/srv/landscape",
-            ]
-        );
+        assert_eq!(args, ["--internal-daemon-worker", "uninstall", "--yes"]);
     }
 }

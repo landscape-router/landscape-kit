@@ -9,14 +9,13 @@
 //!    事务由 daemon 自动接管并执行与 CLI 相同的恢复语义
 //!    ([`crate::deployment::transaction::recover_interrupted`])。
 //!
+//! daemon 全局唯一,固定读取 lkit 地盘(`/root/.lkit/`):pidfile 写入
+//! [`layout::territory_pidfile`](crate::deployment::layout::territory_pidfile),
+//! 恢复目标从地盘的状态与事务发现 landscape 根,不再绑定任何安装根。
 //! 并发安全依赖安装锁:CLI 命令在整个操作期间持有
-//! `<install-root>/run/install.lock`,daemon 每个周期以非阻塞方式尝试获取,
+//! `<territory>/run/install.lock`,daemon 每个周期以非阻塞方式尝试获取,
 //! 获取失败说明有活动命令,跳过本周期。网络接管待确认阶段保持人工
 //! `lkit network confirm|rollback`,daemon 不代替用户确认。
-//!
-//! 单元入口与 [`ServiceManager::render_definition`] 的 `LkitDaemon` 定义一致:
-//! `lkit daemon --config-dir <install-root>/data`,pidfile 固定为
-//! `<install-root>/run/lkit.pid`(config-dir 的父目录即安装根)。
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -25,21 +24,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::Args;
 
 use crate::deployment::plan::InstallError;
-use crate::deployment::root::InstallRoot;
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::{lock, transaction};
+use crate::deployment::{layout, lock, state, transaction};
 use crate::interaction::presentation::OPERATIONS_DIR;
-
-pub(crate) const PIDFILE_NAME: &str = "lkit.pid";
 
 /// 每个恢复周期之间的基础间隔。
 pub(crate) const DAEMON_CYCLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Args)]
 pub struct Daemon {
-    /// Landscape data 目录(安装根目录的 data/,pidfile 写入其父目录的 run/)
-    #[arg(long, value_name = "PATH")]
-    pub config_dir: PathBuf,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -53,11 +46,11 @@ extern "C" fn handle_termination(_signal: libc::c_int) {
 
 /// 运行 lkit 常驻服务直到收到 SIGTERM/SIGINT。
 pub(crate) async fn run(args: &Daemon) -> ExitCode {
-    run_with_config_dir(&args.config_dir, resolve_runtime(args)).await
+    run_with_runtime(resolve_runtime(args)).await
 }
 
-pub(crate) async fn run_with_config_dir(config_dir: &Path, runtime: InstallRuntime) -> ExitCode {
-    match run_inner(config_dir, runtime).await {
+pub(crate) async fn run_with_runtime(runtime: InstallRuntime) -> ExitCode {
+    match run_inner(runtime).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("lkit daemon: {error}");
@@ -66,33 +59,14 @@ pub(crate) async fn run_with_config_dir(config_dir: &Path, runtime: InstallRunti
     }
 }
 
-async fn run_inner(config_dir: &Path, runtime: InstallRuntime) -> Result<(), InstallError> {
-    let canonical = std::fs::canonicalize(config_dir).map_err(|error| {
-        InstallError::Io(std::io::Error::new(
-            error.kind(),
-            format!("resolve config dir {}: {error}", config_dir.display()),
-        ))
-    })?;
-    if !canonical.is_dir() {
-        return Err(InstallError::ParameterUsage(format!(
-            "config dir {} is not a directory",
-            canonical.display()
-        )));
-    }
-    let root = canonical.parent().ok_or_else(|| {
-        InstallError::ParameterUsage(format!(
-            "config dir {} has no install root parent",
-            canonical.display()
-        ))
-    })?;
-    // 恢复目标固定为 daemon 自身所在的安装根(与 unit ExecStart 的 config-dir 一致)。
-    let install_root = InstallRoot {
-        install_root: root.to_path_buf(),
-        canonical: root.to_path_buf(),
-    };
-    let run_dir = root.join("run");
-    std::fs::create_dir_all(&run_dir).map_err(InstallError::Io)?;
-    let pidfile = run_dir.join(PIDFILE_NAME);
+async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
+    let pidfile = layout::territory_pidfile();
+    std::fs::create_dir_all(
+        pidfile
+            .parent()
+            .expect("territory pidfile has a parent directory"),
+    )
+    .map_err(InstallError::Io)?;
     write_pidfile(&pidfile)?;
 
     unsafe {
@@ -102,7 +76,7 @@ async fn run_inner(config_dir: &Path, runtime: InstallRuntime) -> Result<(), Ins
     }
     loop {
         execute_pending_requests();
-        recovery_cycle(&runtime, &install_root).await;
+        recovery_cycle(&runtime).await;
         // 分片睡眠,保证 SIGTERM 及时生效。
         let slices = DAEMON_CYCLE_INTERVAL.as_millis().div_ceil(200).max(1) as u64;
         let mut shutdown = false;
@@ -151,12 +125,17 @@ fn execute_pending_requests() {
 
 /// 单个恢复周期:以非阻塞方式获取安装锁,存在未完成事务时执行
 /// `recover_interrupted`(与 CLI 相同的恢复语义)。
-async fn recovery_cycle(runtime: &InstallRuntime, install_root: &InstallRoot) {
+async fn recovery_cycle(runtime: &InstallRuntime) {
     let lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(_) => return,
     };
-    let unfinished = match transaction::find_unfinished(install_root) {
+    // 恢复目标从 lkit 地盘的状态与事务发现 landscape 根:状态记录已提交安装,
+    // 中断的首次安装还没有状态,从未完成事务记录的根发现。
+    let Some(install_root) = discover_recovery_root() else {
+        return;
+    };
+    let unfinished = match transaction::find_unfinished(&install_root) {
         Ok(unfinished) => unfinished,
         Err(_) => return,
     };
@@ -176,7 +155,7 @@ async fn recovery_cycle(runtime: &InstallRuntime, install_root: &InstallRoot) {
         Err(_) => return,
     };
     match transaction::recover_interrupted(
-        install_root,
+        &install_root,
         &unfinished,
         runtime.service_manager.as_ref(),
         &health,
@@ -197,10 +176,48 @@ async fn recovery_cycle(runtime: &InstallRuntime, install_root: &InstallRoot) {
     drop(lock);
 }
 
+/// 从 lkit 地盘的状态与事务发现 landscape 恢复目标。状态文件缺失时
+/// (中断的首次安装),从未完成事务记录的 `canonical_install_root` 发现。
+fn discover_recovery_root() -> Option<crate::deployment::root::InstallRoot> {
+    if let Ok(Some(root)) = state::discover_landscape_root() {
+        return Some(root);
+    }
+    let dir = layout::territory_transactions_dir();
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(tx) = serde_json::from_slice::<transaction::TransactionFile>(&content) else {
+            continue;
+        };
+        if tx.phase.is_terminal() {
+            continue;
+        }
+        let Ok(root) =
+            crate::deployment::root::normalize_install_root(Path::new(&tx.canonical_install_root))
+        else {
+            continue;
+        };
+        return Some(root);
+    }
+    None
+}
+
 fn write_pidfile(pidfile: &Path) -> Result<(), InstallError> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
+    std::fs::create_dir_all(
+        pidfile
+            .parent()
+            .expect("territory pidfile has a parent directory"),
+    )
+    .map_err(InstallError::Io)?;
     if let Ok(existing) = std::fs::read_to_string(pidfile)
         && let Ok(pid) = existing.trim().parse::<u32>()
         && process_alive(pid)
@@ -240,10 +257,69 @@ fn resolve_runtime(_args: &Daemon) -> InstallRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
+
     use super::*;
 
     #[test]
     fn cycle_interval_is_sliceable() {
         assert!(DAEMON_CYCLE_INTERVAL.as_millis() >= 200);
+    }
+
+    fn territory(name: &str) -> (layout::TerritoryOverride, std::path::PathBuf) {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-daemon-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let guard = layout::test_territory(&temp);
+        (guard, temp)
+    }
+
+    #[test]
+    fn pidfile_is_written_into_the_territory_with_0600() {
+        let (guard, temp) = territory("pidfile");
+        let pidfile = layout::territory_pidfile();
+        assert_eq!(
+            pidfile,
+            temp.join("run/lkit.pid"),
+            "pidfile must be <territory>/run/lkit.pid"
+        );
+        write_pidfile(&pidfile).unwrap();
+        let metadata = std::fs::metadata(&pidfile).unwrap();
+        assert_eq!(metadata.mode() & 0o077, 0, "pidfile must be root-only");
+        assert_eq!(
+            std::fs::read_to_string(&pidfile).unwrap().trim(),
+            std::process::id().to_string()
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn refuses_to_start_while_a_live_instance_exists() {
+        let (guard, temp) = territory("conflict");
+        let pidfile = layout::territory_pidfile();
+        write_pidfile(&pidfile).unwrap();
+        assert!(matches!(
+            write_pidfile(&pidfile),
+            Err(InstallError::ProcessConflict(_))
+        ));
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn overwrites_a_stale_pidfile() {
+        let (guard, temp) = territory("stale");
+        let pidfile = layout::territory_pidfile();
+        std::fs::create_dir_all(pidfile.parent().unwrap()).unwrap();
+        std::fs::write(&pidfile, "99999999\n").unwrap();
+        write_pidfile(&pidfile).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&pidfile).unwrap().trim(),
+            std::process::id().to_string()
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

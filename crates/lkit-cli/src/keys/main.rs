@@ -62,7 +62,6 @@ pub(crate) const MAIN_UNINSTALL_ABOUT: &str = "main.uninstall_about";
 pub(crate) const MAIN_UNINSTALL_YES_HELP: &str = "main.uninstall_yes_help";
 pub(crate) const MAIN_UNINSTALL_ALLOW_NO_BACKUP_HELP: &str = "main.uninstall_allow_no_backup_help";
 pub(crate) const MAIN_UNINSTALL_KEEP_DATA_HELP: &str = "main.uninstall_keep_data_help";
-pub(crate) const MAIN_UNABLE_DELEGATE_SYSTEMD: &str = "main.unable_delegate_systemd";
 pub(crate) const MAIN_SOFTWARE_ABOUT: &str = "main.software_about";
 pub(crate) const MAIN_SOFTWARE_LIST_ABOUT: &str = "main.software_list_about";
 pub(crate) const MAIN_SOFTWARE_INSTALL_ABOUT: &str = "main.software_install_about";

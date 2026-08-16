@@ -220,9 +220,10 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
     )
 }
 
-/// 渲染 lkit 常驻服务 unit 原件内容。二进制约定为
-/// `<install-root>/service/lkit`(与网络接管恢复二进制同目录约定)。
-pub(crate) fn render_lkit_daemon_unit(canonical_root: &Path) -> String {
+/// 渲染 lkit 常驻服务 unit 原件内容。二进制为全局 `/usr/local/bin/lkit`,
+/// unit 原件位于 `/usr/local/lib/lkit/lkit.service`,不复制到任何安装根;
+/// `canonical_root` 对本服务无意义,仅保持 trait 签名。
+pub(crate) fn render_lkit_daemon_unit(_canonical_root: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Lkit daemon\n\
@@ -230,14 +231,13 @@ pub(crate) fn render_lkit_daemon_unit(canonical_root: &Path) -> String {
          Wants=network-online.target\n\
          \n\
          [Service]\n\
-         ExecStart={0}/service/lkit daemon --config-dir {0}/data\n\
+         ExecStart=/usr/local/bin/lkit daemon\n\
          User=root\n\
          Restart=always\n\
          KillMode=process\n\
          \n\
          [Install]\n\
-         WantedBy=multi-user.target\n",
-        canonical_root.display()
+         WantedBy=multi-user.target\n"
     )
 }
 
@@ -280,12 +280,9 @@ pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), 
     validate_definition(content, expected, true, false)
 }
 
-fn validate_lkit_daemon_unit(content: &str, canonical_root: &Path) -> Result<(), InstallError> {
-    let expected = format!(
-        "{0}/service/lkit daemon --config-dir {0}/data",
-        canonical_root.display()
-    );
-    validate_definition(content, expected, false, true)
+fn validate_lkit_daemon_unit(content: &str, _canonical_root: &Path) -> Result<(), InstallError> {
+    let expected = "/usr/local/bin/lkit daemon";
+    validate_definition(content, expected.into(), false, true)
 }
 
 fn validate_definition(
@@ -946,9 +943,11 @@ mod tests {
     fn renders_and_validates_lkit_daemon_unit() {
         let root = Path::new("/srv/landscape");
         let content = render_lkit_daemon_unit(root);
+        assert!(content.contains("ExecStart=/usr/local/bin/lkit daemon"));
+        assert!(!content.contains("/srv/landscape"));
         assert!(validate_lkit_daemon_unit(&content, root).is_ok());
 
-        let tampered = content.replace("/srv/landscape", "/srv/other");
+        let tampered = content.replace("/usr/local/bin/lkit", "/usr/local/bin/other");
         assert!(validate_lkit_daemon_unit(&tampered, root).is_err());
 
         let without_kill_mode = content.replace("KillMode=process\n", "");

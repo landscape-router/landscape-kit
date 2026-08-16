@@ -2,6 +2,8 @@ pub mod backup;
 pub mod check;
 mod existing;
 pub mod install;
+#[path = "self.rs"]
+pub mod lkit_self;
 mod manage;
 pub mod migrate;
 pub mod network;
@@ -9,7 +11,6 @@ pub mod reconcile;
 pub mod reinit;
 pub mod repair;
 pub mod restore;
-pub mod self_service;
 pub mod set_mirror;
 pub mod software;
 pub mod switch;
@@ -21,13 +22,13 @@ use clap::Subcommand;
 pub use backup::Backup;
 pub use check::Check;
 pub use install::Install;
+pub use lkit_self::SelfCommand;
 pub use migrate::Migrate;
 pub use network::Network;
 pub use reconcile::Reconcile;
 pub use reinit::Reinit;
 pub use repair::Repair;
 pub use restore::Restore;
-pub use self_service::SelfService;
 pub use set_mirror::SetMirror;
 pub use software::Software;
 pub use switch::Switch;
@@ -50,6 +51,7 @@ pub enum Commands {
     SetMirror(SetMirror),
     Software(Software),
     Uninstall(Uninstall),
-    SelfService(SelfService),
+    #[command(name = "self")]
+    Self_(SelfCommand),
     Daemon(crate::daemon::Daemon),
 }

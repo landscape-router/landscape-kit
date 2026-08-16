@@ -224,14 +224,9 @@ fn render_router_script(canonical_root: &Path) -> String {
     )
 }
 
-fn render_lkit_script(canonical_root: &Path) -> String {
-    format!(
-        "#!/sbin/openrc-run\n\nname=\"lkit\"\ndescription=\"lkit resident daemon\"\n\ncommand=\"{}/service/lkit\"\ncommand_args=\"daemon --config-dir {}/data\"\ncommand_user=\"root\"\n\nstart() {{\n    ebegin \"Starting lkit daemon\"\n    start-stop-daemon --start --make-pidfile --pidfile {}/run/lkit.pid --background --exec ${{command}} -- ${{command_args}}\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping lkit daemon\"\n    start-stop-daemon --stop --pidfile {}/run/lkit.pid\n    eend $?\n}}\n",
-        shell_quote(&canonical_root.display().to_string()),
-        shell_quote(&canonical_root.display().to_string()),
-        shell_quote(&canonical_root.display().to_string()),
-        shell_quote(&canonical_root.display().to_string()),
-    )
+fn render_lkit_script(_canonical_root: &Path) -> String {
+    "#!/sbin/openrc-run\n\nname=\"lkit\"\ndescription=\"lkit resident daemon\"\n\ncommand=\"/usr/local/bin/lkit\"\ncommand_args=\"daemon\"\ncommand_user=\"root\"\n\nstart() {\n    ebegin \"Starting lkit daemon\"\n    start-stop-daemon --start --make-pidfile --pidfile /run/lkit.pid --background --exec ${command} -- ${command_args}\n    eend $?\n}\n\nstop() {\n    ebegin \"Stopping lkit daemon\"\n    start-stop-daemon --stop --pidfile /run/lkit.pid\n    eend $?\n}\n"
+        .to_string()
 }
 
 fn shell_quote(value: &str) -> String {
@@ -252,10 +247,7 @@ fn validate_script(
             "command=\"{}/current/landscape-webserver\"",
             shell_quote(&canonical_root.display().to_string())
         ),
-        ManagedService::LkitDaemon => format!(
-            "command=\"{}/service/lkit\"",
-            shell_quote(&canonical_root.display().to_string())
-        ),
+        ManagedService::LkitDaemon => "command=\"/usr/local/bin/lkit\"".to_string(),
     };
     if !content.contains(&expected_command) {
         return Err(InstallError::Systemd(format!(
@@ -402,7 +394,7 @@ fn rc_update_show(rc_update: &Path, name: &str) -> Result<bool, InstallError> {
 fn main_pid_pattern(service: ManagedService) -> &'static str {
     match service {
         ManagedService::LandscapeRouter => "current/landscape-webserver",
-        ManagedService::LkitDaemon => "daemon --config-dir",
+        ManagedService::LkitDaemon => "lkit daemon",
     }
 }
 
@@ -432,7 +424,9 @@ mod tests {
     fn renders_lkit_script_and_validates() {
         let root = temp_dir("render-lkit");
         let script = render_lkit_script(&root);
-        assert!(script.contains(&format!("{}/service/lkit", root.display())));
+        assert!(script.contains("command=\"/usr/local/bin/lkit\""));
+        assert!(script.contains("command_args=\"daemon\""));
+        assert!(!script.contains(&root.display().to_string()));
         validate_script(&script, ManagedService::LkitDaemon, &root).unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
