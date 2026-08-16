@@ -34,7 +34,10 @@ lkit() {
   local subcommand=$1
   shift
   case $subcommand in
-    install|switch|repair|reconcile|backup|restore|uninstall)
+    uninstall)
+      command /usr/local/bin/lkit uninstall "$@" --non-interactive --test-runtime "$runtime_config"
+      ;;
+    install|switch|repair|reconcile|backup|restore)
       command /usr/local/bin/lkit "$subcommand" "$@" --test-runtime "$runtime_config"
       ;;
     *) command /usr/local/bin/lkit "$subcommand" "$@" ;;
