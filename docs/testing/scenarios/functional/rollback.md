@@ -46,9 +46,10 @@
 
 **自动回滚自身失败时保留可诊断事务、返回 `6` 并提示人工恢复**
 
-- 测试层：CLI/Docker E2E
-- 状态：`待补充`
-- 说明：outcome 和退出码已实现，但缺少故障注入场景；见 [退出码](../../../commands/output-and-exit-codes.md)。
+- 测试层：Rust workflow、Docker E2E
+- 状态：`已覆盖`
+- 证据：[退出码](../../../commands/output-and-exit-codes.md)、`switch_rollback_failure_returns_rollback_failed_and_preserves_diagnostics`（crates/lkit-cli/src/workflows/install/switch_tests.rs）
+- 说明：激活验证失败触发 `.lkb` 回滚后，回滚自身的健康检查也失败（探测恒失败），返回 `SwitchOutcome::RollbackFailed`（命令层映射退出码 `6`）；事务保持 `failed`，`failed-data`、`replaced-release`、解包 `restore` 目录与保护备份保留供人工恢复，`current` 已在健康检查前恢复。
 
 ## RB-07
 

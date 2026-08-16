@@ -55,11 +55,11 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 1. [`PUB-08`](functional/publish.md#pub-08)：生产 RustFS 上的真实 Release 发布后安装 smoke；
 2. [`LKR-01`](functional/lkit-release.md#lkr-01)、[`LKR-04`](functional/lkit-release.md#lkr-04)：首次真实 lkit Release 与公开安装 smoke；
-3. [`RB-06`](functional/rollback.md#rb-06)：自动回滚自身失败及退出码 `6`；
-4. [`REP-04`](functional/repair.md#rep-04)、[`REP-05`](functional/repair.md#rep-05)：repair 失败后的回滚与回滚失败；
-6. [`RST-03`](functional/backup-and-restore.md#rst-03)：restore 激活或健康检查失败后的自动回滚与退出码 `5`；
-7. [`RST-05`](functional/backup-and-restore.md#rst-05)、[`RST-12`](functional/backup-and-restore.md#rst-12)：restore 中断恢复与同版本回滚的 release 恢复；
-8. [`RST-08`](functional/backup-and-restore.md#rst-08) 至 [`RST-11`](functional/backup-and-restore.md#rst-11)：restore 拒绝/失败路径与恢复入口的自动化覆盖。
+3. [`RB-07`](functional/rollback.md#rb-07)：回滚或主机中断后下次调用按事务 phase 幂等恢复的完整 CLI 故障现场；
+4. [`RST-13`](functional/backup-and-restore.md#rst-13) 说明：真实 systemd worker 内的无 tty 阻塞路径 E2E 断言。
+
+恢复类失败路径（RB-06、REP-04、REP-05、RST-03/05/08~12）已由 Rust workflow 故障注入与
+Docker E2E 直接覆盖。
 
 现有 [发布、安装与成功切换](lifecycle.md)、[失败切换与自动回滚](rollback.md)和
 [扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。数据库级完整恢复
