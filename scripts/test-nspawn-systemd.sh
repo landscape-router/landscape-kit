@@ -343,6 +343,22 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
     archive.writestr("static/index.html", "<h1>nspawn fixture</h1>")
 PY
   ln -sfn releases/1.0.0 "$install_root/current"
+  cat >"$install_root/releases/1.0.0/static/lkit-fixture.json" <<'JSON'
+{
+  "schema_version": 1,
+  "scenario": "healthy",
+  "listen_address": "127.0.0.1",
+  "dns_tcp_port": 53,
+  "dns_udp_port": 53,
+  "http_port": 6300,
+  "https_port": 6443,
+  "ready_delay_ms": 750,
+  "exit_after_ms": 30000,
+  "start_exit_code": 1,
+  "export_version": "1.0.0",
+  "export_content": "version = \"1.0.0\"\n"
+}
+JSON
   printf 'version = "1.0.0"\nadmin_user = "admin"\nadmin_pass = "Secret123"\n' \
     >"$install_root/data/landscape_init.toml"
   chmod 0600 "$install_root/data/landscape_init.toml"
