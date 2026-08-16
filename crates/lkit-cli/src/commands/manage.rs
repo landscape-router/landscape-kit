@@ -81,6 +81,24 @@ pub(crate) fn repository_override(
 }
 
 pub(crate) async fn run_request(args: &InstallRequest) -> ExitCode {
+    // 单实例守卫:install 是唯一允许在已有状态前解析根的安装命令,但任何有效安装
+    // 状态都会拒绝再安装(无论 --install-dir),必须先卸载。损坏状态直接报错。
+    if args.mode == RequestMode::Install {
+        match state::read_state() {
+            Ok(Some(_)) => {
+                eprintln!(
+                    "install: {}",
+                    crate::tr!(crate::keys::MANAGE_SINGLE_INSTANCE_REFUSED)
+                );
+                return ExitCode::from(2);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("install: {error}");
+                return exit_code(&error);
+            }
+        }
+    }
     let runtime = match resolve_runtime(args) {
         Ok(runtime) => runtime,
         Err(error) => {

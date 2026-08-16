@@ -1,4 +1,5 @@
 pub(crate) const MANAGE_INSTALLATION_ALREADY_EXISTS: &str = "manage.installation_already_exists";
+pub(crate) const MANAGE_SINGLE_INSTANCE_REFUSED: &str = "manage.single_instance_refused";
 pub(crate) const MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION: &str =
     "manage.command_requires_existing_installation";
 pub(crate) const MANAGE_FORCE_CANNOT_BE_COMBINED: &str = "manage.force_cannot_be_combined";

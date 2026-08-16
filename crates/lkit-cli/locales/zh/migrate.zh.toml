@@ -4,6 +4,7 @@ migrate.packing_static_locally = "警告：本地缺少 static.zip 且发布仓�
 migrate.committed = "迁移完成：已接管版本 %{version}，迁移备份 %{backup_id} 保留在 backups/ 下"
 migrate.legacy_deployment_left = "旧部署目录 %{source} 未做任何修改（其服务现已停止）；确认不再需要后请自行清理"
 migrate.requires_fresh_install_root = "安装根目录已存在已提交的安装；migrate 需要全新的目录"
+migrate.single_instance_refused = "lkit 地盘已存在已提交的安装；请先运行 `lkit uninstall`"
 migrate.failed_rolled_back = "迁移版本 %{version} 失败；已自动恢复旧实例"
 migrate.failed_rollback_failed = "迁移版本 %{version} 失败，且无法自动恢复旧实例：%{reason}"
 migrate.rollback_failed = "自动回滚失败：%{rollback_error}"

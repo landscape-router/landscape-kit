@@ -4,6 +4,7 @@ migrate.packing_static_locally = "warning: static.zip is missing locally and the
 migrate.committed = "migrated to version %{version}; migration backup %{backup_id} is preserved under backups/"
 migrate.legacy_deployment_left = "the old deployment at %{source} was left untouched (its service is now stopped); remove it manually once you no longer need it"
 migrate.requires_fresh_install_root = "the install root already has a committed installation; migrate requires a fresh directory"
+migrate.single_instance_refused = "the lkit territory already has a committed installation; run `lkit uninstall` first"
 migrate.failed_rolled_back = "migration of %{version} failed; the old instance was restored automatically"
 migrate.failed_rollback_failed = "migration of %{version} failed and the old instance could not be restored automatically: %{reason}"
 migrate.rollback_failed = "automatic rollback failed: %{rollback_error}"

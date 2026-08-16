@@ -29,6 +29,22 @@ pub struct Migrate {
 }
 
 pub async fn run(args: &Migrate) -> ExitCode {
+    // 单实例守卫:lkit 地盘已有有效安装状态时拒绝迁移(无论 --install-dir),
+    // 必须先卸载;损坏状态直接报错。
+    match state::read_state() {
+        Ok(Some(_)) => {
+            eprintln!(
+                "migrate: {}",
+                crate::tr!(crate::keys::MIGRATE_SINGLE_INSTANCE_REFUSED)
+            );
+            return ExitCode::from(2);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("migrate: {error}");
+            return exit_code(&error);
+        }
+    }
     let runtime = match resolve_runtime(args) {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -215,4 +231,53 @@ fn resolve_runtime(args: &Migrate) -> Result<InstallRuntime, plan::InstallError>
 #[cfg(not(feature = "test-support"))]
 fn resolve_runtime(_args: &Migrate) -> Result<InstallRuntime, plan::InstallError> {
     Ok(InstallRuntime::production())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::deployment::layout;
+
+    fn migrate_args() -> Migrate {
+        Migrate {
+            from: "/tmp/legacy-landscape".into(),
+            repository: None,
+            yes: true,
+            install_dir: None,
+            console_confirmed: false,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        }
+    }
+
+    /// 建立隔离 lkit 地盘,写入指定状态内容,返回 (守卫, 地盘)。
+    fn territory_with_state(name: &str, bytes: &[u8]) -> (layout::TerritoryOverride, PathBuf) {
+        let territory = std::env::temp_dir().join(format!(
+            "lkit-migrate-command-test-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(territory.join("state")).unwrap();
+        let guard = layout::test_territory(&territory);
+        std::fs::write(layout::territory_state_path(), bytes).unwrap();
+        (guard, territory)
+    }
+
+    fn valid_state_json() -> &'static [u8] {
+        br#"{"schema_version":1,"layout_version":2,"install_root":"/opt/landscape","canonical_install_root":"/opt/landscape","active_version":"0.19.2","assets":{"webserver":{"architecture":"x86_64","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":10},"static_archive":{"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":20}},"initialization":{"status":"complete","lock_present":true,"initialized_at":"2026-08-01T16:30:00Z"},"service":{"manager":"systemd","registered":true,"enabled":true,"verified":true,"definition_path":"service/landscape-router.service","definition_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"last_transaction_id":null,"committed_at":"2026-08-01T16:30:00Z"}"#
+    }
+
+    #[tokio::test]
+    async fn refuses_migrate_when_an_installation_state_exists() {
+        let (_guard, _territory) = territory_with_state("single-instance", valid_state_json());
+        let args = migrate_args();
+        assert_eq!(run(&args).await, ExitCode::from(2));
+    }
+
+    #[tokio::test]
+    async fn refuses_migrate_when_the_installation_state_is_corrupted() {
+        let (_guard, _territory) = territory_with_state("corrupted-state", b"not json");
+        let args = migrate_args();
+        assert_eq!(run(&args).await, ExitCode::FAILURE);
+    }
 }

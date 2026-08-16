@@ -5,6 +5,7 @@ pub(crate) const MIGRATE_PACKING_STATIC_LOCALLY: &str = "migrate.packing_static_
 pub(crate) const MIGRATE_COMMITTED: &str = "migrate.committed";
 pub(crate) const MIGRATE_LEGACY_DEPLOYMENT_LEFT: &str = "migrate.legacy_deployment_left";
 pub(crate) const MIGRATE_REQUIRES_FRESH_INSTALL_ROOT: &str = "migrate.requires_fresh_install_root";
+pub(crate) const MIGRATE_SINGLE_INSTANCE_REFUSED: &str = "migrate.single_instance_refused";
 pub(crate) const MIGRATE_FAILED_ROLLED_BACK: &str = "migrate.failed_rolled_back";
 pub(crate) const MIGRATE_FAILED_ROLLBACK_FAILED: &str = "migrate.failed_rollback_failed";
 pub(crate) const MIGRATE_ROLLBACK_FAILED: &str = "migrate.rollback_failed";
