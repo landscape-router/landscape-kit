@@ -387,9 +387,13 @@ with open(path, "w", encoding="utf-8") as stream:
     stream.write("\n")
 PY
   chmod 0600 "$rootfs/root/.lkit/state/install-state.json"
+  echo "   restore: daemon-reload"
   machine_shell "systemctl daemon-reload"
+  echo "   restore: enable"
   machine_shell "systemctl enable --quiet landscape-router.service"
+  echo "   restore: start"
   machine_shell "systemctl start landscape-router.service"
+  echo "   restore: is-active"
   machine_shell "systemctl is-active --quiet landscape-router.service"
 }
 
