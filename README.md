@@ -1,6 +1,6 @@
 # Landscape Kit
 
-`lkit` is an interactive terminal console and command-line tool for managing a [Landscape](https://landscape.canonical.com/) instance: first-time installation, version switching, repair, state reconciliation, and service registration.
+`lkit` is an interactive terminal console and command-line tool for managing a [Landscape](https://github.com/ThisSeanZhang/landscape) instance: first-time installation, version switching, repair, state reconciliation, and service registration.
 
 The repository is a Cargo workspace made up of four crates:
 

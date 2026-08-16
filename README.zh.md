@@ -1,6 +1,6 @@
 # Landscape Kit
 
-`lkit` 是用于管理 [Landscape](https://landscape.canonical.com/) 实例的交互终端控制台和命令行工具：支持首次安装、版本切换、修复、状态协调与服务注册。
+`lkit` 是用于管理 [Landscape](https://github.com/ThisSeanZhang/landscape) 实例的交互终端控制台和命令行工具：支持首次安装、版本切换、修复、状态协调与服务注册。
 
 本仓库是一个 Cargo workspace，包含四个 crate：
 
