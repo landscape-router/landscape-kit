@@ -417,16 +417,7 @@ PY
   echo "   restore: wait-active"
   machine_shell 'for i in $(seq 1 100); do systemctl is-active --quiet landscape-router.service && break; sleep 0.1; done; systemctl is-active --quiet landscape-router.service'
   echo "   restore: wait-ready"
-  machine_shell 'python3 -c "
-import socket
-for _ in range(200):
-    try:
-        with socket.create_connection(("127.0.0.1", 6443), timeout=0.2):
-            raise SystemExit(0)
-    except OSError:
-        pass
-    import time; time.sleep(0.1)
-raise SystemExit(1)"'
+  machine_shell 'for i in $(seq 1 200); do (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null && break; sleep 0.1; done; (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null || exit 1'
 }
 
 # S-1 委托提交与结果回收:CLI 写请求、daemon 认领、子进程完成真实卸载、结果回。
