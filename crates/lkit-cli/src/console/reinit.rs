@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -170,9 +168,7 @@ impl ConsoleApp {
 
     /// 确认层 Enter：构建带 `--console-confirmed` 与 `--yes` 的结构化 `Reinit` 请求。
     fn reinit_action(&self) -> ConsoleAction {
-        let install_dir = PathBuf::from(&self.install.install_dir);
         let command = Commands::Reinit(crate::commands::reinit::Reinit {
-            install_dir: Some(install_dir.clone()),
             admin_user: Some(self.reinit.admin_user.clone()),
             password_file: None,
             interactive_password: Some(self.reinit.password.clone()),
@@ -188,8 +184,6 @@ impl ConsoleApp {
             "reinit".into(),
             "--yes".into(),
             "--console-confirmed".into(),
-            "--install-dir".into(),
-            install_dir.display().to_string(),
             "--admin-user".into(),
             self.reinit.admin_user.clone(),
         ];

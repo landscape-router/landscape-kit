@@ -10,6 +10,7 @@ use super::repository::Release;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateServiceManager};
 use super::transaction::Phase;
+use crate::deployment::layout;
 
 /// 版本切换参数。
 pub(crate) struct SwitchArgs {
@@ -67,9 +68,9 @@ pub(crate) async fn switch_version<P: DocsProbe>(
             )));
         }
         std::cmp::Ordering::Equal => {
-            return Err(InstallError::ParameterUsage(
-                crate::tr!(crate::keys::SWITCH_TARGET_VERSION_ALREADY_ACTIVE).into(),
-            ));
+            return Err(InstallError::ParameterUsage(crate::tr!(
+                crate::keys::SWITCH_TARGET_VERSION_ALREADY_ACTIVE
+            )));
         }
         std::cmp::Ordering::Greater => {}
     }
@@ -128,7 +129,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 .join("static.zip");
             let geo_tmp = root.canonical.join("data/geo_tmp");
             let backup_ref = super::backup::create_backup(
-                &root.canonical.join("backups"),
+                &layout::territory_backups_dir(),
                 &from_version,
                 architecture.key(),
                 &webserver,
@@ -145,9 +146,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
         let unit_sha = if is_systemd {
             transaction.systemd_before =
                 Some(capture_before(manager, ManagedService::LandscapeRouter)?);
-            let backup_dir = root
-                .canonical
-                .join("backups")
+            let backup_dir = layout::territory_backups_dir()
                 .join(&transaction.transaction_id)
                 .join("host/resolv.conf");
             let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
@@ -316,7 +315,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                             .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
                             .and_then(|()| {
                                 if let Some(backup_path) = &transaction.resolv_conf_backup {
-                                    let backup_dir = root.canonical.join(backup_path);
+                                    let backup_dir = layout::territory_relative(backup_path);
                                     super::resolv::restore(manager.resolv_conf(), &backup_dir)
                                 } else {
                                     Ok(())

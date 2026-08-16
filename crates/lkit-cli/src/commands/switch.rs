@@ -1,3 +1,5 @@
+#[cfg(feature = "test-support")]
+#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -11,8 +13,6 @@ pub struct Switch {
     pub version: String,
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[arg(long)]
     pub accept_service_change: bool,
     /// Allow switching while the managed service is stopped; no .lkb backup is
@@ -29,7 +29,7 @@ pub async fn run(args: &Switch) -> ExitCode {
         mode: RequestMode::Switch,
         version: Some(args.version.clone()),
         repository: super::manage::repository_override(&args.repository),
-        install_dir: args.install_dir.clone(),
+        install_dir: None,
         admin_user: None,
         password_file: None,
         interactive_password: None,

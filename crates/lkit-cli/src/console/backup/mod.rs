@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::backup::lkb::{BackupMetadata, BackupProgress};
-use crate::deployment::{lock, plan, root};
+use crate::deployment::lock;
 
 pub(crate) use self::render::{
     render_backup, render_backup_create_dialog, render_backup_create_progress,
@@ -75,15 +75,14 @@ impl Default for BackupPanel {
 }
 
 impl BackupPanel {
-    pub(crate) fn start(&mut self, install_dir: &str) {
+    pub(crate) fn start(&mut self) {
         if matches!(self.state, BackupListState::Running(_)) {
             return;
         }
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        let install_dir = install_dir.to_string();
         std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || load_backups(&install_dir));
+            let result = crate::i18n::with_language(language, load_backups);
             let _ = sender.send(result);
         });
         self.state = BackupListState::Running(receiver);
@@ -101,23 +100,19 @@ impl BackupPanel {
 
     /// 在后台线程执行完整创建流程（与 CLI 共用 `create_manual_backup`），
     /// 进度经 channel 回传；结束后由 `poll` 刷新列表并显示结果。
-    pub(crate) fn start_create(&mut self, install_dir: &str, remark: &str) {
+    pub(crate) fn start_create(&mut self, remark: &str) {
         if self.create.is_some() {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        let install_dir = install_dir.to_string();
         let remark = remark.to_string();
         std::thread::spawn(move || {
             let result = (|| {
-                let requested = PathBuf::from(&install_dir);
-                let selected = plan::select_install_root(
-                    Some(&requested),
-                    std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-                )
-                .map_err(|error| error.to_string())?;
-                let root =
-                    root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+                let root = crate::deployment::state::discover_landscape_root()
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| {
+                        crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION).to_string()
+                    })?;
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -153,9 +148,9 @@ impl BackupPanel {
                 Ok(Err(error)) => self.state = BackupListState::Failed(error),
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
-                    self.state = BackupListState::Failed(
-                        crate::tr!(crate::keys::CONSOLE_CHECK_WORKER_STOPPED).into(),
-                    );
+                    self.state = BackupListState::Failed(crate::tr!(
+                        crate::keys::CONSOLE_CHECK_WORKER_STOPPED
+                    ));
                 }
             },
             _ => {}
@@ -173,7 +168,7 @@ impl BackupPanel {
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     self.verify = BackupVerifyState::Idle;
-                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_WORKER_STOPPED).into();
+                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_WORKER_STOPPED);
                 }
             }
         }
@@ -196,8 +191,7 @@ impl BackupPanel {
                             *notice = crate::tr!(
                                 crate::keys::CONSOLE_BACKUP_CREATED,
                                 backup_id = metadata.backup_id
-                            )
-                            .into();
+                            );
                         }
                         Err(error) => *notice = error,
                     }
@@ -205,7 +199,7 @@ impl BackupPanel {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.create = None;
-                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_WORKER_STOPPED).into();
+                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_WORKER_STOPPED);
                 }
             }
         }
@@ -233,16 +227,14 @@ impl BackupPanel {
 }
 
 /// 与 CLI `backup list` 相同的解析与完整校验。
-fn load_backups(install_dir: &str) -> Result<Vec<BackupEntry>, String> {
-    let requested = PathBuf::from(install_dir);
-    let selected = plan::select_install_root(
-        Some(&requested),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )
-    .map_err(|error| error.to_string())?;
-    let normalized = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+fn load_backups() -> Result<Vec<BackupEntry>, String> {
+    let root = crate::deployment::state::discover_landscape_root()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION).to_string()
+        })?;
     let rows = crate::commands::backup::list_backups_with(
-        &normalized,
+        &root,
         crate::commands::backup::BackupListCheck::Metadata,
     )
     .map_err(|error| error.to_string())?;
@@ -253,14 +245,12 @@ fn load_backups(install_dir: &str) -> Result<Vec<BackupEntry>, String> {
 }
 
 /// 与 CLI `backup delete` 相同的根目录解析、安装锁与文件删除。
-pub(super) fn delete_backup_via_console(install_dir: &str, backup_id: &str) -> Result<(), String> {
-    let requested = PathBuf::from(install_dir);
-    let selected = plan::select_install_root(
-        Some(&requested),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )
-    .map_err(|error| error.to_string())?;
-    let root = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
-    let _lock = lock::acquire_install_lock(&root).map_err(|error| error.to_string())?;
+pub(super) fn delete_backup_via_console(backup_id: &str) -> Result<(), String> {
+    let root = crate::deployment::state::discover_landscape_root()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION).to_string()
+        })?;
+    let _lock = lock::acquire_install_lock().map_err(|error| error.to_string())?;
     crate::commands::backup::delete_backup(&root, backup_id).map_err(|error| error.to_string())
 }

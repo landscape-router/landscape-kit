@@ -10,10 +10,11 @@ use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateArchitecture, StateServiceManager};
 use super::transaction::{Phase, TransactionFile};
+use crate::deployment::layout;
 use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 pub(crate) use self::cleanup::{cleanup_runtime_dirs, host_network_services_masked};
-use self::cleanup::{deactivate, purge_install_root, remove_managed_contents};
+use self::cleanup::{deactivate, remove_managed_contents};
 
 /// 网络接管可能停止/disable/mask 的宿主网络服务,用于卸载前的接管特征警告。
 const NETWORK_SERVICE_UNITS: [&str; 4] = [
@@ -27,12 +28,10 @@ const NETWORK_SERVICE_UNITS: [&str; 4] = [
 pub(crate) struct UninstallArgs {
     /// 非交互模式必须显式 `--yes`,否则返回参数错误。
     pub yes: bool,
-    /// 允许跳过保护 `.lkb`;`--purge-root` 必须同时给出。
+    /// 允许跳过保护 `.lkb`。
     pub allow_no_backup: bool,
     /// 保留 `data/` 只卸载服务与程序。
     pub keep_data: bool,
-    /// 整树删除安装根目录(含 `config.toml` 与残留文件)。
-    pub purge_root: bool,
     /// 交互控制台已确认卸载计划,跳过 `/dev/tty` 二次确认。
     pub console_confirmed: bool,
 }
@@ -98,9 +97,7 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             manager,
             ManagedService::LandscapeRouter,
         )?);
-        let backup_dir = root
-            .canonical
-            .join("backups")
+        let backup_dir = layout::territory_backups_dir()
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
         let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
@@ -144,11 +141,7 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
     match result {
         Ok(()) => {
             super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
-            // 事务已提交,日志不再需要;清理剩余运行态目录后再整树删除(可选)。
             cleanup_runtime_dirs(root)?;
-            if args.purge_root {
-                purge_install_root(root)?;
-            }
             Ok(UninstallOutcome::Committed {
                 version,
                 backup_id: transaction
@@ -180,23 +173,12 @@ pub(crate) fn complete_uninstall(
             yes: true,
             allow_no_backup: transaction.backup.is_none(),
             keep_data: false,
-            purge_root: false,
             console_confirmed: true,
         },
     )
 }
 
-fn validate_args(args: &UninstallArgs) -> Result<(), InstallError> {
-    if args.purge_root && args.keep_data {
-        return Err(InstallError::ParameterUsage(
-            "--purge-root and --keep-data cannot be combined".into(),
-        ));
-    }
-    if args.purge_root && !args.allow_no_backup {
-        return Err(InstallError::ParameterUsage(
-            "--purge-root deletes the protection backup together with the install root; --allow-no-backup is required".into(),
-        ));
-    }
+fn validate_args(_args: &UninstallArgs) -> Result<(), InstallError> {
     Ok(())
 }
 
@@ -281,7 +263,7 @@ async fn create_protection_backup<P: DocsProbe>(
         .join("static.zip");
     let geo_tmp = root.canonical.join("data/geo_tmp");
     let backup_ref = backup::create_backup(
-        &root.canonical.join("backups"),
+        &layout::territory_backups_dir(),
         &version,
         architecture,
         &webserver,
@@ -485,56 +467,13 @@ esac
         }
     }
 
-    fn args(yes: bool, allow_no_backup: bool, keep_data: bool, purge_root: bool) -> UninstallArgs {
+    fn args(yes: bool, allow_no_backup: bool, keep_data: bool) -> UninstallArgs {
         UninstallArgs {
             yes,
             allow_no_backup,
             keep_data,
-            purge_root,
             console_confirmed: false,
         }
-    }
-
-    #[tokio::test]
-    async fn purge_root_requires_allow_no_backup() {
-        let _guard = interactive_guard().await;
-        crate::interaction::interactive::configure(false);
-        let root = temp_root("purge-param");
-        let install_root = InstallRoot {
-            install_root: root.clone(),
-            canonical: root.clone(),
-        };
-        let state = install_state(&install_root, "1.2.3");
-        let server = TestServer::start(|_| TestResponse::status(500, "boom", Vec::new()));
-        assert!(matches!(
-            uninstall_installation(
-                &install_root,
-                &state,
-                &fake_systemd(&root.join("fake-systemd")),
-                &args(true, false, false, true),
-                &options_for(&server, &none_health()),
-            )
-            .await,
-            Err(InstallError::ParameterUsage(_))
-        ));
-        assert!(matches!(
-            uninstall_installation(
-                &install_root,
-                &state,
-                &fake_systemd(&root.join("fake-systemd")),
-                &args(true, true, true, true),
-                &options_for(&server, &none_health()),
-            )
-            .await,
-            Err(InstallError::ParameterUsage(_))
-        ));
-        assert!(
-            super::super::transaction::find_unfinished(&install_root)
-                .unwrap()
-                .is_none(),
-            "parameter errors must not create a transaction"
-        );
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
@@ -557,7 +496,7 @@ esac
                 &install_root,
                 &state,
                 &fake_systemd(&root.join("fake-systemd")),
-                &args(false, false, false, false),
+                &args(false, false, false),
                 &options_for(&server, &none_health()),
             )
             .await,
@@ -596,7 +535,7 @@ esac
                 &install_root,
                 &state,
                 &fake_systemd(&root.join("fake-systemd")),
-                &args(true, false, false, false),
+                &args(true, false, false),
                 &options_for(&server, &none_health()),
             )
             .await
@@ -637,7 +576,7 @@ esac
                 &install_root,
                 &state,
                 &fake_systemd(&root.join("fake-systemd")),
-                &args(true, true, false, false),
+                &args(true, true, false),
                 &options_for(&server, &none_health()),
             )
             .await,

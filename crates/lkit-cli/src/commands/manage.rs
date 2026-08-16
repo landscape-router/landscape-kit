@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::ValueEnum;
-
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, plan, root, state, transaction};
 use crate::interaction::credentials::{self, Credentials};
@@ -162,6 +160,17 @@ fn run_force(args: &InstallRequest) -> ExitCode {
             return exit_code(&error);
         }
     };
+    let _lock = match lock::acquire_install_lock() {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("install: {error}");
+            return exit_code(&error);
+        }
+    };
+    if let Err(error) = root::verify_landscape_root_clean(&normalized) {
+        eprintln!("install: {error}");
+        return exit_code(&error);
+    }
     eprintln!(
         "install: {} {}",
         crate::tr!(crate::keys::MANAGE_INSTALL_ROOT_IS),
@@ -600,12 +609,24 @@ async fn execute(
     if let Some(user) = &args.admin_user {
         plan::validate_admin_user(user)?;
     }
-    let install_root = plan::select_install_root(
-        args.install_dir.as_deref(),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )?;
-    let normalized = root::normalize_install_root(&install_root)?;
-    let lock = lock::acquire_install_lock(&normalized)?;
+    let normalized = match args.install_dir.as_deref() {
+        Some(install_dir) => {
+            let selected = plan::select_install_root(
+                Some(install_dir),
+                std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+            )?;
+            root::normalize_install_root(&selected)?
+        }
+        None => match state::discover_landscape_root()? {
+            Some(root) => root,
+            None => {
+                return Err(plan::InstallError::ParameterUsage(
+                    "no installed landscape found; run `lkit install` first".into(),
+                ));
+            }
+        },
+    };
+    let lock = lock::acquire_install_lock()?;
     if let Some(transaction) = transaction::find_unfinished(&normalized)? {
         let health = runtime.health_options()?;
         if transaction.network_takeover.is_some()
@@ -665,9 +686,9 @@ async fn execute(
     )?;
     let repository = match (&args.repository, presence) {
         (Some(choice), _) => Some(choice.clone()),
-        (None, plan::StatePresence::FirstInstall) if args.mode == RequestMode::Install => Some(
-            crate::deployment::config::resolve_default_choice(&normalized)?,
-        ),
+        (None, plan::StatePresence::FirstInstall) if args.mode == RequestMode::Install => {
+            Some(crate::deployment::config::resolve_default_choice()?)
+        }
         (None, plan::StatePresence::FirstInstall) | (None, plan::StatePresence::Installed) => None,
     };
     let plan = plan::build_plan(normalized, target, repository, presence)?;
@@ -721,9 +742,9 @@ fn check_host_conflicts(
 
 fn check_environment(runtime: &InstallRuntime) -> Result<(), plan::InstallError> {
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
-        return Err(plan::InstallError::UnsupportedPlatform(
-            crate::tr!(crate::keys::MANAGE_MUST_RUN_AS_ROOT).into(),
-        ));
+        return Err(plan::InstallError::UnsupportedPlatform(crate::tr!(
+            crate::keys::MANAGE_MUST_RUN_AS_ROOT
+        )));
     }
     Ok(())
 }

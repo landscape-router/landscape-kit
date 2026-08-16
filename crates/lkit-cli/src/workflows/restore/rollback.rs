@@ -12,6 +12,7 @@ use super::super::rollback as rollback_util;
 use super::super::root::InstallRoot;
 use super::super::state::{self, StateServiceManager};
 use super::super::transaction::{Phase, TransactionFile, mark_phase};
+use crate::deployment::layout;
 
 /// restore 失败回滚:优先用事务目录中的旧 `data/`、previous-state、
 /// `previous_current`、`systemd_before` 和 `resolv_conf_backup` 恢复原安装,
@@ -60,15 +61,12 @@ async fn rollback_restore_inner<P: DocsProbe>(
         let unit_origin = root.canonical.join("service/landscape-router.service");
         manager.restore_registration(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
-            let backup_dir = root.canonical.join(backup_path);
+            let backup_dir = layout::territory_relative(backup_path);
             resolv::restore(manager.resolv_conf(), &backup_dir)?;
         }
     }
 
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     if previous_data.exists() || data.exists() {
@@ -136,10 +134,7 @@ fn restore_replaced_release_if_same_version(
     if transaction.previous_current.as_deref() != transaction.target_release.as_deref() {
         return Ok(());
     }
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     let replaced = tx_dir.join("replaced-release");
     if !replaced.is_dir() {
         return Ok(());

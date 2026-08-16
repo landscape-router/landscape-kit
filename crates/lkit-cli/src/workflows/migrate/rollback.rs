@@ -5,6 +5,7 @@ use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 use super::super::systemd::{self, Systemd};
 use super::super::transaction::{HostServiceBefore, Phase, TransactionFile};
+use crate::deployment::layout;
 
 /// 迁移失败回滚:恢复旧实例并清理新根,使安装根回到迁移前状态。
 /// 顺序固定为:注销并停止新受管 unit → 恢复 `/etc/resolv.conf` → 恢复旧 unit
@@ -41,7 +42,7 @@ fn rollback_migrate_inner(
 /// enabled/active 状态恢复(与原位 mask 场景共用同一恢复入口)。
 /// 前台进程场景(`legacy_unit` 为 None)不执行任何操作。
 pub(crate) fn restore_legacy_unit(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     transaction: &TransactionFile,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
@@ -56,7 +57,10 @@ pub(crate) fn restore_legacy_unit(
         let file_path = before.file_path.as_deref().ok_or_else(|| {
             InstallError::CorruptedTransaction("moved legacy unit is missing file_path".into())
         })?;
-        move_file(&root.canonical.join(backup_path), Path::new(file_path))?;
+        move_file(
+            &layout::territory_relative(backup_path),
+            Path::new(file_path),
+        )?;
         systemd::daemon_reload(systemd)?;
     }
     systemd::restore_host_service(

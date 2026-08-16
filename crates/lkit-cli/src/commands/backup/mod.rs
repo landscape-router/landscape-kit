@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
@@ -48,8 +48,6 @@ pub struct BackupCreate {
     /// 将备份原子写入指定新文件(不得已存在)
     #[arg(long, value_name = "PATH")]
     pub output: Option<PathBuf>,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -57,8 +55,6 @@ pub struct BackupCreate {
 
 #[derive(Debug, Args)]
 pub struct BackupList {
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -72,8 +68,6 @@ pub struct BackupShow {
     /// 外部复制的 `.lkb` 文件路径
     #[arg(long, value_name = "PATH", conflicts_with = "backup")]
     pub file: Option<PathBuf>,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -87,8 +81,6 @@ pub struct BackupVerify {
     /// 外部复制的 `.lkb` 文件路径
     #[arg(long, value_name = "PATH", conflicts_with = "backup")]
     pub file: Option<PathBuf>,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -102,8 +94,6 @@ pub struct BackupDelete {
     /// 非交互模式确认删除
     #[arg(long)]
     pub yes: bool,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
 }
 
 pub async fn run(args: &Backup) -> ExitCode {
@@ -116,12 +106,10 @@ pub async fn run(args: &Backup) -> ExitCode {
     }
 }
 
-fn resolve_root(install_dir: Option<&Path>) -> Result<InstallRoot, plan::InstallError> {
-    let install_root = plan::select_install_root(
-        install_dir,
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )?;
-    crate::deployment::root::normalize_install_root(&install_root)
+/// 从 lkit 地盘状态发现 landscape 根;状态缺失返回 `Ok(None)`,
+/// 由各子命令按现有"未安装"参数错误路径处理。
+fn discover_root() -> Result<Option<InstallRoot>, plan::InstallError> {
+    crate::deployment::state::discover_landscape_root()
 }
 
 pub(crate) fn architecture_key(
@@ -161,6 +149,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    /// 建立隔离测试现场:返回 (守卫, 地盘, landscape 根)。
+    fn setup(
+        name: &str,
+    ) -> (
+        crate::deployment::layout::TerritoryOverride,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let temp = temp_dir(name);
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let dir = temp.join("install");
+        std::fs::create_dir_all(&dir).unwrap();
+        (guard, territory, dir)
     }
 
     use crate::deployment::state::{
@@ -290,9 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_writes_manual_backup_without_any_service_manager() {
-        let temp = temp_dir("create-ok");
-        let dir = temp.join("install");
-        std::fs::create_dir_all(&dir).unwrap();
+        let (_guard, territory, dir) = setup("create-ok");
         let state = fake_install(&dir);
         crate::deployment::state::write_state(
             &crate::deployment::root::InstallRoot {
@@ -309,15 +312,14 @@ mod tests {
         )
         .unwrap();
         let server = export_ok_server("1.2.3");
-        let runtime = runtime_file(&temp, &server.base);
+        let runtime = runtime_file(territory.parent().unwrap(), &server.base);
         let args = BackupCreate {
             remark: Some("manual create".into()),
             output: None,
-            install_dir: Some(dir.clone()),
             test_runtime: Some(runtime),
         };
         assert_eq!(run_create(&args).await, ExitCode::SUCCESS);
-        let backups = dir.join("backups");
+        let backups = territory.join("backups");
         let mut lkb = std::fs::read_dir(&backups)
             .unwrap()
             .filter_map(Result::ok)
@@ -329,7 +331,7 @@ mod tests {
         assert!(!metadata.auto, "manual backup must record auto: false");
         assert_eq!(metadata.remark, "manual create");
         assert_eq!(metadata.landscape_version, "1.2.3");
-        let extracted = temp.join("extracted");
+        let extracted = territory.parent().unwrap().join("extracted");
         crate::backup::lkb::extract_lkb(&bytes, &extracted).unwrap();
         assert_eq!(
             std::fs::read_to_string(extracted.join("landscape_init.toml")).unwrap(),
@@ -340,15 +342,13 @@ mod tests {
             std::fs::read(extracted.join("landscape-webserver")).unwrap(),
             b"webserver payload 1.2.3"
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[tokio::test]
     async fn create_export_failure_leaves_no_final_file() {
         use crate::release::repository::test_server::{TestResponse, TestServer};
-        let temp = temp_dir("create-fail");
-        let dir = temp.join("install");
-        std::fs::create_dir_all(&dir).unwrap();
+        let (_guard, territory, dir) = setup("create-fail");
         let state = fake_install(&dir);
         crate::deployment::state::write_state(
             &crate::deployment::root::InstallRoot {
@@ -365,19 +365,18 @@ mod tests {
         )
         .unwrap();
         let server = TestServer::start(|_| TestResponse::status(500, "boom", Vec::new()));
-        let runtime = runtime_file(&temp, &server.base);
+        let runtime = runtime_file(territory.parent().unwrap(), &server.base);
         let args = BackupCreate {
             remark: None,
             output: None,
-            install_dir: Some(dir.clone()),
             test_runtime: Some(runtime),
         };
         assert_eq!(run_create(&args).await, ExitCode::FAILURE);
-        let backups = dir.join("backups");
+        let backups = territory.join("backups");
         assert!(
             !backups.exists() || std::fs::read_dir(&backups).unwrap().count() == 0,
             "export failure must not leave any backup files behind"
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }

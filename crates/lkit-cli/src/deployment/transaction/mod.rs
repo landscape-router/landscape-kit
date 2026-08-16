@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::layout;
 use super::plan::InstallError;
 use super::root::InstallRoot;
 use crate::service::manager::ServiceManager;
@@ -443,8 +444,13 @@ pub(crate) fn begin(root: &InstallRoot, transaction: &TransactionFile) -> Result
             "another unfinished transaction already exists".into(),
         ));
     }
-    std::fs::create_dir_all(root.canonical.join("logs")).map_err(InstallError::Io)?;
-    let log_path = root.canonical.join(&transaction.log_path);
+    let log_path = layout::territory_relative(&transaction.log_path);
+    std::fs::create_dir_all(
+        log_path
+            .parent()
+            .expect("transaction log path has a parent directory"),
+    )
+    .map_err(InstallError::Io)?;
     let mut log = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -482,7 +488,7 @@ pub(crate) fn persist(
 }
 
 pub(crate) fn find_unfinished(root: &InstallRoot) -> Result<Option<TransactionFile>, InstallError> {
-    let dir = root.canonical.join("transactions");
+    let dir = layout::territory_transactions_dir();
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -507,7 +513,7 @@ pub(crate) fn find_committed_operation(
     root: &InstallRoot,
     operation: Operation,
 ) -> Result<Option<TransactionFile>, InstallError> {
-    let dir = root.canonical.join("transactions");
+    let dir = layout::territory_transactions_dir();
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -543,12 +549,25 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deployment::layout;
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("lkit-tx-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+    /// 建立隔离测试现场:返回 (守卫, 地盘, landscape 根)。
+    fn setup(
+        name: &str,
+    ) -> (
+        layout::TerritoryOverride,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let temp = std::env::temp_dir().join(format!("lkit-tx-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = layout::test_territory(&territory);
+        let root = temp.join("landscape");
         std::fs::create_dir_all(&root).unwrap();
-        root
+        (guard, territory, root)
     }
 
     fn new_root(path: &std::path::Path) -> InstallRoot {
@@ -564,8 +583,8 @@ mod tests {
 
     #[test]
     fn creates_valid_install_transaction() {
-        let temp = temp_root("valid");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("valid");
+        let root = new_root(&root);
         let transaction = install_transaction(&root);
         assert_eq!(transaction.operation, Operation::Install);
         assert_eq!(transaction.phase, Phase::Preparing);
@@ -575,18 +594,19 @@ mod tests {
             Some("releases/1.2.3")
         );
         assert!(validate_transaction(&transaction).is_ok());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn begins_and_commits_transaction() {
-        let temp = temp_root("lifecycle");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("lifecycle");
+        let root = new_root(&root);
         let transaction = install_transaction(&root);
         begin(&root, &transaction).unwrap();
-        assert!(temp.join(&transaction.log_path).is_file());
+        assert!(territory.join(&transaction.log_path).is_file());
         assert!(
-            temp.join("transactions")
+            territory
+                .join("transactions")
                 .join(format!("{}.json", transaction.transaction_id))
                 .is_file()
         );
@@ -595,26 +615,26 @@ mod tests {
         mark_phase(&root, &transaction, Phase::Activating).unwrap();
         mark_phase(&root, &transaction, Phase::Committed).unwrap();
         assert!(find_unfinished(&root).unwrap().is_none());
-        let log = std::fs::read_to_string(temp.join(&transaction.log_path)).unwrap();
+        let log = std::fs::read_to_string(territory.join(&transaction.log_path)).unwrap();
         assert!(log.contains("phase: committed"));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn marks_failed_and_ignores_on_detection() {
-        let temp = temp_root("failed");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("failed");
+        let root = new_root(&root);
         let transaction = install_transaction(&root);
         begin(&root, &transaction).unwrap();
         mark_phase(&root, &transaction, Phase::Failed).unwrap();
         assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_second_unfinished_transaction() {
-        let temp = temp_root("second");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("second");
+        let root = new_root(&root);
         let first = install_transaction(&root);
         begin(&root, &first).unwrap();
         let second = install_transaction(&root);
@@ -622,6 +642,6 @@ mod tests {
             begin(&root, &second),
             Err(InstallError::BlockedByTransaction(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }

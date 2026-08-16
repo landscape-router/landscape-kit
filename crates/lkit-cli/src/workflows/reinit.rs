@@ -14,6 +14,7 @@ use super::state::{
     self, InitStatus, InitializationState, InstallState, ServiceState, StateServiceManager,
 };
 use super::transaction::{Phase, TransactionFile};
+use crate::deployment::layout;
 use crate::deployment::runtime::InstallRuntime;
 use crate::interaction::credentials::Credentials;
 use crate::interaction::presentation::{OperationPhase, operation_progress};
@@ -79,10 +80,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
 
     let mut transaction = super::transaction::TransactionFile::new_reinit(root, &version)?;
     super::transaction::begin(root, &transaction)?;
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
     // 保护备份失败时保持现场不变;`--allow-no-backup` 才允许继续。
     if let Err(error) = create_protection_backup(root, state, &mut transaction, options).await {
@@ -106,9 +104,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             manager,
             ManagedService::LandscapeRouter,
         )?);
-        let backup_dir = root
-            .canonical
-            .join("backups")
+        let backup_dir = layout::territory_backups_dir()
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
         let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
@@ -234,7 +230,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
                         .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
                         .and_then(|()| {
                             if let Some(backup_path) = &transaction.resolv_conf_backup {
-                                let backup_dir = root.canonical.join(backup_path);
+                                let backup_dir = layout::territory_relative(backup_path);
                                 super::resolv::restore(manager.resolv_conf(), &backup_dir)
                             } else {
                                 Ok(())
@@ -353,7 +349,7 @@ async fn create_protection_backup<P: DocsProbe>(
         .join("static.zip");
     let geo_tmp = root.canonical.join("data/geo_tmp");
     let backup_ref = backup::create_backup(
-        &root.canonical.join("backups"),
+        &layout::territory_backups_dir(),
         &version_from_state(state)?,
         architecture,
         &webserver,
@@ -442,13 +438,10 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
         }),
     )?;
     if let Some(backup_path) = &transaction.resolv_conf_backup {
-        let backup_dir = root.canonical.join(backup_path);
+        let backup_dir = layout::territory_relative(backup_path);
         super::resolv::restore(manager.resolv_conf(), &backup_dir)?;
     }
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     restore_previous_data(&data, &previous_data)?;

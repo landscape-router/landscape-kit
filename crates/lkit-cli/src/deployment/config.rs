@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use super::layout;
 use super::plan::{InstallError, RepositoryChoice};
-use super::root::InstallRoot;
 use crate::i18n::Language;
 
-pub(crate) const CONFIG_FILE: &str = "config.toml";
 pub(crate) const CONFIG_SCHEMA_VERSION: u64 = 1;
 
 /// 仓库来源记录。state 不再保存来源,该类型只属于配置文件。
@@ -52,10 +51,8 @@ pub(crate) struct ConfigFile {
 /// 内容损坏或不规范时返回 `CorruptedState` 并阻断命令,提示修复或删除该文件。
 /// 读取时对来源做校验和规范化:HTTP 位置按 protocol v1 规则补全并校验,
 /// GitHub 位置校验 `owner/repo` 格式,与 provider 构造使用同一套规则。
-pub(crate) fn load_repository(
-    root: &InstallRoot,
-) -> Result<Option<RepositorySource>, InstallError> {
-    let path = root.canonical.join(CONFIG_FILE);
+pub(crate) fn load_repository() -> Result<Option<RepositorySource>, InstallError> {
+    let path = layout::territory_config_file();
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -104,8 +101,8 @@ pub(crate) fn load_repository(
 /// 缺省来源解析策略:配置存在且有效时使用记录的来源,文件缺失时回落官方 GitHub。
 /// 显式 CLI 来源由调用方直接传入,不经由此处;本函数是"配置 > 官方 GitHub"回退的
 /// 唯一实现,首次安装与已安装命令共用。
-pub(crate) fn resolve_default_choice(root: &InstallRoot) -> Result<RepositoryChoice, InstallError> {
-    match load_repository(root)? {
+pub(crate) fn resolve_default_choice() -> Result<RepositoryChoice, InstallError> {
+    match load_repository()? {
         Some(source) => Ok(source.to_choice()),
         None => Ok(RepositoryChoice::Github(
             crate::release::repository::github::DEFAULT_REPOSITORY.into(),
@@ -117,8 +114,8 @@ pub(crate) fn resolve_default_choice(root: &InstallRoot) -> Result<RepositoryCho
 /// 缺失或值不受支持(如 `fr`)时一律返回 `None`,由调用方回落系统 locale 或默认
 /// 英语,绝不阻断命令。与 `load_repository` 的严格校验不同,语言预设是全局生效的
 /// 展示偏好,不能因为配置问题影响任何命令。
-pub(crate) fn load_language(root: &InstallRoot) -> Option<Language> {
-    let path = root.canonical.join(CONFIG_FILE);
+pub(crate) fn load_language() -> Option<Language> {
+    let path = layout::territory_config_file();
     let text = std::fs::read_to_string(&path).ok()?;
     let config: ConfigFile = toml::from_str(&text).ok()?;
     config
@@ -131,20 +128,18 @@ pub(crate) fn load_language(root: &InstallRoot) -> Option<Language> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deployment::layout;
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let root =
+    /// 建立隔离测试现场:返回 (守卫, 地盘)。
+    fn setup(name: &str) -> (layout::TerritoryOverride, std::path::PathBuf) {
+        let temp =
             std::env::temp_dir().join(format!("lkit-config-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        root
-    }
-
-    fn new_root(path: &std::path::Path) -> InstallRoot {
-        InstallRoot {
-            install_root: path.to_path_buf(),
-            canonical: std::fs::canonicalize(path).unwrap(),
-        }
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = layout::test_territory(&territory);
+        (guard, territory)
     }
 
     fn github_source() -> RepositorySource {
@@ -156,18 +151,16 @@ mod tests {
 
     #[test]
     fn missing_config_returns_none() {
-        let temp = temp_root("missing");
-        let root = new_root(&temp);
-        assert!(load_repository(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let (_guard, territory) = setup("missing");
+        assert!(load_repository().unwrap().is_none());
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn parses_valid_github_config() {
-        let temp = temp_root("github");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("github");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -176,16 +169,15 @@ location = "ThisSeanZhang/landscape"
 "#,
         )
         .unwrap();
-        assert_eq!(load_repository(&root).unwrap().unwrap(), github_source());
-        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(load_repository().unwrap().unwrap(), github_source());
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn parses_and_normalizes_http_config() {
-        let temp = temp_root("http");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("http");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -195,51 +187,49 @@ location = "https://repo.example.com/landscape"
         )
         .unwrap();
         assert_eq!(
-            load_repository(&root).unwrap().unwrap(),
+            load_repository().unwrap().unwrap(),
             RepositorySource {
                 kind: RepositorySourceKind::Http,
                 location: "https://repo.example.com/landscape/".into(),
             }
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_corrupted_config() {
-        let temp = temp_root("corrupt");
-        let root = new_root(&temp);
-        std::fs::write(temp.join(CONFIG_FILE), b"not toml [[[").unwrap();
+        let (_guard, territory) = setup("corrupt");
+        std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             b"schema_version = 2\n[repository]\nkind = \"github\"\nlocation = \"x\"\n",
         )
         .unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             b"schema_version = 1\n[repository]\nkind = \"mirror\"\nlocation = \"x\"\n",
         )
         .unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_unsafe_or_malformed_http_config() {
-        let temp = temp_root("unsafe");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("unsafe");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -249,11 +239,11 @@ location = "http://example.com/repository"
         )
         .unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -263,11 +253,11 @@ location = "https://example.com/repo?x=1"
         )
         .unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -277,18 +267,17 @@ location = "not a url"
         )
         .unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_malformed_github_config() {
-        let temp = temp_root("github-bad");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("github-bad");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -298,18 +287,17 @@ location = "not-owner-repo"
         )
         .unwrap();
         assert!(matches!(
-            load_repository(&root),
+            load_repository(),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn ignores_unknown_sections_and_fields() {
-        let temp = temp_root("unknown");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("unknown");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -321,27 +309,25 @@ key = "value"
 "#,
         )
         .unwrap();
-        assert_eq!(load_repository(&root).unwrap().unwrap(), github_source());
-        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(load_repository().unwrap().unwrap(), github_source());
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn default_choice_falls_back_to_official_github_without_config() {
-        let temp = temp_root("default-missing");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("default-missing");
         assert_eq!(
-            resolve_default_choice(&root).unwrap(),
+            resolve_default_choice().unwrap(),
             RepositoryChoice::Github("ThisSeanZhang/landscape".into())
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn default_choice_uses_recorded_source_when_config_present() {
-        let temp = temp_root("default-recorded");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("default-recorded");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -351,22 +337,21 @@ location = "https://repo.example.com/landscape"
         )
         .unwrap();
         assert_eq!(
-            resolve_default_choice(&root).unwrap(),
+            resolve_default_choice().unwrap(),
             RepositoryChoice::Http("https://repo.example.com/landscape/".into())
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn default_choice_blocks_on_corrupted_config() {
-        let temp = temp_root("default-corrupt");
-        let root = new_root(&temp);
-        std::fs::write(temp.join(CONFIG_FILE), b"not toml [[[").unwrap();
+        let (_guard, territory) = setup("default-corrupt");
+        std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
         assert!(matches!(
-            resolve_default_choice(&root),
+            resolve_default_choice(),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
@@ -396,10 +381,9 @@ location = "https://repo.example.com/landscape"
 
     #[test]
     fn loads_configured_language() {
-        let temp = temp_root("lang-valid");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("lang-valid");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -411,10 +395,10 @@ language = "zh"
 "#,
         )
         .unwrap();
-        assert_eq!(load_language(&root), Some(Language::Zh));
+        assert_eq!(load_language(), Some(Language::Zh));
 
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -426,39 +410,37 @@ language = "en"
 "#,
         )
         .unwrap();
-        assert_eq!(load_language(&root), Some(Language::En));
-        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(load_language(), Some(Language::En));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn missing_config_has_no_language_preset() {
-        let temp = temp_root("lang-missing");
-        let root = new_root(&temp);
-        assert_eq!(load_language(&root), None);
-        let _ = std::fs::remove_dir_all(&temp);
+        let (_guard, territory) = setup("lang-missing");
+        assert_eq!(load_language(), None);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn ignores_unsupported_language_values() {
-        let temp = temp_root("lang-unsupported");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("lang-unsupported");
         for language in ["fr", "zh-CN", "42", ""] {
             std::fs::write(
-                temp.join(CONFIG_FILE),
+                territory.join("config.toml"),
                 format!(
                     "schema_version = 1\n\n[repository]\nkind = \"github\"\nlocation = \"ThisSeanZhang/landscape\"\n\n[ui]\nlanguage = \"{language}\"\n"
                 ),
             )
             .unwrap();
             assert_eq!(
-                load_language(&root),
+                load_language(),
                 None,
                 "unsupported language {language:?} must be ignored"
             );
         }
 
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -471,19 +453,18 @@ language = "ZH"
         )
         .unwrap();
         assert_eq!(
-            load_language(&root),
+            load_language(),
             Some(Language::Zh),
             "case must be normalized like --lang"
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn ignores_missing_ui_section_and_corrupt_config_for_language() {
-        let temp = temp_root("lang-tolerant");
-        let root = new_root(&temp);
+        let (_guard, territory) = setup("lang-tolerant");
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -492,17 +473,17 @@ location = "ThisSeanZhang/landscape"
 "#,
         )
         .unwrap();
-        assert_eq!(load_language(&root), None, "no [ui] section");
+        assert_eq!(load_language(), None, "no [ui] section");
 
-        std::fs::write(temp.join(CONFIG_FILE), b"not toml [[[").unwrap();
+        std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
         assert_eq!(
-            load_language(&root),
+            load_language(),
             None,
             "corrupt config must not block language resolution"
         );
 
         std::fs::write(
-            temp.join(CONFIG_FILE),
+            territory.join("config.toml"),
             br#"schema_version = 1
 
 [repository]
@@ -515,10 +496,10 @@ language = 42
         )
         .unwrap();
         assert_eq!(
-            load_language(&root),
+            load_language(),
             None,
             "wrong field type must be ignored for language"
         );
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }

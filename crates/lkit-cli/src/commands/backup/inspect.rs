@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::backup::lkb::{LKB_METADATA_CAPACITY, backup_id_format_ok, verify_lkb};
@@ -6,20 +6,19 @@ use crate::deployment::plan;
 use crate::workflows::restore::validate_backup_file;
 
 use super::architecture_key;
+use super::discover_root;
 use super::exit_code;
-use super::resolve_root;
 use super::scope_key;
 use super::{BackupShow, BackupVerify};
 
 pub(super) fn run_show(args: &BackupShow) -> ExitCode {
-    let (bytes, label) =
-        match resolve_backup_bytes(&args.backup, &args.file, args.install_dir.as_deref()) {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("backup: {error}");
-                return exit_code(&error);
-            }
-        };
+    let (bytes, label) = match resolve_backup_bytes(&args.backup, &args.file) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("backup: {error}");
+            return exit_code(&error);
+        }
+    };
     let metadata = match verify_lkb(&bytes) {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -56,14 +55,13 @@ pub(super) fn run_show(args: &BackupShow) -> ExitCode {
 }
 
 pub(super) fn run_verify(args: &BackupVerify) -> ExitCode {
-    let (bytes, label) =
-        match resolve_backup_bytes(&args.backup, &args.file, args.install_dir.as_deref()) {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("backup: {error}");
-                return exit_code(&error);
-            }
-        };
+    let (bytes, label) = match resolve_backup_bytes(&args.backup, &args.file) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("backup: {error}");
+            return exit_code(&error);
+        }
+    };
     let metadata = match verify_lkb(&bytes) {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -97,7 +95,6 @@ pub(super) fn run_verify(args: &BackupVerify) -> ExitCode {
 fn resolve_backup_bytes(
     backup: &Option<String>,
     file: &Option<PathBuf>,
-    install_dir: Option<&Path>,
 ) -> Result<(Vec<u8>, String), plan::InstallError> {
     match (backup, file) {
         (Some(id), None) => {
@@ -106,12 +103,16 @@ fn resolve_backup_bytes(
                     "--backup {id} does not match the backup ID format YYYYMMDD-HHMMSS-<8 lowercase hex>"
                 )));
             }
-            let root = resolve_root(install_dir)?;
-            let path = root.canonical.join("backups").join(format!("{id}.lkb"));
+            let _root = discover_root()?.ok_or_else(|| {
+                plan::InstallError::ParameterUsage(crate::tr!(
+                    crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION
+                ))
+            })?;
+            let path = crate::deployment::layout::territory_backups_dir().join(format!("{id}.lkb"));
             if !path.is_file() {
                 return Err(plan::InstallError::InvalidBackup(format!(
                     "backup {id} not found under {}",
-                    root.canonical.join("backups").display()
+                    crate::deployment::layout::territory_backups_dir().display()
                 )));
             }
             validate_backup_file(&path)?;
@@ -226,7 +227,7 @@ mod tests {
         bytes
     }
 
-    /// 写入一个 `root:backups/<id>.lkb` 文件并设为 `0600`。
+    /// 写入一个 `territory:backups/<id>.lkb` 文件并设为 `0600`。
     fn write_backup_file(dir: &std::path::Path, bytes: &[u8]) {
         let backups = dir.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
@@ -238,13 +239,69 @@ mod tests {
         .unwrap();
     }
 
-    fn verify_args(dir: &std::path::Path) -> BackupVerify {
+    fn verify_args() -> BackupVerify {
         BackupVerify {
             backup: Some("20260801-163000-a1b2c3d4".into()),
             file: None,
-            install_dir: Some(dir.to_path_buf()),
             test_runtime: None,
         }
+    }
+
+    /// 建立隔离测试现场并写入有效状态(discover 需要),返回 (守卫, 地盘)。
+    fn setup(
+        name: &str,
+    ) -> (
+        crate::deployment::layout::TerritoryOverride,
+        std::path::PathBuf,
+    ) {
+        let temp = temp_dir(name);
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let install = temp.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        let state = crate::deployment::state::InstallState {
+            schema_version: 1,
+            layout_version: 2,
+            install_root: install.display().to_string(),
+            canonical_install_root: install.display().to_string(),
+            active_version: "1.2.3".into(),
+            assets: crate::deployment::state::Assets {
+                webserver: crate::deployment::state::WebserverAsset {
+                    architecture: crate::deployment::state::StateArchitecture::X86_64,
+                    sha256: "a".repeat(64),
+                    size: 1,
+                },
+                static_archive: crate::deployment::state::ArchiveAsset {
+                    sha256: "b".repeat(64),
+                    size: 1,
+                },
+            },
+            initialization: crate::deployment::state::InitializationState {
+                status: crate::deployment::state::InitStatus::Complete,
+                lock_present: true,
+                initialized_at: Some(chrono::Utc::now()),
+            },
+            service: crate::deployment::state::ServiceState {
+                manager: crate::deployment::state::StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("c".repeat(64)),
+            },
+            last_transaction_id: None,
+            committed_at: Some(chrono::Utc::now()),
+        };
+        crate::deployment::state::write_state(
+            &crate::deployment::root::InstallRoot {
+                install_root: install.clone(),
+                canonical: install.clone(),
+            },
+            &state,
+        )
+        .unwrap();
+        (guard, territory)
     }
 
     fn leftover_verify_dirs() -> Vec<std::path::PathBuf> {
@@ -266,9 +323,9 @@ mod tests {
     #[test]
     fn verify_cleans_up_temp_dirs_and_rejects_incomplete_archives() {
         // 完整归档 verify 成功且不留临时解包目录。
-        let dir = temp_dir("verify");
+        let (_guard, territory) = setup("verify");
         write_backup_file(
-            &dir,
+            &territory,
             &wrap(&gzip_tar(&raw_tar(&[
                 ("landscape-webserver", b'0', b"bin"),
                 ("landscape_init.toml", b'0', b"init"),
@@ -277,14 +334,14 @@ mod tests {
                 ("geo_tmp", b'5', b""),
             ]))),
         );
-        assert_eq!(run_verify(&verify_args(&dir)), ExitCode::SUCCESS);
+        assert_eq!(run_verify(&verify_args()), ExitCode::SUCCESS);
         assert!(
             leftover_verify_dirs().is_empty(),
             "verify must clean up its temporary extraction directory"
         );
         // 归档缺少必需条目 landscape_init.toml 时,verify 必须失败且不留临时目录。
         write_backup_file(
-            &dir,
+            &territory,
             &wrap(&gzip_tar(&raw_tar(&[
                 ("landscape-webserver", b'0', b"bin"),
                 ("static.zip", b'0', b"zip"),
@@ -292,12 +349,12 @@ mod tests {
                 ("geo_tmp", b'5', b""),
             ]))),
         );
-        assert_eq!(run_verify(&verify_args(&dir)), ExitCode::FAILURE);
+        assert_eq!(run_verify(&verify_args()), ExitCode::FAILURE);
         assert!(
             leftover_verify_dirs().is_empty(),
             "failed verify must not leave temporary extraction directories"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     fn gzip_tar(mut tar: &[u8]) -> Vec<u8> {

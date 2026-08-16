@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use crate::backup::lkb::{BackupMetadata, BackupProgress, validate_remark, verify_lkb};
+use crate::deployment::layout;
 use crate::deployment::plan;
 use crate::deployment::plan::InstallError;
 use crate::deployment::root::InstallRoot;
@@ -13,8 +14,8 @@ use crate::deployment::{lock, state, transaction};
 use crate::release::artifacts::WEBSERVER_BINARY;
 
 use super::BackupCreate;
+use super::discover_root;
 use super::exit_code;
-use super::resolve_root;
 
 pub(super) async fn run_create(args: &BackupCreate) -> ExitCode {
     let runtime = match resolve_runtime(args) {
@@ -31,8 +32,15 @@ pub(super) async fn run_create(args: &BackupCreate) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let root = match resolve_root(args.install_dir.as_deref()) {
-        Ok(root) => root,
+    let root = match discover_root() {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            eprintln!(
+                "backup: {}",
+                crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION)
+            );
+            return ExitCode::from(2);
+        }
         Err(error) => {
             eprintln!("backup: {error}");
             return exit_code(&error);
@@ -84,8 +92,7 @@ pub(super) async fn run_create(args: &BackupCreate) -> ExitCode {
             let path = if let Some(output) = &args.output {
                 output.display().to_string()
             } else {
-                root.canonical
-                    .join("backups")
+                layout::territory_backups_dir()
                     .join(format!("{}.lkb", metadata.backup_id))
                     .display()
                     .to_string()
@@ -121,7 +128,7 @@ pub(crate) async fn create_manual_backup(
     output: Option<&Path>,
     mut progress: impl FnMut(BackupProgress),
 ) -> Result<BackupMetadata, InstallError> {
-    let _lock = lock::acquire_install_lock(root)?;
+    let _lock = lock::acquire_install_lock()?;
     let health = runtime.health_options()?;
     let unfinished = transaction::find_unfinished(root)?;
     if let Some(transaction) = unfinished
@@ -175,7 +182,7 @@ pub(crate) async fn create_manual_backup(
         .join("static.zip");
     let geo_tmp = root.canonical.join("data/geo_tmp");
     let backup_ref = crate::backup::lkb::create_backup(
-        &root.canonical.join("backups"),
+        &layout::territory_backups_dir(),
         &version,
         architecture,
         &webserver,
@@ -188,11 +195,12 @@ pub(crate) async fn create_manual_backup(
         Some(&mut progress),
     )?;
     if let Some(output) = output {
-        let final_path = root.canonical.join(&backup_ref.path);
+        let final_path = layout::territory_relative(&backup_ref.path);
         copy_backup_to_output(&final_path, output)?;
     }
     let metadata = verify_lkb(
-        &std::fs::read(root.canonical.join(&backup_ref.path)).map_err(plan::InstallError::Io)?,
+        &std::fs::read(layout::territory_relative(&backup_ref.path))
+            .map_err(plan::InstallError::Io)?,
     )?;
     Ok(metadata)
 }

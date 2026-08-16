@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Args;
 
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::{lock, plan, root, state, transaction};
+use crate::deployment::{lock, plan, state, transaction};
 use crate::workflows::restore::{RestoreArgs, RestoreOptions, RestoreOutcome};
 
 #[derive(Debug, Args)]
@@ -24,8 +24,6 @@ pub struct Restore {
     /// 控制台已确认恢复计划（内部参数，交互模式也跳过 tty 确认）
     #[arg(long, hide = true)]
     pub console_confirmed: bool,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -46,24 +44,21 @@ pub async fn run(args: &Restore) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let install_root = match plan::select_install_root(
-        args.install_dir.as_deref(),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    ) {
-        Ok(install_root) => install_root,
+    let normalized = match state::discover_landscape_root() {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            eprintln!(
+                "restore: {}",
+                crate::tr!(crate::keys::RESTORE_REQUIRES_EXISTING_INSTALLATION)
+            );
+            return ExitCode::from(2);
+        }
         Err(error) => {
             eprintln!("restore: {error}");
             return exit_code(&error);
         }
     };
-    let normalized = match root::normalize_install_root(&install_root) {
-        Ok(normalized) => normalized,
-        Err(error) => {
-            eprintln!("restore: {error}");
-            return exit_code(&error);
-        }
-    };
-    let _lock = match lock::acquire_install_lock(&normalized) {
+    let _lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("restore: {error}");
@@ -104,6 +99,7 @@ pub async fn run(args: &Restore) -> ExitCode {
             return exit_code(&error);
         }
     }) else {
+        // 状态在锁后消失(如已完成的卸载事务):按未安装处理。
         eprintln!(
             "restore: {}",
             crate::tr!(crate::keys::RESTORE_REQUIRES_EXISTING_INSTALLATION)

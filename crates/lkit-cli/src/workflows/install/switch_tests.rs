@@ -406,9 +406,7 @@ async fn repository_override_does_not_require_a_second_confirmation() {
         .unwrap()
         .unwrap();
     assert!(
-        super::super::config::load_repository(&first.root)
-            .unwrap()
-            .is_none(),
+        super::super::config::load_repository().unwrap().is_none(),
         "first install must not create config.toml"
     );
 
@@ -462,9 +460,7 @@ async fn repository_override_does_not_require_a_second_confirmation() {
         .unwrap();
     assert_eq!(state.active_version, "1.3.0");
     assert!(
-        super::super::config::load_repository(&first.root)
-            .unwrap()
-            .is_none(),
+        super::super::config::load_repository().unwrap().is_none(),
         "switch must not write config.toml"
     );
     first.stop.store(true, std::sync::atomic::Ordering::Relaxed);

@@ -10,6 +10,7 @@ use super::plan::InstallError;
 use super::root::InstallRoot;
 use super::state::{self, InstallState, StateServiceManager};
 use super::transaction::{Phase, TransactionFile};
+use crate::deployment::layout;
 use crate::service::manager::{ManagedService, ServiceManager};
 use crate::service::resolv;
 
@@ -17,23 +18,21 @@ use crate::service::resolv;
 pub(crate) const STATE_SNAPSHOT_NAME: &str = "previous-state.json";
 
 pub(crate) fn write_state_snapshot(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     transaction_id: &str,
     state: &InstallState,
 ) -> Result<(), InstallError> {
-    let dir = root.canonical.join("backups").join(transaction_id);
+    let dir = layout::territory_backups_dir().join(transaction_id);
     std::fs::create_dir_all(&dir).map_err(InstallError::Io)?;
     let bytes = serde_json::to_vec_pretty(state).map_err(InstallError::StateWrite)?;
     write_atomic(&dir.join(STATE_SNAPSHOT_NAME), &bytes, 0o600)
 }
 
 pub(crate) fn read_state_snapshot(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     transaction_id: &str,
 ) -> Result<InstallState, InstallError> {
-    let path = root
-        .canonical
-        .join("backups")
+    let path = layout::territory_backups_dir()
         .join(transaction_id)
         .join(STATE_SNAPSHOT_NAME);
     let bytes = std::fs::read(&path).map_err(|_| {
@@ -78,10 +77,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             }),
         )?;
     }
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
     move_data_aside(&root.canonical.join("data"), &tx_dir.join("failed-data"))?;
     let data = root.canonical.join("data");
@@ -92,7 +88,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
         )
     })?;
     let lkb_bytes =
-        std::fs::read(root.canonical.join(&backup_ref.path)).map_err(InstallError::Io)?;
+        std::fs::read(layout::territory_relative(&backup_ref.path)).map_err(InstallError::Io)?;
     let restore_dir = tx_dir.join("restore");
     let _ = std::fs::remove_dir_all(&restore_dir);
     let metadata = backup::extract_lkb(&lkb_bytes, &restore_dir)?;
@@ -188,7 +184,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
             .join(systemd.service_name(ManagedService::LandscapeRouter));
         systemd.restore_registration(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
-            let backup_dir = root.canonical.join(backup_path);
+            let backup_dir = layout::territory_relative(backup_path);
             resolv::restore(systemd.resolv_conf(), &backup_dir)?;
         }
     }
@@ -351,7 +347,7 @@ fn build_restored_state(
 
 pub(crate) fn restore_current(root: &InstallRoot, target: &str) -> Result<(), InstallError> {
     let current = root.canonical.join("current");
-    let tmp = root.canonical.join("run/.current.tmp");
+    let tmp = layout::territory_run_dir().join(".current.tmp");
     std::fs::create_dir_all(tmp.parent().expect("run dir has a parent"))
         .map_err(InstallError::Io)?;
     let _ = std::fs::remove_file(&tmp);
@@ -469,6 +465,9 @@ mod tests {
     #[tokio::test]
     async fn restores_release_config_and_geo_from_lkb_instead_of_live_files() {
         let dir = temp_dir("lkb-source");
+        let territory = dir.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _guard = crate::deployment::layout::test_territory(&territory);
         let root = InstallRoot {
             install_root: dir.clone(),
             canonical: dir.clone(),
@@ -536,7 +535,7 @@ esac
         std::fs::write(backup_static.join("assets/app.js"), b"asset-from-lkb").unwrap();
         std::fs::write(backup_geo.join("ip/geo.dat"), b"geo-from-lkb").unwrap();
         let backup_ref = backup::create_backup(
-            &dir.join("backups"),
+            &territory.join("backups"),
             &from_version,
             "x86_64",
             &backup_binary,
@@ -644,7 +643,9 @@ esac
             std::path::PathBuf::from("releases/1.2.3")
         );
 
-        let tx_dir = dir.join("transactions").join(&transaction.transaction_id);
+        let tx_dir = territory
+            .join("transactions")
+            .join(&transaction.transaction_id);
         assert_eq!(
             std::fs::read(tx_dir.join("replaced-release/landscape-webserver")).unwrap(),
             b"polluted-binary"
@@ -655,7 +656,8 @@ esac
         );
         let recorded: TransactionFile = serde_json::from_slice(
             &std::fs::read(
-                dir.join("transactions")
+                territory
+                    .join("transactions")
                     .join(format!("{}.json", transaction.transaction_id)),
             )
             .unwrap(),

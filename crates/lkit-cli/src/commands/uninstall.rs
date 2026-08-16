@@ -1,10 +1,12 @@
+#[cfg(feature = "test-support")]
+#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Args;
 
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::{lock, plan, root, state, transaction};
+use crate::deployment::{lock, plan, state, transaction};
 use crate::workflows::uninstall::{UninstallArgs, UninstallOptions, UninstallOutcome};
 
 #[derive(Debug, Args)]
@@ -18,14 +20,9 @@ pub struct Uninstall {
     /// 只卸载服务与程序,保留 data/ 与 config.toml
     #[arg(long)]
     pub keep_data: bool,
-    /// 在默认清理基础上整树删除安装根目录(含 config.toml),必须同时给出 --allow-no-backup
-    #[arg(long)]
-    pub purge_root: bool,
     /// 控制台已确认卸载计划(内部参数,交互模式也跳过 tty 确认)
     #[arg(long, hide = true)]
     pub console_confirmed: bool,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -46,24 +43,21 @@ pub async fn run(args: &Uninstall) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let install_root = match plan::select_install_root(
-        args.install_dir.as_deref(),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    ) {
-        Ok(install_root) => install_root,
+    let normalized = match state::discover_landscape_root() {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            eprintln!(
+                "uninstall: {}",
+                crate::tr!(crate::keys::UNINSTALL_REQUIRES_EXISTING_INSTALLATION)
+            );
+            return ExitCode::from(2);
+        }
         Err(error) => {
             eprintln!("uninstall: {error}");
             return exit_code(&error);
         }
     };
-    let normalized = match root::normalize_install_root(&install_root) {
-        Ok(normalized) => normalized,
-        Err(error) => {
-            eprintln!("uninstall: {error}");
-            return exit_code(&error);
-        }
-    };
-    let _lock = match lock::acquire_install_lock(&normalized) {
+    let _lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("uninstall: {error}");
@@ -136,7 +130,6 @@ pub async fn run(args: &Uninstall) -> ExitCode {
         yes: args.yes,
         allow_no_backup: args.allow_no_backup,
         keep_data: args.keep_data,
-        purge_root: args.purge_root,
         console_confirmed: args.console_confirmed,
     };
     match crate::workflows::uninstall::uninstall_installation(
@@ -206,29 +199,15 @@ mod tests {
 
     #[test]
     fn parses_uninstall_options() {
-        let uninstall = parse(&[
-            "uninstall",
-            "--yes",
-            "--allow-no-backup",
-            "--keep-data",
-            "--install-dir",
-            "/opt/landscape",
-        ])
-        .unwrap();
+        let uninstall = parse(&["uninstall", "--yes", "--allow-no-backup", "--keep-data"]).unwrap();
         assert!(uninstall.yes);
         assert!(uninstall.allow_no_backup);
         assert!(uninstall.keep_data);
-        assert!(!uninstall.purge_root);
-        assert_eq!(
-            uninstall.install_dir.as_deref(),
-            Some(std::path::Path::new("/opt/landscape"))
-        );
     }
 
     #[test]
-    fn parses_purge_root_flag() {
-        let uninstall = parse(&["uninstall", "--purge-root", "--allow-no-backup"]).unwrap();
-        assert!(uninstall.purge_root);
-        assert!(uninstall.allow_no_backup);
+    fn rejects_removed_flags() {
+        assert!(parse(&["uninstall", "--purge-root"]).is_err());
+        assert!(parse(&["uninstall", "--install-dir", "/opt/landscape"]).is_err());
     }
 }

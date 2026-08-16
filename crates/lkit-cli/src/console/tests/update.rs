@@ -252,14 +252,14 @@ fn update_load_config_offers_current_source_and_reports_corruption() {
     app.install.install_dir = install_dir.clone();
     app.update.current_source = None;
 
-    app.update.load_config(&install_dir);
+    app.update.load_config();
     assert!(app.update.current_source.is_none());
     assert!(app.update.config_error.is_none());
     assert_eq!(app.update.repository, UpdateRepositoryMode::Github);
 
     let preset = "schema_version = 1\n\n[repository]\nkind = \"http\"\nlocation = \"https://example.com/releases/\"\n";
     std::fs::write(dir.join("config.toml"), preset).unwrap();
-    app.update.load_config(&install_dir);
+    app.update.load_config();
     assert_eq!(
         app.update.repository,
         UpdateRepositoryMode::Current,
@@ -271,7 +271,7 @@ fn update_load_config_offers_current_source_and_reports_corruption() {
     assert!(app.update.config_error.is_none());
 
     std::fs::write(dir.join("config.toml"), "not a config").unwrap();
-    app.update.load_config(&install_dir);
+    app.update.load_config();
     assert!(app.update.current_source.is_none());
     assert!(app.update.config_error.is_some());
     assert_eq!(app.update.repository, UpdateRepositoryMode::Github);

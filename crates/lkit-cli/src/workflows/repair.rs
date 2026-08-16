@@ -14,6 +14,7 @@ use super::rollback;
 use super::root::InstallRoot;
 use super::state::{InitStatus, InstallState, StateArchitecture, StateServiceManager};
 use super::transaction::{Phase, StaticBackupRef, TransactionFile};
+use crate::deployment::layout;
 
 #[derive(Debug)]
 pub(crate) enum RepairOutcome {
@@ -175,7 +176,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             .join("static.zip");
         let geo_tmp = root.canonical.join("data/geo_tmp");
         let backup_ref = backup::create_backup(
-            &root.canonical.join("backups"),
+            &layout::territory_backups_dir(),
             &active,
             architecture.key(),
             &current_binary,
@@ -194,9 +195,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
                 manager,
                 ManagedService::LandscapeRouter,
             )?);
-            let backup_dir = root
-                .canonical
-                .join("backups")
+            let backup_dir = layout::territory_backups_dir()
                 .join(&transaction.transaction_id)
                 .join("host/resolv.conf");
             let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
@@ -376,10 +375,8 @@ fn architecture_from_state(state: &InstallState) -> Architecture {
     }
 }
 
-fn tx_dir(root: &InstallRoot, transaction: &TransactionFile) -> std::path::PathBuf {
-    root.canonical
-        .join("transactions")
-        .join(&transaction.transaction_id)
+fn tx_dir(_root: &InstallRoot, transaction: &TransactionFile) -> std::path::PathBuf {
+    layout::territory_transactions_dir().join(&transaction.transaction_id)
 }
 
 #[cfg(test)]
@@ -676,10 +673,7 @@ mod tests {
             "static backup must preserve the previous pages"
         );
         assert!(
-            !root
-                .canonical
-                .join(super::super::config::CONFIG_FILE)
-                .exists(),
+            !root.canonical.join("config.toml").exists(),
             "repair must not create config.toml"
         );
         let _ = std::fs::remove_dir_all(&root.install_root);
@@ -879,10 +873,7 @@ esac
                 .is_none()
         );
         assert!(
-            !install_root
-                .canonical
-                .join(super::super::config::CONFIG_FILE)
-                .exists(),
+            !install_root.canonical.join("config.toml").exists(),
             "repair must not create config.toml"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -1019,10 +1010,7 @@ esac
                 .is_none()
         );
         assert!(
-            !install_root
-                .canonical
-                .join(super::super::config::CONFIG_FILE)
-                .exists(),
+            !install_root.canonical.join("config.toml").exists(),
             "repair must not create config.toml"
         );
         stop.store(true, std::sync::atomic::Ordering::Relaxed);

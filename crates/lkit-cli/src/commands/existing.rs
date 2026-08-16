@@ -2,7 +2,6 @@ use std::process::ExitCode;
 
 use crate::deployment::plan;
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::state;
 use crate::deployment::state::{InitStatus, StateServiceManager};
 use crate::release::repository::provider_for;
 use crate::workflows::install as pipeline;
@@ -256,7 +255,7 @@ async fn run_installed_inner(
 
 fn resolve_provider(
     args: &InstallRequest,
-    root: &crate::deployment::root::InstallRoot,
+    _root: &crate::deployment::root::InstallRoot,
 ) -> Result<
     (
         crate::release::repository::ReleaseProvider,
@@ -272,7 +271,7 @@ fn resolve_provider(
     let provider = match &provider_override {
         Some(spec) => provider_for(spec.kind, spec.location.as_str())?,
         None => {
-            let spec = crate::deployment::config::resolve_default_choice(root)?.resolve()?;
+            let spec = crate::deployment::config::resolve_default_choice()?.resolve()?;
             provider_for(spec.kind, spec.location.as_str())?
         }
     };
@@ -355,7 +354,7 @@ async fn same_version_install(
             ));
         }
         // 后端摘要必须与落盘二进制一致:清单摘要针对压缩产物,须下载解压后比对。
-        let check_dir = root.canonical.join("run/.source-check.tmp");
+        let check_dir = crate::deployment::layout::territory_run_dir().join(".source-check.tmp");
         let _ = std::fs::remove_dir_all(&check_dir);
         std::fs::create_dir_all(&check_dir).map_err(plan::InstallError::Io)?;
         let built = pipeline::fetch_webserver_asset(&release, &check_dir).await?;

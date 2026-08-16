@@ -4,16 +4,13 @@ use std::process::ExitCode;
 use clap::Args;
 
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::{lock, plan, root, state, transaction};
+use crate::deployment::{lock, plan, state, transaction};
 use crate::interaction::credentials::{self, Credentials};
 use crate::network::config::NetworkPlan;
 use crate::workflows::reinit::{ReinitArgs, ReinitOptions, ReinitOutcome};
 
 #[derive(Args)]
 pub struct Reinit {
-    /// Full install root directory
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     /// New admin username, defaults to `admin`
     #[arg(long, value_name = "NAME")]
     pub admin_user: Option<String>,
@@ -48,7 +45,6 @@ impl std::fmt::Debug for Reinit {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Reinit")
-            .field("install_dir", &self.install_dir)
             .field("admin_user", &self.admin_user)
             .field(
                 "password_file",
@@ -79,24 +75,21 @@ pub async fn run(args: &Reinit) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let install_root = match plan::select_install_root(
-        args.install_dir.as_deref(),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    ) {
-        Ok(install_root) => install_root,
+    let normalized = match state::discover_landscape_root() {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            eprintln!(
+                "reinit: {}",
+                crate::tr!(crate::keys::REINIT_REQUIRES_EXISTING_INSTALLATION)
+            );
+            return ExitCode::from(2);
+        }
         Err(error) => {
             eprintln!("reinit: {error}");
             return exit_code(&error);
         }
     };
-    let normalized = match root::normalize_install_root(&install_root) {
-        Ok(normalized) => normalized,
-        Err(error) => {
-            eprintln!("reinit: {error}");
-            return exit_code(&error);
-        }
-    };
-    let _lock = match lock::acquire_install_lock(&normalized) {
+    let _lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("reinit: {error}");

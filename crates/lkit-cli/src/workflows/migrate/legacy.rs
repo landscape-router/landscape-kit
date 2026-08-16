@@ -8,6 +8,7 @@ use super::super::systemd::{self, Availability, Systemd};
 use super::super::transaction::{LegacyUnitBefore, TransactionFile};
 use super::rollback::move_file;
 use super::{MigrateOptions, pid_alive};
+use crate::deployment::layout;
 
 /// 停止旧部署实例并返回其事务前事实。
 ///
@@ -56,7 +57,7 @@ pub(crate) fn stop_legacy_instance<P: DocsProbe>(
 /// 事务目录(否则 `mask` 会占用该路径,与受管 `landscape-router.service` 注册冲突,
 /// 且 systemd 对 `/etc` 下的原件拒绝 mask);其他位置的 unit 走 `stop + disable + mask`。
 pub(crate) fn stop_legacy_unit(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     transaction: &TransactionFile,
     systemd: &Systemd,
     unit: &str,
@@ -75,9 +76,7 @@ pub(crate) fn stop_legacy_unit(
         systemd::unit_command(systemd, "disable", unit)?;
     }
     if file_moved {
-        let backup = root
-            .canonical
-            .join("transactions")
+        let backup = layout::territory_transactions_dir()
             .join(&transaction.transaction_id)
             .join("legacy-unit")
             .join(unit);

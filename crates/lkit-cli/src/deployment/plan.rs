@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use lkit_repository::parse_stable_version;
 use semver::Version;
 
+use super::layout;
 use super::repository::github::DEFAULT_REPOSITORY;
 use super::repository::http::HttpRepository;
 use super::repository::{ProviderKind, RepositoryError};
 use super::root::InstallRoot;
 
-pub(crate) const DEFAULT_INSTALL_ROOT: &str = "/root/.lkit/landscape";
+pub(crate) const DEFAULT_INSTALL_ROOT: &str = layout::DEFAULT_LANDSCAPE_ROOT;
 pub(crate) const DEFAULT_HTTP_MIRROR: &str = "https://l1s3.whileaway.dev/landscape/";
 
 const CREDENTIAL_DATA_PROBES: [&str; 3] = [

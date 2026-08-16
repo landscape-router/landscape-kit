@@ -19,8 +19,7 @@ use crate::network::config::NetworkPlan;
 
 use self::protocol::{
     CANCEL_FILE_SUFFIX, RemoveFile, WaitOutcome, WorkerRequest, create_private_file,
-    create_private_secret_file, string_environment, terminal_path, validate_credential_path,
-    validate_network_plan_path, write_private_json,
+    create_private_secret_file, string_environment, terminal_path, write_private_json,
 };
 
 /// 委托执行者标记:daemon executor 起子进程时注入的命令行参数。子命令以此为
@@ -117,28 +116,35 @@ pub(crate) fn daemon_is_running(install_root: &Path) -> bool {
     crate::daemon::process_alive(pid)
 }
 
-/// 从命令参数解析委托目标安装根(与工作流相同的选择规则)。
+/// 从命令参数解析委托目标安装根:仅 install/migrate 显式选择安装根,
+/// 其余命令从 lkit 地盘状态发现 landscape 根。
 pub(crate) fn delegate_install_root(command: &Commands) -> Result<Option<PathBuf>, DelegateError> {
-    let selected = crate::deployment::plan::select_install_root(
-        command_install_dir(command),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )
-    .map_err(|error| DelegateError::usage(error.to_string()))?;
-    crate::deployment::root::normalize_install_root(&selected)
-        .map(|root| Some(root.canonical))
-        .map_err(|error| DelegateError::infrastructure(error.to_string()))
+    match command_install_dir(command) {
+        Some(install_dir) => {
+            let selected = crate::deployment::plan::select_install_root(
+                Some(install_dir),
+                std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
+            )
+            .map_err(|error| DelegateError::usage(error.to_string()))?;
+            crate::deployment::root::normalize_install_root(&selected)
+                .map(|root| Some(root.canonical))
+                .map_err(|error| DelegateError::infrastructure(error.to_string()))
+        }
+        None => {
+            let root = crate::deployment::state::discover_landscape_root()
+                .map_err(|error| DelegateError::infrastructure(error.to_string()))?
+                .ok_or_else(|| {
+                    DelegateError::usage("no installed landscape found; run `lkit install` first")
+                })?;
+            Ok(Some(root.canonical))
+        }
+    }
 }
 
 fn command_install_dir(command: &Commands) -> Option<&Path> {
     match command {
         Commands::Install(args) => args.install_dir.as_deref(),
         Commands::Migrate(args) => args.install_dir.as_deref(),
-        Commands::Switch(args) => args.install_dir.as_deref(),
-        Commands::Update(args) => args.install_dir.as_deref(),
-        Commands::Repair(args) => args.install_dir.as_deref(),
-        Commands::Restore(args) => args.install_dir.as_deref(),
-        Commands::Reinit(args) => args.install_dir.as_deref(),
-        Commands::Uninstall(args) => args.install_dir.as_deref(),
         _ => None,
     }
 }

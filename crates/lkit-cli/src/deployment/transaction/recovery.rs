@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use super::super::health::{DocsProbe, HealthOptions};
+use super::super::layout;
 use super::super::manager::{ManagedService, ServiceManager};
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
@@ -122,7 +123,7 @@ async fn recover_reinit<P: DocsProbe>(
         Phase::Prepared | Phase::Stopping => {
             restore_pre_activation_systemd(root, transaction, systemd)?;
             if let Some(backup_path) = &transaction.resolv_conf_backup {
-                let backup_dir = root.canonical.join(backup_path);
+                let backup_dir = layout::territory_relative(backup_path);
                 super::super::resolv::restore(systemd.resolv_conf(), &backup_dir)?;
             }
             let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
@@ -276,7 +277,7 @@ fn recover_static_repair(
         .static_backup
         .as_ref()
         .ok_or_else(|| corrupted("static repair transaction is missing static_backup".into()))?;
-    let backup_dir = root.canonical.join(&backup.path);
+    let backup_dir = layout::territory_relative(&backup.path);
     let target = root.canonical.join(&backup.target);
     let _ = std::fs::remove_dir_all(&target);
     super::super::rollback::copy_tree_into(&backup_dir, &target)?;
@@ -319,7 +320,7 @@ fn recover_migration(
                 return Err(restore_error);
             }
             if let Some(backup_path) = &transaction.resolv_conf_backup {
-                let backup_dir = root.canonical.join(backup_path);
+                let backup_dir = layout::territory_relative(backup_path);
                 if let Err(restore_error) =
                     super::super::resolv::restore(systemd.resolv_conf(), &backup_dir)
                 {
@@ -337,10 +338,8 @@ fn recover_migration(
     }
 }
 
-fn transaction_dir(root: &InstallRoot, transaction: &TransactionFile) -> std::path::PathBuf {
-    root.canonical
-        .join("transactions")
-        .join(&transaction.transaction_id)
+fn transaction_dir(_root: &InstallRoot, transaction: &TransactionFile) -> std::path::PathBuf {
+    layout::territory_transactions_dir().join(&transaction.transaction_id)
 }
 
 /// 用保存的二进制原子恢复 `releases/<version>/landscape-webserver`。
@@ -453,7 +452,7 @@ async fn recover_switch<P: DocsProbe>(
 
 fn restore_current_link(root: &InstallRoot, target: &str) -> Result<(), InstallError> {
     let current = root.canonical.join("current");
-    let tmp = root.canonical.join("run/.current.tmp");
+    let tmp = layout::territory_run_dir().join(".current.tmp");
     std::fs::create_dir_all(tmp.parent().expect("run dir has a parent"))
         .map_err(InstallError::Io)?;
     let _ = std::fs::remove_file(&tmp);
@@ -487,6 +486,7 @@ fn corrupted(reason: String) -> InstallError {
 mod tests {
     use super::*;
 
+    use crate::deployment::layout;
     use crate::service::systemd::Systemd;
 
     use super::super::{
@@ -495,11 +495,23 @@ mod tests {
     };
     use chrono::Utc;
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("lkit-tx-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+    /// 建立隔离测试现场:返回 (守卫, 地盘, landscape 根)。
+    fn setup(
+        name: &str,
+    ) -> (
+        layout::TerritoryOverride,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let temp = std::env::temp_dir().join(format!("lkit-tx-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = layout::test_territory(&territory);
+        let root = temp.join("landscape");
         std::fs::create_dir_all(&root).unwrap();
-        root
+        (guard, territory, root)
     }
 
     fn new_root(path: &std::path::Path) -> InstallRoot {
@@ -531,8 +543,8 @@ mod tests {
 
     #[test]
     fn recovers_interrupted_reinit_in_preparing() {
-        let temp = temp_root("reinit-recover");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("reinit-recover");
+        let root = new_root(&root);
         let transaction =
             TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
         begin(&root, &transaction).unwrap();
@@ -547,16 +559,16 @@ mod tests {
                 .await
                 .unwrap()
         });
-        let tx = load_finished(&root, &temp);
+        let tx = load_finished(&root, &territory);
         assert_eq!(tx.phase, Phase::Failed);
         assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn blocks_reinit_awaiting_confirmation_on_recovery() {
-        let temp = temp_root("reinit-blocked");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("reinit-blocked");
+        let root = new_root(&root);
         let mut transaction =
             TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
         transaction.network_takeover = Some(NetworkTakeoverTransaction {
@@ -591,13 +603,13 @@ mod tests {
         let error = runtime
             .block_on(async { recover_interrupted(&root, &tx, &Systemd::host(), &health).await });
         assert!(matches!(error, Err(InstallError::BlockedByTransaction(_))));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn recovers_interrupted_uninstall_by_forward_completion() {
-        let temp = temp_root("uninstall-recover");
-        let root = new_root(&temp);
+        let (_guard, territory, root_path) = setup("uninstall-recover");
+        let root = new_root(&root_path);
         let mut transaction =
             TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
         transaction.backup = Some(BackupRef {
@@ -609,14 +621,14 @@ mod tests {
         begin(&root, &transaction).unwrap();
         mark_phase(&root, &transaction, Phase::Activating).unwrap();
 
-        std::fs::create_dir_all(temp.join("releases/1.2.3")).unwrap();
-        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
-        std::fs::create_dir_all(temp.join("data")).unwrap();
-        std::fs::create_dir_all(temp.join("state")).unwrap();
-        std::fs::write(temp.join("state/install-state.json"), b"{}").unwrap();
-        std::fs::create_dir_all(temp.join("service")).unwrap();
-        std::fs::create_dir_all(temp.join("backups")).unwrap();
-        std::fs::write(temp.join("config.toml"), b"[repository]\n").unwrap();
+        std::fs::create_dir_all(root_path.join("releases/1.2.3")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", root_path.join("current")).unwrap();
+        std::fs::create_dir_all(root_path.join("data")).unwrap();
+        std::fs::create_dir_all(root_path.join("service")).unwrap();
+        std::fs::create_dir_all(territory.join("state")).unwrap();
+        std::fs::write(territory.join("state/install-state.json"), b"{}").unwrap();
+        std::fs::create_dir_all(territory.join("backups")).unwrap();
+        std::fs::write(territory.join("config.toml"), b"[repository]\n").unwrap();
 
         let tx = find_unfinished(&root).unwrap().unwrap();
         let health = test_health();
@@ -629,28 +641,29 @@ mod tests {
                 .await
                 .unwrap()
         });
-        assert!(!temp.join("releases").exists());
-        assert!(!temp.join("current").exists());
-        assert!(!temp.join("data").exists());
-        assert!(!temp.join("state").exists());
-        assert!(!temp.join("service").exists());
-        assert!(!temp.join("logs").exists());
-        assert!(!temp.join("run").exists());
+        assert!(!root_path.join("releases").exists());
+        assert!(!root_path.join("current").exists());
+        assert!(!root_path.join("data").exists());
+        assert!(!root_path.join("service").exists());
+        assert!(
+            !territory.join("state/install-state.json").exists(),
+            "the territory install state must be removed by the forward completion"
+        );
         assert_eq!(
-            std::fs::read_to_string(temp.join("config.toml")).unwrap(),
+            std::fs::read_to_string(territory.join("config.toml")).unwrap(),
             "[repository]\n"
         );
-        assert!(temp.join("backups").is_dir());
-        assert!(temp.join("transactions").is_dir());
-        let tx = load_finished(&root, &temp);
+        assert!(territory.join("backups").is_dir());
+        assert!(territory.join("transactions").is_dir());
+        let tx = load_finished(&root, &territory);
         assert_eq!(tx.phase, Phase::Committed);
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn keeps_uninstall_in_preparing_on_recovery() {
-        let temp = temp_root("uninstall-preparing");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("uninstall-preparing");
+        let root = new_root(&root);
         let transaction =
             TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
         begin(&root, &transaction).unwrap();
@@ -665,29 +678,29 @@ mod tests {
                 .await
                 .unwrap()
         });
-        let tx = load_finished(&root, &temp);
+        let tx = load_finished(&root, &territory);
         assert_eq!(tx.phase, Phase::Failed);
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn recovers_interrupted_install() {
-        let temp = temp_root("recover");
-        let root = new_root(&temp);
+        let (_guard, territory, root_path) = setup("recover");
+        let root = new_root(&root_path);
         let transaction = install_transaction(&root);
         begin(&root, &transaction).unwrap();
         mark_phase(&root, &transaction, Phase::Activating).unwrap();
 
-        std::fs::create_dir_all(temp.join("releases/1.2.3/static")).unwrap();
-        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
-        std::fs::create_dir_all(temp.join("data")).unwrap();
+        std::fs::create_dir_all(root_path.join("releases/1.2.3/static")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", root_path.join("current")).unwrap();
+        std::fs::create_dir_all(root_path.join("data")).unwrap();
         std::fs::write(
-            temp.join("data/landscape_init.toml"),
+            root_path.join("data/landscape_init.toml"),
             b"version = \"1.2.3\"",
         )
         .unwrap();
-        std::fs::create_dir_all(temp.join("state")).unwrap();
-        std::fs::write(temp.join("state/install-state.json"), b"{}").unwrap();
+        std::fs::create_dir_all(territory.join("state")).unwrap();
+        std::fs::write(territory.join("state/install-state.json"), b"{}").unwrap();
 
         let tx = find_unfinished(&root).unwrap().unwrap();
         let health = test_health();
@@ -700,32 +713,36 @@ mod tests {
                 .await
                 .unwrap()
         });
-        assert!(!temp.join("releases/1.2.3").exists());
-        assert!(!temp.join("current").exists());
-        assert!(!temp.join("data/landscape_init.toml").exists());
-        assert!(!temp.join("state/install-state.json").exists());
+        assert!(!root_path.join("releases/1.2.3").exists());
+        assert!(!root_path.join("current").exists());
+        assert!(!root_path.join("data/landscape_init.toml").exists());
+        assert!(!territory.join("state/install-state.json").exists());
         assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn keeps_completed_install_on_recovery() {
-        let temp = temp_root("keep");
-        let root = new_root(&temp);
+        let (_guard, territory, root_path) = setup("keep");
+        let root = new_root(&root_path);
         let transaction = install_transaction(&root);
         begin(&root, &transaction).unwrap();
         mark_phase(&root, &transaction, Phase::Activating).unwrap();
 
-        std::fs::create_dir_all(temp.join("releases/1.2.3")).unwrap();
-        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
-        std::fs::create_dir_all(temp.join("service")).unwrap();
-        std::fs::write(temp.join("service/landscape-router.service"), b"[Unit]\n").unwrap();
-        std::fs::create_dir_all(temp.join("state")).unwrap();
+        std::fs::create_dir_all(root_path.join("releases/1.2.3")).unwrap();
+        std::os::unix::fs::symlink("releases/1.2.3", root_path.join("current")).unwrap();
+        std::fs::create_dir_all(root_path.join("service")).unwrap();
+        std::fs::write(
+            root_path.join("service/landscape-router.service"),
+            b"[Unit]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(territory.join("state")).unwrap();
         let state = serde_json::json!({
             "schema_version": 1,
-            "layout_version": 1,
-            "install_root": temp.display().to_string(),
-            "canonical_install_root": std::fs::canonicalize(&temp).unwrap().display().to_string(),
+            "layout_version": 2,
+            "install_root": root_path.display().to_string(),
+            "canonical_install_root": std::fs::canonicalize(&root_path).unwrap().display().to_string(),
             "active_version": "1.2.3",
             "repository": {"kind": "http", "location": "https://example.com/"},
             "assets": {
@@ -737,7 +754,11 @@ mod tests {
             "last_transaction_id": null,
             "committed_at": null
         });
-        std::fs::write(temp.join("state/install-state.json"), state.to_string()).unwrap();
+        std::fs::write(
+            territory.join("state/install-state.json"),
+            state.to_string(),
+        )
+        .unwrap();
 
         let tx = find_unfinished(&root).unwrap().unwrap();
         let health = test_health();
@@ -750,17 +771,17 @@ mod tests {
                 .await
                 .unwrap()
         });
-        assert!(temp.join("releases/1.2.3").exists());
-        assert!(temp.join("current").exists());
-        assert!(temp.join("state/install-state.json").exists());
-        let tx = load_finished(&root, &temp);
+        assert!(root_path.join("releases/1.2.3").exists());
+        assert!(root_path.join("current").exists());
+        assert!(territory.join("state/install-state.json").exists());
+        let tx = load_finished(&root, &territory);
         assert_eq!(tx.phase, Phase::Committed);
         assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
-    fn load_finished(root: &InstallRoot, temp: &std::path::Path) -> TransactionFile {
-        let entries: Vec<_> = std::fs::read_dir(temp.join("transactions"))
+    fn load_finished(root: &InstallRoot, territory: &std::path::Path) -> TransactionFile {
+        let entries: Vec<_> = std::fs::read_dir(territory.join("transactions"))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
@@ -770,8 +791,8 @@ mod tests {
 
     #[test]
     fn recovers_failed_switch_before_backup_creation() {
-        let temp = temp_root("switch-recover");
-        let root = new_root(&temp);
+        let (_guard, territory, root_path) = setup("switch-recover");
+        let root = new_root(&root_path);
         let transaction = TransactionFile::new_switch(
             &root,
             &semver::Version::new(1, 1, 0),
@@ -789,7 +810,7 @@ mod tests {
         )
         .unwrap();
         begin(&root, &transaction).unwrap();
-        std::fs::create_dir_all(temp.join("releases/1.3.0/static")).unwrap();
+        std::fs::create_dir_all(root_path.join("releases/1.3.0/static")).unwrap();
 
         let tx = find_unfinished(&root).unwrap().unwrap();
         let health = test_health();
@@ -802,15 +823,15 @@ mod tests {
                 .await
                 .unwrap()
         });
-        assert!(!temp.join("releases/1.3.0").exists());
+        assert!(!root_path.join("releases/1.3.0").exists());
         assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn recovers_repair_transaction_in_preparing() {
-        let temp = temp_root("repair-recover");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("repair-recover");
+        let root = new_root(&root);
         let tx = TransactionFile::new_repair_binary(&root, &semver::Version::new(1, 1, 0)).unwrap();
         begin(&root, &tx).unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -823,6 +844,6 @@ mod tests {
                 .unwrap()
         });
         assert!(find_unfinished(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }

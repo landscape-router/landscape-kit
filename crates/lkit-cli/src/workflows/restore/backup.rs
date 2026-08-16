@@ -7,11 +7,12 @@ use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 use super::super::state::{InstallState, StateArchitecture};
 use super::RestoreArgs;
+use crate::deployment::layout;
 
 /// 解析目标备份:ID 只解析安装根目录 `backups/`,外部文件必须 root 所有、
 /// 权限不宽于 `0600` 的普通文件。返回完整字节与文件级 SHA-256。
 pub(super) fn resolve_target_backup(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     args: &RestoreArgs,
 ) -> Result<(Vec<u8>, String), InstallError> {
     match (&args.backup_id, &args.file_path) {
@@ -21,11 +22,11 @@ pub(super) fn resolve_target_backup(
                     "--backup {id} does not match the backup ID format YYYYMMDD-HHMMSS-<8 lowercase hex>"
                 )));
             }
-            let path = root.canonical.join("backups").join(format!("{id}.lkb"));
+            let path = layout::territory_backups_dir().join(format!("{id}.lkb"));
             if !path.is_file() {
                 return Err(InstallError::InvalidBackup(format!(
                     "backup {id} not found under {}",
-                    root.canonical.join("backups").display()
+                    layout::territory_backups_dir().display()
                 )));
             }
             validate_backup_file(&path)?;

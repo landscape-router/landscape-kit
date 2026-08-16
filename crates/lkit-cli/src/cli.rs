@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::{ArgMatches, CommandFactory, Parser};
 
 use crate::commands::Commands;
@@ -22,23 +20,10 @@ pub(crate) struct Cli {
     pub(crate) command: Option<Commands>,
 }
 
-/// 读取配置预设的语言。宽容读取:安装根无法解析(相对路径、危险目录等)、
-/// `config.toml` 缺失或损坏时一律返回 `None`,语言解析回落到系统 locale。
-pub(crate) fn configured_language(matches: &ArgMatches) -> Option<Language> {
-    let mut leaf = matches;
-    while let Some((_, sub)) = leaf.subcommand() {
-        leaf = sub;
-    }
-    // `get_one` 对未定义的参数 id 在 debug 断言下 panic(如裸控制台、check),
-    // 这里用 `try_get_one` 宽容读取:未定义时回落到环境变量与默认安装根。
-    let install_dir = match leaf.try_get_one::<PathBuf>("install_dir").ok().flatten() {
-        Some(path) => path.clone(),
-        None => std::env::var("LKIT_INSTALL_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(deployment::plan::DEFAULT_INSTALL_ROOT)),
-    };
-    let root = deployment::root::normalize_install_root(&install_dir).ok()?;
-    deployment::config::load_language(&root)
+/// 读取配置预设的语言。宽容读取:`config.toml` 缺失或损坏时一律返回 `None`,
+/// 语言解析回落到系统 locale。
+pub(crate) fn configured_language(_matches: &ArgMatches) -> Option<Language> {
+    deployment::config::load_language()
 }
 
 pub(crate) fn localized_command() -> clap::Command {
@@ -149,9 +134,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
         .mut_subcommand("network", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_NETWORK_ABOUT))
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                })
                 .mut_subcommand("status", |command| {
                     command.about(crate::tr_static!(keys::MAIN_NETWORK_STATUS_ABOUT))
                 })
@@ -170,9 +152,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 })
                 .mut_arg("repository", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
-                })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_arg("accept_service_change", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
@@ -193,9 +172,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                         .mut_arg("output", |arg| {
                             arg.help(crate::tr_static!(keys::MAIN_BACKUP_OUTPUT_HELP))
                         })
-                        .mut_arg("install_dir", |arg| {
-                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                        })
                 })
                 .mut_subcommand("list", |command| {
                     command.about(crate::tr_static!(keys::MAIN_BACKUP_LIST_ABOUT))
@@ -209,9 +185,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                         .mut_arg("file", |arg| {
                             arg.help(crate::tr_static!(keys::MAIN_BACKUP_FILE_HELP))
                         })
-                        .mut_arg("install_dir", |arg| {
-                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                        })
                 })
                 .mut_subcommand("verify", |command| {
                     command
@@ -222,9 +195,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                         .mut_arg("file", |arg| {
                             arg.help(crate::tr_static!(keys::MAIN_BACKUP_FILE_HELP))
                         })
-                        .mut_arg("install_dir", |arg| {
-                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                        })
                 })
                 .mut_subcommand("delete", |command| {
                     command
@@ -234,9 +204,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                         })
                         .mut_arg("yes", |arg| {
                             arg.help(crate::tr_static!(keys::MAIN_BACKUP_DELETE_YES_HELP))
-                        })
-                        .mut_arg("install_dir", |arg| {
-                            arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                         })
                 })
         })
@@ -249,9 +216,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 .mut_arg("file", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_BACKUP_FILE_HELP))
                 })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                })
                 .mut_arg("allow_no_backup", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_RESTORE_ALLOW_NO_BACKUP_HELP))
                 })
@@ -262,9 +226,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
         .mut_subcommand("reinit", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_REINIT_ABOUT))
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                })
                 .mut_arg("admin_user", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_ADMIN_USER_HELP))
                 })
@@ -286,9 +247,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 })
                 .mut_arg("repository", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
-                })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_arg("accept_service_change", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
@@ -333,18 +291,12 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 .mut_arg("repository", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
                 })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
-                })
         })
         .mut_subcommand("reconcile", |command| {
             command
                 .about(crate::tr_static!(keys::MAIN_RECONCILE_ABOUT))
                 .mut_arg("repository", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
-                })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
                 .mut_arg("accept_service_change", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_ACCEPT_SERVICE_CHANGE_HELP))
@@ -378,12 +330,6 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 })
                 .mut_arg("keep_data", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_KEEP_DATA_HELP))
-                })
-                .mut_arg("purge_root", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_PURGE_ROOT_HELP))
-                })
-                .mut_arg("install_dir", |arg| {
-                    arg.help(crate::tr_static!(keys::MAIN_INSTALL_DIR_HELP))
                 })
         })
 }

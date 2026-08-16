@@ -1,11 +1,9 @@
 mod keys;
 mod render;
 
-use std::path::PathBuf;
-
 use ratatui::style::Color;
 
-use crate::deployment::{root, state};
+use crate::deployment::state;
 use crate::network::config::{
     DEFAULT_MANAGEMENT_CIDR, Ipv4Cidr, NetworkMode, NetworkPlan, SelectedInterface, WanIpv4Config,
 };
@@ -379,12 +377,14 @@ pub(crate) enum Snapshot {
 }
 
 impl Snapshot {
-    pub(crate) fn load(install_dir: &str) -> Self {
+    pub(crate) fn load() -> Self {
         if unsafe { libc::geteuid() } != 0 {
             return Self::RootRequired;
         }
-        let path = PathBuf::from(install_dir);
-        let result = root::normalize_install_root(&path).and_then(|root| {
+        let result = (|| -> Result<Self, crate::deployment::plan::InstallError> {
+            let Some(root) = crate::deployment::state::discover_landscape_root()? else {
+                return Ok(Self::NotInstalled);
+            };
             if let Some(transaction) = crate::deployment::transaction::find_unfinished(&root)?
                 && let Some(network) = transaction.network_takeover.as_ref()
                 && matches!(
@@ -412,7 +412,7 @@ impl Snapshot {
                     initialized: installed.initialization.status == state::InitStatus::Complete,
                 },
             })
-        });
+        })();
         match result {
             Ok(snapshot) => snapshot,
             Err(error) => Self::Unavailable(error.to_string()),

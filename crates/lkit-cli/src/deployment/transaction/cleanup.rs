@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use super::super::layout;
 use super::super::manager::{ManagedService, ServiceManager};
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
@@ -17,7 +18,7 @@ pub(crate) fn cleanup_failed_first_install(
             .join(manager.service_name(ManagedService::LandscapeRouter));
         manager.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
-            let backup_dir = root.canonical.join(backup_path);
+            let backup_dir = layout::territory_relative(backup_path);
             super::super::resolv::restore(manager.resolv_conf(), &backup_dir)?;
         }
     }
@@ -31,7 +32,7 @@ pub(crate) fn cleanup_failed_first_install(
                 .join(format!(".install-{target_version}.tmp")),
         );
     }
-    let _ = std::fs::remove_file(root.canonical.join("run/.current.tmp"));
+    let _ = std::fs::remove_file(layout::territory_run_dir().join(".current.tmp"));
     if let Some(target_release) = transaction.target_release.as_deref()
         && let Ok(target) = std::fs::read_link(root.canonical.join("current"))
         && target == Path::new(target_release)
@@ -39,7 +40,7 @@ pub(crate) fn cleanup_failed_first_install(
         let _ = std::fs::remove_file(root.canonical.join("current"));
     }
     let _ = std::fs::remove_file(root.canonical.join("data/landscape_init.toml"));
-    let _ = std::fs::remove_file(root.canonical.join("state/install-state.json"));
+    let _ = std::fs::remove_file(layout::territory_state_path());
     Ok(())
 }
 
@@ -69,10 +70,10 @@ pub(crate) fn cleanup_uncommitted_network_install(
                 .join(format!(".install-{target_version}.tmp")),
         )?;
     }
-    remove_path_if_present(&root.canonical.join("run/.current.tmp"))?;
-    remove_path_if_present(&root.canonical.join("state/install-state.json"))?;
+    remove_path_if_present(&layout::territory_run_dir().join(".current.tmp"))?;
+    remove_path_if_present(&layout::territory_state_path())?;
     if let Some(network) = &transaction.network_takeover {
-        remove_path_if_present(&root.canonical.join(&network.pending_state))?;
+        remove_path_if_present(&layout::territory_relative(&network.pending_state))?;
     }
     remove_path_if_present(&root.canonical.join("data"))?;
     Ok(())
@@ -91,7 +92,7 @@ pub(crate) fn restore_uncommitted_network_systemd(
             .join(manager.service_name(ManagedService::LandscapeRouter));
         manager.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)?;
         if let Some(backup_path) = &transaction.resolv_conf_backup {
-            let backup_dir = root.canonical.join(backup_path);
+            let backup_dir = layout::territory_relative(backup_path);
             super::super::resolv::restore(manager.resolv_conf(), &backup_dir)?;
         }
     }

@@ -60,7 +60,7 @@ pub async fn run(args: &Migrate) -> ExitCode {
             return exit_code(&error);
         }
     };
-    let _lock = match lock::acquire_install_lock(&normalized) {
+    let _lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("migrate: {error}");

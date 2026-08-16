@@ -1,3 +1,5 @@
+#[cfg(feature = "test-support")]
+#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -7,9 +9,6 @@ use clap::{Args, Subcommand};
 pub struct Network {
     #[command(subcommand)]
     pub action: NetworkAction,
-    /// Full install root directory
-    #[arg(long, value_name = "PATH", global = true)]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true, global = true)]
     pub test_runtime: Option<PathBuf>,
@@ -45,10 +44,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_confirmation_and_install_root() {
-        let network = parse(&["network", "confirm", "--install-dir", "/opt/landscape"]).unwrap();
+    fn parses_confirmation_and_rejects_removed_install_dir() {
+        let network = parse(&["network", "confirm"]).unwrap();
         assert!(matches!(network.action, NetworkAction::Confirm));
-        assert_eq!(network.install_dir, Some(PathBuf::from("/opt/landscape")));
+        assert!(parse(&["network", "confirm", "--install-dir", "/opt/landscape"]).is_err());
     }
 
     #[test]

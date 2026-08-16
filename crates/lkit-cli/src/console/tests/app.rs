@@ -324,7 +324,7 @@ fn pending_takeover_snapshot_is_detected_from_transaction() {
             pending_state: format!("transactions/{id}/pending-install-state.json"),
         });
     crate::deployment::transaction::persist(&root, &transaction).unwrap();
-    let snapshot = Snapshot::load(&temp.display().to_string());
+    let snapshot = Snapshot::load();
     let _ = std::fs::remove_dir_all(&temp);
     match snapshot {
         // 以 root 运行测试时 Snapshot::load 返回 RootRequired，跳过检测断言。

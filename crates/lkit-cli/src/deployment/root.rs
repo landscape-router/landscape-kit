@@ -1,18 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use super::layout;
 use super::plan::InstallError;
 
 const DANGEROUS_ROOTS: [&str; 3] = ["/", "/root", "/root/.lkit"];
-const MANAGED_DIRS: [&str; 8] = [
-    "releases",
-    "data",
-    "state",
-    "transactions",
-    "backups",
-    "run",
-    "service",
-    "logs",
-];
+const MANAGED_DIRS: [&str; 3] = ["releases", "data", "service"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InstallRoot {
@@ -41,11 +33,30 @@ fn reject_dangerous_root(path: &Path) -> Result<(), InstallError> {
     if DANGEROUS_ROOTS
         .iter()
         .any(|dangerous| path == Path::new(dangerous))
+        || path == layout::lkit_territory()
     {
         return Err(InstallError::DangerousDirectory(format!(
             "{} is a dangerous parent directory",
             path.display()
         )));
+    }
+    Ok(())
+}
+
+/// 校验 landscape 安装根目录顶层只允许受管目录(`releases`/`data`/`service`)与
+/// `current` 链接存在(缺失 OK);出现其他条目 → 危险目录。
+pub(crate) fn verify_landscape_root_clean(root: &InstallRoot) -> Result<(), InstallError> {
+    for entry in std::fs::read_dir(&root.canonical).map_err(InstallError::Io)? {
+        let name = entry.map_err(InstallError::Io)?.file_name();
+        let known = ["releases", "data", "service", "current"]
+            .iter()
+            .any(|known| name.as_encoded_bytes() == known.as_bytes());
+        if !known {
+            return Err(InstallError::DangerousDirectory(format!(
+                "{} contains unknown content; the landscape root only allows releases/data/service/current",
+                root.canonical.display()
+            )));
+        }
     }
     Ok(())
 }
@@ -157,6 +168,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_the_active_lkit_territory_as_install_root() {
+        let (_guard, territory, _root) = temp_territory("territory-dangerous");
+        assert!(matches!(
+            normalize_install_root(&territory),
+            Err(InstallError::DangerousDirectory(_))
+        ));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
     fn rejects_managed_dir_escaping_the_root() {
         let temp = temp_root("managed");
         let outside = temp.join("outside");
@@ -176,7 +197,7 @@ mod tests {
         let temp = temp_root("managed-inside");
         let root = temp.join("root");
         std::fs::create_dir_all(root.join("data")).unwrap();
-        std::os::unix::fs::symlink(root.join("data"), root.join("logs")).unwrap();
+        std::os::unix::fs::symlink(root.join("data"), root.join("service")).unwrap();
         assert!(normalize_install_root(&root).is_ok());
         let _ = std::fs::remove_dir_all(&temp);
     }
@@ -186,11 +207,58 @@ mod tests {
         let temp = temp_root("managed-broken");
         let root = temp.join("root");
         std::fs::create_dir_all(&root).unwrap();
-        std::os::unix::fs::symlink(root.join("missing-target"), root.join("state")).unwrap();
+        std::os::unix::fs::symlink(root.join("missing-target"), root.join("service")).unwrap();
         assert!(matches!(
             normalize_install_root(&root),
             Err(InstallError::DangerousDirectory(_))
         ));
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn landscape_root_clean_allows_only_managed_dirs_and_current() {
+        let temp = temp_root("clean");
+        let root = InstallRoot {
+            install_root: temp.clone(),
+            canonical: temp.clone(),
+        };
+        assert!(verify_landscape_root_clean(&root).is_ok());
+        for dir in ["releases", "data", "service"] {
+            std::fs::create_dir_all(temp.join(dir)).unwrap();
+            assert!(verify_landscape_root_clean(&root).is_ok());
+        }
+        std::os::unix::fs::symlink("releases/1.2.3", temp.join("current")).unwrap();
+        assert!(verify_landscape_root_clean(&root).is_ok());
+        std::fs::write(temp.join("config.toml"), b"x").unwrap();
+        assert!(matches!(
+            verify_landscape_root_clean(&root),
+            Err(InstallError::DangerousDirectory(_))
+        ));
+        std::fs::remove_file(temp.join("config.toml")).unwrap();
+        std::fs::write(temp.join("random.txt"), b"x").unwrap();
+        assert!(matches!(
+            verify_landscape_root_clean(&root),
+            Err(InstallError::DangerousDirectory(_))
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    fn temp_territory(
+        name: &str,
+    ) -> (
+        super::layout::TerritoryOverride,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-root-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = super::layout::test_territory(&territory);
+        let root = temp.join("landscape");
+        std::fs::create_dir_all(&root).unwrap();
+        (guard, territory, root)
     }
 }

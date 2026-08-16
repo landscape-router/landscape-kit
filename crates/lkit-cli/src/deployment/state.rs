@@ -7,15 +7,16 @@ use chrono::{DateTime, Utc};
 use lkit_repository::parse_stable_version;
 use serde::{Deserialize, Serialize};
 
+use super::layout;
 use super::plan::InstallError;
 use super::root::InstallRoot;
 
 /// 安装状态中序列化的服务管理器后端标识。
 pub(crate) use crate::service::manager::ServiceManagerKind as StateServiceManager;
 
-pub(crate) const INSTALL_STATE_RELATIVE: &str = "state/install-state.json";
 pub(crate) const STATE_SCHEMA_VERSION: u64 = 1;
-pub(crate) const STATE_LAYOUT_VERSION: u64 = 1;
+/// 双地盘布局:状态位于 lkit 地盘,`install_root` 记录 landscape 安装根。
+pub(crate) const STATE_LAYOUT_VERSION: u64 = 2;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct InstallState {
@@ -82,7 +83,7 @@ pub(crate) struct ServiceState {
 }
 
 pub(crate) fn load_state(root: &InstallRoot) -> Result<Option<InstallState>, InstallError> {
-    let path = root.canonical.join(INSTALL_STATE_RELATIVE);
+    let path = layout::territory_state_path();
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -105,6 +106,39 @@ pub(crate) fn load_state(root: &InstallRoot) -> Result<Option<InstallState>, Ins
     Ok(Some(state))
 }
 
+/// 只读 lkit 地盘的状态文件并校验,不做 canonical/current 检查
+/// (install 单实例守卫用)。
+pub(crate) fn read_state() -> Result<Option<InstallState>, InstallError> {
+    let path = layout::territory_state_path();
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(InstallError::Io(std::io::Error::new(
+                error.kind(),
+                format!("failed to read {}: {error}", path.display()),
+            )));
+        }
+    };
+    let state: InstallState = serde_json::from_slice(&bytes).map_err(|error| {
+        InstallError::CorruptedState(format!(
+            "{} is not a valid install state: {error}",
+            path.display()
+        ))
+    })?;
+    validate_state(&state)?;
+    Ok(Some(state))
+}
+
+/// 从 lkit 地盘的状态文件发现 landscape 安装根。状态缺失返回 `Ok(None)`。
+pub(crate) fn discover_landscape_root() -> Result<Option<InstallRoot>, InstallError> {
+    let Some(state) = read_state()? else {
+        return Ok(None);
+    };
+    let root = super::root::normalize_install_root(Path::new(&state.canonical_install_root))?;
+    Ok(Some(root))
+}
+
 pub(crate) fn validate_state(state: &InstallState) -> Result<(), InstallError> {
     if state.schema_version != STATE_SCHEMA_VERSION {
         return Err(corrupted(format!(
@@ -112,7 +146,8 @@ pub(crate) fn validate_state(state: &InstallState) -> Result<(), InstallError> {
             state.schema_version
         )));
     }
-    if state.layout_version != STATE_LAYOUT_VERSION {
+    // layout_version 1 是旧单根布局,字段结构相同,读兼容不迁移。
+    if state.layout_version != STATE_LAYOUT_VERSION && state.layout_version != 1 {
         return Err(corrupted(format!(
             "unsupported layout version {}",
             state.layout_version
@@ -231,11 +266,16 @@ fn check_current(canonical: &Path, active_version: &str) -> Result<(), InstallEr
     Ok(())
 }
 
-pub(crate) fn write_state(root: &InstallRoot, state: &InstallState) -> Result<(), InstallError> {
-    let state_dir = root.canonical.join("state");
-    std::fs::create_dir_all(&state_dir).map_err(InstallError::Io)?;
+pub(crate) fn write_state(_root: &InstallRoot, state: &InstallState) -> Result<(), InstallError> {
+    let path = layout::territory_state_path();
+    let state_dir = path.parent().ok_or_else(|| {
+        InstallError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("state path {} has no parent directory", path.display()),
+        ))
+    })?;
+    std::fs::create_dir_all(state_dir).map_err(InstallError::Io)?;
     let bytes = serde_json::to_vec_pretty(state).map_err(InstallError::StateWrite)?;
-    let path = state_dir.join("install-state.json");
     let tmp = state_dir.join(format!(".install-state.{}.tmp", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)
@@ -264,13 +304,27 @@ fn is_sha256(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deployment::layout;
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let root =
+    /// 建立隔离测试现场:lkit 地盘与 landscape 根位于同一临时目录树下,
+    /// 地盘由 `test_territory` 指向,返回 (守卫, 地盘, landscape 根)。
+    fn setup(
+        name: &str,
+    ) -> (
+        layout::TerritoryOverride,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let temp =
             std::env::temp_dir().join(format!("lkit-state-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = layout::test_territory(&territory);
+        let root = temp.join("landscape");
         std::fs::create_dir_all(&root).unwrap();
-        root
+        (guard, territory, root)
     }
 
     fn new_root(path: &std::path::Path) -> InstallRoot {
@@ -326,21 +380,40 @@ mod tests {
 
     #[test]
     fn round_trips_through_disk() {
-        let temp = temp_root("round-trip");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("round-trip");
+        let root = new_root(&root);
         activate(&root, "0.19.2");
         let state = valid_state(&root);
         write_state(&root, &state).unwrap();
+        assert!(territory.join("state/install-state.json").is_file());
         assert_eq!(load_state(&root).unwrap().unwrap(), state);
-        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(read_state().unwrap().unwrap(), state);
+        let discovered = discover_landscape_root().unwrap().unwrap();
+        assert_eq!(discovered, root);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn missing_state_returns_none() {
-        let temp = temp_root("missing");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("missing");
+        let root = new_root(&root);
         assert!(load_state(&root).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&temp);
+        assert!(read_state().unwrap().is_none());
+        assert!(discover_landscape_root().unwrap().is_none());
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn discovers_the_recorded_landscape_root() {
+        let (_guard, territory, root) = setup("discover");
+        let root = new_root(&root);
+        activate(&root, "0.19.2");
+        let state = valid_state(&root);
+        write_state(&root, &state).unwrap();
+        let discovered = discover_landscape_root().unwrap().unwrap();
+        assert_eq!(discovered.canonical, root.canonical);
+        assert_eq!(discovered.install_root, root.canonical);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
@@ -379,22 +452,39 @@ mod tests {
     }
 
     #[test]
+    fn accepts_layout_version_1_for_read_compatibility() {
+        let root = InstallRoot {
+            install_root: "/x".into(),
+            canonical: "/x".into(),
+        };
+        let mut state = valid_state(&root);
+        state.layout_version = 1;
+        assert!(validate_state(&state).is_ok());
+        state.layout_version = 3;
+        assert!(matches!(
+            validate_state(&state),
+            Err(InstallError::CorruptedState(_))
+        ));
+    }
+
+    #[test]
     fn rejects_invalid_json_and_schema_version() {
-        let temp = temp_root("corrupt");
-        let root = new_root(&temp);
-        std::fs::create_dir_all(temp.join("state")).unwrap();
-        std::fs::write(temp.join("state/install-state.json"), b"not json").unwrap();
+        let (_guard, territory, root) = setup("corrupt");
+        let root = new_root(&root);
+        std::fs::create_dir_all(territory.join("state")).unwrap();
+        std::fs::write(territory.join("state/install-state.json"), b"not json").unwrap();
         assert!(matches!(
             load_state(&root),
             Err(InstallError::CorruptedState(_))
         ));
+        assert!(matches!(read_state(), Err(InstallError::CorruptedState(_))));
         let mut state = valid_state(&root);
         state.schema_version = 2;
         assert!(matches!(
             validate_state(&state),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
@@ -453,8 +543,8 @@ mod tests {
 
     #[test]
     fn rejects_canonical_root_mismatch() {
-        let temp = temp_root("canonical");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("canonical");
+        let root = new_root(&root);
         activate(&root, "0.19.2");
         let mut state = valid_state(&root);
         state.canonical_install_root = "/other/root".into();
@@ -463,29 +553,27 @@ mod tests {
             load_state(&root),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_missing_current() {
-        let temp = temp_root("no-current");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("no-current");
+        let root = new_root(&root);
         let state = valid_state(&root);
         write_state(&root, &state).unwrap();
         assert!(matches!(
             load_state(&root),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_current_outside_the_root() {
-        let temp = temp_root("outside-current");
-        let root_path = temp.join("root");
-        std::fs::create_dir_all(&root_path).unwrap();
+        let (_guard, territory, root_path) = setup("outside-current");
         let root = new_root(&root_path);
-        let outside = temp.join("outside");
+        let outside = territory.parent().unwrap().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root_path.join("current")).unwrap();
         let state = valid_state(&root);
@@ -494,13 +582,13 @@ mod tests {
             load_state(&root),
             Err(InstallError::CorruptedState(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn rejects_current_targeting_a_different_release() {
-        let temp = temp_root("drift");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("drift");
+        let root = new_root(&root);
         activate(&root, "0.20.0");
         let state = valid_state(&root);
         write_state(&root, &state).unwrap();
@@ -508,31 +596,31 @@ mod tests {
             load_state(&root),
             Err(InstallError::ActivationDrift(_))
         ));
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn accepts_releases_dir_symlink_inside_the_root() {
-        let temp = temp_root("releases-symlink");
-        std::fs::create_dir_all(temp.join("real-releases/0.19.2")).unwrap();
-        std::os::unix::fs::symlink("real-releases", temp.join("releases")).unwrap();
-        let root = new_root(&temp);
-        let current = temp.join("current");
+        let (_guard, territory, root) = setup("releases-symlink");
+        std::fs::create_dir_all(root.join("real-releases/0.19.2")).unwrap();
+        std::os::unix::fs::symlink("real-releases", root.join("releases")).unwrap();
+        let root = new_root(&root);
+        let current = root.canonical.join("current");
         std::os::unix::fs::symlink("releases/0.19.2", &current).unwrap();
         let state = valid_state(&root);
         write_state(&root, &state).unwrap();
         assert_eq!(load_state(&root).unwrap().unwrap(), state);
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn ignores_unknown_fields() {
-        let temp = temp_root("unknown-fields");
-        let root = new_root(&temp);
+        let (_guard, territory, root) = setup("unknown-fields");
+        let root = new_root(&root);
         activate(&root, "0.19.2");
         let state = valid_state(&root);
         write_state(&root, &state).unwrap();
-        let path = temp.join("state/install-state.json");
+        let path = territory.join("state/install-state.json");
         let mut text = std::fs::read_to_string(&path).unwrap();
         text = text.replace(
             "\"last_transaction_id\"",
@@ -540,6 +628,6 @@ mod tests {
         );
         std::fs::write(&path, text).unwrap();
         assert!(load_state(&root).is_ok());
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }

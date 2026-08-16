@@ -65,7 +65,7 @@ fn run_inner(args: &SelfService) -> Result<(), InstallError> {
         std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
     )?;
     let install_root = root::normalize_install_root(&selected)?;
-    let _lock = lock::acquire_install_lock(&install_root)?;
+    let _lock = lock::acquire_install_lock()?;
     let manager = runtime.service_manager.as_ref();
     match &args.action {
         SelfServiceAction::Install(sub) => install(&install_root, sub, manager),
@@ -75,7 +75,7 @@ fn run_inner(args: &SelfService) -> Result<(), InstallError> {
 
 fn install(
     install_root: &root::InstallRoot,
-    args: &SelfServiceArgs,
+    _args: &SelfServiceArgs,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     require_manager(manager)?;

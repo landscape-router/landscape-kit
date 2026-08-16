@@ -166,6 +166,50 @@ fn backup_delete_confirms_and_removes_the_backup() {
     let _language = LanguageGuard::set(Language::En);
     let dir = std::env::temp_dir().join(format!("lkit-console-delete-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    let _guard = crate::deployment::layout::test_territory(&dir);
+    let install = dir.join("install");
+    std::fs::create_dir_all(&install).unwrap();
+    let state = crate::deployment::state::InstallState {
+        schema_version: 1,
+        layout_version: 2,
+        install_root: install.display().to_string(),
+        canonical_install_root: install.display().to_string(),
+        active_version: "1.2.3".into(),
+        assets: crate::deployment::state::Assets {
+            webserver: crate::deployment::state::WebserverAsset {
+                architecture: crate::deployment::state::StateArchitecture::X86_64,
+                sha256: "a".repeat(64),
+                size: 1,
+            },
+            static_archive: crate::deployment::state::ArchiveAsset {
+                sha256: "b".repeat(64),
+                size: 1,
+            },
+        },
+        initialization: crate::deployment::state::InitializationState {
+            status: crate::deployment::state::InitStatus::Complete,
+            lock_present: true,
+            initialized_at: Some(chrono::Utc::now()),
+        },
+        service: crate::deployment::state::ServiceState {
+            manager: crate::deployment::state::StateServiceManager::Systemd,
+            registered: true,
+            enabled: true,
+            verified: true,
+            definition_path: Some("service/landscape-router.service".into()),
+            definition_sha256: Some("c".repeat(64)),
+        },
+        last_transaction_id: None,
+        committed_at: Some(chrono::Utc::now()),
+    };
+    crate::deployment::state::write_state(
+        &crate::deployment::root::InstallRoot {
+            install_root: install.clone(),
+            canonical: install.clone(),
+        },
+        &state,
+    )
+    .unwrap();
     let backups = dir.join("backups");
     std::fs::create_dir_all(&backups).unwrap();
     let path = backups.join("20260807-131500-ab12cd34.lkb");

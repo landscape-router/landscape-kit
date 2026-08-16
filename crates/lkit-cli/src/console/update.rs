@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
@@ -16,22 +15,17 @@ use super::{ConsoleAction, ConsoleApp};
 use crate::commands::Commands;
 use crate::commands::update::{ResolvedUpdate, resolve_update_target};
 use crate::deployment::config::{RepositorySource, RepositorySourceKind};
-use crate::deployment::{plan, root, state};
+use crate::deployment::{plan, state};
 
-/// Update 面板后台解析：与命令模式 `lkit update` 相同的根目录解析、状态读取、
+/// Update 面板后台解析：与命令模式 `lkit update` 相同的状态发现、
 /// 来源解析与目标版本解析/比较（复用 `resolve_update_target`），网络只读，零副作用。
 fn resolve_update_from_console(
-    install_dir: &str,
     repository: &plan::RepositoryChoice,
     version: &str,
 ) -> Result<ResolvedUpdate, String> {
-    let requested = PathBuf::from(install_dir);
-    let selected = plan::select_install_root(
-        Some(&requested),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )
-    .map_err(|error| error.to_string())?;
-    let root = root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
+    let root = state::discover_landscape_root()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| crate::tr!(crate::keys::MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION))?;
     let state = state::load_state(&root)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| crate::tr!(crate::keys::MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION))?;
@@ -127,18 +121,9 @@ impl UpdatePanel {
     /// 读取 `config.toml`（与 `lkit update` 相同的解析与校验）：有效时提供
     /// “当前来源”选项并默认选中,文件缺失时只留显式选项,损坏时显示错误提示。
     /// 每次进入 Update 菜单时重新读取,不缓存旧配置。
-    pub(crate) fn load_config(&mut self, install_dir: &str) {
-        let requested = PathBuf::from(install_dir);
-        let loaded = (|| -> Result<Option<RepositorySource>, String> {
-            let selected = plan::select_install_root(
-                Some(&requested),
-                std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-            )
-            .map_err(|error| error.to_string())?;
-            let root =
-                root::normalize_install_root(&selected).map_err(|error| error.to_string())?;
-            crate::deployment::config::load_repository(&root).map_err(|error| error.to_string())
-        })();
+    pub(crate) fn load_config(&mut self) {
+        let loaded =
+            crate::deployment::config::load_repository().map_err(|error| error.to_string());
         match loaded {
             Ok(Some(source)) => {
                 if self.current_source.is_none() {
@@ -342,7 +327,6 @@ impl ConsoleApp {
             ));
         }
         let (sender, receiver) = mpsc::channel();
-        let install_dir = self.install.install_dir.clone();
         let repository = match self.update.repository {
             UpdateRepositoryMode::Current => self
                 .update
@@ -362,7 +346,7 @@ impl ConsoleApp {
         let language = crate::i18n::current();
         std::thread::spawn(move || {
             let result = crate::i18n::with_language(language, || {
-                resolve_update_from_console(&install_dir, &repository, &version)
+                resolve_update_from_console(&repository, &version)
             });
             let _ = sender.send(result);
         });
@@ -399,14 +383,11 @@ impl ConsoleApp {
 
     /// 确认层 Enter：构建带 `--console-confirmed` 与 `--yes` 的结构化 `Uninstall` 请求。
     fn uninstall_action(&self) -> ConsoleAction {
-        let install_dir = PathBuf::from(&self.install.install_dir);
         let command = Commands::Uninstall(crate::commands::uninstall::Uninstall {
             yes: true,
             allow_no_backup: false,
             keep_data: false,
-            purge_root: false,
             console_confirmed: true,
-            install_dir: Some(install_dir.clone()),
             #[cfg(feature = "test-support")]
             test_runtime: None,
         });
@@ -414,8 +395,6 @@ impl ConsoleApp {
             "uninstall".into(),
             "--yes".into(),
             "--console-confirmed".into(),
-            "--install-dir".into(),
-            install_dir.display().to_string(),
         ];
         ConsoleAction::Command { command, args }
     }
@@ -423,7 +402,6 @@ impl ConsoleApp {
     /// 确认层 Enter：构建带 `--console-confirmed` 的结构化 `Update` 请求。
     /// Current 来源不传 `--repository`，由命令按 `config.toml` > 官方 GitHub 解析。
     pub(crate) fn update_action(&self) -> ConsoleAction {
-        let install_dir = PathBuf::from(&self.install.install_dir);
         let repository = match self.update.repository {
             UpdateRepositoryMode::Current => None,
             UpdateRepositoryMode::Github => Some(Some("github".into())),
@@ -436,7 +414,6 @@ impl ConsoleApp {
         let command = Commands::Update(crate::commands::update::Update {
             version: Some(version.clone()),
             repository: repository.clone(),
-            install_dir: Some(install_dir.clone()),
             accept_service_change: false,
             allow_no_backup: false,
             console_confirmed: true,
@@ -448,8 +425,6 @@ impl ConsoleApp {
             "--console-confirmed".into(),
             "--version".into(),
             version,
-            "--install-dir".into(),
-            install_dir.display().to_string(),
         ];
         match &repository {
             None => {}

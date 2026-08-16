@@ -18,6 +18,7 @@ use super::root::InstallRoot;
 use super::state::{InitStatus, InitializationState, ServiceState, StateServiceManager};
 pub(crate) use super::switch::{SwitchArgs, SwitchOptions, SwitchOutcome, switch_version};
 use super::transaction::Phase;
+use crate::deployment::layout;
 use crate::deployment::runtime::InstallRuntime;
 
 mod init_config;
@@ -96,9 +97,9 @@ async fn first_install_impl<P: DocsProbe>(
     runtime: Option<&InstallRuntime>,
 ) -> Result<FirstInstallOutcome, InstallError> {
     let architecture = Architecture::host().ok_or_else(|| {
-        InstallError::UnsupportedPlatform(
-            crate::tr!(crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED).into(),
-        )
+        InstallError::UnsupportedPlatform(crate::tr!(
+            crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED
+        ))
     })?;
     let release = match target {
         TargetVersion::Latest => provider
@@ -134,9 +135,7 @@ async fn first_install_impl<P: DocsProbe>(
         let init_config = build_init_config(&release.version, credentials, network)?;
         write_init_config(root, &init_config)?;
         let before = capture_before(manager, ManagedService::LandscapeRouter)?;
-        let backup_dir = root
-            .canonical
-            .join("backups")
+        let backup_dir = layout::territory_backups_dir()
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
         let _ = resolv::backup(manager.resolv_conf(), &backup_dir)?;

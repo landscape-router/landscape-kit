@@ -1,3 +1,5 @@
+#[cfg(feature = "test-support")]
+#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -18,8 +20,6 @@ pub struct Repair {
     pub target: RepairTarget,
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -35,7 +35,7 @@ pub async fn run(args: &Repair) -> ExitCode {
         },
         version: None,
         repository: super::manage::repository_override(&args.repository),
-        install_dir: args.install_dir.clone(),
+        install_dir: None,
         admin_user: None,
         password_file: None,
         interactive_password: None,

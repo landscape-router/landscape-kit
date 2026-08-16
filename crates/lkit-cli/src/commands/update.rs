@@ -1,3 +1,5 @@
+#[cfg(feature = "test-support")]
+#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -6,7 +8,6 @@ use clap::Args;
 use super::manage::{InstallRequest, RequestMode, repository_override};
 use crate::deployment::config::RepositorySourceKind;
 use crate::deployment::plan::{self, RepositoryChoice, TargetVersion};
-use crate::deployment::root;
 use crate::deployment::state;
 use crate::release::repository::provider_for;
 
@@ -16,8 +17,6 @@ pub struct Update {
     pub version: Option<String>,
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
-    #[arg(long, value_name = "PATH")]
-    pub install_dir: Option<PathBuf>,
     #[arg(long)]
     pub accept_service_change: bool,
     /// Allow updating while the managed service is stopped; no .lkb backup is
@@ -68,22 +67,22 @@ async fn run_update(
     args: &Update,
     mut tty: Option<&mut crate::interaction::interactive::Tty>,
 ) -> Result<ExitCode, plan::InstallError> {
-    let install_root = plan::select_install_root(
-        args.install_dir.as_deref(),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )?;
-    let normalized = root::normalize_install_root(&install_root)?;
+    let normalized = state::discover_landscape_root()?.ok_or_else(|| {
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION
+        ))
+    })?;
     let state = state::load_state(&normalized)?.ok_or_else(|| {
-        plan::InstallError::ParameterUsage(
-            crate::tr!(crate::keys::MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION).into(),
-        )
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::MANAGE_COMMAND_REQUIRES_EXISTING_INSTALLATION
+        ))
     })?;
 
     let repository = match repository_override(&args.repository) {
         Some(choice) => choice,
         None => match &mut tty {
-            Some(tty) => select_repository(tty, &normalized)?,
-            None => crate::deployment::config::resolve_default_choice(&normalized)?,
+            Some(tty) => select_repository(tty)?,
+            None => crate::deployment::config::resolve_default_choice()?,
         },
     };
     let target = match &args.version {
@@ -171,7 +170,7 @@ fn switch_request(args: &Update, version: String, repository: RepositoryChoice) 
         mode: RequestMode::Switch,
         version: Some(version),
         repository: Some(repository),
-        install_dir: args.install_dir.clone(),
+        install_dir: None,
         admin_user: None,
         password_file: None,
         interactive_password: None,
@@ -192,9 +191,8 @@ fn switch_request(args: &Update, version: String, repository: RepositoryChoice) 
 /// 默认 HTTP 镜像和自定义 HTTP 仓库;文件不存在时选项从官方 GitHub 开始。
 fn select_repository(
     tty: &mut crate::interaction::interactive::Tty,
-    root: &crate::deployment::root::InstallRoot,
 ) -> Result<RepositoryChoice, plan::InstallError> {
-    let recorded = crate::deployment::config::load_repository(root)?;
+    let recorded = crate::deployment::config::load_repository()?;
     let options = match &recorded {
         Some(source) => {
             let kind = match source.kind {
@@ -242,12 +240,13 @@ fn select_repository(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-support")]
+    use std::path::PathBuf;
 
     fn args() -> Update {
         Update {
             version: None,
             repository: None,
-            install_dir: Some(PathBuf::from("/tmp/lkit-update-test")),
             accept_service_change: true,
             allow_no_backup: true,
             console_confirmed: false,
@@ -266,10 +265,7 @@ mod tests {
             let request = switch_request(&args(), "1.2.4".into(), repository.clone());
             assert_eq!(request.repository, Some(repository));
             assert_eq!(request.version.as_deref(), Some("1.2.4"));
-            assert_eq!(
-                request.install_dir.as_deref(),
-                Some(std::path::Path::new("/tmp/lkit-update-test"))
-            );
+            assert!(request.install_dir.is_none());
             assert!(request.accept_service_change);
             assert!(request.allow_no_backup);
             assert!(!request.console_confirmed);

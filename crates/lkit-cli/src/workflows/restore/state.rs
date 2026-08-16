@@ -16,6 +16,7 @@ use super::super::state::{
 };
 use super::super::transaction::TransactionFile;
 use super::RestoreOptions;
+use crate::deployment::layout;
 
 pub(super) async fn create_protection_backup<P: DocsProbe>(
     root: &InstallRoot,
@@ -53,7 +54,7 @@ pub(super) async fn create_protection_backup<P: DocsProbe>(
         .join("static.zip");
     let geo_tmp = root.canonical.join("data/geo_tmp");
     let backup_ref = lkb::create_backup(
-        &root.canonical.join("backups"),
+        &layout::territory_backups_dir(),
         &version,
         architecture,
         &webserver,
@@ -73,7 +74,7 @@ pub(super) async fn create_protection_backup<P: DocsProbe>(
 /// 身份分别从解包二进制和备份内压缩包现场计算。
 pub(super) fn build_restore_state(
     root: &InstallRoot,
-    previous: &InstallState,
+    _previous: &InstallState,
     transaction: &TransactionFile,
     metadata: &BackupMetadata,
     restore_dir: &Path,

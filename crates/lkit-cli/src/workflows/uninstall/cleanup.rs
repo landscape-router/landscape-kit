@@ -73,10 +73,10 @@ fn deactivate_service(
     Ok(())
 }
 
-/// 删除受管内容。默认保留 `config.toml`、`backups/` 与 `transactions/`;
-/// `--keep-data` 额外保留 `data/`。`logs/` 与 `run/` 在事务提交后由
-/// [`cleanup_runtime_dirs`] 删除(提交阶段需要事务日志,不能提前删除)。
-/// `--purge-root` 在事务提交后由 [`purge_install_root`] 删除全部剩余内容与安装根目录。
+/// 删除受管内容。landscape 根删除 `current`/`releases`/`service`(与
+/// `--keep-data` 之外的 `data/`);lkit 地盘的 `install-state.json` 一并删除,
+/// 卸载后按全新安装处理。lkit 地盘的 `config.toml`、`backups/`、`transactions/`、
+/// `logs/` 与 `run/` 原样保留。
 pub(super) fn remove_managed_contents(
     root: &InstallRoot,
     args: &UninstallArgs,
@@ -94,28 +94,14 @@ pub(super) fn remove_managed_contents(
     for path in paths {
         remove_path_if_present(&path)?;
     }
+    remove_path_if_present(&crate::deployment::layout::territory_state_path())?;
     Ok(())
 }
 
-/// 事务提交后删除运行态目录(`logs/` 与 `run/`,含 `install.lock`)。
-/// 锁文件描述符仍由调用方持有,删除路径不影响锁的生命周期。
-pub(crate) fn cleanup_runtime_dirs(root: &InstallRoot) -> Result<(), InstallError> {
-    for path in [root.canonical.join("logs"), root.canonical.join("run")] {
-        remove_path_if_present(&path)?;
-    }
-    Ok(())
-}
-
-/// `--purge-root`:删除安装根目录剩余全部内容(含 `config.toml`、`backups/`、
-/// `transactions/` 与已提交的卸载事务文件),然后移除根目录本身。
-/// 只在事务标记 `committed` 之后调用。
-pub(super) fn purge_install_root(root: &InstallRoot) -> Result<(), InstallError> {
-    let canonical = &root.canonical;
-    for entry in std::fs::read_dir(canonical).map_err(InstallError::Io)? {
-        let entry = entry.map_err(InstallError::Io)?;
-        remove_path_if_present(&entry.path())?;
-    }
-    std::fs::remove_dir(canonical).map_err(InstallError::Io)?;
+/// 卸载后清理运行态目录。lkit 地盘的 `logs/` 与 `run/`(含 `install.lock`)
+/// 不属于 landscape 卸载范围,原样保留;本函数保持为空操作以保证调用方
+/// (中断恢复前向完成)语义不变。
+pub(crate) fn cleanup_runtime_dirs(_root: &InstallRoot) -> Result<(), InstallError> {
     Ok(())
 }
 
@@ -339,12 +325,11 @@ esac
         }
     }
 
-    fn args(yes: bool, allow_no_backup: bool, keep_data: bool, purge_root: bool) -> UninstallArgs {
+    fn args(yes: bool, allow_no_backup: bool, keep_data: bool) -> UninstallArgs {
         UninstallArgs {
             yes,
             allow_no_backup,
             keep_data,
-            purge_root,
             console_confirmed: false,
         }
     }
@@ -373,7 +358,7 @@ esac
             &install_root,
             &state,
             &fake_systemd(&root.join("fake-systemd")),
-            &args(true, false, false, false),
+            &args(true, false, false),
             &options_for(&server, &none_health()),
         )
         .await
@@ -430,7 +415,7 @@ esac
             &install_root,
             &state,
             &fake_systemd(&root.join("fake-systemd")),
-            &args(true, false, true, false),
+            &args(true, false, true),
             &options_for(&server, &none_health()),
         )
         .await
@@ -449,35 +434,6 @@ esac
                 .exists()
         );
         assert!(!install_root.canonical.join("current").exists());
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[tokio::test]
-    async fn purge_root_deletes_the_whole_install_root_after_commit() {
-        let _guard = interactive_guard().await;
-        crate::interaction::interactive::configure(true);
-        let _reset = NonInteractiveGuard;
-        let root = temp_root("purge-root");
-        let install_root = InstallRoot {
-            install_root: root.clone(),
-            canonical: root.clone(),
-        };
-        activate_version(&install_root, "1.2.3");
-        setup_current(&install_root);
-        let state = install_state(&install_root, "1.2.3");
-        super::super::super::state::write_state(&install_root, &state).unwrap();
-        let server = export_server("1.2.3".into());
-
-        uninstall_installation(
-            &install_root,
-            &state,
-            &fake_systemd(&root.join("fake-systemd")),
-            &args(true, true, false, true),
-            &options_for(&server, &none_health()),
-        )
-        .await
-        .unwrap();
-        assert!(!root.exists(), "the whole install root must be removed");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -527,7 +483,7 @@ esac
             &install_root,
             &state,
             &systemd,
-            &args(true, false, false, false),
+            &args(true, false, false),
             &options_for(&server, &none_health()),
         )
         .await

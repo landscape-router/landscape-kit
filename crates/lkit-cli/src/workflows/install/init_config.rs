@@ -7,6 +7,7 @@ use serde::Serialize;
 use super::super::credentials::Credentials;
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
+use crate::deployment::layout;
 
 pub(crate) fn parse_stable_version(
     value: &str,
@@ -19,7 +20,7 @@ pub(crate) fn activate_current(
     version: &semver::Version,
 ) -> Result<(), InstallError> {
     let current = root.canonical.join("current");
-    let tmp_link = root.canonical.join("run").join(".current.tmp");
+    let tmp_link = layout::territory_run_dir().join(".current.tmp");
     std::fs::create_dir_all(tmp_link.parent().expect("run dir has a parent"))
         .map_err(InstallError::Io)?;
     let _ = std::fs::remove_file(&tmp_link);

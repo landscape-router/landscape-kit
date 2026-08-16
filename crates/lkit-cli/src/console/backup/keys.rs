@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::mpsc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -60,7 +59,7 @@ impl ConsoleApp {
                         Ok(()) => {
                             self.backup.editing = false;
                             self.backup.remark.clear();
-                            self.backup.start_create(&self.install.install_dir, &remark);
+                            self.backup.start_create(&remark);
                         }
                         Err(error) => self.notice = error.to_string(),
                     }
@@ -140,8 +139,7 @@ impl ConsoleApp {
                                 .unwrap_or_default()
                                 .to_string_lossy()
                                 .trim_end_matches(".lkb")
-                        )
-                        .into();
+                        );
                     }
                 }
             }
@@ -151,7 +149,7 @@ impl ConsoleApp {
                 {
                     self.backup.restore_confirming = true;
                 } else {
-                    self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE).into();
+                    self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE);
                 }
             }
             KeyCode::Char('d' | 'D') => {
@@ -172,7 +170,7 @@ impl ConsoleApp {
 
 impl ConsoleApp {
     fn delete_backup(&mut self, backup_id: String) {
-        let result = delete_backup_via_console(&self.install.install_dir, &backup_id);
+        let result = delete_backup_via_console(&backup_id);
         match result {
             Ok(()) => {
                 self.backup.details = None;
@@ -222,18 +220,16 @@ impl ConsoleApp {
             let _ = sender.send(result);
         });
         self.backup.verify = BackupVerifyState::Running(receiver);
-        self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING).into();
+        self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING);
     }
 
     fn backup_restore_action(&self, backup_id: &str) -> ConsoleAction {
-        let install_dir = PathBuf::from(&self.install.install_dir);
         let command = Commands::Restore(crate::commands::restore::Restore {
             backup: Some(backup_id.to_string()),
             file: None,
             allow_no_backup: false,
             yes: true,
             console_confirmed: true,
-            install_dir: Some(install_dir.clone()),
             #[cfg(feature = "test-support")]
             test_runtime: None,
         });
@@ -243,8 +239,6 @@ impl ConsoleApp {
             backup_id.to_string(),
             "--yes".into(),
             "--console-confirmed".into(),
-            "--install-dir".into(),
-            install_dir.display().to_string(),
         ];
         ConsoleAction::Command { command, args }
     }

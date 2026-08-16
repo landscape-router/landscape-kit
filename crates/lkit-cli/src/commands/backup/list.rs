@@ -2,25 +2,33 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::backup::lkb::{BackupMetadata, read_backup_metadata_streamed, verify_lkb};
+use crate::deployment::layout;
 use crate::deployment::plan;
 use crate::deployment::root::InstallRoot;
 use crate::workflows::restore::validate_backup_file;
 
 use super::BackupList;
 use super::architecture_key;
+use super::discover_root;
 use super::exit_code;
-use super::resolve_root;
 use super::scope_key;
 
-pub(super) fn run_list(args: &BackupList) -> ExitCode {
-    let root = match resolve_root(args.install_dir.as_deref()) {
-        Ok(root) => root,
+pub(super) fn run_list(_args: &BackupList) -> ExitCode {
+    let root = match discover_root() {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            eprintln!(
+                "backup: {}",
+                crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION)
+            );
+            return ExitCode::from(2);
+        }
         Err(error) => {
             eprintln!("backup: {error}");
             return exit_code(&error);
         }
     };
-    let backups_dir = root.canonical.join("backups");
+    let backups_dir = layout::territory_backups_dir();
     let rows = match list_backups(&root) {
         Ok(rows) => rows,
         Err(error) => {
@@ -93,10 +101,10 @@ pub(crate) enum BackupListCheck {
 }
 
 pub(crate) fn list_backups_with(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     check: BackupListCheck,
 ) -> Result<Vec<(Option<BackupMetadata>, PathBuf)>, plan::InstallError> {
-    let backups_dir = root.canonical.join("backups");
+    let backups_dir = layout::territory_backups_dir();
     let entries = match std::fs::read_dir(&backups_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -175,17 +183,74 @@ mod tests {
         root
     }
 
+    /// 建立隔离测试现场并写入有效状态(discover 需要),返回 (守卫, 地盘)。
+    fn setup(
+        name: &str,
+    ) -> (
+        crate::deployment::layout::TerritoryOverride,
+        std::path::PathBuf,
+    ) {
+        let temp = temp_dir(name);
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let install = temp.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        let state = crate::deployment::state::InstallState {
+            schema_version: 1,
+            layout_version: 2,
+            install_root: install.display().to_string(),
+            canonical_install_root: install.display().to_string(),
+            active_version: "1.2.3".into(),
+            assets: crate::deployment::state::Assets {
+                webserver: crate::deployment::state::WebserverAsset {
+                    architecture: crate::deployment::state::StateArchitecture::X86_64,
+                    sha256: "a".repeat(64),
+                    size: 1,
+                },
+                static_archive: crate::deployment::state::ArchiveAsset {
+                    sha256: "b".repeat(64),
+                    size: 1,
+                },
+            },
+            initialization: crate::deployment::state::InitializationState {
+                status: crate::deployment::state::InitStatus::Complete,
+                lock_present: true,
+                initialized_at: Some(chrono::Utc::now()),
+            },
+            service: crate::deployment::state::ServiceState {
+                manager: crate::deployment::state::StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("c".repeat(64)),
+            },
+            last_transaction_id: None,
+            committed_at: Some(chrono::Utc::now()),
+        };
+        crate::deployment::state::write_state(
+            &crate::deployment::root::InstallRoot {
+                install_root: install.clone(),
+                canonical: install.clone(),
+            },
+            &state,
+        )
+        .unwrap();
+        (guard, territory)
+    }
+
     #[test]
     fn list_marks_symlinks_and_unsafe_permissions_invalid() {
-        let dir = temp_dir("list");
-        let source = dir.join("source");
+        let (_guard, territory) = setup("list");
+        let source = territory.parent().unwrap().join("source");
         std::fs::create_dir_all(source.join("static/assets")).unwrap();
         let webserver = source.join("landscape-webserver");
         std::fs::write(&webserver, b"binary").unwrap();
         std::fs::write(source.join("static/index.html"), b"<h1>x</h1>").unwrap();
         std::fs::write(source.join("static.zip"), b"zip").unwrap();
         std::fs::create_dir_all(source.join("geo_tmp")).unwrap();
-        let backups = dir.join("backups");
+        let backups = territory.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         let backup = crate::backup::lkb::create_backup(
             &backups,
@@ -208,16 +273,11 @@ mod tests {
         std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         #[cfg(feature = "test-support")]
-        let args = BackupList {
-            install_dir: Some(dir.clone()),
-            test_runtime: None,
-        };
+        let args = BackupList { test_runtime: None };
         #[cfg(not(feature = "test-support"))]
-        let args = BackupList {
-            install_dir: Some(dir.clone()),
-        };
+        let args = BackupList {};
         assert_eq!(run_list(&args), ExitCode::FAILURE);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     /// 构造不含 tar checksum 校验的最小 tar 字节流(用于包装成 `.lkb`)。
@@ -312,8 +372,8 @@ mod tests {
             ("static", b'5', b""),
             ("geo_tmp", b'5', b""),
         ]));
-        let dir = temp_dir("list-incomplete");
-        let backups = dir.join("backups");
+        let (_guard, territory) = setup("list-incomplete");
+        let backups = territory.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         std::fs::write(backups.join("20260801-163000-a1b2c3d4.lkb"), wrap(&tar_gz)).unwrap();
         std::fs::set_permissions(
@@ -323,21 +383,17 @@ mod tests {
         .unwrap();
 
         #[cfg(feature = "test-support")]
-        let args = BackupList {
-            install_dir: Some(dir.clone()),
-            test_runtime: None,
-        };
+        let args = BackupList { test_runtime: None };
         #[cfg(not(feature = "test-support"))]
-        let args = BackupList {
-            install_dir: Some(dir.clone()),
-        };
+        let args = BackupList {};
         assert_eq!(run_list(&args), ExitCode::FAILURE);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]
     fn metadata_list_mode_reads_only_the_metadata_region() {
-        let dir = temp_dir("metadata-list");
+        let (_guard, territory) = setup("metadata-list");
+        let dir = territory.parent().unwrap();
         let source = dir.join("source");
         std::fs::create_dir_all(source.join("static/assets")).unwrap();
         let webserver = source.join("landscape-webserver");
@@ -346,7 +402,7 @@ mod tests {
         std::fs::write(source.join("static.zip"), b"zip").unwrap();
         std::fs::create_dir_all(source.join("geo_tmp")).unwrap();
         std::fs::write(source.join("geo_tmp/geo.dat"), b"geo").unwrap();
-        let backups = dir.join("backups");
+        let backups = territory.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         let backup = crate::backup::lkb::create_backup(
             &backups,
@@ -364,8 +420,8 @@ mod tests {
         .unwrap();
         let path = backups.join(format!("{}.lkb", backup.backup_id));
         let root = crate::deployment::root::InstallRoot {
-            install_root: dir.clone(),
-            canonical: dir.clone(),
+            install_root: territory.clone(),
+            canonical: territory.clone(),
         };
 
         let rows = list_backups_with(&root, BackupListCheck::Full).unwrap();
@@ -392,6 +448,6 @@ mod tests {
             let rows = list_backups_with(&root, check).unwrap();
             assert!(rows[0].0.is_none(), "{check:?} must reject a bad header");
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }

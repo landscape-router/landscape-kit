@@ -152,7 +152,7 @@ fn execute_pending_requests() {
 /// 单个恢复周期:以非阻塞方式获取安装锁,存在未完成事务时执行
 /// `recover_interrupted`(与 CLI 相同的恢复语义)。
 async fn recovery_cycle(runtime: &InstallRuntime, install_root: &InstallRoot) {
-    let lock = match lock::acquire_install_lock(install_root) {
+    let lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(_) => return,
     };

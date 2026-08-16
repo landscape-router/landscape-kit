@@ -96,7 +96,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
     let has_backup = transaction.backup.is_some();
     let has_restore_backup = transaction.restore_backup.is_some();
     let has_static_backup = transaction.static_backup.is_some();
-    let has_versions = transaction.from_version.is_some()
+    let _has_versions = transaction.from_version.is_some()
         || transaction.target_version.is_some()
         || transaction.previous_current.is_some()
         || transaction.target_release.is_some();
@@ -461,8 +461,11 @@ mod tests {
     fn rejects_corrupted_transactions() {
         let temp = temp_root("corrupt");
         let root = new_root(&temp);
-        std::fs::create_dir_all(temp.join("transactions")).unwrap();
-        std::fs::write(temp.join("transactions/bad.json"), b"not json").unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _guard = crate::deployment::layout::test_territory(&territory);
+        std::fs::create_dir_all(territory.join("transactions")).unwrap();
+        std::fs::write(territory.join("transactions/bad.json"), b"not json").unwrap();
         assert!(matches!(
             find_unfinished(&root),
             Err(InstallError::CorruptedTransaction(_))

@@ -7,10 +7,11 @@ use std::process::{Command, ExitCode};
 use chrono::{Duration as ChronoDuration, Utc};
 
 use crate::commands::network::{Network, NetworkAction};
+use crate::deployment::layout;
 use crate::deployment::plan::InstallError;
 use crate::deployment::root::InstallRoot;
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::{lock, plan, root, state, transaction};
+use crate::deployment::{lock, state, transaction};
 use crate::service::manager::{ManagedService, ServiceManager};
 use crate::service::{health, systemd};
 
@@ -115,9 +116,8 @@ pub(crate) fn arm_recovery(
         .map(|path| format!(" --test-runtime={}", unit_quote(path)))
         .unwrap_or_default();
     let rollback_command = format!(
-        "{} network rollback --automatic --install-dir={}{}",
+        "{} network rollback --automatic{}",
         unit_quote(&recovery),
-        unit_quote(&root.canonical),
         runtime_arg
     );
     let rollback = format!(
@@ -165,11 +165,11 @@ pub(crate) fn cleanup_failed_takeover(
 }
 
 pub(crate) fn write_pending_state(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     network: &transaction::NetworkTakeoverTransaction,
     state: &state::InstallState,
 ) -> Result<(), InstallError> {
-    let path = root.canonical.join(&network.pending_state);
+    let path = layout::territory_relative(&network.pending_state);
     let parent = path.parent().ok_or_else(|| {
         InstallError::CorruptedTransaction("pending state path has no parent".into())
     })?;
@@ -194,16 +194,20 @@ pub(crate) async fn run_command(args: &Network) -> ExitCode {
 async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
     let runtime = resolve_runtime(args)?;
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
-        return Err(InstallError::UnsupportedPlatform(
-            crate::tr!(crate::keys::TAKEOVER_NETWORK_COMMANDS_REQUIRE_ROOT).into(),
-        ));
+        return Err(InstallError::UnsupportedPlatform(crate::tr!(
+            crate::keys::TAKEOVER_NETWORK_COMMANDS_REQUIRE_ROOT
+        )));
     }
-    let selected = plan::select_install_root(
-        args.install_dir.as_deref(),
-        std::env::var("LKIT_INSTALL_DIR").ok().as_deref(),
-    )?;
-    let root = root::normalize_install_root(&selected)?;
-    let _lock = lock::acquire_install_lock(&root)?;
+    let normalized = match state::discover_landscape_root()? {
+        Some(root) => root,
+        None => {
+            return Err(InstallError::ParameterUsage(
+                "no installed landscape found; run `lkit install` first".into(),
+            ));
+        }
+    };
+    let root = normalized;
+    let _lock = lock::acquire_install_lock()?;
     match &args.action {
         NetworkAction::Status => status(&root),
         NetworkAction::Confirm => confirm(&root, &runtime).await,
@@ -236,7 +240,7 @@ fn status(root: &InstallRoot) -> Result<(), InstallError> {
                 .plan
                 .management_address()
                 .map(|address| address.to_string())
-                .unwrap_or_else(|| crate::tr!(crate::keys::TAKEOVER_DHCP_LEASE).into())
+                .unwrap_or_else(|| crate::tr!(crate::keys::TAKEOVER_DHCP_LEASE))
         );
         println!(
             "network: {} {}",
@@ -308,8 +312,8 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
         transaction::persist(root, &pending)?;
     }
     remove_recovery_units(root, &network, systemd, false)?;
-    let bytes =
-        std::fs::read(root.canonical.join(&network.pending_state)).map_err(InstallError::Io)?;
+    let bytes = std::fs::read(layout::territory_relative(&network.pending_state))
+        .map_err(InstallError::Io)?;
     let mut install_state: state::InstallState =
         serde_json::from_slice(&bytes).map_err(|error| {
             InstallError::CorruptedState(format!("pending install state is invalid: {error}"))
@@ -319,7 +323,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
     install_state.committed_at = Some(Utc::now());
     state::write_state(root, &install_state)?;
     transaction::mark_phase(root, &pending, transaction::Phase::Committed)?;
-    let _ = std::fs::remove_file(root.canonical.join(&network.pending_state));
+    let _ = std::fs::remove_file(layout::territory_relative(&network.pending_state));
     println!(
         "network: {}",
         crate::tr!(crate::keys::TAKEOVER_CONFIRMED_LANDSCAPE_TAKEOVER)

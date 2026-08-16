@@ -10,6 +10,7 @@ use super::rollback as rollback_util;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateServiceManager};
 use super::transaction::{BackupRef, Phase, TransactionFile};
+use crate::deployment::layout;
 use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 mod backup;
@@ -83,10 +84,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
 
     let mut transaction = TransactionFile::new_restore(root, &from_version, &target_version)?;
     super::transaction::begin(root, &transaction)?;
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
     // 外部备份先复制进事务目录并重新自校验,事务只记录安装根目录内的相对路径。
     let target_backup = match (&args.backup_id, &args.file_path) {
@@ -142,9 +140,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             manager,
             ManagedService::LandscapeRouter,
         )?);
-        let backup_dir = root
-            .canonical
-            .join("backups")
+        let backup_dir = layout::territory_backups_dir()
             .join(&transaction.transaction_id)
             .join("host/resolv.conf");
         let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
@@ -301,7 +297,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
                         .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
                         .and_then(|()| {
                             if let Some(backup_path) = &transaction.resolv_conf_backup {
-                                let backup_dir = root.canonical.join(backup_path);
+                                let backup_dir = layout::territory_relative(backup_path);
                                 super::resolv::restore(manager.resolv_conf(), &backup_dir)
                             } else {
                                 Ok(())
@@ -498,7 +494,7 @@ mod tests {
         std::fs::write(static_dir.join("index.html"), "static 1.2.3").unwrap();
         std::fs::write(geo.join("ip/geo.dat"), "geo 1.2.3").unwrap();
         let backup_ref = lkb::create_backup(
-            &root.canonical.join("backups"),
+            &layout::territory_backups_dir(),
             &semver::Version::new(1, 2, 3),
             "x86_64",
             &binary,
@@ -673,9 +669,7 @@ esac
             .unwrap();
         assert_eq!(updated.active_version, "1.2.3");
         assert!(
-            super::super::config::load_repository(&install_root)
-                .unwrap()
-                .is_none(),
+            super::super::config::load_repository().unwrap().is_none(),
             "restore must not write the repository record"
         );
         let (webserver_sha, webserver_size) = sha256_bytes(PAYLOAD_1_2_3);

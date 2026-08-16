@@ -20,6 +20,7 @@ use super::state::{
 };
 use super::systemd::{self, Systemd};
 use super::transaction::{BackupRef, Phase, TransactionFile};
+use crate::deployment::layout;
 use crate::interaction::interactive;
 
 mod legacy;
@@ -102,10 +103,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
 
     let mut transaction = super::transaction::TransactionFile::new_migrate(root, &version)?;
     super::transaction::begin(root, &transaction)?;
-    let tx_dir = root
-        .canonical
-        .join("transactions")
-        .join(&transaction.transaction_id);
+    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
     let mut stopping_started = false;
     let result: Result<(), InstallError> = async {
@@ -114,9 +112,9 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
             crate::interaction::presentation::OperationPhase::Downloading,
         );
         let architecture = Architecture::host().ok_or_else(|| {
-            InstallError::UnsupportedPlatform(
-                crate::tr!(crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED).into(),
-            )
+            InstallError::UnsupportedPlatform(crate::tr!(
+                crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED
+            ))
         })?;
         let backup = create_migration_backup(
             root,
@@ -145,9 +143,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
                 manager,
                 ManagedService::LandscapeRouter,
             )?);
-            let backup_dir = root
-                .canonical
-                .join("backups")
+            let backup_dir = layout::territory_backups_dir()
                 .join(&transaction.transaction_id)
                 .join("host/resolv.conf");
             let _ = super::resolv::backup(manager.resolv_conf(), &backup_dir)?;
@@ -175,7 +171,7 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
             crate::interaction::presentation::OperationPhase::Applying,
         );
         let backup_bytes =
-            std::fs::read(root.canonical.join(&backup.path)).map_err(InstallError::Io)?;
+            std::fs::read(layout::territory_relative(&backup.path)).map_err(InstallError::Io)?;
         let restore_dir = tx_dir.join("restore");
         let _ = std::fs::remove_dir_all(&restore_dir);
         let metadata = extract_lkb(&backup_bytes, &restore_dir)?;
@@ -389,7 +385,7 @@ async fn create_migration_backup(
     let geo_tmp = source.join("geo_tmp");
     let remark = format!("migration from {}", source.display());
     lkb::create_backup(
-        &root.canonical.join("backups"),
+        &layout::territory_backups_dir(),
         version,
         architecture.key(),
         &staged_binary,
@@ -437,7 +433,7 @@ fn copy_from_proc_exe(pid: u32, target: &Path) -> Result<(), InstallError> {
 
 /// 从发布仓库下载指定版本的 `static.zip`;仓库不可用或版本不存在时返回 None。
 async fn fetch_static_zip(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     tx_dir: &Path,
     version: &semver::Version,
     architecture: Architecture,
@@ -445,7 +441,7 @@ async fn fetch_static_zip(
 ) -> Result<Option<PathBuf>, InstallError> {
     let spec = match &args.repository {
         Some(choice) => choice.clone().resolve()?,
-        None => super::config::resolve_default_choice(root)?.resolve()?,
+        None => super::config::resolve_default_choice()?.resolve()?,
     };
     let provider = provider_for(spec.kind, spec.location.as_str())?;
     let release = match provider.release(version, architecture).await {

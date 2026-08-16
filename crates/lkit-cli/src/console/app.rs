@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use super::ConsoleAction;
 use super::backup::{BackupListState, BackupPanel};
 use super::install_form::InstallForm;
@@ -45,7 +43,7 @@ pub(super) struct ConsoleApp {
 impl ConsoleApp {
     pub(super) fn new() -> Self {
         let install = InstallForm::default();
-        let snapshot = Snapshot::load(&install.install_dir);
+        let snapshot = Snapshot::load();
         Self {
             menu_index: 0,
             focus: Focus::Navigation,
@@ -99,16 +97,10 @@ impl ConsoleApp {
         ConsoleAction::Command {
             command: Commands::Network(crate::commands::network::Network {
                 action: crate::commands::network::NetworkAction::Confirm,
-                install_dir: Some(PathBuf::from(&self.install.install_dir)),
                 #[cfg(feature = "test-support")]
                 test_runtime: None,
             }),
-            args: vec![
-                "network".into(),
-                "confirm".into(),
-                "--install-dir".into(),
-                self.install.install_dir.clone(),
-            ],
+            args: vec!["network".into(), "confirm".into()],
         }
     }
 
@@ -158,7 +150,7 @@ impl ConsoleApp {
                 }
             }
             if matches!(&self.backup.state, BackupListState::NotRun) {
-                self.backup.start(&self.install.install_dir);
+                self.backup.start();
             }
         } else {
             self.backup_menu_active = false;
@@ -167,7 +159,7 @@ impl ConsoleApp {
         if self.menu() == Menu::Update {
             if !self.update_menu_active {
                 self.update_menu_active = true;
-                self.update.load_config(&self.install.install_dir);
+                self.update.load_config();
             }
         } else {
             self.update_menu_active = false;
@@ -186,7 +178,7 @@ impl ConsoleApp {
         crate::i18n::configure(crate::i18n::current().toggled());
         self.exit_state = ExitState::Idle;
         self.notice = "Ready".into();
-        self.snapshot = Snapshot::load(&self.install.install_dir);
+        self.snapshot = Snapshot::load();
         if !self.menu_available(self.menu()) {
             self.menu_index = 0;
             self.focus = Focus::Navigation;

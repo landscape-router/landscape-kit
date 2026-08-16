@@ -3,17 +3,18 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
+use super::super::layout;
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 use super::TransactionFile;
 use super::validate_transaction;
 
 pub(super) fn write_transaction(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     transaction: &TransactionFile,
 ) -> Result<(), InstallError> {
     validate_transaction(transaction)?;
-    let dir = root.canonical.join("transactions");
+    let dir = layout::territory_transactions_dir();
     std::fs::create_dir_all(&dir).map_err(InstallError::Io)?;
     let bytes = serde_json::to_vec_pretty(transaction).map_err(InstallError::StateWrite)?;
     let path = dir.join(format!("{}.json", transaction.transaction_id));
@@ -55,11 +56,11 @@ pub(super) fn load_transaction_file(
 }
 
 pub(super) fn append_log(
-    root: &InstallRoot,
+    _root: &InstallRoot,
     transaction: &TransactionFile,
     line: &str,
 ) -> Result<(), InstallError> {
-    let log_path = root.canonical.join(&transaction.log_path);
+    let log_path = layout::territory_relative(&transaction.log_path);
     let mut log = OpenOptions::new()
         .append(true)
         .mode(0o600)
