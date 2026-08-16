@@ -209,6 +209,9 @@ mod tests {
     #[tokio::test]
     async fn rollback_restores_previous_data_from_transaction_dir() {
         let root = temp_root("rollback");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -236,10 +239,7 @@ mod tests {
         });
         persist(&install_root, &transaction).unwrap();
         write_state_snapshot(&install_root, &transaction.transaction_id, &state).unwrap();
-        let tx_dir = install_root
-            .canonical
-            .join("transactions")
-            .join(&transaction.transaction_id);
+        let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
         std::fs::create_dir_all(tx_dir.join("previous-data")).unwrap();
         std::fs::write(tx_dir.join("previous-data/landscape_db.sqlite"), b"old-db").unwrap();
         mark_phase(&install_root, &transaction, Phase::Activating).unwrap();
@@ -274,6 +274,9 @@ mod tests {
         // 模拟:上次回滚已完成 previous-data -> data 重命名,但写 state 前崩溃。
         // 重试不得再次删除 data,必须直接按已恢复状态提交。
         let root = temp_root("already-restored");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -301,10 +304,7 @@ mod tests {
         });
         persist(&install_root, &transaction).unwrap();
         write_state_snapshot(&install_root, &transaction.transaction_id, &state).unwrap();
-        let tx_dir = install_root
-            .canonical
-            .join("transactions")
-            .join(&transaction.transaction_id);
+        let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
         // previous-data 已被上次回滚消费:data 里放旧数据库,previous-data 不存在。
         std::fs::write(
             install_root.canonical.join("data/landscape_db.sqlite"),
@@ -339,6 +339,9 @@ mod tests {
         // 同版本 restore:rebuild_release_from_backup 会把原 release 移入
         // replaced-release;回滚必须把它移回,保证 release 内容与回滚前一致。
         let root = temp_root("same-version");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -366,10 +369,7 @@ mod tests {
         });
         persist(&install_root, &transaction).unwrap();
         write_state_snapshot(&install_root, &transaction.transaction_id, &state).unwrap();
-        let tx_dir = install_root
-            .canonical
-            .join("transactions")
-            .join(&transaction.transaction_id);
+        let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
         std::fs::create_dir_all(tx_dir.join("previous-data")).unwrap();
         std::fs::write(tx_dir.join("previous-data/landscape_db.sqlite"), b"old-db").unwrap();
         // 模拟 rebuild:原 release 被移入 replaced-release,releases/1.3.0 现在是
@@ -415,6 +415,9 @@ mod tests {
         // 回滚任一步失败(这里让 restore_current 失败)必须把事务标记为 failed,
         // 不能留在 rolling_back 让下一条命令反复自动回滚。
         let root = temp_root("rollback-failed");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -442,10 +445,7 @@ mod tests {
         });
         persist(&install_root, &transaction).unwrap();
         write_state_snapshot(&install_root, &transaction.transaction_id, &state).unwrap();
-        let tx_dir = install_root
-            .canonical
-            .join("transactions")
-            .join(&transaction.transaction_id);
+        let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
         std::fs::create_dir_all(tx_dir.join("previous-data")).unwrap();
         std::fs::write(tx_dir.join("previous-data/landscape_db.sqlite"), b"old-db").unwrap();
         mark_phase(&install_root, &transaction, Phase::Activating).unwrap();
@@ -461,9 +461,7 @@ mod tests {
                 .is_err()
         );
 
-        let phase_file = install_root
-            .canonical
-            .join("transactions")
+        let phase_file = layout::territory_transactions_dir()
             .join(format!("{}.json", transaction.transaction_id));
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&phase_file).unwrap()).unwrap();

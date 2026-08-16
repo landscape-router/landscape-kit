@@ -145,6 +145,9 @@ mod tests {
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("protection-blocked");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -193,6 +196,9 @@ mod tests {
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
         let root = temp_root("protection-allow");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -236,10 +242,8 @@ mod tests {
             .unwrap()
             .last_transaction_id
             .unwrap();
-        let path = install_root
-            .canonical
-            .join("transactions")
-            .join(format!("{tx_id}.json"));
+        let path =
+            crate::deployment::layout::territory_transactions_dir().join(format!("{tx_id}.json"));
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(value["no_backup"], true);

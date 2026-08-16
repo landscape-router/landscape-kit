@@ -9,7 +9,7 @@ use super::super::state::{InstallState, StateArchitecture};
 use super::RestoreArgs;
 use crate::deployment::layout;
 
-/// 解析目标备份:ID 只解析安装根目录 `backups/`,外部文件必须 root 所有、
+/// 解析目标备份:ID 只解析 lkit 地盘 `backups/`,外部文件必须 root 所有、
 /// 权限不宽于 `0600` 的普通文件。返回完整字节与文件级 SHA-256。
 pub(super) fn resolve_target_backup(
     _root: &InstallRoot,
@@ -123,6 +123,9 @@ mod tests {
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("bad-id");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),

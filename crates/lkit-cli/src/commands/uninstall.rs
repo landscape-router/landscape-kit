@@ -17,7 +17,7 @@ pub struct Uninstall {
     /// 保护备份无法创建时继续,不产生可移植的当前配置快照
     #[arg(long)]
     pub allow_no_backup: bool,
-    /// 只卸载服务与程序,保留 data/ 与 config.toml
+    /// 只卸载服务与程序,保留 landscape 根的 data/
     #[arg(long)]
     pub keep_data: bool,
     /// 控制台已确认卸载计划(内部参数,交互模式也跳过 tty 确认)

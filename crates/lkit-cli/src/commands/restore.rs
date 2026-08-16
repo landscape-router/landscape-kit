@@ -9,7 +9,7 @@ use crate::workflows::restore::{RestoreArgs, RestoreOptions, RestoreOutcome};
 
 #[derive(Debug, Args)]
 pub struct Restore {
-    /// 安装根目录 `backups/` 下的备份 ID
+    /// lkit 地盘 `backups/` 下的备份 ID
     #[arg(long, value_name = "ID", conflicts_with = "file")]
     pub backup: Option<String>,
     /// 外部复制的 `.lkb` 文件路径

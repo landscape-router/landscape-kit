@@ -7,14 +7,14 @@ use crate::deployment::root::InstallRoot;
 use crate::service::manager::{ManagedService, ServiceManager, SystemRegistration};
 use crate::service::systemd;
 
-/// 幂等停止、disable 并注销受管服务(Landscape 与 lkit 常驻服务),最后执行定义刷新。
+/// 幂等停止、disable 并注销受管 Landscape 服务,最后执行定义刷新。
 /// 注册链接缺失视为已注销;指向其他目标的链接属于所有权冲突,阻断。
+/// lkit 常驻服务(`lkit.service`)不属于卸载范围,不停止、不注销。
 pub(super) fn deactivate(
     manager: &dyn ServiceManager,
     root: &InstallRoot,
 ) -> Result<(), InstallError> {
     deactivate_service(manager, root, ManagedService::LandscapeRouter)?;
-    deactivate_service(manager, root, ManagedService::LkitDaemon)?;
     manager.refresh()?;
     Ok(())
 }
@@ -76,7 +76,7 @@ fn deactivate_service(
 /// 删除受管内容。landscape 根删除 `current`/`releases`/`service`(与
 /// `--keep-data` 之外的 `data/`);lkit 地盘的 `install-state.json` 一并删除,
 /// 卸载后按全新安装处理。lkit 地盘的 `config.toml`、`backups/`、`transactions/`、
-/// `logs/` 与 `run/` 原样保留。
+/// `logs/` 与 `run/` 原样保留(landscape 根不再持有这些目录)。
 pub(super) fn remove_managed_contents(
     root: &InstallRoot,
     args: &UninstallArgs,
@@ -85,7 +85,6 @@ pub(super) fn remove_managed_contents(
     let mut paths: Vec<PathBuf> = vec![
         canonical.join("current"),
         canonical.join("releases"),
-        canonical.join("state"),
         canonical.join("service"),
     ];
     if !args.keep_data {
@@ -236,9 +235,21 @@ mod tests {
         std::fs::create_dir_all(root.canonical.join("data")).unwrap();
         std::fs::write(root.canonical.join("data/landscape_init.lock"), b"").unwrap();
         std::fs::write(root.canonical.join("data/landscape.toml"), b"").unwrap();
-        std::fs::create_dir_all(root.canonical.join("backups")).unwrap();
-        std::fs::create_dir_all(root.canonical.join("transactions")).unwrap();
-        std::fs::write(root.canonical.join("config.toml"), b"[repository]\n").unwrap();
+    }
+
+    /// 建立 lkit 地盘现场:config.toml、backups/(含一份既有 `.lkb`)、
+    /// transactions/、logs/ 与 run/。卸载后这些必须原样保留。
+    fn setup_territory(territory: &std::path::Path) {
+        std::fs::create_dir_all(territory.join("backups")).unwrap();
+        std::fs::write(
+            territory.join("backups/20260801-163000-00000000.lkb"),
+            b"existing backup",
+        )
+        .unwrap();
+        std::fs::create_dir_all(territory.join("transactions")).unwrap();
+        std::fs::create_dir_all(territory.join("logs")).unwrap();
+        std::fs::create_dir_all(territory.join("run")).unwrap();
+        std::fs::write(territory.join("config.toml"), b"[repository]\n").unwrap();
     }
 
     fn fake_systemd(dir: &std::path::Path) -> Systemd {
@@ -335,16 +346,20 @@ esac
     }
 
     #[tokio::test]
-    async fn uninstalls_none_mode_and_keeps_config_backups_transactions() {
+    async fn uninstalls_none_mode_and_keeps_the_lkit_territory() {
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("none-mode");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
         };
         activate_version(&install_root, "1.2.3");
         setup_current(&install_root);
+        setup_territory(&territory);
         std::fs::write(
             install_root.canonical.join("data/landscape_db.sqlite"),
             b"db",
@@ -367,25 +382,51 @@ esac
             outcome,
             UninstallOutcome::Committed { version, backup_id } if version == semver::Version::new(1, 2, 3) && backup_id.is_some()
         ));
+        // landscape 根的全部受管内容被清理。
         assert!(!install_root.canonical.join("current").exists());
         assert!(!install_root.canonical.join("releases").exists());
         assert!(!install_root.canonical.join("data").exists());
-        assert!(!install_root.canonical.join("state").exists());
         assert!(!install_root.canonical.join("service").exists());
+        // landscape 根不再持有 lkit 地盘目录。
+        assert!(!install_root.canonical.join("state").exists());
+        assert!(!install_root.canonical.join("backups").exists());
+        assert!(!install_root.canonical.join("transactions").exists());
         assert!(!install_root.canonical.join("logs").exists());
         assert!(!install_root.canonical.join("run").exists());
+        assert!(!install_root.canonical.join("config.toml").exists());
+        // lkit 地盘原样保留:config.toml、backups/(含既有与保护 `.lkb`)、
+        // transactions/、logs/ 与 run/。
         assert_eq!(
-            std::fs::read_to_string(install_root.canonical.join("config.toml")).unwrap(),
+            std::fs::read_to_string(territory.join("config.toml")).unwrap(),
             "[repository]\n",
             "config.toml must be preserved byte-for-byte"
         );
-        assert!(install_root.canonical.join("backups").is_dir());
-        assert!(install_root.canonical.join("transactions").is_dir());
+        assert!(
+            territory
+                .join("backups/20260801-163000-00000000.lkb")
+                .is_file(),
+            "existing .lkb backups must be preserved"
+        );
+        assert!(territory.join("backups").is_dir());
+        assert!(territory.join("transactions").is_dir());
+        assert!(territory.join("logs").is_dir());
+        assert!(territory.join("run").is_dir());
+        // 保护 `.lkb` 落在 lkit 地盘 backups/。
+        let lkb_count = std::fs::read_dir(territory.join("backups"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"))
+            .count();
+        assert_eq!(lkb_count, 2, "existing backup plus the protection backup");
+        // install-state.json 位于 lkit 地盘,卸载后不再存在。
+        assert!(
+            !territory.join("state/install-state.json").exists(),
+            "install-state.json must be removed after the uninstall"
+        );
         assert!(
             super::super::super::state::load_state(&install_root)
                 .unwrap()
-                .is_none(),
-            "install-state.json must be removed"
+                .is_none()
         );
         assert!(
             super::super::super::transaction::find_unfinished(&install_root)
@@ -401,12 +442,16 @@ esac
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
         let root = temp_root("keep-data");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
         };
         activate_version(&install_root, "1.2.3");
         setup_current(&install_root);
+        setup_territory(&territory);
         let state = install_state(&install_root, "1.2.3");
         super::super::super::state::write_state(&install_root, &state).unwrap();
         let server = export_server("1.2.3".into());
@@ -428,17 +473,19 @@ esac
             "data must be preserved with --keep-data"
         );
         assert!(
-            !install_root
-                .canonical
-                .join("state/install-state.json")
-                .exists()
+            !territory.join("state/install-state.json").exists(),
+            "the uninstall is committed and install-state.json is removed"
         );
         assert!(!install_root.canonical.join("current").exists());
+        assert_eq!(
+            std::fs::read_to_string(territory.join("config.toml")).unwrap(),
+            "[repository]\n"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
-    async fn systemd_mode_unregisters_the_unit() {
+    async fn systemd_mode_unregisters_the_unit_but_not_lkit_daemon() {
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("systemd-mode");
@@ -449,6 +496,9 @@ esac
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let systemd = fake_systemd(&dir);
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -466,6 +516,14 @@ esac
         )
         .unwrap();
         let unit_origin_canonical = unit_origin.canonicalize().unwrap();
+        // lkit 常驻服务(全局 unit)不受卸载影响:注册链接必须原样保留。
+        let lkit_origin = dir.join("lkit.service.origin");
+        std::fs::write(&lkit_origin, "[Unit]\n[Service]\n").unwrap();
+        std::os::unix::fs::symlink(
+            lkit_origin.canonicalize().unwrap(),
+            dir.join("units/lkit.service"),
+        )
+        .unwrap();
         let state = install_state(&install_root, "1.2.3");
         let mut state = state;
         state.service = ServiceState {
@@ -492,13 +550,17 @@ esac
             !dir.join("units/landscape-router.service").exists(),
             "the registration link must be removed"
         );
+        assert!(
+            dir.join("units/lkit.service").exists(),
+            "the lkit daemon registration link must survive the uninstall"
+        );
         assert!(!install_root.canonical.join("service").exists());
         assert!(
             super::super::super::transaction::find_unfinished(&install_root)
                 .unwrap()
                 .is_none()
         );
-        let tx = transaction_json(&install_root);
+        let tx = transaction_json(&territory);
         assert_eq!(tx["phase"], "committed");
         assert_eq!(
             tx["systemd_before"]["registration"]["kind"], "symlink",
@@ -512,8 +574,8 @@ esac
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn transaction_json(root: &InstallRoot) -> serde_json::Value {
-        let entries: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
+    fn transaction_json(territory: &std::path::Path) -> serde_json::Value {
+        let entries: Vec<_> = std::fs::read_dir(territory.join("transactions"))
             .unwrap()
             .filter_map(Result::ok)
             .collect();

@@ -374,6 +374,7 @@ mod tests {
 
     /// 与 cleanup::tests 相同的假 systemctl:对任意命令返回成功,
     /// 托管服务处于 inactive 状态(卸载路径跳过 stop)。
+    /// 卸载不触碰 lkit 常驻服务,脚本不包含 lkit.service 分支。
     fn fake_systemd(dir: &std::path::Path) -> Systemd {
         std::fs::create_dir_all(dir).unwrap();
         let script = dir.join("systemctl");
@@ -382,9 +383,7 @@ mod tests {
             r#"#!/bin/sh
 case "$*" in
   "is-active landscape-router.service") echo inactive; exit 3;;
-  "is-active lkit.service") echo inactive; exit 3;;
   "is-enabled landscape-router.service") echo disabled;;
-  "is-enabled lkit.service") echo disabled;;
   *) exit 0;;
 esac
 "#,
@@ -406,9 +405,16 @@ esac
         std::fs::create_dir_all(root.canonical.join("data")).unwrap();
         std::fs::write(root.canonical.join("data/landscape_init.lock"), b"").unwrap();
         std::fs::write(root.canonical.join("data/landscape.toml"), b"").unwrap();
-        std::fs::create_dir_all(root.canonical.join("backups")).unwrap();
-        std::fs::create_dir_all(root.canonical.join("transactions")).unwrap();
-        std::fs::write(root.canonical.join("config.toml"), b"[repository]\n").unwrap();
+    }
+
+    /// 建立 lkit 地盘现场:config.toml、backups/、transactions/、logs/ 与 run/,
+    /// 卸载后必须原样保留。
+    fn setup_territory(territory: &std::path::Path) {
+        std::fs::create_dir_all(territory.join("backups")).unwrap();
+        std::fs::create_dir_all(territory.join("transactions")).unwrap();
+        std::fs::create_dir_all(territory.join("logs")).unwrap();
+        std::fs::create_dir_all(territory.join("run")).unwrap();
+        std::fs::write(territory.join("config.toml"), b"[repository]\n").unwrap();
     }
 
     struct FakeDocs;
@@ -482,12 +488,16 @@ esac
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
         let root = temp_root("non-interactive");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
         };
         activate_version(&install_root, "1.2.3");
         setup_current(&install_root);
+        setup_territory(&territory);
         let state = install_state(&install_root, "1.2.3");
         super::super::state::write_state(&install_root, &state).unwrap();
         let server = export_server("1.2.3".into());
@@ -521,6 +531,9 @@ esac
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("protection-blocked");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -562,12 +575,16 @@ esac
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
         let root = temp_root("protection-allow");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
         };
         activate_version(&install_root, "1.2.3");
         setup_current(&install_root);
+        setup_territory(&territory);
         let state = install_state(&install_root, "1.2.3");
         super::super::state::write_state(&install_root, &state).unwrap();
         let server = TestServer::start(|_| TestResponse::status(500, "boom", Vec::new()));
@@ -583,11 +600,24 @@ esac
             Ok(UninstallOutcome::Committed { backup_id, .. }) if backup_id.is_none()
         ));
         assert!(
-            !install_root
-                .canonical
-                .join("state/install-state.json")
-                .exists()
+            !crate::deployment::layout::territory_state_path().exists(),
+            "install-state.json must be removed after the uninstall"
         );
+        assert!(
+            territory.join("config.toml").is_file(),
+            "the lkit territory must be preserved"
+        );
+        assert!(territory.join("backups").is_dir());
+        assert!(territory.join("transactions").is_dir());
+        assert!(territory.join("logs").is_dir());
+        assert!(territory.join("run").is_dir());
+        assert!(
+            !install_root.canonical.join("current").exists(),
+            "the landscape root must be cleaned"
+        );
+        assert!(!install_root.canonical.join("releases").exists());
+        assert!(!install_root.canonical.join("data").exists());
+        assert!(!install_root.canonical.join("service").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -23,7 +23,7 @@ pub(crate) use self::rollback::{restore_previous_data, rollback_restore, write_f
 use self::state::{build_restore_state, create_protection_backup};
 /// restore 运行参数。
 pub(crate) struct RestoreArgs {
-    /// `--backup <ID>` 只解析安装根目录 `backups/` 下的备份 ID。
+    /// `--backup <ID>` 只解析 lkit 地盘 `backups/` 下的备份 ID。
     pub backup_id: Option<String>,
     /// `--file <PATH>` 用于外部复制的备份,先复制进事务目录再校验。
     pub file_path: Option<PathBuf>,
@@ -86,7 +86,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
     super::transaction::begin(root, &transaction)?;
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
-    // 外部备份先复制进事务目录并重新自校验,事务只记录安装根目录内的相对路径。
+    // 外部备份先复制进事务目录并重新自校验,事务只记录 lkit 地盘相对路径。
     let target_backup = match (&args.backup_id, &args.file_path) {
         (Some(id), None) => BackupRef {
             backup_id: id.clone(),
@@ -478,7 +478,7 @@ mod tests {
     static BACKUP_SOURCE_COUNTER: std::sync::atomic::AtomicUsize =
         std::sync::atomic::AtomicUsize::new(0);
 
-    pub(super) fn create_target_backup(root: &InstallRoot) -> (BackupRef, Vec<u8>) {
+    pub(super) fn create_target_backup(_root: &InstallRoot) -> (BackupRef, Vec<u8>) {
         let source = temp_root(&format!(
             "backup-source-{}",
             BACKUP_SOURCE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -508,9 +508,7 @@ mod tests {
         )
         .unwrap();
         let bytes = std::fs::read(
-            root.canonical
-                .join("backups")
-                .join(format!("{}.lkb", backup_ref.backup_id)),
+            layout::territory_backups_dir().join(format!("{}.lkb", backup_ref.backup_id)),
         )
         .unwrap();
         let _ = std::fs::remove_dir_all(&source);
@@ -629,6 +627,9 @@ esac
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("cross-version");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -713,7 +714,7 @@ esac
                 .unwrap()
                 .is_none()
         );
-        let lkb_count = std::fs::read_dir(install_root.canonical.join("backups"))
+        let lkb_count = std::fs::read_dir(layout::territory_backups_dir())
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"))
@@ -738,6 +739,9 @@ esac
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
         let root = temp_root("non-interactive");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -771,15 +775,9 @@ esac
                 .is_none(),
             "missing --yes must not create a transaction"
         );
-        assert!(
-            !install_root
-                .canonical
-                .join("transactions")
-                .join(".tmp")
-                .exists()
-        );
+        assert!(!layout::territory_transactions_dir().join(".tmp").exists());
         assert_eq!(
-            std::fs::read_dir(install_root.canonical.join("transactions"))
+            std::fs::read_dir(layout::territory_transactions_dir())
                 .map(|entries| entries.count())
                 .unwrap_or(0),
             0,
@@ -794,6 +792,9 @@ esac
         crate::interaction::interactive::configure(true);
         let _reset = NonInteractiveGuard;
         let root = temp_root("restore-yes");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -844,6 +845,9 @@ esac
         let _guard = interactive_guard().await;
         crate::interaction::interactive::configure(false);
         let root = temp_root("console-confirmed");
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _territory_guard = crate::deployment::layout::test_territory(&territory);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
