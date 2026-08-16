@@ -84,12 +84,11 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 
 **网络接管特征（宿主网络服务被 stop/disable/mask）警告后仍可继续卸载**
 
-- 测试层：Rust workflow、Docker E2E
-- 状态：`待补充`
-- 证据：[`lkit uninstall`](../../../commands/uninstall.md#卸载前检查)
-- 说明：检测接管特征并输出警告，不阻断；卸载后宿主网络服务保持现状，由用户自行恢复。
-- 缺口：`host_network_services_masked` 的检测存在，但没有任何测试断言警告输出与
-  "警告后继续卸载"路径。
+- 测试层：Rust workflow、CLI fixture E2E、Docker E2E
+- 状态：`已覆盖`
+- 证据：[`lkit uninstall`](../../../commands/uninstall.md#卸载前检查)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/uninstall.rs)
+- 说明：检测接管特征（交互模式以确认提示呈现，确认后继续）不阻断；卸载后宿主网络
+  服务保持现状，由用户自行恢复。
 
 ## UNI-09
 
@@ -119,11 +118,10 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 **未安装或状态损坏时拒绝卸载**
 
 - 测试层：Rust workflow、CLI
-- 状态：`待补充`
-- 证据：[`lkit uninstall`](../../../commands/uninstall.md)
-- 说明：无有效 state 返回参数错误 `2`；状态损坏按损坏判定阻断，不猜测重建。
-- 缺口：commands/uninstall.rs 的拒绝分支（`REQUIRES_EXISTING_INSTALLATION` 与损坏
-  状态映射）无命令层测试。
+- 状态：`已覆盖`
+- 证据：[`lkit uninstall`](../../../commands/uninstall.md)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/uninstall.rs)
+- 说明：无有效 state 返回参数错误 `2` 且不写任何文件；状态损坏按损坏判定阻断
+  （退出码非 0），不触碰 config/安装现场。
 
 ## UNI-12
 

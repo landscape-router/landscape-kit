@@ -78,10 +78,11 @@
 **激活或健康检查失败自动回滚,退出码 `5`;回滚失败 `6`**
 
 - 测试层：CLI fixture E2E
-- 状态：`待补充`
-- 证据：[reinit 工作流](../../../../crates/lkit-cli/src/workflows/reinit.rs)
-- 说明：通过 fixture 注入新配置启动失败场景尚未覆盖（`REI-08`）；回滚优先使用事务
-  目录旧 data 现场，回滚失败保留现场、事务标记 `failed`，返回 `6`。
+- 状态：`已覆盖`
+- 证据：[reinit 工作流](../../../../crates/lkit-cli/src/workflows/reinit.rs)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/reinit.rs)
+- 说明：健康检查注入失败（base_url 指向不可达端口）→ 自动回滚退出码 `5`、
+  原 data 恢复、服务恢复运行、事务不进入确认窗口；回滚失败保留现场、事务标记
+  `failed`、返回 `6`（`RollbackFailed` 分支无注入测试）。
 - 缺口：激活/健康检查失败自动回滚（退出码 `5`）与回滚失败（退出码 `6`）无 fixture
   注入场景；switch/restore 的同类回滚测试不覆盖 reinit。
 

@@ -24,11 +24,12 @@
 
 **daemon 对网络接管待确认阶段不代替用户确认**
 
-- 测试层：待补充
-- 状态：`待补充`
-- 说明：恢复循环显式跳过 `awaiting_network_confirmation`/`finalizing`/
-  `rolling_back` 阶段；缺少直接断言场景（可构造带 `network_takeover` 现场的事务，
-  对恢复循环或 fixture E2E 断言不触碰）。
+- 测试层：CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/daemon.rs)
+- 说明：构造带 `network_takeover` 的 `awaiting_network_confirmation` 事务并启动
+  daemon，多个周期后事务保持原阶段、安装现场不被触碰、daemon 存活；
+  恢复循环显式跳过 `awaiting_network_confirmation`/`finalizing`/`rolling_back`。
 
 ## DAE-04
 

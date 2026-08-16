@@ -21,25 +21,22 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 
 **默认 latest 确认后成功升级**
 
-- 测试层：Docker E2E
-- 状态：`待补充`
-- 证据：[成功切换](../lifecycle.md#成功切换-200)
+- 测试层：CLI fixture E2E、Docker E2E
+- 状态：`已覆盖`
+- 证据：[成功切换](../lifecycle.md#成功切换-200)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/update.rs)
 - 说明：确认后走 switch 提交路径，事务 `operation` 为 `switch`，`.lkb` 与 systemd
-  激活语义与 `lkit switch --version latest` 一致。
-- 缺口：现有 CLI 测试只覆盖"已是最新/取消/非交互"路径（
-  `update_interaction_handles_defaults_cancellation_and_non_interactive_mode`），
-  确认后实际升级执行无覆盖。
+  激活语义与 `lkit switch --version latest` 一致；fixture 用第二版本仓库 + pty
+  确认断言 active 版本更新、服务保持运行。
 
 ## UP-03
 
 **`--version` 固定目标确认后升级**
 
-- 测试层：Docker E2E
-- 状态：`待补充`
+- 测试层：CLI fixture E2E、Docker E2E
+- 状态：`已覆盖`
+- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/update.rs)
 - 说明：显式版本与默认 latest 在目标比较、确认和执行阶段遵循相同流程；降级行为继承
   [`SW-02`](switch.md#sw-02)，同版本行为由 `UP-04` 单独定义。
-- 缺口：固定版本确认升级执行无覆盖（switch 流水线本身有 Rust 与 Docker 断言，但
-  `lkit update --version` 封装层无）。
 
 ## UP-04
 

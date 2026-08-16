@@ -14,9 +14,10 @@
 
 - 测试层：Rust workflow/CLI E2E
 - 状态：`部分覆盖`
-- 说明：变化检测逻辑存在（`same_version_install` 的 unit 变化分支），无任何直接测试；
-  Docker S9 只覆盖初始化文件变化，未覆盖 unit 内容变化（确认、`--accept-service-change`、
-  更新 `definition_sha256`）；见 [`lkit reconcile`](../../../commands/reconcile.md)。
+- 说明：变化检测逻辑存在（`same_version_install` 的 unit 变化分支）；fixture 用
+  `--accept-service-change` 断言修改被接受、`definition_sha256` 更新、服务保持运行；
+  无 `--accept-service-change` 时的交互确认拒绝路径无测试；见
+  [`lkit reconcile`](../../../commands/reconcile.md)。
 
 ## REC-03
 
