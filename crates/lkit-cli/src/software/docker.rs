@@ -79,7 +79,7 @@ fn install_apt(
 /// 写入 apt 的 docker-ce 源文件（纯文件操作，可单测）。
 fn write_apt_source(host: &Host, source: DockerSource) -> Result<(), SoftwareError> {
     let codename = host.codename.clone().ok_or_else(|| {
-        SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_MISSING_CODENAME).into())
+        SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_MISSING_CODENAME))
     })?;
     let slug = crate::software::docker_family_slug(host.family);
     let arch = apt_arch()?;
@@ -121,7 +121,7 @@ fn install_dnf(
 fn write_dnf_repo(host: &Host, source: DockerSource) -> Result<(), SoftwareError> {
     let slug = crate::software::docker_family_slug(host.family);
     let version = crate::software::detect::major_version(&paths().os_release).ok_or_else(|| {
-        SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_OS_RELEASE_UNREADABLE).into())
+        SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_OS_RELEASE_UNREADABLE))
     })?;
     let base = source.base_url();
     let repo = format!(
@@ -158,9 +158,8 @@ fn finish(stream: bool, phase: &mut dyn FnMut(InstallPhase)) -> Result<(), Softw
         Err(error) => return Err(error),
     }
     // 最终验证：daemon 未就绪时安装不能视为成功。
-    run_command("docker", &["info"], false).map_err(|_| {
-        SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_SERVICE_NOT_RUNNING).into())
-    })
+    run_command("docker", &["info"], false)
+        .map_err(|_| SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_SERVICE_NOT_RUNNING)))
 }
 
 /// 运行外部命令。`stream` 为 true 时继承 stdio 并透出原始输出；
@@ -218,9 +217,10 @@ fn apt_arch() -> Result<&'static str, SoftwareError> {
         "x86_64" => Ok("amd64"),
         "aarch64" => Ok("arm64"),
         "arm" => Ok("armhf"),
-        other => Err(SoftwareError::Message(
-            crate::tr!(crate::keys::SOFTWARE_ARCH_UNSUPPORTED, arch = other).into(),
-        )),
+        other => Err(SoftwareError::Message(crate::tr!(
+            crate::keys::SOFTWARE_ARCH_UNSUPPORTED,
+            arch = other
+        ))),
     }
 }
 

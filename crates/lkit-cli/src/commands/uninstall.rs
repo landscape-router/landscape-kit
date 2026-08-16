@@ -82,18 +82,17 @@ pub async fn run(args: &Uninstall) -> ExitCode {
         unfinished.as_ref().map(|transaction| transaction.operation),
         Some(transaction::Operation::Uninstall)
     );
-    if let Some(transaction) = unfinished {
-        if let Err(error) = transaction::recover_interrupted(
+    if let Some(transaction) = unfinished
+        && let Err(error) = transaction::recover_interrupted(
             &normalized,
             &transaction,
             runtime.service_manager.as_ref(),
             &health,
         )
         .await
-        {
-            eprintln!("uninstall: {error}");
-            return exit_code(&error);
-        }
+    {
+        eprintln!("uninstall: {error}");
+        return exit_code(&error);
     }
     let Some(state) = (match state::load_state(&normalized) {
         Ok(state) => state,

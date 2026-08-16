@@ -193,16 +193,16 @@ impl ConsoleApp {
             return;
         }
         if let Some(wizard) = self.network_wizard.as_mut() {
-            if wizard.editing {
-                if let Some(target) = wizard.value_mut() {
-                    let remaining = 128_usize.saturating_sub(target.chars().count());
-                    target.extend(
-                        value
-                            .chars()
-                            .filter(|character| !character.is_control())
-                            .take(remaining),
-                    );
-                }
+            if wizard.editing
+                && let Some(target) = wizard.value_mut()
+            {
+                let remaining = 128_usize.saturating_sub(target.chars().count());
+                target.extend(
+                    value
+                        .chars()
+                        .filter(|character| !character.is_control())
+                        .take(remaining),
+                );
             }
             return;
         }

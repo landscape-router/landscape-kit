@@ -349,11 +349,10 @@ fn mirror_rows_are_mouse_clickable() {
     assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Aliyun));
     app.mirror.confirming = None;
 
-    let restore_hit = (4..28).find_map(|row| {
+    let restore_hit = (4..28).find(|row| {
         app.hits
-            .hit_at(40, row)
+            .hit_at(40, *row)
             .is_some_and(|hit| hit == Hit::MirrorRestore)
-            .then_some(row)
     });
     let Some(restore_row) = restore_hit else {
         panic!("no clickable restore row found");

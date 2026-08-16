@@ -337,9 +337,9 @@ fn require_root() -> Result<(), MirrorError> {
     if crate::mirror::root_allowed() {
         Ok(())
     } else {
-        Err(MirrorError::Message(
-            crate::tr!(crate::keys::SET_MIRROR_ROOT_REQUIRED).into(),
-        ))
+        Err(MirrorError::Message(crate::tr!(
+            crate::keys::SET_MIRROR_ROOT_REQUIRED
+        )))
     }
 }
 

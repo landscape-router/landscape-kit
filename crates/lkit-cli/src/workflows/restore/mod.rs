@@ -373,7 +373,9 @@ fn confirm_restore<P: DocsProbe>(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
+    // 交互模式测试通过 std::sync::Mutex 串行化,锁故意跨 await 持有。
     use std::os::unix::fs::PermissionsExt;
 
     use super::super::health::HealthOptions;

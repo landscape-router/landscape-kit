@@ -189,10 +189,10 @@ fn install_suggestion_for(package: DependencyPackage, manager: Option<PackageMan
         (Some(PackageManager::Zypper), DependencyPackage::Iproute) => "zypper install iproute2",
         (Some(PackageManager::Zypper), DependencyPackage::Ppp) => "zypper install ppp",
         (None, DependencyPackage::Iproute) => {
-            return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PROVIDING_IP_AND_TC).into();
+            return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PROVIDING_IP_AND_TC);
         }
         (None, DependencyPackage::Ppp) => {
-            return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PPP_PACKAGE).into();
+            return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PPP_PACKAGE);
         }
     };
     let package_note = match package {

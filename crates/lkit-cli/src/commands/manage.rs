@@ -283,16 +283,16 @@ async fn run_first_install(
         }
     };
     let result = if let Some(network) = network_plan.as_ref() {
-        pipeline::first_install_with_network(
-            &plan.root,
-            &provider,
-            &plan.target,
-            &credentials,
-            runtime.service_manager.as_ref(),
-            &health_options,
-            network,
-            runtime,
-        )
+        pipeline::first_install_with_network(pipeline::FirstInstallArgs {
+            root: &plan.root,
+            provider: &provider,
+            target: &plan.target,
+            credentials: &credentials,
+            manager: runtime.service_manager.as_ref(),
+            health_options: &health_options,
+            network: Some(network),
+            runtime: Some(runtime),
+        })
         .await
     } else {
         pipeline::first_install(

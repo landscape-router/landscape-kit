@@ -74,11 +74,11 @@ impl ConsoleApp {
     /// 执行换源或恢复。失败与成功都写入底栏 notice；确认层在调用前已关闭。
     pub(crate) fn execute_mirror(&mut self, confirm: MirrorConfirm) {
         let Some(Ok(host)) = &self.mirror.host else {
-            self.notice = crate::tr!(crate::keys::CONSOLE_MIRROR_DETECT_FAILED).into();
+            self.notice = crate::tr!(crate::keys::CONSOLE_MIRROR_DETECT_FAILED);
             return;
         };
         if !crate::mirror::root_allowed() {
-            self.notice = crate::tr!(crate::keys::SET_MIRROR_ROOT_REQUIRED).into();
+            self.notice = crate::tr!(crate::keys::SET_MIRROR_ROOT_REQUIRED);
             return;
         }
         match confirm {
@@ -91,8 +91,7 @@ impl ConsoleApp {
                         crate::keys::SET_MIRROR_NO_CHANGE,
                         family = host.family.label(),
                         mirror = mirror.label()
-                    )
-                    .into();
+                    );
                 }
                 Ok(report) => {
                     self.notice = crate::tr!(
@@ -100,8 +99,7 @@ impl ConsoleApp {
                         family = host.family.label(),
                         mirror = mirror.label(),
                         files = report.changed_files
-                    )
-                    .into();
+                    );
                     match report.fallback {
                         Some(crate::mirror::Fallback::CdromConverted) => {
                             self.notice = format!(
@@ -147,7 +145,7 @@ impl ConsoleApp {
             },
             MirrorConfirm::Restore => match crate::mirror::restore(host) {
                 Ok(()) => {
-                    self.notice = crate::tr!(crate::keys::SET_MIRROR_RESTORED).into();
+                    self.notice = crate::tr!(crate::keys::SET_MIRROR_RESTORED);
                 }
                 Err(error) => self.notice = error.to_string(),
             },

@@ -62,9 +62,8 @@ impl Preflight {
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
-                self.state = PreflightState::Failed(
-                    crate::tr!(crate::keys::CONSOLE_CHECK_WORKER_STOPPED).into(),
-                );
+                self.state =
+                    PreflightState::Failed(crate::tr!(crate::keys::CONSOLE_CHECK_WORKER_STOPPED));
             }
         }
     }
@@ -178,12 +177,12 @@ pub(crate) fn render_preflight_summary(frame: &mut Frame<'_>, app: &mut ConsoleA
     let (status, detail, color) = match &app.preflight.state {
         PreflightState::NotRun => (
             crate::tr!(crate::keys::CONSOLE_NOT_RUN),
-            crate::tr!(crate::keys::CONSOLE_WAITING_TO_CHECK_HOST).into(),
+            crate::tr!(crate::keys::CONSOLE_WAITING_TO_CHECK_HOST),
             Color::DarkGray,
         ),
         PreflightState::Running(_) => (
             crate::tr!(crate::keys::CONSOLE_RUNNING),
-            crate::tr!(crate::keys::CONSOLE_CHECKING_THIS_HOST).into(),
+            crate::tr!(crate::keys::CONSOLE_CHECKING_THIS_HOST),
             Color::Cyan,
         ),
         PreflightState::Complete(report) => (

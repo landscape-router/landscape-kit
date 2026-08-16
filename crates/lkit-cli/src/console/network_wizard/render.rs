@@ -49,13 +49,13 @@ pub(crate) fn render_network_wizard(
                     .addresses
                     .first()
                     .map(ToString::to_string)
-                    .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_NO_IPV4).into());
+                    .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_NO_IPV4));
                 let gateway = wizard
                     .routes
                     .iter()
                     .find(|route| route.iface == iface.name)
                     .map(|route| route.gateway.to_string())
-                    .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_GATEWAY_NOT_FOUND).into());
+                    .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_GATEWAY_NOT_FOUND));
                 clickables.push((lines.len(), Hit::WizardWan(index)));
                 push!(Line::styled(
                     format!(

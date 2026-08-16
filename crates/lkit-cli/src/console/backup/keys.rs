@@ -71,10 +71,11 @@ impl ConsoleApp {
                 KeyCode::Backspace => {
                     self.backup.remark.pop();
                 }
-                KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if self.backup.remark.chars().count() < 256 {
-                        self.backup.remark.push(character);
-                    }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.backup.remark.chars().count() < 256 =>
+                {
+                    self.backup.remark.push(character);
                 }
                 _ => {}
             }
@@ -212,9 +213,8 @@ impl ConsoleApp {
                         let _ = std::fs::remove_dir_all(&verify_dir);
                         error.to_string()
                     })
-                    .map(|message| {
+                    .inspect(|_message| {
                         let _ = std::fs::remove_dir_all(&verify_dir);
-                        message
                     })
             });
             let _ = sender.send(result);

@@ -208,11 +208,10 @@ fn software_rows_are_mouse_clickable() {
     let mut app = software_ready_app();
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let row = (4..12).find_map(|row| {
+    let row = (4..12).find(|row| {
         app.hits
-            .hit_at(40, row)
+            .hit_at(40, *row)
             .is_some_and(|hit| hit == Hit::SoftwareField(Software::Docker))
-            .then_some(row)
     });
     let Some(row) = row else {
         panic!("no clickable software row found");

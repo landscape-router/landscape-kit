@@ -283,7 +283,9 @@ async fn create_protection_backup<P: DocsProbe>(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
+    // 交互模式测试通过 std::sync::Mutex 串行化,锁故意跨 await 持有。
     use crate::service::systemd::Systemd;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;

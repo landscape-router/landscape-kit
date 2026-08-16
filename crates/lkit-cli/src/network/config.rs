@@ -220,9 +220,7 @@ impl NetworkPlan {
         let mut selected_names = HashSet::new();
         for selected in &self.selected_macs {
             validate_iface_name(&selected.name)?;
-            if !expected_interfaces
-                .iter()
-                .any(|expected| *expected == selected.name.as_bytes())
+            if !expected_interfaces.contains(&selected.name.as_bytes())
                 || !selected_names.insert(selected.name.as_str())
             {
                 return Err(network_error(

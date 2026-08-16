@@ -131,91 +131,91 @@ async fn run_installed_inner(
     } else {
         None
     };
-    if let Some(release) = release {
-        if release.version.to_string() != state.active_version {
-            let health_options = runtime.health_options()?;
-            let data_dir = plan.root.canonical.join("data");
-            let switch_options = pipeline::SwitchOptions {
-                export_base_url: runtime.export_base_url.clone(),
-                token: &(|| {
-                    crate::backup::export::read_api_token(
-                        &data_dir.join("landscape_api_token"),
-                        runtime.managed_uid,
+    if let Some(release) = release
+        && release.version.to_string() != state.active_version
+    {
+        let health_options = runtime.health_options()?;
+        let data_dir = plan.root.canonical.join("data");
+        let switch_options = pipeline::SwitchOptions {
+            export_base_url: runtime.export_base_url.clone(),
+            token: &(|| {
+                crate::backup::export::read_api_token(
+                    &data_dir.join("landscape_api_token"),
+                    runtime.managed_uid,
+                )
+            }),
+            confirm: &|prompt| {
+                if args.console_confirmed {
+                    // 控制台分发路径:确认已在 TUI 内完成,worker 无法读取键盘。
+                    Ok(true)
+                } else {
+                    crate::interaction::interactive::confirm(prompt)
+                }
+            },
+            health: &health_options,
+        };
+        return match pipeline::switch_version(
+            &plan.root,
+            &state,
+            release,
+            &pipeline::SwitchArgs {
+                allow_no_backup: args.allow_no_backup,
+            },
+            runtime.service_manager.as_ref(),
+            &switch_options,
+        )
+        .await
+        {
+            Ok(pipeline::SwitchOutcome::Committed { version, backup_id }) => {
+                println!(
+                    "install: {}",
+                    crate::tr!(crate::keys::EXISTING_SWITCHED_TO_VERSION, version = version)
+                );
+                match backup_id {
+                    Some(backup_id) => {
+                        println!(
+                            "install: {}",
+                            crate::tr!(
+                                crate::keys::EXISTING_BACKUP_PRESERVED,
+                                backup_id = backup_id
+                            )
+                        );
+                    }
+                    None => {
+                        println!(
+                            "install: {}",
+                            crate::tr!(crate::keys::EXISTING_NO_BACKUP_CREATED)
+                        );
+                    }
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            Ok(pipeline::SwitchOutcome::RolledBack { version, backup_id }) => {
+                let backup = backup_id.map_or_else(String::new, |id| {
+                    crate::tr!(crate::keys::EXISTING_ROLLED_BACK_USING_BACKUP, id = id)
+                });
+                eprintln!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::EXISTING_SWITCH_FAILED_ROLLED_BACK,
+                        version = version,
+                        backup = backup
                     )
-                }),
-                confirm: &|prompt| {
-                    if args.console_confirmed {
-                        // 控制台分发路径:确认已在 TUI 内完成,worker 无法读取键盘。
-                        Ok(true)
-                    } else {
-                        crate::interaction::interactive::confirm(prompt)
-                    }
-                },
-                health: &health_options,
-            };
-            return match pipeline::switch_version(
-                &plan.root,
-                &state,
-                release,
-                &pipeline::SwitchArgs {
-                    allow_no_backup: args.allow_no_backup,
-                },
-                runtime.service_manager.as_ref(),
-                &switch_options,
-            )
-            .await
-            {
-                Ok(pipeline::SwitchOutcome::Committed { version, backup_id }) => {
-                    println!(
-                        "install: {}",
-                        crate::tr!(crate::keys::EXISTING_SWITCHED_TO_VERSION, version = version)
-                    );
-                    match backup_id {
-                        Some(backup_id) => {
-                            println!(
-                                "install: {}",
-                                crate::tr!(
-                                    crate::keys::EXISTING_BACKUP_PRESERVED,
-                                    backup_id = backup_id
-                                )
-                            );
-                        }
-                        None => {
-                            println!(
-                                "install: {}",
-                                crate::tr!(crate::keys::EXISTING_NO_BACKUP_CREATED)
-                            );
-                        }
-                    }
-                    Ok(ExitCode::SUCCESS)
-                }
-                Ok(pipeline::SwitchOutcome::RolledBack { version, backup_id }) => {
-                    let backup = backup_id.map_or_else(String::new, |id| {
-                        crate::tr!(crate::keys::EXISTING_ROLLED_BACK_USING_BACKUP, id = id)
-                    });
-                    eprintln!(
-                        "install: {}",
-                        crate::tr!(
-                            crate::keys::EXISTING_SWITCH_FAILED_ROLLED_BACK,
-                            version = version,
-                            backup = backup
-                        )
-                    );
-                    Ok(ExitCode::from(5))
-                }
-                Ok(pipeline::SwitchOutcome::RollbackFailed { version, .. }) => {
-                    eprintln!(
-                        "install: {}",
-                        crate::tr!(
-                            crate::keys::EXISTING_SWITCH_FAILED_ROLLBACK_FAILED,
-                            version = version
-                        )
-                    );
-                    Ok(ExitCode::from(6))
-                }
-                Err(error) => Err(error),
-            };
-        }
+                );
+                Ok(ExitCode::from(5))
+            }
+            Ok(pipeline::SwitchOutcome::RollbackFailed { version, .. }) => {
+                eprintln!(
+                    "install: {}",
+                    crate::tr!(
+                        crate::keys::EXISTING_SWITCH_FAILED_ROLLBACK_FAILED,
+                        version = version
+                    )
+                );
+                Ok(ExitCode::from(6))
+            }
+            Err(error) => Err(error),
+        };
     }
 
     let data = plan.root.canonical.join("data");

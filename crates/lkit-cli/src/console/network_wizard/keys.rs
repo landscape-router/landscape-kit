@@ -5,9 +5,7 @@ use super::{WanMode, WizardStep};
 
 impl ConsoleApp {
     pub(crate) fn handle_network_wizard_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
-        let Some(wizard) = self.network_wizard.as_mut() else {
-            return None;
-        };
+        let wizard = self.network_wizard.as_mut()?;
         if wizard.cancel_confirming {
             match key.code {
                 KeyCode::Enter => {
@@ -119,8 +117,8 @@ impl ConsoleApp {
                 }
                 _ => {}
             },
-            WizardStep::Confirm => match key.code {
-                KeyCode::Enter => {
+            WizardStep::Confirm => {
+                if key.code == KeyCode::Enter {
                     let plan = match wizard.plan() {
                         Ok(plan) => plan,
                         Err(error) => {
@@ -146,8 +144,7 @@ impl ConsoleApp {
                         Err(error) => self.notice = error,
                     }
                 }
-                _ => {}
-            },
+            }
         }
         None
     }

@@ -223,9 +223,8 @@ fn parse_deb822_with_diagnostics(text: &str) -> (Vec<AptEntry>, Vec<ParseIssue>)
     let mut issues = Vec::new();
     let mut start = 0usize;
     let mut cur = 0usize;
-    let mut line_index = 0usize;
     let mut stanza_start_line = 1usize;
-    for line in text.split_inclusive('\n') {
+    for (line_index, line) in text.split_inclusive('\n').enumerate() {
         if line.trim().is_empty() {
             if start < cur {
                 let (entry, kinds) = parse_deb822_stanza(&text[start..cur], start);
@@ -238,7 +237,6 @@ fn parse_deb822_with_diagnostics(text: &str) -> (Vec<AptEntry>, Vec<ParseIssue>)
             start = cur + line.len();
             stanza_start_line = line_index + 2;
         }
-        line_index += 1;
         cur += line.len();
     }
     if start < text.len() {
@@ -778,9 +776,7 @@ mod tests {
 
     #[test]
     fn parses_cdrom_uri_with_spaces_in_label() {
-        let content = concat!(
-            "deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - Official amd64 DVD Binary-1 20240210-10:16]/ bookworm contrib main\n",
-        );
+        let content = "deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - Official amd64 DVD Binary-1 20240210-10:16]/ bookworm contrib main\n";
         let entries = parse_sources(content);
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
@@ -1182,9 +1178,7 @@ mod tests {
 
     #[test]
     fn converts_cdrom_entry_keeping_suites_and_components() {
-        let content = concat!(
-            "deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - Official amd64 DVD Binary-1 20240210-10:16]/ bookworm contrib main non-free\n",
-        );
+        let content = "deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - Official amd64 DVD Binary-1 20240210-10:16]/ bookworm contrib main non-free\n";
         let converted = convert_cdrom(content, Family::Debian, MirrorName::Tuna).unwrap();
         assert_eq!(
             converted,
@@ -1202,9 +1196,7 @@ mod tests {
 
     #[test]
     fn ubuntu_cdrom_conversion_uses_ports_on_arm_architectures() {
-        let content = concat!(
-            "deb cdrom:[Ubuntu 24.04 LTS _Noble Numbat_ - Release amd64 (20240423)]/ noble main restricted\n",
-        );
+        let content = "deb cdrom:[Ubuntu 24.04 LTS _Noble Numbat_ - Release amd64 (20240423)]/ noble main restricted\n";
         // 常规 x86_64 → /ubuntu。
         let x86 =
             convert_cdrom_with_arch(content, Family::Ubuntu, MirrorName::Tuna, "x86_64").unwrap();

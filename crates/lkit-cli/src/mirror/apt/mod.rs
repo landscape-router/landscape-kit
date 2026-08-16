@@ -60,9 +60,9 @@ pub(crate) fn managed_files() -> Result<Vec<PathBuf>, MirrorError> {
         files.extend(names);
     }
     if files.is_empty() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_SOURCE_FILES
+        )));
     }
     Ok(files)
 }
@@ -188,9 +188,9 @@ fn fallback(
     // 2) 合成并追加新条目。
     let Some(codename) = codename else {
         let _ = fs::remove_dir_all(backup_path);
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_OFFICIAL_SOURCE).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_OFFICIAL_SOURCE
+        )));
     };
     let lines = synth_lines(family, mirror, replace_security, codename);
     // 写入 sources.list；不存在则创建 sources.list.d/lkit-mirror.list，并在备份
@@ -244,9 +244,9 @@ pub(crate) fn show() -> Result<String, MirrorError> {
 fn restore(family: &Family) -> Result<(), MirrorError> {
     let dir = backup_dir(*family);
     if !dir.exists() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_BACKUP).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_BACKUP
+        )));
     }
     common::restore_files(&dir, &paths().restore_root)?;
     fs::remove_dir_all(&dir)?;

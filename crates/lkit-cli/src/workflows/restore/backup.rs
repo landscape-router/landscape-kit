@@ -106,7 +106,9 @@ pub(super) fn check_architecture(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
+    // 交互模式测试通过 std::sync::Mutex 串行化,锁故意跨 await 持有。
     use super::*;
 
     use super::super::tests::{

@@ -84,11 +84,11 @@ impl ConsoleApp {
             }
             return None;
         }
-        if self.menu() == Menu::Backup && self.focus == Focus::Panel {
-            match self.handle_backup_key(key) {
-                Some(action) => return action,
-                None => {}
-            }
+        if self.menu() == Menu::Backup
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_backup_key(key)
+        {
+            return action;
         }
         if self.menu() == Menu::Update
             && self.focus == Focus::Panel
@@ -224,8 +224,7 @@ impl ConsoleApp {
                                                 self.network_wizard = Some(wizard);
                                                 self.notice = crate::tr!(
                                                     crate::keys::CONSOLE_CONFIGURE_NETWORK_TAKEOVER
-                                                )
-                                                .into();
+                                                );
                                             }
                                             Err(error) => self.notice = error,
                                         },
@@ -242,8 +241,7 @@ impl ConsoleApp {
                             GateState::Waiting => {
                                 self.notice = crate::tr!(
                                     crate::keys::CONSOLE_ENVIRONMENT_CHECKS_NOT_COMPLETED
-                                )
-                                .into();
+                                );
                             }
                             GateState::Dialog => self.preflight_dialog = true,
                         }
@@ -306,9 +304,7 @@ impl ConsoleApp {
             self.exit_state = ExitState::Idle;
             self.notice = "Ready".into();
         }
-        let Some(hit) = self.hits.hit_at(mouse.column, mouse.row) else {
-            return None;
-        };
+        let hit = self.hits.hit_at(mouse.column, mouse.row)?;
         match hit {
             Hit::Nothing => None,
             Hit::Outside => {
@@ -397,9 +393,7 @@ impl ConsoleApp {
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::WizardWan(index) => {
-                let Some(wizard) = self.network_wizard.as_mut() else {
-                    return None;
-                };
+                let wizard = self.network_wizard.as_mut()?;
                 if wizard.step != WizardStep::Wan || wizard.cancel_confirming {
                     return None;
                 }
@@ -407,9 +401,7 @@ impl ConsoleApp {
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::WizardTab(mode) => {
-                let Some(wizard) = self.network_wizard.as_mut() else {
-                    return None;
-                };
+                let wizard = self.network_wizard.as_mut()?;
                 if wizard.step != WizardStep::WanConfig || wizard.cancel_confirming {
                     return None;
                 }
@@ -419,9 +411,7 @@ impl ConsoleApp {
                 None
             }
             Hit::WizardField(focus) => {
-                let Some(wizard) = self.network_wizard.as_mut() else {
-                    return None;
-                };
+                let wizard = self.network_wizard.as_mut()?;
                 if wizard.cancel_confirming || !wizard.is_field_focus(focus) {
                     return None;
                 }
@@ -430,9 +420,7 @@ impl ConsoleApp {
                 None
             }
             Hit::WizardLan(index) => {
-                let Some(wizard) = self.network_wizard.as_mut() else {
-                    return None;
-                };
+                let wizard = self.network_wizard.as_mut()?;
                 if wizard.step != WizardStep::Lan || wizard.cancel_confirming {
                     return None;
                 }
@@ -444,9 +432,7 @@ impl ConsoleApp {
                 None
             }
             Hit::WizardContinue => {
-                let Some(wizard) = self.network_wizard.as_mut() else {
-                    return None;
-                };
+                let wizard = self.network_wizard.as_mut()?;
                 if wizard.cancel_confirming {
                     return None;
                 }

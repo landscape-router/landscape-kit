@@ -51,7 +51,7 @@ impl Language {
     fn from_system_locale(value: &str) -> Self {
         let primary = value
             .trim()
-            .split(|character| matches!(character, '_' | '-' | '.' | '@'))
+            .split(['_', '-', '.', '@'])
             .next()
             .unwrap_or_default();
         match primary.to_ascii_lowercase().as_str() {

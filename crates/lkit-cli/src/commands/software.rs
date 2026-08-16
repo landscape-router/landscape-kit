@@ -201,9 +201,9 @@ fn require_root() -> Result<(), SoftwareError> {
     if software::root_allowed() {
         Ok(())
     } else {
-        Err(SoftwareError::Message(
-            crate::tr!(crate::keys::SOFTWARE_ROOT_REQUIRED).into(),
-        ))
+        Err(SoftwareError::Message(crate::tr!(
+            crate::keys::SOFTWARE_ROOT_REQUIRED
+        )))
     }
 }
 

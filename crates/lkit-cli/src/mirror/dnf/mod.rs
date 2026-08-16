@@ -43,7 +43,7 @@ impl SourcesBackend for DnfBackend {
 /// 受管 dnf/yum 仓库文件：`/etc/yum.repos.d/*.repo`。
 pub(crate) fn managed_files() -> Result<Vec<PathBuf>, MirrorError> {
     let entries = fs::read_dir(&paths().dnf_repos_dir).map_err(|_| {
-        MirrorError::Message(crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into())
+        MirrorError::Message(crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES))
     })?;
     let mut files: Vec<_> = entries
         .filter_map(|entry| entry.ok())
@@ -55,9 +55,9 @@ pub(crate) fn managed_files() -> Result<Vec<PathBuf>, MirrorError> {
         .map(|entry| entry.path())
         .collect();
     if files.is_empty() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_SOURCE_FILES
+        )));
     }
     files.sort();
     Ok(files)
@@ -108,9 +108,9 @@ fn apply(family: &Family, mirror: MirrorName) -> Result<ApplyReport, MirrorError
         });
     }
     if rewrites.is_empty() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_OFFICIAL_SOURCE).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_OFFICIAL_SOURCE
+        )));
     }
     let backup_path = backup(*family)?;
     let mut report = ApplyReport {
@@ -143,9 +143,9 @@ pub(crate) fn show() -> Result<String, MirrorError> {
 fn restore(family: &Family) -> Result<(), MirrorError> {
     let dir = backup_dir(*family);
     if !dir.exists() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_BACKUP).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_BACKUP
+        )));
     }
     common::restore_files(&dir, &paths().restore_root)?;
     fs::remove_dir_all(&dir)?;

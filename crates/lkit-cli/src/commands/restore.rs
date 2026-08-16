@@ -79,18 +79,17 @@ pub async fn run(args: &Restore) -> ExitCode {
             return exit_code(&error);
         }
     };
-    if let Some(transaction) = unfinished {
-        if let Err(error) = transaction::recover_interrupted(
+    if let Some(transaction) = unfinished
+        && let Err(error) = transaction::recover_interrupted(
             &normalized,
             &transaction,
             runtime.service_manager.as_ref(),
             &health,
         )
         .await
-        {
-            eprintln!("restore: {error}");
-            return exit_code(&error);
-        }
+    {
+        eprintln!("restore: {error}");
+        return exit_code(&error);
     }
     let Some(state) = (match state::load_state(&normalized) {
         Ok(state) => state,

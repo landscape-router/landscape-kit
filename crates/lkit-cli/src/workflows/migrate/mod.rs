@@ -356,9 +356,7 @@ async fn create_migration_backup(
     copy_from_proc_exe(instance.pid, &staged_binary)?;
 
     let (_, web) = process::path_args(&instance.args);
-    let static_dir = web
-        .map(PathBuf::from)
-        .unwrap_or_else(|| source.join(STATIC_DIR));
+    let static_dir = web.unwrap_or_else(|| source.join(STATIC_DIR));
     if !static_dir.is_dir() {
         return Err(InstallError::ExportFailed(format!(
             "cannot locate the static directory: the process runs without --web and {} is not a directory; extract the release static pages there or re-run the old instance with --web",
@@ -489,7 +487,7 @@ fn pack_static_zip(static_dir: &Path, target: &Path) -> Result<PathBuf, InstallE
 }
 
 fn zip_error(error: zip::result::ZipError) -> InstallError {
-    InstallError::Io(std::io::Error::new(std::io::ErrorKind::Other, error))
+    InstallError::Io(std::io::Error::other(error))
 }
 
 fn pack_entry<W: std::io::Write + std::io::Seek>(
@@ -505,9 +503,7 @@ fn pack_entry<W: std::io::Write + std::io::Seek>(
         let entry_path = entry.path();
         let relative = entry_path
             .strip_prefix(root)
-            .map_err(|error| {
-                InstallError::Io(std::io::Error::new(std::io::ErrorKind::Other, error))
-            })?
+            .map_err(|error| InstallError::Io(std::io::Error::other(error)))?
             .to_path_buf();
         let zip_name = prefix.join(relative);
         if file_type.is_dir() {

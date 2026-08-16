@@ -125,13 +125,13 @@ fn validate_network_takeover_rollback(
         ));
     }
     let data = root.canonical.join("data");
-    if let Ok(metadata) = std::fs::symlink_metadata(&data) {
-        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-            return Err(InstallError::DangerousDirectory(format!(
-                "{} is not a real data directory",
-                data.display()
-            )));
-        }
+    if let Ok(metadata) = std::fs::symlink_metadata(&data)
+        && (!metadata.file_type().is_dir() || metadata.file_type().is_symlink())
+    {
+        return Err(InstallError::DangerousDirectory(format!(
+            "{} is not a real data directory",
+            data.display()
+        )));
     }
     Ok(())
 }

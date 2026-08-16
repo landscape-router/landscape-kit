@@ -138,8 +138,8 @@ impl BackupPanel {
     }
 
     pub(crate) fn poll(&mut self, notice: &mut String) {
-        match &self.state {
-            BackupListState::Running(receiver) => match receiver.try_recv() {
+        if let BackupListState::Running(receiver) = &self.state {
+            match receiver.try_recv() {
                 Ok(Ok(entries)) => {
                     self.state = BackupListState::Complete(entries);
                     self.details = None;
@@ -152,8 +152,7 @@ impl BackupPanel {
                         crate::keys::CONSOLE_CHECK_WORKER_STOPPED
                     ));
                 }
-            },
-            _ => {}
+            }
         }
         if let BackupVerifyState::Running(receiver) = &self.verify {
             match receiver.try_recv() {
@@ -172,11 +171,8 @@ impl BackupPanel {
                 }
             }
         }
-        loop {
-            let message = match &self.create {
-                Some(run) => run.receiver.try_recv(),
-                None => break,
-            };
+        while let Some(run) = &self.create {
+            let message = run.receiver.try_recv();
             match message {
                 Ok(BackupCreateMessage::Progress(progress)) => {
                     if let Some(run) = &mut self.create {

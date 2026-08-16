@@ -45,13 +45,10 @@ fn os_release_codename(path: &Path) -> Option<String> {
 /// 从 os-release 内容检测发行版家族与版本代号。
 pub(crate) fn detect_from(path: &Path) -> Result<Host, MirrorError> {
     let id = os_release_id(path).ok_or_else(|| {
-        MirrorError::Message(
-            crate::tr!(
-                crate::keys::mirror::MIRROR_OS_RELEASE_UNREADABLE,
-                path = path.display()
-            )
-            .into(),
-        )
+        MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_OS_RELEASE_UNREADABLE,
+            path = path.display()
+        ))
     })?;
     let family = match id.as_str() {
         "debian" => Family::Debian,
@@ -70,9 +67,10 @@ pub(crate) fn detect_from(path: &Path) -> Result<Host, MirrorError> {
         "almalinux" => Family::Alma,
         "arch" => Family::Arch,
         _ => {
-            return Err(MirrorError::Message(
-                crate::tr!(crate::keys::mirror::MIRROR_DISTRO_UNSUPPORTED, id = id).into(),
-            ));
+            return Err(MirrorError::Message(crate::tr!(
+                crate::keys::mirror::MIRROR_DISTRO_UNSUPPORTED,
+                id = id
+            )));
         }
     };
     let codename = match family {

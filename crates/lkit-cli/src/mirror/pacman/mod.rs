@@ -64,9 +64,9 @@ fn backup() -> Result<PathBuf, MirrorError> {
 /// 把 pacman mirrorlist 切换到指定镜像。写入失败时从备份回滚。
 fn apply(mirror: MirrorName) -> Result<ApplyReport, MirrorError> {
     if !paths().pacman_mirrorlist.is_file() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_SOURCE_FILES
+        )));
     }
     let backup_path = backup()?;
     if let Err(error) =
@@ -87,9 +87,9 @@ fn apply(mirror: MirrorName) -> Result<ApplyReport, MirrorError> {
 /// 显示当前 mirrorlist 内容。
 fn show() -> Result<String, MirrorError> {
     if !paths().pacman_mirrorlist.is_file() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_SOURCE_FILES
+        )));
     }
     Ok(format!(
         "# {}\n{}",
@@ -102,9 +102,9 @@ fn show() -> Result<String, MirrorError> {
 fn restore() -> Result<(), MirrorError> {
     let dir = backup_dir(Family::Arch);
     if !dir.exists() {
-        return Err(MirrorError::Message(
-            crate::tr!(crate::keys::mirror::MIRROR_NO_BACKUP).into(),
-        ));
+        return Err(MirrorError::Message(crate::tr!(
+            crate::keys::mirror::MIRROR_NO_BACKUP
+        )));
     }
     common::restore_files(&dir, &paths().restore_root)?;
     fs::remove_dir_all(&dir)?;

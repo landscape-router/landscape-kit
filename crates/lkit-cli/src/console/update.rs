@@ -96,7 +96,7 @@ impl UpdateField {
             Self::Version => panel.version.clone(),
             Self::Repository => panel.repository.label(panel.current_source.as_ref()),
             Self::RepositoryUrl => panel.repository_url.clone(),
-            Self::Start => crate::tr!(crate::keys::CONSOLE_UPDATE_BUTTON).into(),
+            Self::Start => crate::tr!(crate::keys::CONSOLE_UPDATE_BUTTON),
         }
     }
 
@@ -129,18 +129,10 @@ impl UpdateRepositoryMode {
 
 /// 卸载面板：版本/服务摘要 + 数据损失与保留物说明 + 确认层。
 /// 确认层打开时检测网络接管特征并展示警告;Enter 分发结构化请求。
+#[derive(Default)]
 pub(crate) struct UninstallPanel {
     pub(crate) confirming: bool,
     pub(crate) masked: bool,
-}
-
-impl Default for UninstallPanel {
-    fn default() -> Self {
-        Self {
-            confirming: false,
-            masked: false,
-        }
-    }
 }
 
 /// Update 面板：当前版本 + 目标版本/仓库来源表单、后台目标解析与确认层。

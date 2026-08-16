@@ -40,6 +40,8 @@ use std::path::PathBuf;
 #[cfg(test)]
 use widgets::{Focus, Hit, Menu};
 
+/// 仅在 console 内部传递,低频构造;`Command` 携带完整命令结构便于分发,保持平坦布局。
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ConsoleAction {
     Quit,
     Command {
@@ -50,7 +52,7 @@ pub(crate) enum ConsoleAction {
 
 pub(crate) fn run() -> Result<ConsoleAction, String> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return Err(crate::tr!(crate::keys::CONSOLE_TERMINAL_REQUIRED).into());
+        return Err(crate::tr!(crate::keys::CONSOLE_TERMINAL_REQUIRED));
     }
     let mut terminal = ConsoleTerminal::start()?;
     let mut app = ConsoleApp::new();

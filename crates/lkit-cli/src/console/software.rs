@@ -84,10 +84,10 @@ impl SoftwarePanel {
             return Ok(());
         }
         let Some(Ok(host)) = &self.host else {
-            return Err(crate::tr!(crate::keys::CONSOLE_SOFTWARE_DETECT_FAILED).into());
+            return Err(crate::tr!(crate::keys::CONSOLE_SOFTWARE_DETECT_FAILED));
         };
         if !crate::software::root_allowed() {
-            return Err(crate::tr!(crate::keys::SOFTWARE_ROOT_REQUIRED).into());
+            return Err(crate::tr!(crate::keys::SOFTWARE_ROOT_REQUIRED));
         }
         let host = host.clone();
         let (sender, receiver) = mpsc::channel();
@@ -117,11 +117,8 @@ impl SoftwarePanel {
     }
 
     pub(crate) fn poll(&mut self, notice: &mut String) {
-        loop {
-            let message = match &self.install {
-                Some(run) => run.receiver.try_recv(),
-                None => break,
-            };
+        while let Some(run) = &self.install {
+            let message = run.receiver.try_recv();
             match message {
                 Ok(SoftwareInstallMessage::Phase(phase)) => {
                     if let Some(run) = &mut self.install {
@@ -133,7 +130,7 @@ impl SoftwarePanel {
                     match result {
                         Ok(()) => {
                             self.refresh_status();
-                            *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_INSTALLED).into();
+                            *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_INSTALLED);
                         }
                         Err(error) => *notice = error,
                     }
@@ -141,7 +138,7 @@ impl SoftwarePanel {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.install = None;
-                    *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED).into();
+                    *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED);
                 }
             }
         }
@@ -159,8 +156,7 @@ impl ConsoleApp {
                             self.notice = crate::tr!(
                                 crate::keys::CONSOLE_SOFTWARE_INSTALLING,
                                 software = confirm.software.label()
-                            )
-                            .into();
+                            );
                         }
                         Err(message) => self.notice = message,
                     }
@@ -210,8 +206,7 @@ impl ConsoleApp {
                     self.notice = crate::tr!(
                         crate::keys::SOFTWARE_ALREADY_INSTALLED,
                         software = software.label()
-                    )
-                    .into();
+                    );
                     return Some(None);
                 }
                 self.software.confirming = Some(SoftwareConfirm {

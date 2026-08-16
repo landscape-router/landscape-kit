@@ -42,6 +42,18 @@ pub(crate) struct FirstInstallOutcome {
     pub pending_network_address: Option<std::net::Ipv4Addr>,
 }
 
+/// 首次安装上下文。`network`/`runtime` 仅在网络接管安装时提供。
+pub(crate) struct FirstInstallArgs<'a, P: DocsProbe> {
+    pub root: &'a InstallRoot,
+    pub provider: &'a ReleaseProvider,
+    pub target: &'a TargetVersion,
+    pub credentials: &'a Credentials,
+    pub manager: &'a dyn ServiceManager,
+    pub health_options: &'a HealthOptions<P>,
+    pub network: Option<&'a crate::network::config::NetworkPlan>,
+    pub runtime: Option<&'a InstallRuntime>,
+}
+
 pub(crate) async fn first_install<P: DocsProbe>(
     root: &InstallRoot,
     provider: &ReleaseProvider,
@@ -50,52 +62,38 @@ pub(crate) async fn first_install<P: DocsProbe>(
     manager: &dyn ServiceManager,
     health_options: &HealthOptions<P>,
 ) -> Result<FirstInstallOutcome, InstallError> {
-    first_install_impl(
+    first_install_impl(FirstInstallArgs {
         root,
         provider,
         target,
         credentials,
         manager,
         health_options,
-        None,
-        None,
-    )
+        network: None,
+        runtime: None,
+    })
     .await
 }
 
 pub(crate) async fn first_install_with_network<P: DocsProbe>(
-    root: &InstallRoot,
-    provider: &ReleaseProvider,
-    target: &TargetVersion,
-    credentials: &Credentials,
-    manager: &dyn ServiceManager,
-    health_options: &HealthOptions<P>,
-    network: &crate::network::config::NetworkPlan,
-    runtime: &InstallRuntime,
+    args: FirstInstallArgs<'_, P>,
 ) -> Result<FirstInstallOutcome, InstallError> {
-    first_install_impl(
+    first_install_impl(args).await
+}
+
+async fn first_install_impl<P: DocsProbe>(
+    args: FirstInstallArgs<'_, P>,
+) -> Result<FirstInstallOutcome, InstallError> {
+    let FirstInstallArgs {
         root,
         provider,
         target,
         credentials,
         manager,
         health_options,
-        Some(network),
-        Some(runtime),
-    )
-    .await
-}
-
-async fn first_install_impl<P: DocsProbe>(
-    root: &InstallRoot,
-    provider: &ReleaseProvider,
-    target: &TargetVersion,
-    credentials: &Credentials,
-    manager: &dyn ServiceManager,
-    health_options: &HealthOptions<P>,
-    network: Option<&crate::network::config::NetworkPlan>,
-    runtime: Option<&InstallRuntime>,
-) -> Result<FirstInstallOutcome, InstallError> {
+        network,
+        runtime,
+    } = args;
     let architecture = Architecture::host().ok_or_else(|| {
         InstallError::UnsupportedPlatform(crate::tr!(
             crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED

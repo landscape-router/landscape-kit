@@ -117,25 +117,22 @@ impl Tty {
         let raw = self.input(&selection_prompt)?;
         let selected = if raw.trim().is_empty() {
             default.map(|index| index + 1).ok_or_else(|| {
-                InstallError::ParameterUsage(
-                    crate::tr!(crate::keys::INTERACTIVE_SELECTION_MUST_BE_NUMBER).into(),
-                )
+                InstallError::ParameterUsage(crate::tr!(
+                    crate::keys::INTERACTIVE_SELECTION_MUST_BE_NUMBER
+                ))
             })?
         } else {
             raw.trim().parse::<usize>().map_err(|_| {
-                InstallError::ParameterUsage(
-                    crate::tr!(crate::keys::INTERACTIVE_SELECTION_MUST_BE_NUMBER).into(),
-                )
+                InstallError::ParameterUsage(crate::tr!(
+                    crate::keys::INTERACTIVE_SELECTION_MUST_BE_NUMBER
+                ))
             })?
         };
         if !(1..=options.len()).contains(&selected) {
-            return Err(InstallError::ParameterUsage(
-                crate::tr!(
-                    crate::keys::INTERACTIVE_SELECTION_OUT_OF_RANGE,
-                    maximum = options.len()
-                )
-                .into(),
-            ));
+            return Err(InstallError::ParameterUsage(crate::tr!(
+                crate::keys::INTERACTIVE_SELECTION_OUT_OF_RANGE,
+                maximum = options.len()
+            )));
         }
         Ok(selected - 1)
     }

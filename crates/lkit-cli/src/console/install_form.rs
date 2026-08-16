@@ -90,7 +90,7 @@ impl InstallField {
             Self::Password => mask(&form.password),
             Self::PasswordConfirmation => mask(&form.password_confirmation),
             Self::StartInstallation => {
-                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON).into()
+                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON)
             }
         }
     }
@@ -252,11 +252,10 @@ impl InstallForm {
     }
 
     pub(crate) fn change_choice(&mut self, forward: bool) {
-        match self.selected {
-            InstallField::Repository => self.repository.change(forward),
+        if self.selected == InstallField::Repository {
+            self.repository.change(forward);
             // TODO(network-takeover): 恢复网络接管开关时放开:
             // InstallField::NetworkTakeover => self.takeover_network = !self.takeover_network,
-            _ => {}
         }
     }
 
@@ -294,7 +293,9 @@ impl InstallForm {
                 .map_err(|error| error.to_string())?;
         }
         if self.password != self.password_confirmation {
-            return Err(crate::tr!(crate::keys::CONSOLE_PASSWORD_CONFIRMATION_MISMATCH).into());
+            return Err(crate::tr!(
+                crate::keys::CONSOLE_PASSWORD_CONFIRMATION_MISMATCH
+            ));
         }
         credentials::validate_password(&self.password).map_err(|error| error.to_string())?;
         Ok(())
