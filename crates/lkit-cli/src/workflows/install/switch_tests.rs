@@ -14,7 +14,9 @@ use super::first_install_tests::{
 };
 use super::*;
 
-fn start_switch_repository(
+/// 只构造 switch 仓库(不触碰 lkit 地盘):供已在同一测试内设置过地盘、
+/// 需要第二个仓库的场景复用,避免重复获取地盘守卫导致死锁。
+fn switch_repository(
     name: &str,
     from: &str,
     to: &str,
@@ -37,6 +39,24 @@ fn start_switch_repository(
     };
     let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
     (server, install_root, provider)
+}
+
+fn start_switch_repository(
+    name: &str,
+    from: &str,
+    to: &str,
+    payload_to: &[u8],
+) -> (
+    TestServer,
+    InstallRoot,
+    ReleaseProvider,
+    crate::deployment::layout::TerritoryOverride,
+) {
+    let (server, root, provider) = switch_repository(name, from, to, payload_to);
+    let territory = root.install_root.join("territory");
+    std::fs::create_dir_all(&territory).unwrap();
+    let guard = crate::deployment::layout::test_territory(&territory);
+    (server, root, provider, guard)
 }
 
 fn switch_options<'a, P: DocsProbe>(
@@ -66,13 +86,17 @@ struct SwitchWorld {
     _tcp: Vec<std::net::TcpListener>,
     _udp: UdpSocket,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _territory: crate::deployment::layout::TerritoryOverride,
 }
 
 fn switch_world(name: &str) -> SwitchWorld {
+    switch_world_repo(name, "1.2.3", "1.3.0", b"webserver 1.3.0 payload")
+}
+
+fn switch_world_repo(name: &str, from: &str, to: &str, payload_to: &[u8]) -> SwitchWorld {
     use std::net::{TcpListener, UdpSocket};
 
-    let (server, root, provider) =
-        start_switch_repository(name, "1.2.3", "1.3.0", b"webserver 1.3.0 payload");
+    let (server, root, provider, _territory) = start_switch_repository(name, from, to, payload_to);
     let dir = std::env::temp_dir().join(format!("lkit-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -118,6 +142,7 @@ fn switch_world(name: &str) -> SwitchWorld {
         _tcp: vec![tcp1, tcp2, tcp3],
         _udp: udp,
         stop,
+        _territory,
     }
 }
 
@@ -173,10 +198,7 @@ async fn switches_version_after_first_install() {
     );
     assert!(world.root.canonical.join("releases/1.2.3").is_dir());
     assert!(
-        world
-            .root
-            .canonical
-            .join("backups")
+        crate::deployment::layout::territory_backups_dir()
             .join(format!("{}.lkb", backup_id.as_ref().unwrap()))
             .is_file()
     );
@@ -283,18 +305,13 @@ async fn reuses_existing_target_release_directory_without_redownloading() {
 
 #[tokio::test]
 async fn rejects_version_downgrade_before_transaction_or_asset_download() {
-    let mut world = switch_world("e2e-switch-downgrade");
     // 仓库内容不同:降级路径使用 0.22.2 → 0.21.1。
-    let _ = std::fs::remove_dir_all(&world.root.install_root);
-    let (server, root, provider) = start_switch_repository(
+    let world = switch_world_repo(
         "e2e-switch-downgrade",
         "0.22.2",
         "0.21.1",
         b"webserver 0.21.1 payload",
     );
-    world._server = server;
-    world.root = root;
-    world.provider = provider;
     first_install(
         &world.root,
         &world.provider,
@@ -410,9 +427,14 @@ async fn repository_override_does_not_require_a_second_confirmation() {
         "first install must not create config.toml"
     );
 
-    let second = switch_world("e2e-switch-repo-b");
-    let target = second
-        .provider
+    // 第二个仓库只提供 provider 与导出端点,复用同一测试的地盘守卫。
+    let (second_server, _second_root, second_provider) = switch_repository(
+        "e2e-switch-repo-b",
+        "1.2.3",
+        "1.3.0",
+        b"webserver 1.3.0 payload",
+    );
+    let target = second_provider
         .release(&semver::Version::new(1, 3, 0), Architecture::X86_64)
         .await
         .unwrap();
@@ -424,7 +446,7 @@ async fn repository_override_does_not_require_a_second_confirmation() {
         Ok(true)
     };
     let options = SwitchOptions {
-        export_base_url: second._server.base.clone(),
+        export_base_url: second_server.base.clone(),
         token: &token,
         confirm: &confirm,
         health: &health,
@@ -464,13 +486,9 @@ async fn repository_override_does_not_require_a_second_confirmation() {
         "switch must not write config.toml"
     );
     first.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    second
-        .stop
-        .store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = std::fs::remove_dir_all(&first.dir);
-    let _ = std::fs::remove_dir_all(&second.dir);
     let _ = std::fs::remove_dir_all(&first.root.install_root);
-    let _ = std::fs::remove_dir_all(&second.root.install_root);
+    let _ = std::fs::remove_dir_all(&_second_root.install_root);
 }
 
 /// 有状态假 systemctl:start/stop 维护 state 文件,stop 后 ActiveState 为 inactive。
@@ -526,7 +544,7 @@ fn init_watcher(data_dir: std::path::PathBuf, stop: std::sync::Arc<std::sync::at
 async fn switches_version_with_systemd() {
     use std::net::{TcpListener, UdpSocket};
 
-    let (server, root, provider) = start_switch_repository(
+    let (server, root, provider, _territory) = start_switch_repository(
         "e2e-switch-systemd",
         "1.2.3",
         "1.3.0",
@@ -622,8 +640,7 @@ async fn switches_version_with_systemd() {
         retained_init
     );
     assert!(
-        root.canonical
-            .join("backups")
+        crate::deployment::layout::territory_backups_dir()
             .join(format!("{}.lkb", backup_id.as_ref().unwrap()))
             .is_file()
     );
@@ -652,12 +669,13 @@ type StoppedServiceWorld = (
     Vec<std::net::TcpListener>,
     UdpSocket,
     std::sync::Arc<std::sync::atomic::AtomicBool>,
+    crate::deployment::layout::TerritoryOverride,
 );
 
 fn stopped_service_world(name: &str) -> StoppedServiceWorld {
     use std::net::{TcpListener, UdpSocket};
 
-    let (server, root, provider) =
+    let (server, root, provider, _territory) =
         start_switch_repository(name, "1.2.3", "1.3.0", b"webserver 1.3.0 payload");
     let dir =
         std::env::temp_dir().join(format!("lkit-pipeline-host-{name}-{}", std::process::id()));
@@ -708,6 +726,7 @@ fn stopped_service_world(name: &str) -> StoppedServiceWorld {
         vec![tcp1, tcp2, tcp3],
         udp,
         stop,
+        _territory,
     )
 }
 
@@ -715,7 +734,7 @@ fn stopped_service_world(name: &str) -> StoppedServiceWorld {
 async fn refuses_switch_when_stopped_service_without_allow_no_backup() {
     use std::os::unix::fs::PermissionsExt;
 
-    let (server, root, provider, systemd, dir, options, _tcp, _udp, stop) =
+    let (server, root, provider, systemd, dir, options, _tcp, _udp, stop, _territory) =
         stopped_service_world("e2e-switch-stopped-refuse");
     first_install(
         &root,
@@ -772,7 +791,7 @@ async fn refuses_switch_when_stopped_service_without_allow_no_backup() {
 
 #[tokio::test]
 async fn switches_stopped_service_without_backup_when_allowed() {
-    let (server, root, provider, systemd, dir, options, _tcp, _udp, stop) =
+    let (server, root, provider, systemd, dir, options, _tcp, _udp, stop, _territory) =
         stopped_service_world("e2e-switch-stopped-ok");
     first_install(
         &root,
@@ -817,7 +836,7 @@ async fn switches_stopped_service_without_backup_when_allowed() {
     assert_eq!(tx["operation"], "switch");
     assert!(tx["no_backup"] == true);
     assert!(tx["backup"].is_null());
-    let lkb_count = std::fs::read_dir(root.canonical.join("backups"))
+    let lkb_count = std::fs::read_dir(crate::deployment::layout::territory_backups_dir())
         .map(|entries| {
             entries
                 .filter_map(Result::ok)
@@ -845,7 +864,7 @@ async fn switches_stopped_service_without_backup_when_allowed() {
 
 #[tokio::test]
 async fn rolls_back_stopped_service_switch_without_backup_on_health_failure() {
-    let (server, root, provider, systemd, dir, _options, _tcp, _udp, stop) =
+    let (server, root, provider, systemd, dir, _options, _tcp, _udp, stop, _territory) =
         stopped_service_world("e2e-switch-stopped-rollback");
     // 首次安装阶段 /api/docs 保持可用。
     let install_options = HealthOptions {
@@ -932,7 +951,7 @@ async fn rolls_back_stopped_service_switch_without_backup_on_health_failure() {
 async fn switches_and_rolls_back_via_lkb_on_health_failure() {
     use std::net::{TcpListener, UdpSocket};
 
-    let (server, root, provider) =
+    let (server, root, provider, _territory) =
         start_switch_repository("e2e-rollback", "1.2.3", "1.3.0", b"webserver 1.3.0 payload");
     let dir = std::env::temp_dir().join(format!(
         "lkit-pipeline-test-rollback-{}",
@@ -1034,16 +1053,13 @@ async fn switches_and_rolls_back_via_lkb_on_health_failure() {
     let tx = load_transaction_json(&root);
     assert_eq!(tx["phase"], "rolled_back");
     assert_eq!(tx["operation"], "switch");
-    let tx_dir = root
-        .canonical
-        .join("transactions")
+    let tx_dir = crate::deployment::layout::territory_transactions_dir()
         .join(tx["transaction_id"].as_str().unwrap());
     assert!(tx_dir.join("failed-data").is_dir());
     assert!(tx_dir.join("replaced-release").is_dir());
     assert!(tx_dir.join("restore").is_dir());
     assert!(
-        root.canonical
-            .join("backups")
+        crate::deployment::layout::territory_backups_dir()
             .join(tx["transaction_id"].as_str().unwrap())
             .join("host/resolv.conf")
             .is_dir()
@@ -1073,7 +1089,7 @@ async fn switch_rollback_failure_returns_rollback_failed_and_preserves_diagnosti
     // RB-06:激活验证失败触发 `.lkb` 回滚,回滚自身的健康检查也失败时
     // 返回 RollbackFailed(命令层映射退出码 6),事务标记 `failed` 且诊断
     // 现场保留。探测恒失败,事件驱动,不依赖墙钟。
-    let (server, root, provider) = start_switch_repository(
+    let (server, root, provider, _territory) = start_switch_repository(
         "e2e-switch-rollback-failed",
         "1.2.3",
         "1.3.0",
@@ -1165,9 +1181,7 @@ async fn switch_rollback_failure_returns_rollback_failed_and_preserves_diagnosti
         "a failed rollback must leave the transaction in the failed phase"
     );
     assert_eq!(tx["operation"], "switch");
-    let tx_dir = root
-        .canonical
-        .join("transactions")
+    let tx_dir = crate::deployment::layout::territory_transactions_dir()
         .join(tx["transaction_id"].as_str().unwrap());
     assert!(
         tx_dir.join("failed-data").is_dir(),
@@ -1182,8 +1196,7 @@ async fn switch_rollback_failure_returns_rollback_failed_and_preserves_diagnosti
         "the extracted .lkb must be preserved for manual recovery"
     );
     assert!(
-        root.canonical
-            .join("backups")
+        crate::deployment::layout::territory_backups_dir()
             .join(tx["transaction_id"].as_str().unwrap())
             .join("host/resolv.conf")
             .is_dir()

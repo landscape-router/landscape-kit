@@ -408,6 +408,19 @@ fn parse_upgrade_version(value: &str) -> Result<Version, InstallError> {
             "lkit version must be a canonical semver like 0.2.0 or v0.2.0-rc.1, got {value:?}"
         )));
     }
+    // 候选版必须带数字发布段(v0.2.0-rc.1 这类 tag 约定);裸 `-rc` 虽是合法
+    // SemVer,但不属于可解析的发布 tag。
+    if !version.pre.is_empty()
+        && version
+            .pre
+            .split('.')
+            .next_back()
+            .is_none_or(|segment| !segment.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(InstallError::ParameterUsage(format!(
+            "lkit prerelease versions must carry a numeric segment like v0.2.0-rc.1, got {value:?}"
+        )));
+    }
     Ok(version)
 }
 

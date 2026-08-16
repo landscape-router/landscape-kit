@@ -130,6 +130,13 @@ impl Drop for TempRoot {
     }
 }
 
+/// 建立 lkit 地盘(由 `test_territory` 指向临时目录),返回守卫,须存活整个测试。
+fn territory_guard(root: &TempRoot) -> crate::deployment::layout::TerritoryOverride {
+    let territory = root.join("territory");
+    std::fs::create_dir_all(&territory).unwrap();
+    crate::deployment::layout::test_territory(&territory)
+}
+
 struct Instance {
     child: Child,
 }
@@ -343,6 +350,7 @@ async fn migrate_requires_yes_in_non_interactive() {
     interactive::configure(true);
     let _reset = NonInteractiveGuard;
     let root = TempRoot::new("migrate-yes");
+    let _territory = territory_guard(&root);
     let ports = FixturePorts::unique();
     let (source, _static_dir, _instance) =
         spawn_manual_install(&root, &ports, Scenario::Healthy).await;
@@ -368,9 +376,7 @@ async fn migrate_requires_yes_in_non_interactive() {
     ));
     assert!(find_unfinished(&install_root).unwrap().is_none());
     assert!(
-        !install_root
-            .canonical
-            .join("transactions")
+        !crate::deployment::layout::territory_transactions_dir()
             .join(".tmp")
             .exists()
     );
@@ -382,6 +388,7 @@ async fn migrates_in_systemd_mode_with_legacy_unit_adoption() {
     interactive::configure(true);
     let _reset = NonInteractiveGuard;
     let root = TempRoot::new("systemd-mode");
+    let _territory = territory_guard(&root);
     let old_ports = FixturePorts::unique();
     let new_ports = FixturePorts::unique();
     let (source, _static_dir, _old_instance) =
@@ -469,9 +476,7 @@ async fn migrates_in_systemd_mode_with_legacy_unit_adoption() {
         !legacy_unit.exists(),
         "legacy unit must be moved out of the unit dir"
     );
-    let tx_dir = install_root
-        .canonical
-        .join("transactions")
+    let tx_dir = crate::deployment::layout::territory_transactions_dir()
         .join(state.last_transaction_id.as_deref().unwrap());
     assert!(
         tx_dir
@@ -495,6 +500,7 @@ async fn systemd_mode_rolls_back_and_restores_legacy_unit_on_activation_failure(
     interactive::configure(true);
     let _reset = NonInteractiveGuard;
     let root = TempRoot::new("rollback");
+    let _territory = territory_guard(&root);
     let old_ports = FixturePorts::unique();
     let new_ports = FixturePorts::unique();
     let (source, _static_dir, _old_instance) =

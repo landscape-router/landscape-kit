@@ -95,18 +95,26 @@ pub(crate) fn repository_files() -> (HashMap<String, Vec<u8>>, Vec<u8>) {
 pub(crate) fn start_repository(
     name: &str,
     files: HashMap<String, Vec<u8>>,
-) -> (TestServer, InstallRoot, ReleaseProvider) {
+) -> (
+    TestServer,
+    InstallRoot,
+    ReleaseProvider,
+    crate::deployment::layout::TerritoryOverride,
+) {
     let server = TestServer::start(move |path| match files.get(path) {
         Some(body) => TestResponse::ok(body.clone()),
         None => TestResponse::status(404, "Not Found", Vec::new()),
     });
     let root = temp_root(name);
+    let territory = root.join("territory");
+    std::fs::create_dir_all(&territory).unwrap();
+    let guard = crate::deployment::layout::test_territory(&territory);
     let install_root = InstallRoot {
         install_root: root.clone(),
         canonical: root,
     };
     let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
-    (server, install_root, provider)
+    (server, install_root, provider, guard)
 }
 
 pub(crate) fn credentials() -> Credentials {
@@ -238,7 +246,8 @@ esac
 async fn performs_first_install_from_http_repository() {
     use std::net::{TcpListener, UdpSocket};
 
-    let (server, root, provider) = start_repository("e2e-explicit", repository_files().0);
+    let (server, root, provider, _territory) =
+        start_repository("e2e-explicit", repository_files().0);
     let dir = std::env::temp_dir().join(format!(
         "lkit-pipeline-test-explicit-{}",
         std::process::id()
@@ -354,10 +363,11 @@ async fn performs_first_install_from_http_repository() {
             .unwrap()
             .is_none()
     );
-    let tx_files: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
+    let tx_files: Vec<_> =
+        std::fs::read_dir(crate::deployment::layout::territory_transactions_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
     assert_eq!(tx_files.len(), 1);
     drop(tcp1);
     drop(tcp2);
@@ -370,7 +380,7 @@ async fn performs_first_install_from_http_repository() {
 #[tokio::test]
 async fn first_install_fails_without_available_systemd() {
     let (files, _) = repository_files();
-    let (_server, root, provider) = start_repository("e2e-systemd-unavail", files);
+    let (_server, root, provider, _territory) = start_repository("e2e-systemd-unavail", files);
     let dir = std::env::temp_dir().join(format!(
         "lkit-pipeline-test-systemd-unavail-{}",
         std::process::id()
@@ -396,7 +406,7 @@ async fn first_install_fails_without_available_systemd() {
         .await,
         Err(InstallError::UnsupportedPlatform(_))
     ));
-    assert!(!root.canonical.join("state/install-state.json").exists());
+    assert!(!crate::deployment::layout::territory_state_path().exists());
     let _ = std::fs::remove_dir_all(&root.install_root);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -410,7 +420,7 @@ pub(crate) async fn assert_systemd_first_install(case: &str) {
     use std::net::{TcpListener, UdpSocket};
 
     let (files, payload) = repository_files();
-    let (server, root, provider) = start_repository(case, files);
+    let (server, root, provider, _territory) = start_repository(case, files);
     let dir =
         std::env::temp_dir().join(format!("lkit-pipeline-test-{case}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -502,7 +512,7 @@ pub(crate) async fn assert_systemd_first_install(case: &str) {
     assert!(tx["systemd_before"]["registration"]["kind"] == "missing");
     let resolv_backup = tx["resolv_conf_backup"].as_str().unwrap();
     assert!(
-        root.canonical.join(resolv_backup).is_dir(),
+        crate::deployment::layout::territory_relative(resolv_backup).is_dir(),
         "resolv backup dir missing: {resolv_backup}"
     );
 
@@ -518,11 +528,12 @@ pub(crate) async fn assert_systemd_first_install(case: &str) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-pub(crate) fn load_transaction_json(root: &InstallRoot) -> serde_json::Value {
-    let entries: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
+pub(crate) fn load_transaction_json(_root: &InstallRoot) -> serde_json::Value {
+    let entries: Vec<_> =
+        std::fs::read_dir(crate::deployment::layout::territory_transactions_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
     assert!(!entries.is_empty());
     // uuid v7 按时间排序,取最新的交易。
     let newest = entries
@@ -537,7 +548,8 @@ pub(crate) fn load_transaction_json(root: &InstallRoot) -> serde_json::Value {
 async fn resolves_latest_stable_from_channel() {
     use std::net::{TcpListener, UdpSocket};
 
-    let (_server, root, provider) = start_repository("e2e-latest", repository_files().0);
+    let (_server, root, provider, _territory) =
+        start_repository("e2e-latest", repository_files().0);
     let dir =
         std::env::temp_dir().join(format!("lkit-pipeline-test-latest-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -610,7 +622,7 @@ async fn fails_without_stable_channel() {
     let (files, _) = repository_files();
     let mut files = files;
     files.remove("/channels/stable.json");
-    let (_server, root, provider) = start_repository("e2e-missing", files);
+    let (_server, root, provider, _territory) = start_repository("e2e-missing", files);
     let dir =
         std::env::temp_dir().join(format!("lkit-pipeline-test-missing-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -637,7 +649,7 @@ async fn cleans_up_on_asset_download_failure() {
     let (mut files, _) = repository_files();
     let asset_path = "/releases/1.2.3/landscape-webserver-x86_64.zst";
     files.remove(asset_path);
-    let (server, root, provider) = start_repository("e2e-download-failure", files);
+    let (server, root, provider, _territory) = start_repository("e2e-download-failure", files);
     let dir = std::env::temp_dir().join(format!(
         "lkit-pipeline-test-download-failure-{}",
         std::process::id()
@@ -696,7 +708,7 @@ async fn cleans_up_on_corrupted_webserver_archive() {
         "/releases/1.2.3/landscape-webserver-x86_64.zst".into(),
         b"garbage".to_vec(),
     );
-    let (_server, root, provider) = start_repository("e2e-corrupt", files);
+    let (_server, root, provider, _territory) = start_repository("e2e-corrupt", files);
     let dir =
         std::env::temp_dir().join(format!("lkit-pipeline-test-corrupt-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -753,7 +765,7 @@ async fn cleans_up_on_invalid_static_archive() {
         manifest.into_bytes(),
     );
     files.insert("/releases/1.2.3/static.zip".into(), invalid_static.to_vec());
-    let (server, root, provider) = start_repository("e2e-invalid-static", files);
+    let (server, root, provider, _territory) = start_repository("e2e-invalid-static", files);
     let dir = std::env::temp_dir().join(format!(
         "lkit-pipeline-test-invalid-static-{}",
         std::process::id()
@@ -788,7 +800,7 @@ pub(crate) fn assert_failed_first_install_cleanup(root: &InstallRoot) {
     assert!(!root.canonical.join("current").exists());
     assert!(!root.canonical.join("releases/1.2.3").exists());
     assert!(!root.canonical.join("data/landscape_init.toml").exists());
-    assert!(!root.canonical.join("state/install-state.json").exists());
+    assert!(!crate::deployment::layout::territory_state_path().exists());
     assert!(!root.canonical.join("releases/.install-1.2.3.tmp").exists());
     assert!(
         super::super::transaction::find_unfinished(root)
@@ -800,7 +812,8 @@ pub(crate) fn assert_failed_first_install_cleanup(root: &InstallRoot) {
 
 #[tokio::test]
 async fn rejects_existing_release_directory() {
-    let (_server, root, provider) = start_repository("e2e-exists", repository_files().0);
+    let (_server, root, provider, _territory) =
+        start_repository("e2e-exists", repository_files().0);
     std::fs::create_dir_all(root.canonical.join("releases/1.2.3")).unwrap();
     let dir =
         std::env::temp_dir().join(format!("lkit-pipeline-test-exists-{}", std::process::id()));
