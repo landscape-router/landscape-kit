@@ -9,4 +9,6 @@ mod network;
 mod reinit;
 mod self_cmd;
 mod support;
+mod switch;
 mod uninstall;
+mod update;

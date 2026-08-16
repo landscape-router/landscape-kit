@@ -269,6 +269,86 @@ fn reinit_refused_confirmation_leaves_no_side_effects() {
     );
 }
 
+/// REI-08:激活后健康检查失败 → 自动回滚恢复原数据与服务状态
+/// (退出码 5),事务终止且不进入确认窗口。
+#[test]
+fn reinit_rolls_back_when_activation_health_check_fails() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reinit-health-fail", "healthy", 10_000);
+    harness.seed_host_services();
+    let output = harness.run_takeover();
+    assert!(
+        output.status.success(),
+        "takeover install failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_success(&harness.network_command(&["confirm"]));
+    let init_path = harness.install_root.join("data/landscape_init.toml");
+    let original_init = std::fs::read_to_string(&init_path).unwrap();
+    assert!(original_init.contains("Secret123"));
+
+    let new_password = harness.world.path("reinit-health-password");
+    std::fs::write(&new_password, b"NewSecret456\n").unwrap();
+    std::fs::set_permissions(&new_password, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    // 健康检查注入失败:base_url 指向不可达端口,其余探针保持 fixture 现场。
+    let mut runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&harness.runtime_config).unwrap()).unwrap();
+    runtime["health"]["base_url"] = serde_json::Value::String("https://127.0.0.1:1".into());
+    let broken_runtime = harness.world.path("reinit-broken-health.json");
+    std::fs::write(
+        &broken_runtime,
+        serde_json::to_vec_pretty(&runtime).unwrap(),
+    )
+    .unwrap();
+
+    let mut pty = Pty::open();
+    pty.master
+        .write_all(b"1\n1\n\n\n\nyes\nyes\nyes\n")
+        .unwrap();
+    let reinit = Command::new(LKIT)
+        .env(
+            lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+            &harness.world.systemctl_config,
+        )
+        .env("LKIT_TERRITORY", &harness.territory)
+        .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+        .args(["reinit", "--admin-user", "admin", "--password-file"])
+        .arg(&new_password)
+        .args(["--test-runtime"])
+        .arg(&broken_runtime)
+        .output()
+        .unwrap();
+    assert_eq!(
+        reinit.status.code(),
+        Some(5),
+        "a failed reinit must exit 5 (rolled back)\nstdout:\n{}\nstderr:\n{}\nservice log:\n{}",
+        String::from_utf8_lossy(&reinit.stdout),
+        String::from_utf8_lossy(&reinit.stderr),
+        harness.service_log()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&init_path).unwrap(),
+        original_init,
+        "the rollback must restore the previous data directory"
+    );
+    let transaction = transaction_of_operation(&harness.territory, "reinit");
+    assert_ne!(
+        transaction["phase"], "awaiting_network_confirmation",
+        "a failed reinit must not enter the confirmation window"
+    );
+    assert_ne!(transaction["phase"], "committed");
+    let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
+    assert_eq!(
+        String::from_utf8_lossy(&active.stdout).trim(),
+        "active",
+        "the rollback must restore the running service"
+    );
+}
+
 #[test]
 fn reinit_rollback_restores_previous_data() {
     if !e2e_enabled() {

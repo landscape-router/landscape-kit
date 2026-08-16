@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::path::Path;
 
+use sha2::Digest;
+
 use super::support::*;
 
 #[test]
@@ -489,4 +491,52 @@ fn cleans_up_after_fixture_health_failure() {
         std::fs::read(harness.host.join("resolv.conf")).unwrap(),
         b"nameserver 127.0.0.1\n"
     );
+}
+
+/// REC-02:受管 unit 原件内容变化后,reconcile 检测到差异;
+/// `--accept-service-change` 接受修改并更新状态记录,服务保持运行。
+#[test]
+fn reconcile_accepts_a_modified_service_unit() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reconcile-modified-unit", "healthy", 10_000);
+    assert_success(&harness.run());
+    let origin = harness
+        .install_root
+        .join("service/landscape-router.service");
+    let mut content = std::fs::read_to_string(&origin).unwrap();
+    content.push_str("# operator modification\n");
+    std::fs::write(&origin, content).unwrap();
+
+    let output = harness
+        .command()
+        .args(["reconcile", "--accept-service-change", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert!(
+        std::fs::read_to_string(&origin)
+            .unwrap()
+            .ends_with("# operator modification\n"),
+        "the accepted modification must be kept"
+    );
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
+    let recorded = state["service"]["definition_sha256"].as_str().unwrap();
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(std::fs::read_to_string(&origin).unwrap().as_bytes());
+    let expected = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(
+        recorded, expected,
+        "reconcile must record the accepted unit definition hash"
+    );
+    let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
+    assert_eq!(String::from_utf8_lossy(&active.stdout).trim(), "active");
 }

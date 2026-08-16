@@ -89,6 +89,63 @@ fn daemon_defers_while_the_install_lock_is_held() {
     terminate(&mut daemon);
 }
 
+/// DAE-03:网络接管待确认阶段保持人工处理——daemon 周期跳过
+/// `awaiting_network_confirmation` 事务,不代替用户确认、不触碰现场。
+#[test]
+fn daemon_never_acts_on_pending_network_confirmation() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("daemon-pending-takeover", "healthy", 30_000);
+    let root = prepare_interrupted_install(&harness);
+
+    let transaction_file = harness.transactions_dir().join("t.json");
+    let mut transaction: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&transaction_file).unwrap()).unwrap();
+    transaction["phase"] = "awaiting_network_confirmation".into();
+    transaction["network_takeover"] = serde_json::json!({
+        "plan": {
+            "mode": "wan_dhcp",
+            "wan": "ens3",
+            "selected_macs": [{"name": "ens3", "mac": "52:54:00:12:34:01"}],
+        },
+        "host_services": [],
+        "confirmation_deadline": chrono::Utc::now().to_rfc3339(),
+        "rollback_service": "lkit-network-tx-rollback.service",
+        "rollback_timer": "lkit-network-tx-rollback.timer",
+        "boot_rollback_service": "lkit-network-tx-boot-rollback.service",
+        "recovery_binary": "service/lkit-network-recovery",
+        "pending_state": format!(
+            "transactions/{}/pending-install-state.json",
+            transaction["transaction_id"].as_str().unwrap()
+        ),
+    });
+    std::fs::write(
+        &transaction_file,
+        serde_json::to_vec_pretty(&transaction).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        root.join("current").exists(),
+        "the interrupted install scene must stay intact"
+    );
+
+    let mut daemon = spawn_daemon(&harness);
+    std::thread::sleep(Duration::from_secs(7));
+    let transaction: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&transaction_file).unwrap()).unwrap();
+    assert_eq!(
+        transaction["phase"], "awaiting_network_confirmation",
+        "daemon must never touch a transaction awaiting network confirmation"
+    );
+    assert!(
+        process_alive(daemon.id()),
+        "daemon must stay alive while deferring"
+    );
+    terminate(&mut daemon);
+}
+
 /// 构造中断现场:landscape 根(install_root)有暂存的 release/current/data;
 /// lkit 地盘有有效安装状态(active_version 与目标不同,确保恢复走回滚而不是
 /// 判定已完成)、进行中事务与事务日志。
@@ -179,4 +236,8 @@ fn terminate(daemon: &mut std::process::Child) {
     }
     let status = daemon.wait().unwrap();
     assert!(status.success(), "daemon must exit cleanly on SIGTERM");
+}
+
+fn process_alive(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
