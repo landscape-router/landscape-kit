@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 真实 systemd 契约验证:在 systemd-nspawn 中部署 lkit 常驻 daemon
-# (`lkit self-service install`),验证真实 manager 的注册、启停、MainPID 与
+# (`lkit self install`),验证真实 manager 的注册、启停、MainPID 与
 # `KillMode=process` 契约。卸载场景当前不处理(见 docs/testing/nspawn-systemd.md),
 # 由 OpenRC/sysvinit 后端 fixture E2E 覆盖的委托执行边界不在此重复。
 #
@@ -89,7 +89,7 @@ install -D -m 0755 "$prebuilt_dir/landscape-webserver" \
 
 install_root=$rootfs/var/lib/lkit-nspawn/landscape
 release=$install_root/releases/1.0.0
-mkdir -p "$release/static" "$install_root/data" "$install_root/state" "$install_root/service"
+mkdir -p "$release/static" "$install_root/data" "$install_root/service" "$rootfs/root/.lkit/state"
 install -m 0755 "$prebuilt_dir/landscape-webserver" "$release/landscape-webserver"
 ln -s releases/1.0.0 "$install_root/current"
 cat >"$release/static/lkit-fixture.json" <<'JSON'
@@ -136,7 +136,7 @@ ln -s /var/lib/lkit-nspawn/landscape/service/landscape-router.service \
 webserver_sha=$(sha256sum "$release/landscape-webserver" | awk '{print $1}')
 webserver_size=$(stat -c '%s' "$release/landscape-webserver")
 unit_sha=$(sha256sum "$install_root/service/landscape-router.service" | awk '{print $1}')
-python3 - "$install_root/state/install-state.json" "$webserver_sha" "$webserver_size" "$unit_sha" <<'PY'
+python3 - "$rootfs/root/.lkit/state/install-state.json" "$webserver_sha" "$webserver_size" "$unit_sha" <<'PY'
 import json
 import sys
 
@@ -144,7 +144,7 @@ path, webserver_sha, webserver_size, unit_sha = sys.argv[1:]
 root = "/var/lib/lkit-nspawn/landscape"
 state = {
     "schema_version": 1,
-    "layout_version": 1,
+    "layout_version": 2,
     "install_root": root,
     "canonical_install_root": root,
     "active_version": "1.0.0",
@@ -177,7 +177,7 @@ with open(path, "w", encoding="utf-8") as stream:
     json.dump(state, stream, indent=2)
     stream.write("\n")
 PY
-chmod 0600 "$install_root/state/install-state.json"
+chmod 0600 "$rootfs/root/.lkit/state/install-state.json"
 
 cat >"$rootfs/var/lib/lkit-nspawn/runtime.json" <<'JSON'
 {
@@ -269,15 +269,15 @@ machine_shell "systemctl is-enabled --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet landscape-router.service"
 machine_shell "test \"\$(systemctl show --property=MainPID --value landscape-router.service)\" -gt 1"
 
-# 部署常驻 daemon:self-service install 在真实 systemd 下注册并启动 lkit.service。
-echo "== deploy the resident daemon via self-service install"
+# 部署常驻 daemon:self install 在真实 systemd 下注册并启动 lkit.service。
+echo "== deploy the resident daemon via self install"
 machine_shell \
-  "/usr/local/bin/lkit self-service install --install-dir /var/lib/lkit-nspawn/landscape --test-runtime /var/lib/lkit-nspawn/runtime.json"
+  "/usr/local/bin/lkit self install --test-runtime /var/lib/lkit-nspawn/runtime.json"
 machine_shell "systemctl is-enabled --quiet lkit.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 machine_shell "test \"\$(systemctl show --property=MainPID --value lkit.service)\" -gt 1"
 machine_shell "systemctl show --property=KillMode --value lkit.service | grep -qx process"
-machine_shell "test -f /var/lib/lkit-nspawn/landscape/run/lkit.pid"
+machine_shell "test -f /root/.lkit/run/lkit.pid"
 
 # 真实 systemd 契约:受管服务可停止并重新启动(不涉及卸载/注销)。
 echo "== stop and restart the managed services"
@@ -289,7 +289,7 @@ machine_shell "systemctl stop lkit.service"
 machine_shell "! systemctl is-active --quiet lkit.service"
 machine_shell "systemctl start lkit.service"
 machine_shell "systemctl is-active --quiet lkit.service"
-machine_shell "test -f /var/lib/lkit-nspawn/landscape/run/lkit.pid"
+machine_shell "test -f /root/.lkit/run/lkit.pid"
 
 # 当前节点不处理卸载:委托的 uninstall 需要交互确认,而 daemon 子进程没有
 # 终端(`cannot open /dev/tty`),确认委托机制尚未实现。所有权冲突、前端断开后

@@ -194,11 +194,11 @@ wait_for_ssh() {
 wait_for_takeover_ready() {
   local deadline=$((SECONDS + 240))
   while ((SECONDS < deadline)); do
-    if lan_ssh "jq -e '.phase == \"awaiting_network_confirmation\"' /var/lib/landscape/transactions/*.json" \
+    if lan_ssh "jq -e '.phase == \"awaiting_network_confirmation\"' /root/.lkit/transactions/*.json" \
       >/dev/null 2>&1; then
       return 0
     fi
-    if lan_ssh "jq -e '.phase == \"failed\" or .phase == \"rolled_back\"' /var/lib/landscape/transactions/*.json" \
+    if lan_ssh "jq -e '.phase == \"failed\" or .phase == \"rolled_back\"' /root/.lkit/transactions/*.json" \
       >/dev/null 2>&1; then
       return 1
     fi
@@ -227,7 +227,7 @@ find /var/lib/landscape -maxdepth 4 -type f -printf "%p\n" | sort
 echo "== landscape logs =="
 find /var/lib/landscape/data/logs -maxdepth 1 -type f -exec sh -c '\''for file do echo "--- $file"; tail -n 300 "$file"; done'\'' sh {} +
 echo "== transactions =="
-for file in /var/lib/landscape/transactions/*.json; do test -f "$file" && { echo "--- $file"; cat "$file"; }; done
+for file in /root/.lkit/transactions/*.json; do test -f "$file" && { echo "--- $file"; cat "$file"; }; done
 echo "== service state =="
 systemctl --no-pager --full status landscape-router.service NetworkManager.service firewalld.service systemd-resolved.service
 echo "== network state =="
@@ -261,12 +261,12 @@ assert_confirmed_wan_plan() {
   local scenario=$1
   local wan
   local wan_mode
-  if ! wan=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json"); then
+  if ! wan=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan' /root/.lkit/transactions/*.json"); then
     collect_guest_diagnostics "$scenario"
     echo "$scenario could not read the confirmed WAN interface" >&2
     return 1
   fi
-  if ! wan_mode=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.mode // \"none\"' /var/lib/landscape/transactions/*.json"); then
+  if ! wan_mode=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.mode // \"none\"' /root/.lkit/transactions/*.json"); then
     collect_guest_diagnostics "$scenario"
     echo "$scenario could not read the confirmed WAN IPv4 mode" >&2
     return 1
@@ -276,12 +276,12 @@ assert_confirmed_wan_plan() {
     static)
       local address
       local prefix
-      address=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.address' /var/lib/landscape/transactions/*.json") || {
+      address=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.address' /root/.lkit/transactions/*.json") || {
         collect_guest_diagnostics "$scenario"
         echo "$scenario could not read the confirmed static WAN address" >&2
         return 1
       }
-      prefix=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.prefix' /var/lib/landscape/transactions/*.json") || {
+      prefix=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.prefix' /root/.lkit/transactions/*.json") || {
         collect_guest_diagnostics "$scenario"
         echo "$scenario could not read the confirmed static WAN prefix" >&2
         return 1
@@ -366,6 +366,11 @@ start_takeover() {
     version_args=(--version "$LKIT_QEMU_LANDSCAPE_VERSION")
   fi
   set +e
+  wan_ssh 'systemctl is-active --quiet lkit.service || /usr/local/bin/lkit self install' \
+    || {
+      echo "failed to ensure the resident lkit daemon" >&2
+      return 1
+    }
   printf '%s\n1\n\n\n\n' "$wan_index" | timeout 900 ssh "${ssh_common[@]}" \
     -tt -p "$active_ssh_port" root@127.0.0.1 \
     /usr/local/bin/lkit install --takeover-network \
@@ -395,7 +400,7 @@ start_takeover() {
   assert_lan "$scenario" "one physical LAN member in br_lan" \
     "ip -j link show master br_lan | jq -e 'length == 1'" >/dev/null
   assert_lan "$scenario" "WAN keeps its inherited IPv4 address before confirmation" \
-    "ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /var/lib/landscape/transactions/*.json) | grep -q ' inet '"
+    "ip -4 -o address show dev \$(jq -r '.network_takeover.plan.mode.wan' /root/.lkit/transactions/*.json) | grep -q ' inet '"
   for unit in NetworkManager.service firewalld.service systemd-resolved.service; do
     assert_lan "$scenario" "$unit is masked" \
       "test \"\$(systemctl is-enabled $unit || true)\" = masked"
@@ -411,7 +416,7 @@ rollback_ready=false
 rollback_deadline=$((SECONDS + 300))
 while (( SECONDS < rollback_deadline )); do
   if wan_ssh \
-    "jq -e '.phase == \"rolled_back\"' /var/lib/landscape/transactions/*.json >/dev/null && systemctl is-active --quiet NetworkManager firewalld systemd-resolved" \
+    "jq -e '.phase == \"rolled_back\"' /root/.lkit/transactions/*.json >/dev/null && systemctl is-active --quiet NetworkManager firewalld systemd-resolved" \
     >/dev/null 2>&1; then
     rollback_ready=true
     break
@@ -423,17 +428,17 @@ done
   echo "boot recovery did not restore the original host network services" >&2
   exit 1
 }
-wan_ssh 'test ! -e /var/lib/landscape/state/install-state.json'
+wan_ssh 'test ! -e /root/.lkit/state/install-state.json'
 wan_ssh 'test ! -e /var/lib/landscape/data'
 cleanup_vm
 
 boot_vm confirm
 start_takeover confirm
-lan_ssh '/usr/local/bin/lkit network confirm --install-dir /var/lib/landscape' \
+lan_ssh '/usr/local/bin/lkit network confirm' \
   >"$artifact_dir/confirm-command.log" 2>&1
 assert_confirmed_wan_plan confirm
-lan_ssh "jq -e '.phase == \"committed\"' /var/lib/landscape/transactions/*.json" >/dev/null
-lan_ssh "jq -e '.active_version != null' /var/lib/landscape/state/install-state.json" >/dev/null
+lan_ssh "jq -e '.phase == \"committed\"' /root/.lkit/transactions/*.json" >/dev/null
+lan_ssh "jq -e '.active_version != null' /root/.lkit/state/install-state.json" >/dev/null
 lan_ssh "! find /etc/systemd/system -maxdepth 1 -name 'lkit-network-*' | grep -q ."
 lan_ssh 'systemctl poweroff' >/dev/null 2>&1 || true
 
