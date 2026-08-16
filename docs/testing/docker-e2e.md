@@ -75,8 +75,9 @@ ELF 尾部加入版本标记；Linux 可执行加载不受影响，各发布版�
 - 失败切换回滚后残留 release 目录的可信复用（S14）。
 
 S1-S8、S11-S13 的 repair/switch/update 需要仓库来源。`install` 自 0.1.4 起不再持久化
-来源，场景在各安装根完成首次安装后写入 `config.toml`（`[repository]` HTTP 来源），
-顺带验证配置驱动的来源解析路径。
+来源，场景在唯一安装根完成首次安装后写入 lkit 地盘的 `config.toml`
+（`/root/.lkit/config.toml`，`[repository]` HTTP 来源），顺带验证配置驱动的来源解析
+路径。
 
 宿主 `lkit check` 不属于 Docker 功能矩阵；它验证宿主内核和依赖能力，应在实际支持
 主机或完整 VM 验收中执行。

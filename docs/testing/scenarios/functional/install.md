@@ -133,7 +133,7 @@
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
-- 说明：首次安装完成后断言 `install-state.json` 不包含 `repository` 字段且安装根目录顶层
+- 说明：首次安装完成后断言 `install-state.json` 不包含 `repository` 字段且 lkit 地盘顶层
   不存在 `config.toml`；预置有效配置（HTTP 来源）后不带 `--repository` 执行首次安装，
   安装使用该来源且配置字节保持不变；网络接管 confirm 前后均不创建配置文件。
 - 缺口：缺省官方 GitHub 的首次安装只在配置缺失路径被隐含覆盖，未单独断言请求打到官方

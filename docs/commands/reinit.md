@@ -5,9 +5,9 @@
 重启 Landscape → 一律进入网络确认窗口,经 `lkit network confirm` 才提交。
 
 ```text
-lkit [--non-interactive] reinit [--install-dir <PATH>]
-             [--admin-user <NAME>] [--password-file <PATH>]
-             [--allow-no-backup] [--yes]
+lkit [--non-interactive] reinit
+     [--admin-user <NAME>] [--password-file <PATH>]
+     [--allow-no-backup] [--yes]
 ```
 
 ## 适用范围(v1 硬性前置)
@@ -16,7 +16,7 @@ lkit [--non-interactive] reinit [--install-dir <PATH>]
 
 - root 权限、真实可通信的服务管理器和交互终端(网络收集必须交互;控制台委托的内部
   daemon worker 通过隐藏 `--network-plan-file` 提供计划,见 [daemon worker](../service/runtime-and-health.md));
-- 安装状态存在且已提交;目标目录中不存在有效状态时返回参数错误并提示先执行
+- 安装状态存在且已提交;lkit 地盘无有效状态时返回参数错误并提示先执行
   `lkit install`;
 - `service.manager == systemd`,且宿主网络服务已被接管(NetworkManager、
   `networking.service`、firewalld、systemd-resolved 处于 stop/disable/mask 状态);

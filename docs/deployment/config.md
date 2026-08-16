@@ -2,7 +2,7 @@
 
 ## 职责
 
-`<install-root>/config.toml` 是安装根目录顶层的**用户维护**配置文件，独立于
+`/root/.lkit/config.toml` 是 lkit 地盘顶层的**用户维护**配置文件，独立于
 `state/install-state.json`。它保存安装机器的持续分发通道偏好，不属于安装记录：
 `state/install-state.json` 不包含任何仓库信息。
 
@@ -12,9 +12,9 @@
 - 用户随时可以编辑或删除 `config.toml` 改变后续命令的缺省来源；
 - 文件不存在与"官方 GitHub 默认"等价，首次安装不传 `--repository` 时行为一致。
 
-`config.toml` 允许存在于安装根目录顶层（`lkit` 对顶层目录执行白名单检查，
+`config.toml` 允许存在于 lkit 地盘顶层（`lkit` 对顶层目录执行白名单检查，
 `releases/`、`state/` 等受管目录之外的未知文件都会阻断命令）。没有该文件时首次安装
-正常进行。
+正常进行。config.toml 不属于任何 landscape 安装根：卸载 landscape 不删除它。
 
 ## Schema v1
 

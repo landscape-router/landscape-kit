@@ -5,14 +5,16 @@
 
 ```text
 lkit backup create [--remark <TEXT>] [--output <PATH>]
-                    [--install-dir <PATH>]
-lkit backup list [--install-dir <PATH>]
-lkit backup show (--backup <ID> | --file <PATH>) [--install-dir <PATH>]
-lkit backup verify (--backup <ID> | --file <PATH>) [--install-dir <PATH>]
-lkit backup delete --backup <ID> [--yes] [--install-dir <PATH>]
+lkit backup list
+lkit backup show (--backup <ID> | --file <PATH>)
+lkit backup verify (--backup <ID> | --file <PATH>)
+lkit backup delete --backup <ID> [--yes]
 ```
 
 `--non-interactive` 和 `--lang` 仍是全局参数，可放在子命令前后。
+
+备份存放在 lkit 地盘(`/root/.lkit/backups/`),与 landscape 安装根无关;landscape 根
+从 `install-state.json` 发现,命令不接收 `--install-dir`。
 
 控制台（裸 `lkit`）在 Backup 面板提供同样的能力：列表做快速读取（只读 32 字节 header 与
 metadata JSON，不做归档校验和与解包校验），Enter 查看 metadata 详情，R 进入恢复确认，
@@ -40,7 +42,7 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 默认备份写入：
 
 ```text
-<install-root>/backups/<backup-id>.lkb
+/root/.lkit/backups/<backup-id>.lkb
 ```
 
 `--output <PATH>` 将备份原子写入指定的新文件。目标文件不得已存在、不得是符号链接，
@@ -66,7 +68,8 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 
 ## `backup list`
 
-只枚举安装根目录下的普通 `.lkb` 文件，按 `created_at` 从新到旧排列。输出至少包含备份
+只枚举 lkit 地盘(`/root/.lkit/backups/`)下的普通 `.lkb` 文件，按 `created_at` 从新到旧
+排列。输出至少包含备份
 ID、创建时间、Landscape 版本、架构、`auto`、scope、remark 和 metadata 状态。除内容校验
 外，每个条目还执行与 `show`/`verify` 相同的安全校验：必须为 root 所有、权限不宽于
 `0600` 的普通文件。损坏、权限或所有者不安全以及符号链接条目显示为 invalid 并使命令
@@ -74,7 +77,7 @@ ID、创建时间、Landscape 版本、架构、`auto`、scope、remark 和 meta
 
 ## `backup show` 与 `backup verify`
 
-`--backup <ID>` 只解析安装根目录的备份 ID，ID 必须符合备份 ID 格式
+`--backup <ID>` 只解析 lkit 地盘备份目录的备份 ID，ID 必须符合备份 ID 格式
 `YYYYMMDD-HHMMSS-<8位小写hex>`，其他取值视为参数错误；`--file <PATH>` 用于检查外部
 复制的备份。路径必须指向 root 所有、权限不宽于 `0600` 的普通文件。
 
@@ -87,7 +90,7 @@ verify 解包到随机命名的 `0700` 临时目录，解包目录与文件分�
 
 ## `backup delete`
 
-`--backup <ID>` 只解析安装根目录的备份 ID，ID 必须符合备份 ID 格式
+`--backup <ID>` 只解析 lkit 地盘备份目录的备份 ID，ID 必须符合备份 ID 格式
 `YYYYMMDD-HHMMSS-<8位小写hex>`，其他取值视为参数错误。目标必须存在且为 root 所有、
 权限不宽于 `0600` 的普通文件（不跟随符号链接），符号链接、权限不安全与缺失的备份
 拒绝删除。删除前取得安装锁，避免与 switch、repair、restore 等正在引用备份的事务并发。

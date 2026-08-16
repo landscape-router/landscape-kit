@@ -95,10 +95,11 @@ capture_before(manager: &dyn ServiceManager, service: ManagedService) -> Result<
 
 `render_definition` 按 `ManagedService` 渲染:
 
-- `LandscapeRouter`:`<root>/current/landscape-webserver --config-dir <root>/data
-  --web <root>/current/static`,含 `LimitMEMLOCK=infinity`;
-- `LkitDaemon`:`<root>/service/lkit daemon --config-dir <root>/data`
-  (lkit 二进制复制到 `<root>/service/lkit`,与网络接管恢复二进制同目录约定),
+- `LandscapeRouter`:`<landscape-root>/current/landscape-webserver --config-dir
+  <landscape-root>/data --web <landscape-root>/current/static`,含
+  `LimitMEMLOCK=infinity`;
+- `LkitDaemon`:`/usr/local/bin/lkit daemon`(lkit 全局二进制,unit 原件位于
+  `/usr/local/lib/lkit/lkit.service`,不复制到任何安装根),
   含 `KillMode=process`——停服时只向主进程发信号,daemon 能完成进行中的委托
   请求,不会通过 cgroup 信号杀死执行子进程(停 lkit.service 自身即停服场景)。
 
@@ -109,10 +110,11 @@ daemon 额外要求 `KillMode=process`),且不含凭据内容。
 ## OpenRC 后端(简单实现)
 
 `service/openrc.rs` 的 `Openrc` 结构体。服务名与 systemd 一致
-(`landscape-router.service` / `lkit.service`,避免与 `service/lkit` 二进制同名冲突):
+(`landscape-router.service` / `lkit.service`):
 
-- 注册:`/etc/init.d/<name>` 是指向 `<root>/service/<name>` 原件的软链接
-  (与原 unit 文件相同的所有权冲突语义);
+- 注册:`/etc/init.d/<name>` 是指向原件的软链接;Landscape 原件位于
+  `<landscape-root>/service/<name>`,lkit daemon 原件位于全局
+  `/usr/local/lib/lkit/<name>`(与原 unit 文件相同的所有权冲突语义);
 - 生命周期:`rc-service <name> {start|stop|restart|status}`;`status` 退出码
   3 表示停止,其他非零视为错误;
 - 启用:`rc-update add|del <name> default`,`rc-update show` 解析启用表;

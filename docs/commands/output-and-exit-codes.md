@@ -17,7 +17,8 @@
 确认前先输出当前版本、目标版本、备份 ID 和“minimal 不含数据库”warning，之后沿用事务阶段、
 健康检查和回滚结果的顺序。`uninstall` 在破坏性确认前先输出当前版本、服务状态、数据损失
 范围与保留物清单，检测到网络接管特征时追加宿主网络服务警告，之后沿用事务阶段顺序并
-在成功时输出保护备份 ID 与保留物。
+在成功时输出保护备份 ID 与保留物。`self` 命令输出被操作对象与结果（安装/升级/移除的
+daemon 或 `/usr/local/bin/lkit`），`upgrade` 输出目标版本与校验结果。
 
 交互终端中的 warning 使用标题、原因和建议分行显示。资产下载使用动态进度条；非终端
 stderr 不输出进度控制字符。systemd worker 只写结构化进度事件，由仍然连接且 stderr 为
@@ -48,8 +49,9 @@ CI、`Command::output()` 和其他非交互调用只消费进度事件，不产�
 - `130`：进程收到显式 Ctrl+C；该状态是信号取消结果，不是业务失败码。
 
 `uninstall` 没有自动回滚语义，只使用 `0/1/2` 和 `130`，不定义 `5` 和 `6`；卸载中断
-恢复采用前向完成，失败时保护 `.lkb` 与事务现场保留在安装根目录，见
-[`lkit uninstall`](../commands/uninstall.md#失败语义)。
+恢复采用前向完成，失败时保护 `.lkb` 与事务现场保留在 lkit 地盘，见
+[`lkit uninstall`](../commands/uninstall.md#失败语义)。`self` 系列不创建事务、不定义
+`5` 和 `6`；`upgrade` 与目标版本相同或已是最新时返回 `0`，版本参数非法返回 `2`。
 
 除业务码 `0/1/2/5/6` 和信号取消状态 `130` 外，v1 不定义其他 `lkit` 管理命令退出码。
 生产 systemd 环境中的前端保持连接时，返回 worker 记录的业务命令退出码；显式 Ctrl+C
@@ -70,9 +72,9 @@ worker 继续完成提交或自动回滚。worker 或主机重启导致事务中
 - 不支持 `x86_64` 和 `aarch64` 以外架构。
 - 不允许安装 prerelease。
 - 不实现 AWS S3 profile、region 或 access key 鉴权。
-- 不自动删除旧版本、事务或 `.lkb`；`uninstall` 是唯一显式清理入口，默认保留
-  `config.toml`、`backups/` 与 `transactions/`，`--purge-root` 在显式 `--allow-no-backup`
-  下删除整个安装根目录。
+- 不自动删除旧版本、事务或 `.lkb`；`uninstall` 是唯一显式清理入口，删除 landscape 根
+  受管内容并保留 lkit 地盘（`config.toml`、`backups/` 与 `transactions/`），不支持
+  `--purge-root`。
 - 网络接管未确认回滚成功时删除本次未提交的整个 `data/`；已提交安装、旧版本和事务日志
   不在该清理范围内。
 - 不实现 `.lkb` full scope。

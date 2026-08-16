@@ -3,9 +3,9 @@
 网络子命令只处理 `lkit install --takeover-network` 创建的待定事务：
 
 ```text
-lkit network status [--install-dir <PATH>]
-lkit network confirm [--install-dir <PATH>]
-lkit network rollback [--install-dir <PATH>]
+lkit network status
+lkit network confirm
+lkit network rollback
 ```
 
 - `status` 显示事务阶段、管理地址和确认截止时间。
@@ -18,8 +18,8 @@ lkit network rollback [--install-dir <PATH>]
 - 确认前主机重启、10 分钟确认 timer 到期和手工 `rollback` 都使用同一幂等回滚入口；重启
   不会继续保留确认窗口，而是按未确认处理。
 - 只有确认成功才会提交 `state/install-state.json`。回滚成功后删除未提交首次安装的
-  `current`、目标 release、pending state 和整个 `data/`，安装根目录恢复为可重新首次安装
-  的状态；事务 JSON 和日志保留用于审计。
+  `current`、目标 release、pending state 和整个 `data/`，landscape 安装根恢复为可重新
+  首次安装的状态；事务 JSON 和日志保留用于审计。
 - 回滚只接受 `install` 的 `awaiting_network_confirmation`、`finalizing` 或
   `rolling_back` 事务。任何恢复或清理失败都会进入 `failed` 并要求人工处理，不报告
   `rolled_back`。

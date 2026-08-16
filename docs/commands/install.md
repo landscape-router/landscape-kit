@@ -1,6 +1,8 @@
 # `lkit install`
 
-仅用于首次安装 Landscape Router。目标目录中已经存在有效安装状态时返回参数使用错误，并提示使用 `update`、`switch`、`repair` 或 `reconcile`。
+仅用于首次安装 Landscape Router。lkit 地盘(`/root/.lkit/`)中已经存在有效安装状态时
+返回参数使用错误(单实例约束,见[安装布局与状态](../deployment/layout-and-state.md)),
+并提示使用 `update`、`switch`、`repair` 或 `reconcile`,或先 `lkit uninstall`。
 
 ```text
 lkit [--non-interactive] install [--version <VERSION>]
@@ -17,8 +19,8 @@ lkit [--non-interactive] install [--version <VERSION>]
   使用指定 protocol v1 HTTP 仓库；缺省时按 显式 CLI > `config.toml` > 官方 GitHub 的
   优先级解析来源（预置配置生效，缺失时官方 GitHub）。
 - 仓库来源不写入 `state/install-state.json`，`lkit` 也**从不创建或更新** `config.toml`；
-  该文件完全由用户维护，只影响后续命令未显式指定 `--repository` 时的缺省来源，
-  见[配置文件](../deployment/config.md)。
+  该文件位于 lkit 地盘(`/root/.lkit/config.toml`)，完全由用户维护，只影响后续命令未
+  显式指定 `--repository` 时的缺省来源，见[配置文件](../deployment/config.md)。
 - `--force` 不删除文件，只显示规范化安装根目录并要求用户自行清理。
 - `--takeover-network` 仅用于首次安装，要求 systemd 和交互终端。它让用户选择 WAN/LAN
   接口，并在 Landscape 健康后进入待确认状态；完整行为见[网络接管](../network/takeover.md)。
@@ -27,6 +29,10 @@ lkit [--non-interactive] install [--version <VERSION>]
 - `--takeover-network` 只允许目标 `data/` 目录不存在或为空；已有数据必须先由对应的
   `lkit network rollback` 清理。确认前重启会触发 boot rollback，不会让本次安装继续等待。
 - 已安装环境的版本更新、切换、修复和状态变更不再通过本命令的互斥 flags 表达。
+- `--install-dir` 指定 landscape 应用安装根目录（默认 `/root/.lkit/landscape`）；lkit
+  元数据（状态、事务、备份、锁）固定写入 `/root/.lkit/`，见
+  [安装布局与状态](../deployment/layout-and-state.md)。安装提交后 landscape 根位置
+  记录在 `install-state.json`，后续命令从状态发现根目录，不再接收 `--install-dir`。
 
 如果安装根目录存在未完成的网络接管事务，`install` 不自行确认、回滚或删除数据，只提示
 使用 `lkit network status`、`lkit network confirm` 或 `lkit network rollback`。`--admin-user`

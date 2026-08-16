@@ -7,9 +7,10 @@
 
 ```text
 lkit update [--version <VERSION>] [--repository [<BASE_URL>]]
-            [--install-dir <PATH>] [--accept-service-change]
-            [--allow-no-backup]
+            [--accept-service-change] [--allow-no-backup]
 ```
+
+landscape 根从 `install-state.json` 发现，命令不接收 `--install-dir`。
 
 ## 交互流程
 

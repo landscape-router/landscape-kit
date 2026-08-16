@@ -26,13 +26,14 @@
 ## 首次安装
 
 runner 使用带 `test-support` 的 CLI，并由公共 wrapper 自动追加
-`--test-runtime <runtime.json>`：
+`--test-runtime <runtime.json>`。test-support 运行时覆盖 lkit 地盘路径（默认
+`/root/.lkit/`）与 landscape 安装根（默认 `/root/.lkit/landscape`），保证多个场景
+并发隔离；生产 CLI 固定使用 lkit 地盘，不提供这些覆盖参数：
 
 ```sh
 lkit install \
   --version 1.0.0 \
   --repository <rustfs-public-base> \
-  --install-dir /var/lib/lkit-e2e/landscape \
   --admin-user admin \
   --password-file /var/lib/lkit-e2e/password \
 ```
@@ -58,9 +59,7 @@ lkit install \
 5. 执行：
 
 ```sh
-lkit switch \
-  --version 2.0.0 \
-  --install-dir /var/lib/lkit-e2e/landscape
+lkit switch --version 2.0.0
 ```
 
 必须验证：

@@ -11,13 +11,14 @@
 
 ## 命令
 
-- [`install`](commands/install.md)：首次安装。
+- [`install`](commands/install.md)：首次安装（单实例；landscape 根经 `--install-dir` 指定）。
 - [`migrate`](commands/migrate.md)：把手工部署（非 lkit 安装格式）迁移为受管安装。
 - [`update`](commands/update.md)：交互式更新到最新或指定 stable 版本。
 - [`switch`](commands/switch.md)：切换到指定 stable 版本。
 - [`backup`](commands/backup.md)：创建、查看和验证 `.lkb` minimal 备份。
 - [`restore`](commands/restore.md)：在现有安装内从 `.lkb` 恢复版本和配置。
-- [`uninstall`](commands/uninstall.md)：卸载已安装的 Landscape 并清理受管文件。
+- [`uninstall`](commands/uninstall.md)：卸载已安装的 Landscape 并清理其安装根（lkit 地盘保留）。
+- [`self`](commands/self.md)：管理 lkit 自身——`self install` / `self upgrade` / `self remove`。
 - [`reinit`](commands/reinit.md)：备份并重建已安装配置,按新网络计划与凭据重新初始化。
 - [`repair`](commands/repair.md)：修复静态页面或后端二进制。
 - [`reconcile`](commands/reconcile.md)：协调初始化完成状态、service unit 或仓库来源变化。

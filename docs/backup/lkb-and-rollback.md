@@ -87,7 +87,7 @@ Accept: application/json
 API token 固定存放在当前 Landscape home path：
 
 ```text
-<install-root>/data/landscape_api_token
+<landscape-root>/data/landscape_api_token
 ```
 
 读取规则：
@@ -231,10 +231,10 @@ Header：
 
 ### 创建顺序与存放
 
-备份路径：
+备份路径（lkit 地盘）：
 
 ```text
-<install-root>/backups/<backup-id>.lkb
+/root/.lkit/backups/<backup-id>.lkb
 ```
 
 创建流程：

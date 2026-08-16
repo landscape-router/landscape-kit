@@ -6,13 +6,16 @@
 
 ```text
 lkit restore (--backup <ID> | --file <PATH>)
-             [--install-dir <PATH>] [--allow-no-backup] [--yes]
+             [--allow-no-backup] [--yes]
 ```
 
 `--non-interactive` 和 `--lang` 是全局参数。交互模式必须确认当前版本、目标版本、备份 ID
 和 minimal scope 的数据损失；非交互模式必须额外提供 `--yes`，否则直接返回参数错误。
 `--yes` 覆盖全部确认：在非交互模式下同时表示确认恢复计划、minimal scope 数据损失以及
 （外部实例已由用户自己的进程管理器停止的场景由 systemd 模式接管）
+
+landscape 根从 `install-state.json` 发现，命令不接收 `--install-dir`；`--backup <ID>`
+解析 lkit 地盘备份目录中的备份，`--file <PATH>` 指向外部复制的 `.lkb`。
 
 从交互控制台（TUI）发起的 restore 由 TUI 恢复确认层完成全部确认，命令内部标记
 `--console-confirmed`，不再请求 `/dev/tty` 二次确认；这在 systemd worker 路径下是必需

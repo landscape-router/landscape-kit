@@ -17,9 +17,7 @@
 执行：
 
 ```sh
-lkit switch \
-  --version 3.0.0 \
-  --install-dir /var/lib/lkit-e2e/landscape
+lkit switch --version 3.0.0
 ```
 
 ## 必须断言

@@ -5,8 +5,8 @@
 ### 1. 准备
 
 1. 验证 root、平台和架构；
-2. 解析并固定安装根目录真实路径；
-3. 获取 `run/install.lock` 非阻塞独占锁；
+2. 解析并固定 lkit 地盘与 landscape 安装根真实路径；
+3. 获取 `/root/.lkit/run/install.lock` 非阻塞独占锁；
 4. 读取安装状态和未完成事务；
 5. 检测危险目录、旧部署、进程和 systemd unit 冲突；
 6. 调用部署前检查；
@@ -140,9 +140,10 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
 ### 9. 卸载
 
 `lkit uninstall` 是独立的 `uninstall` 事务,只处理已提交安装,不负责空目录或状态损坏
-现场。完整命令规格见 [`lkit uninstall`](../commands/uninstall.md)。
+现场。它只卸载 landscape 安装根;lkit 地盘与常驻 daemon 不属于卸载范围。完整命令
+规格见 [`lkit uninstall`](../commands/uninstall.md)。
 
-1. 获取安装锁并恢复未完成事务;读取已提交 state,不存在则参数错误;
+1. 获取安装锁并恢复未完成事务;读取已提交 state(记录 landscape 根),不存在则参数错误;
 2. 交互确认卸载计划与数据损失范围(非交互模式以 `--yes` 代替);网络接管特征警告
    (宿主网络服务被 stop/disable/mask)只提示不阻断;
 3. 默认创建保护 `.lkb`(`uninstall 前自动保护备份`,auto 标记为 true),失败阻断;
@@ -151,13 +152,14 @@ unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后�
    systemd 环境必要的 `/etc/resolv.conf` 备份现场;
 5. 更新为 `stopping` 后停止服务并确认进程退出,再更新为 `activating`,
    执行 `disable`、注销注册链接和 `daemon-reload`;
-6. 删除受管内容。默认保留 `config.toml`、`backups/` 与 `transactions/`;`--keep-data`
-   额外保留 `data/`;`--purge-root` 整树删除安装根目录(必须同时给出
-   `--allow-no-backup`);
+6. 删除 landscape 根受管内容(`releases/`、`data/`、`service/` 与 `current`);
+   `--keep-data` 保留 `data/`;lkit 地盘(`config.toml`、`backups/`、`transactions/`)
+   原样保留;
 7. 提交 `committed`,输出卸载结果、保护备份 ID 与保留物清单。
 
 卸载中断恢复采用前向完成:继续注销服务、删除文件并提交,不自动回滚;恢复再次失败
-标记 `failed` 并保留现场要求人工诊断。卸载成功后该根目录视为全新首次安装。
+标记 `failed` 并保留现场要求人工诊断。卸载成功后 lkit 地盘视为无已提交安装,
+再次 `lkit install` 按全新首次安装处理。
 
 ### 10. 重新初始化
 
@@ -196,7 +198,8 @@ systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
 ### 11. 手工部署迁移
 
 `lkit migrate` 把手工部署（非 lkit 安装格式）迁移为受管安装，是独立的 `migrate`
-事务，目标安装根必须全新。完整命令规格见 [`lkit migrate`](../commands/migrate.md)。
+事务。单实例约束下，lkit 地盘必须无已提交状态（无 `state/install-state.json`），
+landscape 安装根必须全新。完整命令规格见 [`lkit migrate`](../commands/migrate.md)。
 
 1. 获取安装锁并恢复未完成事务；校验安装根无状态且无遗留受管内容；校验 `--from`
    目录含 Landscape 特征文件且不是受管安装的 data；
@@ -224,6 +227,25 @@ systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
 按 enabled/active 重启）、删除新根内容，回滚成功返回 `5`、失败返回 `6`；前台实例
 场景不自动重启旧实例。中断恢复见
 [事务与中断恢复](../deployment/transactions-and-recovery.md)。
+
+### 12. lkit 自身生命周期
+
+lkit 自身(CLI 与全局常驻 daemon)与 landscape 安装解耦,由 [`lkit self`](../commands/self.md)
+管理,不创建业务事务:
+
+- `lkit self install`:把 lkit 注册为全局常驻服务(`/usr/local/lib/lkit/lkit.service`,
+  `ExecStart=/usr/local/bin/lkit daemon`,注册链接指向全局原件),启用并启动,校验
+  MainPID 非零;重复执行时 restart 刷新;
+- `lkit self upgrade [--version <TAG>]`:从 GitHub Release 下载对应架构二进制与
+  `SHA256SUMS`,校验、`--version` 自检后原子替换 `/usr/local/bin/lkit`;与目标版本
+  相同时返回 `0` 不修改;daemon 已注册且运行则 `restart`,未运行不启动,未注册仅升
+  CLI 并提示;
+- `lkit self remove`:停止并注销 daemon,删除全局 unit 原件;幂等可重复,不删除
+  `/usr/local/bin/lkit`,不触碰 lkit 地盘元数据。
+
+daemon 固定读取 `/root/.lkit/`,pidfile 写入 `/root/.lkit/run/lkit.pid`,周期恢复
+目标从 lkit 地盘状态与事务发现 landscape 根。卸载 landscape 不停止 daemon;daemon
+在无未完成事务时保持空闲。
 
 ## 首次安装失败
 

@@ -15,8 +15,8 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
   `/api/v1/system/config/export` 导出当前配置，同时从导出响应读取后端版本。
 - **备份不升级**：迁移 `.lkb` 记录旧部署导出的版本；恢复后活动版本保持该版本，
   升级由后续 `lkit switch` 完成。
-- 目标安装根目录必须是全新目录：不存在 `install-state.json`，也没有遗留的
-  `data/`、`releases/`、`service/` 或 `current`。
+- 单实例约束：lkit 地盘必须无已提交状态（不存在 `install-state.json`），landscape
+  安装根必须是全新目录：没有遗留的 `data/`、`releases/`、`service/` 或 `current`。
 - `--repository` 只在本地缺少 `static.zip` 时用于从发布仓库下载该版本的压缩包；
   下载不可用时回退为把解压后的 `static/` 现场打包。
 - 非交互模式必须显式 `--yes` 确认迁移计划。
@@ -33,7 +33,7 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
    - static 目录取进程 `--web` 参数，缺省为 `<CONFIG_DIR>/static`；
    - `static.zip` 本地存在则直接使用，否则从发布仓库下载，仓库不可用时从
      `static/` 现场打包并自校验；
-   - 按 `.lkb` minimal scope 生成迁移备份到 `<install-root>/backups/<id>.lkb`。
+   - 按 `.lkb` minimal scope 生成迁移备份到 `/root/.lkit/backups/<id>.lkb`。
 4. **确认**：展示源目录、后端版本（不升级）、目标管理方式和安装根目录；拒绝时
    不创建事务、不写任何文件。
 5. **停止旧实例**（`stopping`）：
@@ -70,4 +70,4 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
 ## 旧部署去留
 
 迁移**不删除、不修改**旧部署目录和旧二进制；旧 unit 在成功后保持停止状态。
-用户确认不再需要后自行清理。`lkit uninstall` 只管理 lkit 安装根目录，不涉及旧部署。
+用户确认不再需要后自行清理。`lkit uninstall` 只管理 landscape 安装根目录，不涉及旧部署。

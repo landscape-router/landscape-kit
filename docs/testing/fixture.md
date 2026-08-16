@@ -46,8 +46,8 @@ fake Landscape 接受 lkit 生成的真实参数：
 
 ```text
 landscape-webserver \
-  --config-dir <install-root>/data \
-  --web <install-root>/current/static
+  --config-dir <landscape-root>/data \
+  --web <landscape-root>/current/static
 ```
 
 `--config-dir` 必须提供；指定 `--web` 时，该目录必须存在。

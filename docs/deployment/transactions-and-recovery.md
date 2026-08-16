@@ -4,13 +4,21 @@
 
 ### Schema v4
 
-每次首次安装、同版本修复、版本切换、restore 或卸载创建：
+每次首次安装、同版本修复、版本切换、restore 或卸载创建:
 
 ```text
-<install-root>/transactions/<transaction-id>.json
+/root/.lkit/transactions/<transaction-id>.json
 ```
 
-示例：
+事务文件位于 lkit 地盘(见[安装布局与状态](layout-and-state.md)),不随 landscape
+卸载删除。事务中的路径字段按基准分为两类:
+
+- 带 `backups/`、`transactions/`、`logs/` 前缀的字段相对 **lkit 地盘**(与事务文件
+  同目录体系);
+- 带 `releases/`、`data/`、`service/` 或 `current` 前缀的字段相对 **landscape
+  安装根**;`install_root` / `canonical_install_root` 字段记录 landscape 根。
+
+示例:
 
 ```json
 {
@@ -81,7 +89,7 @@
 `restore` 时 `restore_backup` 必须记录用户选择的目标 `.lkb`，`from_version`、`target_version`、
 `previous_current` 和 `target_release` 必须同时记录当前与目标版本关系；`backup` 在默认保护备份成功
 后记录当前实例的保护 `.lkb`，使用 `--allow-no-backup` 时为 null；`static_backup` 必须为
-null。目标备份在进入 `prepared` 前必须已经完整验证并放入安装根目录相对路径，外部路径
+null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lkit 地盘相对路径，外部路径
 不得直接写入事务文件。交互确认（含 minimal scope 数据损失确认）先于 `begin` 完成：
 用户拒绝或非交互模式缺少 `--yes` 时不创建事务、不写任何文件，`--file` 也不产生
 暂存拷贝。
@@ -89,11 +97,10 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 `uninstall` 时 `from_version` 和 `previous_current` 必须记录当前已提交版本关系，
 `target_version` 和 `target_release` 为 null；`backup` 在默认保护备份成功后记录卸载前
 的保护 `.lkb`，使用 `--allow-no-backup` 时为 null，`restore_backup` 和 `static_backup`
-必须为 null。`--purge-root` 会连保护备份一起删除，因此该模式下事务只允许在
-`--allow-no-backup` 下创建（`backup` 为 null）。卸载确认先于 `begin` 完成：用户拒绝或
-非交互模式缺少 `--yes` 时不创建事务、不写任何文件。
+必须为 null。卸载确认先于 `begin` 完成：用户拒绝或非交互模式缺少 `--yes` 时不创建
+事务、不写任何文件。
 
-`restore_backup.path` 与 `backup.path` 都必须是安装根目录内的安全相对路径；外部备份先复制
+`restore_backup.path` 与 `backup.path` 都必须是 lkit 地盘内的安全相对路径；外部备份先复制
 到本次 restore 事务目录并完成自校验，事务只记录复制后的路径、backup ID 和文件 checksum。
 
 `no_backup` 是布尔字段，只有用户对已停止的 systemd 服务显式使用
@@ -110,7 +117,8 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 }
 ```
 
-两个路径都是相对于安装根目录的规范路径，必须留在安装根目录内。备份目录只能包含本次替换前的静态目录内容。
+`path` 相对 lkit 地盘，`target` 相对 landscape 安装根，两个路径都必须是规范路径，
+不得逃逸各自基准。备份目录只能包含本次替换前的静态目录内容。
 
 `systemd_before` 和 `resolv_conf_backup` 都是必填但可为 `null` 的字段。需要注册、停止、启动或重启 Landscape 的 systemd 事务，必须在首次修改 systemd 或运行状态前记录 `systemd_before`。需要启动或重启 Landscape 的事务还必须先创建 `resolv_conf_backup`。
 
@@ -130,7 +138,7 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入安�
 
 `registration.kind` 只允许 `missing` 或 `symlink`。为 `symlink` 时必须额外包含绝对字符串字段 `target`，记录 `/etc/systemd/system/landscape-router.service` 的原始链接目标；其他文件类型仍属于所有权冲突，不进入事务。`enabled` 和 `active` 是事务开始前通过 systemd 查询得到的布尔值。
 
-`resolv_conf_backup` 是安装根目录相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 不修改运行状态时，该字段为 null。
+`resolv_conf_backup` 是 lkit 地盘相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 不修改运行状态时，该字段为 null。
 
 `network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
 接口与 MAC、Landscape 网络计划、NetworkManager/`networking.service`/firewalld/
@@ -142,7 +150,8 @@ systemd-resolved 的原始 installed/active/enable 状态、确认截止时间�
 
 恢复时必须按 `systemd_before` 恢复注册链接以及 enabled/active 状态，并通过 `resolv_conf_backup` 找到对应主机备份。缺少必要字段、备份不可用或现场出现无法安全覆盖的所有权冲突时，不猜测原状态，事务标记为 `failed` 并要求人工处理。
 
-`log_path` 是必填的安装根目录相对路径，固定指向 `logs/<transaction-id>.log`，不得逃逸安装根目录。
+`log_path` 是必填的 lkit 地盘相对路径，固定指向 `logs/<transaction-id>.log`，不得逃逸
+lkit 地盘。
 
 事务日志规则：
 
@@ -150,8 +159,8 @@ systemd-resolved 的原始 installed/active/enable 状态、确认截止时间�
 - 记录阶段变化、外部命令结果、已脱敏 URL、HTTP 状态、文件路径、摘要和恢复动作；
 - 不记录密码、初始化 TOML 内容、API token、Authorization header、证书私钥或 URL query/fragment；
 - 日志写入失败时不得开始或继续修改运行状态；
-- 日志随事务永久保留，失败恢复输出必须引用该路径；
-- 在安装根目录和事务尚未创建前发生的错误只输出到终端，不另行落盘。
+- 日志随事务永久保留（位于 lkit 地盘，卸载 landscape 不删除），失败恢复输出必须引用该路径；
+- 在 lkit 地盘和事务尚未创建前发生的错误只输出到终端，不另行落盘。
 
 首次安装的 `from_version` 和 `previous_current` 可以为 `null`。事务对象允许未知字段并忽略，以便向后兼容；已定义字段缺失、类型错误或组合不满足上述 operation 规则时，事务损坏。事务不得保存密码、初始化 TOML 内容、API token 或预签名 URL。
 
@@ -164,12 +173,14 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 ### 生命周期
 
 - 每次阶段变化都原子更新事务文件；
-- 同一安装根目录只能存在一个未结束事务；
+- 同一台主机只能存在一个未结束事务（lkit 地盘全局唯一）；
 - `committed` 和 `rolled_back` 是正常终态；
 - `failed` 是异常终态，阻断新事务；
 - 历史事务文件保留用于审计。
 
-事务文件无法读取、JSON 无法解析、Schema 不支持、必填字段缺失、阶段非法或路径逃逸安装根目录时，必须停止并报告事务状态损坏。不得猜测阶段、重命名损坏文件、创建替代事务或根据 `current` 自动提交；用户修复或移走损坏事务文件前，不得开始新事务。
+事务文件无法读取、JSON 无法解析、Schema 不支持、必填字段缺失、阶段非法或路径逃逸
+各自基准目录时，必须停止并报告事务状态损坏。不得猜测阶段、重命名损坏文件、创建替代
+事务或根据 `current` 自动提交；用户修复或移走损坏事务文件前，不得开始新事务。
 
 ### 中断恢复
 
@@ -233,14 +244,14 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 网络接管首次安装只有在同时满足以下条件时才允许清理整个 `data/`：事务 `operation` 为
 `install`，存在 `network_takeover`，阶段为 `awaiting_network_confirmation`、`finalizing`
 或 `rolling_back`，不存在旧版本、`previous_current`、`.lkb` 或已提交的
-`state/install-state.json`，且事务记录的 canonical 安装根目录与当前根目录一致。
+`state/install-state.json`，且事务记录的 canonical 安装根目录与当前真实目录一致。
 
 通过校验后，手工 rollback、10 分钟 timer rollback 和确认前重启触发的 boot rollback 都必须：
 
 1. 恢复 Landscape systemd 注册、enabled/active 状态和 `/etc/resolv.conf`；
 2. 恢复事务快照中的宿主网络服务；
 3. 删除 `current`、目标 release、临时 current 链接、pending install state 和整个
-   `<install-root>/data/`；
+   `<landscape-root>/data/`；
 4. 移除 recovery binary、timer 和 service，并将事务标记为 `rolled_back`。
 
 任一恢复或清理步骤失败时不得标记 `rolled_back`，事务必须进入 `failed`，保留现场和日志供
@@ -249,9 +260,9 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 ## 委托执行(daemon 托管)
 
 生产运行时中，任何可能注册、停止、启动或注销服务（含网络接管）的命令，在进入
-部署检查和事务前先委托给目标安装根的常驻 daemon（`lkit daemon`）执行。委托前提是
-该根的 daemon 已在运行（`<root>/run/lkit.pid` pidfile 存活），否则命令明确失败
-（退出码 `2`）并提示重新安装或运行 `lkit self-service install`。daemon 由 init 系统
+部署检查和事务前先委托给全局常驻 daemon（`lkit daemon`）执行。委托前提是
+daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命令明确失败
+（退出码 `2`）并提示运行 `lkit self install`。daemon 由 init 系统
 托管（systemd / OpenRC / sysvinit 受管服务），因此不再依赖临时 systemd unit。
 
 CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
@@ -262,7 +273,8 @@ CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
 内联执行、不再二次委托——否则 daemon 等待子进程、子进程又等待 daemon 认领
 自己写下的请求文件，形成死锁。
 
-请求文件可能短暂包含仓库环境凭据，因此不得复制到事务日志或安装根目录。stdout/stderr
+请求文件可能短暂包含仓库环境凭据，因此不得复制到事务日志、lkit 地盘或 landscape
+安装根目录。stdout/stderr
 写入同目录日志，仍在连接的前端持续转发；结果使用 root-only JSON 原子提交到
 `<id>.result.json`。下载进度另写入同目录的 root-only `<id>.presentation.jsonl`，
 只包含资产显示名称、字节数、耗时和状态，不包含 URL、凭据或初始化配置。前端 stderr
@@ -298,14 +310,15 @@ SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只�
 
 ### daemon 自动恢复
 
-安装了 lkit 常驻服务（`lkit self-service install`）后，daemon 每 2 秒尝试以
+安装了 lkit 常驻服务（`lkit self install`）后，daemon 每 2 秒尝试以
 非阻塞方式获取安装锁；锁空闲且存在未完成事务时，执行与 CLI 完全相同的本节恢复
-语义（见[`lkit self-service`](../commands/self-service.md)）：
+语义（见[`lkit self`](../commands/self.md)）：
 
 - CLI 进程因 SSH 断开、崩溃或 `SIGKILL` 消失后，遗留事务由 daemon 自动接管：
   失败激活回滚（含 `.lkb` 配置级回滚）、中断恢复、卸载前向完成均按本节规则执行，
   不再依赖下一次 lkit 调用或委托进程存活；
-- daemon 恢复目标固定为自身所在安装根；
+- daemon 恢复目标固定为 lkit 地盘：从 `/root/.lkit/` 下的状态与事务发现 landscape
+  根，不绑定任何具体安装根；
 - 网络接管 `awaiting_network_confirmation` / `finalizing` / `rolling_back` 阶段
   保持人工处理（`lkit network confirm|rollback`），daemon 不代替确认；
 - 并发安全：CLI 命令整个操作期间持有安装锁，daemon 获取失败即跳过本周期；

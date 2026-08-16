@@ -16,7 +16,7 @@ lkit --non-interactive install ... # 严格非交互命令模式
 
 侧栏固定包含：
 
-- Overview：读取默认或 `LKIT_INSTALL_DIR` 指定根目录的安装状态；
+- Overview：读取 lkit 地盘(`/root/.lkit/`)的安装状态并展示 landscape 根位置；
 - Install：首次安装表单；
 - Backup：备份列表、创建与恢复；
 - Update：版本更新表单（仅已安装时可用）；
@@ -117,8 +117,8 @@ Software 与 Reinit，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板
 代码完整保留供重新启用（`TODO(uninstall-console)`）。卸载当前只能通过命令模式
 `lkit uninstall` 使用；本段描述的是面板重新启用后的行为：面板在已安装、root 且安装
 状态可读时可用。进入面板后展示当前版本、服务 manager 与运行状态摘要，并列出卸载数据
-损失范围（数据库、API token、日志和指标不可逆删除）与默认保留物（`config.toml`、
-`backups/`、`transactions/`）；检测到网络接管特征（宿主网络服务被 stop/disable/mask）
+损失范围（数据库、API token、日志和指标不可逆删除）与保留物（lkit 地盘的
+`config.toml`、`backups/`、`transactions/`）；检测到网络接管特征（宿主网络服务被 stop/disable/mask）
 时追加醒目警告，说明卸载不会恢复宿主网络服务。面板提供“开始卸载”动作，激活后打开居中
 确认层，展示上述摘要并明确要求确认；Enter 确认后控制台把结构化 `Uninstall` 请求
 （标记 `--console-confirmed`）交给共享命令分发并退出 alternate screen，systemd 模式

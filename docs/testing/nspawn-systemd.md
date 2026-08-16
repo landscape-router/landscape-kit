@@ -55,7 +55,7 @@ sudo env LKIT_NSPAWN_PREBUILT_DIR="$PWD/target/release" \
 脚本创建临时 trixie rootfs 和 private network namespace，结束时终止 machine 并删除
 rootfs。CI 当前每周及手动运行；普通 PR 和普通发布不承担 rootfs 下载和 boot 成本。
 
-测试先注册并启动受管的 landscape-router unit，再以 `lkit self-service install` 部署
+测试先注册并启动受管的 landscape-router unit，再以 `lkit self install` 部署
 常驻 daemon，断言 unit 注册、启停、MainPID 与 `KillMode=process`；最后停止并重新
 启动两个受管服务，确认真实 manager 的 stop/start 契约。卸载与所有权冲突场景见
 「当前节点不处理卸载」。

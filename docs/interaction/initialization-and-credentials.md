@@ -4,10 +4,10 @@
 
 ### 最小初始化接口
 
-首次安装由 `lkit` 创建：
+首次安装由 `lkit` 创建（位于 landscape 安装根）：
 
 ```text
-<install-root>/data/landscape_init.toml
+<landscape-root>/data/landscape_init.toml
 ```
 
 最小内容固定为：

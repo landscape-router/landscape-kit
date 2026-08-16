@@ -73,6 +73,10 @@ strip = "symbols"
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
 ```
 
+已安装环境的升级使用 `lkit self upgrade`：它从 GitHub Release 下载对应架构二进制与
+`SHA256SUMS`，按与 install.sh 相同的规则校验、自检并原子替换 `/usr/local/bin/lkit`，
+并在 daemon 注册且运行时 restart 使其加载新二进制（见 [`lkit self`](../commands/self.md)）。
+
 发布时 `install.sh` 内的下载地址会被替换为对应 Release 的资产地址
 （`releases/download/<tag>/`），不依赖 `releases/latest` 的指向。因此每个 Release
 的 `install.sh` 始终安装该 Release 自身的内容；`releases/latest/download/install.sh`

@@ -6,12 +6,17 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 约束与基础场景一致：
 
 - 被测 `lkit` 使用 `test-support` 构建，通过 `--test-runtime` 显式选择
-  `preflight: skip`、`execution: inline`；
+  `preflight: skip`、`execution: inline`；test-support 运行时覆盖 lkit 地盘与
+  landscape 安装根（生产 CLI 固定为 `/root/.lkit/` 与 `/root/.lkit/landscape`，
+  不提供覆盖参数）；
 - 使用 fake systemctl 和隔离的 unit/resolv.conf 路径，但仍绑定固定端口
   `53/6300/6443` 并启动真实 fixture 进程；
 - fixture 只通过版本化的 `static/lkit-fixture.json` 切换声明式场景；
 - 每个新 release 使用 `lkit-fixture-release --stamp-version` 获得唯一二进制摘要；
   fixture 只编译一次。
+
+单实例约束下所有场景串行共用唯一的 landscape 安装根：场景切换前置状态时先
+`lkit uninstall`（保留 lkit 地盘元数据），再安装目标版本，不再使用多个并行根。
 
 本文档记录 `run-scenarios.sh` 当前执行的场景和断言。
 
@@ -20,7 +25,7 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 | 编号 | 场景 | fixture 场景 | 前置状态 | 命令 | 核心验证点 |
 | --- | --- | --- | --- | --- | --- |
 | S1 | repair 全流程 | healthy | 已安装 1.0.0 | `lkit repair binary/static` | 从仓库恢复二进制与静态页，SHA 一致 |
-| S2 | 导出失败回滚 | export_error | 独立安装根上 4.0.0 运行中 | `lkit switch 4.1.0` | 备份阶段失败的不同回滚路径 |
+| S2 | 导出失败回滚 | export_error | 唯一根上 4.0.0 运行中 | `lkit switch 4.1.0` | 备份阶段失败的不同回滚路径 |
 | S3a | 启动即退 | start_exit | 已运行 2.0.0 | `lkit switch 4.1.0` | 进程启动后立即退出，失败清理 |
 | S3b | 稳定期退出 | exit_during_stability | 已运行 2.0.0 | `lkit switch 4.2.0` | 就绪后退出，稳定观察失败 |
 | S3c | 慢启动超时 | delayed_ready | 已运行 2.0.0 | `lkit switch 4.3.0` | 启动轮询超时 |
@@ -32,7 +37,7 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 版本规划（避免与现有 1.0.0/2.0.0/3.0.0 冲突）：
 
 ```text
-4.0.0 export_error（S2 独立安装根）
+4.0.0 export_error（S2 前置，唯一安装根）
 4.1.0 start_exit（S3a；S2 的失败切换目标）
 4.2.0 exit_during_stability
 4.3.0 delayed_ready（ready_delay_ms = 10000，超过 4 秒测试启动超时）
@@ -47,7 +52,7 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 1. 篡改二进制：复制 `releases/1.0.0/landscape-webserver` 到临时文件，追加字节后原子
    替换原路径，使 SHA 与 `state.assets.webserver.sha256` 不一致，避免直接写入正在执行的
    ELF；
-2. 执行 `lkit repair binary --install-dir <root>`，从仓库重新下载并校验：
+2. 执行 `lkit repair binary`，从仓库重新下载并校验：
    - 退出码 `0`；
    - `sha256sum releases/1.0.0/landscape-webserver` 与状态记录一致；
    - 修复创建版本为 `1.0.0` 的 `.lkb`（`assert_backup_metadata`）；
@@ -65,15 +70,16 @@ Docker 功能 E2E 在 install、成功 switch 和健康失败回滚的基础上�
 配置导出 API 由**运行中**的服务提供，`.lkb` 备份的内容来自该次导出。因此
 export 失败（发生在备份创建之前）只能在 export_error 版本**正在运行**时被触发；
 切换到 export_error 版本本身会成功（fixture 可正常启动，`/api/docs` 返回 `200`）。
-该场景使用独立的安装根，避免污染主安装根的后续切换：
+单实例约束下该场景复用唯一安装根：先卸载 S1 的 `1.0.0`，再安装 `4.0.0` 运行：
 
-1. 使用新的 `--install-dir` 安装 `4.0.0`（export_error）到独立根：
+1. 卸载当前安装后安装 `4.0.0`（export_error）到唯一安装根：
    ```sh
-   lkit install --version 4.0.0 --install-dir <root-export>
+   lkit uninstall --yes --allow-no-backup
+   lkit install --version 4.0.0
    ```
 2. 尝试切换到尚未安装的 `4.1.0`：
    ```sh
-   lkit switch --version 4.1.0 --install-dir <root-export>
+   lkit switch --version 4.1.0
    ```
 3. 必须断言：
    - 命令返回失败退出码；
@@ -134,7 +140,8 @@ install: the managed service is not running: ... start it with
 
 ## S6 latest 通道安装
 
-使用新的 `--install-dir` 执行 `lkit install --repository <base>`（不带版本）：
+卸载当前安装后执行 `lkit install --repository <base>`（不带版本，前置：服务已停止、
+端口空闲）：
    - 解析 `channels/stable.json` 为 `5.0.0`（此时 6.0.0 尚未发布）；
    - 安装成功并注册新服务；
    - state `active_version == 5.0.0`，仓库来源为 HTTP。
@@ -143,11 +150,10 @@ install: the managed service is not running: ... start it with
 
 以确定性方式模拟 kill -9 中断（不真正 kill）：
 
-1. 在 S7 的安装根上（当前 `5.0.0` 运行中）手工写入一个 switch 事务文件
+1. 在唯一安装根上（当前 `5.0.0` 运行中）手工写入一个 switch 事务文件
    （phase `preparing`，from `5.0.0` → target `6.0.0`），并制造现场：
    目标 release 目录 `releases/6.0.0/` 半成品（只含部分文件）、`current` 未动；
-2. 发布 `6.0.0` 后执行 `lkit switch --version 6.0.0 --install-dir <root-latest>`，
-   触发 `recover_interrupted`；
+2. 发布 `6.0.0` 后执行 `lkit switch --version 6.0.0`，触发 `recover_interrupted`；
 3. 断言：
    - 命令正常完成（退出码 `0`），无残留未完成事务；
    - 手工制造的事务 phase 为 `failed`（preparing 阶段恢复：清理半成品目标
@@ -159,7 +165,7 @@ install: the managed service is not running: ... start it with
 （`schema_version`、`log_path`、`canonical_install_root` 等字段必须合法）。
 
 恢复逻辑与目标版本无关（preparing 阶段不读取旧状态）。该场景使用
-`5.0.0 → 6.0.0`，避免与主安装根上 S4 的 `5.0.0` 切换竞争同一版本。
+`5.0.0 → 6.0.0`，与 S4 的 `5.0.0` 切换共用唯一安装根并按顺序执行。
 
 ## S8 reconcile
 
@@ -169,7 +175,7 @@ install: the managed service is not running: ... start it with
 因此场景按以下语义断言：
 
 1. 在初始化已完成的安装中，外部向 `data/landscape_init.toml` 追加标记，执行
-   `lkit reconcile --install-dir <root>`：
+   `lkit reconcile`：
    - 退出码 `0`，文件字节不变，state 不包含初始化文件摘要；
 2. 再次执行 `lkit reconcile`（无变化、无需确认）：退出码 `0`，状态文件有效；
 3. 删除 `state/install-state.json`，执行 `lkit reconcile`：

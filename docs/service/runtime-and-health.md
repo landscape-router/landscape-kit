@@ -58,7 +58,7 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 判定当前 `lkit` 管理进程必须同时满足：
 
 - 执行文件摘要等于状态记录；
-- 执行路径位于真实安装根目录的 `releases/<active-version>`；
+- 执行路径位于真实 landscape 安装根目录的 `releases/<active-version>`；
 - 参数中的数据和静态目录对应当前安装；
 - 监听套接字属于该 PID。
 
@@ -103,24 +103,31 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 
 ### 命令会话隔离
 
-生产模式下，需要改变 systemd 或 Landscape 运行态的完整 lkit 命令由临时 system
-unit 执行。调用进程只负责启动 unit、转发临时日志并等待结果；SSH 会话断开不会向
-worker cgroup 传播退出。unit 不取得前端 controlling terminal；需要确认时，worker
-子进程直接打开原终端设备。具体文件、结果语义、清理与重启边界见
-[事务与中断恢复](../deployment/transactions-and-recovery.md#systemd-托管操作)。
+生产模式下，需要改变 systemd 或 Landscape 运行态的完整 lkit 命令委托给全局常驻
+daemon（`lkit daemon`）执行。调用进程只负责写入请求文件、转发日志并等待结果；
+SSH 会话断开不会向 daemon 的子进程组传播退出。子进程不取得前端 controlling
+terminal；需要确认时，worker 子进程直接打开原终端设备。具体文件、结果语义、清理
+与重启边界见[事务与中断恢复](../deployment/transactions-and-recovery.md#委托执行daemon-托管)。
 
 ### unit 路径与内容
 
-unit 原件(systemd 后端):
+Landscape 受管 unit 原件（systemd 后端）：
 
 ```text
-<install-root>/service/landscape-router.service
+<landscape-root>/service/landscape-router.service
 ```
 
-系统注册链接(systemd 后端):
+系统注册链接（systemd 后端）：
 
 ```text
 /etc/systemd/system/landscape-router.service
+```
+
+lkit 常驻 daemon 的 unit 原件与注册为全局（见 [`lkit self`](../commands/self.md)）：
+
+```text
+/usr/local/lib/lkit/lkit.service
+/etc/systemd/system/lkit.service
 ```
 
 OpenRC/sysvinit 后端使用同名定义原件,注册为 `/etc/init.d/landscape-router.service`
@@ -130,7 +137,7 @@ OpenRC/sysvinit 后端使用同名定义原件,注册为 `/etc/init.d/landscape-
 
 unit 至少包含：
 
-- `ExecStart=<canonical-install-root>/current/landscape-webserver --config-dir <canonical-install-root>/data --web <canonical-install-root>/current/static`；
+- `ExecStart=<canonical-landscape-root>/current/landscape-webserver --config-dir <canonical-landscape-root>/data --web <canonical-landscape-root>/current/static`；
 - `User=root`；
 - `Restart=always`；
 - `LimitMEMLOCK=infinity`；
@@ -146,7 +153,7 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 
 原件摘要变化时：
 
-- 先解析 unit，确认它仍启动当前安装根目录下的 `current/landscape-webserver`，仍使用当前 `data` 和 `current/static`，并保持 `User=root` 与 `LimitMEMLOCK=infinity`；
+- 先解析 unit，确认它仍启动当前 landscape 安装根目录下的 `current/landscape-webserver`，仍使用当前 `data` 和 `current/static`，并保持 `User=root` 与 `LimitMEMLOCK=infinity`；
 - unit 无法解析、改变受管可执行文件或数据目录、加入凭据，或破坏上述安全不变量时阻断，不能通过普通确认接受；
 - 仅包含其他可兼容用户修改时，交互模式展示变化并要求确认；
 - 非交互模式必须使用 `--accept-service-change`；
@@ -173,7 +180,7 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 每个需要启动或重启 Landscape 的事务，在对应事务备份目录记录安装前的 `/etc/resolv.conf`：
 
 ```text
-<install-root>/backups/<transaction-id>/host/resolv.conf/
+/root/.lkit/backups/<transaction-id>/host/resolv.conf/
 ├── metadata.json
 └── content
 ```
