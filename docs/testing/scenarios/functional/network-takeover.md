@@ -73,6 +73,7 @@
   计划校验失败不提交。进入
   TUI 时若存在待确认网络接管，直接显示阻塞屏（“稍后”退出、“确认执行”内联运行
   `lkit network confirm`），Install 菜单不可进入。
+- 缺口：确认时 `verify_interfaces`/`verify_live` 校验失败不提交的路径无直接断言。
 
 ## NET-07
 

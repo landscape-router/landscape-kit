@@ -53,13 +53,44 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 优先补充能够改变发布判断的场景：
 
-1. [`PUB-08`](functional/publish.md#pub-08)：生产 RustFS 上的真实 Release 发布后安装 smoke；
-2. [`LKR-01`](functional/lkit-release.md#lkr-01)、[`LKR-04`](functional/lkit-release.md#lkr-04)：首次真实 lkit Release 与公开安装 smoke；
-3. [`RB-07`](functional/rollback.md#rb-07)：回滚或主机中断后下次调用按事务 phase 幂等恢复的完整 CLI 故障现场；
-4. [`RST-13`](functional/backup-and-restore.md#rst-13) 说明：真实 systemd worker 内的无 tty 阻塞路径 E2E 断言。
+1. [`SS-05`](functional/self.md#ss-05) 至 `SS-08`：`lkit self upgrade` 全链路
+   （下载校验→原子替换→daemon restart、同版本返回 `0`、失败保留原二进制、
+   daemon 未注册仅更新 CLI），当前无任何测试；
+2. [`UP-02`](functional/update.md#up-02)、[`UP-03`](functional/update.md#up-03)：
+   `lkit update` 确认后实际升级执行（latest 与固定版本）；
+3. [`REI-01`](functional/reinit.md#rei-01)、[`REI-02`](functional/reinit.md#rei-02)、
+   [`REI-08`](functional/reinit.md#rei-08)：reinit 拒绝路径、凭据先收集零副作用、
+   激活/健康检查失败回滚（退出码 `5`/`6`）；
+4. [`UNI-08`](functional/uninstall.md#uni-08)、[`UNI-11`](functional/uninstall.md#uni-11)：
+   网络接管特征警告后继续卸载、未安装/状态损坏拒绝卸载；
+5. [`SW-03`](functional/switch.md#sw-03)、[`SW-10`](functional/switch.md#sw-10)：
+   目标版本已 active 拒绝；服务运行中忽略 `--allow-no-backup` 并照常创建 `.lkb`；
+6. [`MIG-05`](functional/migrate.md#mig-05)、[`REC-02`](functional/reconcile-and-transactions.md#rec-02)：
+   static.zip 缺失本地打包回退、受管 unit 内容变化后的 reconcile；
+7. [`DAE-03`](functional/daemon.md#dae-03)、[`DAE-04`](functional/daemon.md#dae-04)：
+   daemon 不代替网络接管确认、daemon 侧 switch 失败回滚完整现场；
+8. [`TX-03`](functional/reconcile-and-transactions.md#tx-03) 的 migrate/repair 恢复档、
+   [`SEC-03`](functional/security-and-environment.md#sec-03) 的通用退出码 `6`、
+   [`ENV-02`](functional/security-and-environment.md#env-02) 的命令级阻断级别。
+
+**委托端到端链路**（daemon worker：CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
+全仓库只有 systemd-nspawn SYS-03 一处抽样且仅覆盖提交路径；计划在 fixture E2E 增加
+真实委托测试（仅 CI 运行，不支持本地手动跑），覆盖提交、取消（SIGTERM→SIGKILL→130）、
+前端断开后继续完成、`LKIT_LANG` 转发与 daemon 未运行报错，见
+[daemon.md](functional/daemon.md#委托端到端链路worker覆盖现状)。
+
+发布流程性 smoke（`PUB-08` 生产 RustFS 真实发布后安装、
+`LKR-01`/`LKR-04` 首次真实 Release 与公开安装）依赖发布环境，维持低频标注。
 
 恢复类失败路径（RB-06、REP-04、REP-05、RST-03/05/08~12）已由 Rust workflow 故障注入与
-Docker E2E 直接覆盖。
+Docker E2E 直接覆盖；`RB-07`（回滚后下次调用按事务 phase 幂等恢复的完整 CLI 故障现场）
+已由 Docker E2E S8/S12 覆盖。
+
+### 文档状态维护说明
+
+各场景文件的 `状态` 取值只有四档：`已覆盖`/`部分覆盖`/`待补充`/`低频 smoke`。
+新增或改名测试后必须同步更新对应场景的 `状态` 与 `证据` 行，避免文档滞后产生
+虚假缺口。
 
 现有 [发布、安装与成功切换](lifecycle.md)、[失败切换与自动回滚](rollback.md)和
 [扩展 Docker 功能 E2E](extended.md)继续保存已落地场景的详细执行步骤。数据库级完整恢复

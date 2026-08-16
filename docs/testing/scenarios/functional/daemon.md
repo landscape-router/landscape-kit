@@ -27,7 +27,8 @@
 - 测试层：待补充
 - 状态：`待补充`
 - 说明：恢复循环显式跳过 `awaiting_network_confirmation`/`finalizing`/
-  `rolling_back` 阶段；缺少直接断言场景。
+  `rolling_back` 阶段；缺少直接断言场景（可构造带 `network_takeover` 现场的事务，
+  对恢复循环或 fixture E2E 断言不触碰）。
 
 ## DAE-04
 
@@ -35,5 +36,23 @@
 
 - 测试层：Rust workflow（`recover_switch`）、Fixture E2E 待补充
 - 状态：`部分覆盖`
-- 说明：`recover_interrupted` 的 switch 回滚语义已有 Rust 覆盖；daemon 作为其
-  触发者与 CLI 复用同一代码路径，daemon 侧的完整失败切换现场待补充。
+- 说明：`recover_interrupted` 的 switch 回滚语义已有 Rust 覆盖（仅 preparing 分支）；
+  daemon 作为其触发者与 CLI 复用同一代码路径，daemon 侧的完整失败切换现场
+  （activating 阶段 + `.lkb` 配置级回滚）待补充。
+
+## 委托端到端链路（worker）覆盖现状
+
+`daemon_worker` 的委托请求链路（CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
+当前只有 5 个薄单测（委托清单、worker flag 注入、凭据文件权限、完成消息），
+核心流程无直接测试：
+
+- `delegate()` 请求文件生命周期、executor 认领与子进程管理（setpgid/O_NOCTTY/
+  输出转发/结果 JSON 原子提交）、wait 轮询/取消/超时均无单测；
+- fixture E2E 全部以 `--test-runtime` 内联执行，**从不走真实委托**；
+- 委托端到端全仓库只有 systemd-nspawn SYS-03 一处覆盖，且只测提交路径。
+
+计划（仅 CI 运行，不支持本地手动跑）：在 `install_fixture_e2e` 增加真实委托端到端
+测试——CLI 不带 `--test-runtime`（root + 无 test_runtime 即走真实委托）、spawn 的
+测试 daemon、真实 `/run/lkit/operations` 路径，覆盖：委托提交、取消（SIGTERM→SIGKILL
+→130）、前端断开后 daemon 子进程组继续完成、`LKIT_LANG` 环境转发、daemon 未运行
+报错。该测试需要 root，仅由 CI（`LKIT_E2E=1`）运行。

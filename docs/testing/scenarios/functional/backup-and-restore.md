@@ -44,6 +44,7 @@
 - 状态：`部分覆盖`
 - 证据：[backup create](../../../commands/backup.md#backup-create)、`remark_resolution_uses_flag_or_empty_default`、`rejects_invalid_remarks`（crates/lkit-cli/src/backup/lkb.rs）
 - 说明：`--remark` 优先；非交互或无法打开终端时缺省为空；超过 256 字符或含控制字符时返回参数错误 `2`。
+- 缺口：`/dev/tty` 交互提示分支无 pty 测试（flag/非交互默认已有直接断言）。
 - 缺口：交互模式经 `/dev/tty` 提示输入的 pty 路径未覆盖（仓库无 pty 测试设施）。
 
 ## BKP-06

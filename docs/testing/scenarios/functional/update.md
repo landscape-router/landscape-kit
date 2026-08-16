@@ -26,6 +26,9 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 - 证据：[成功切换](../lifecycle.md#成功切换-200)
 - 说明：确认后走 switch 提交路径，事务 `operation` 为 `switch`，`.lkb` 与 systemd
   激活语义与 `lkit switch --version latest` 一致。
+- 缺口：现有 CLI 测试只覆盖"已是最新/取消/非交互"路径（
+  `update_interaction_handles_defaults_cancellation_and_non_interactive_mode`），
+  确认后实际升级执行无覆盖。
 
 ## UP-03
 
@@ -35,6 +38,8 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 - 状态：`待补充`
 - 说明：显式版本与默认 latest 在目标比较、确认和执行阶段遵循相同流程；降级行为继承
   [`SW-02`](switch.md#sw-02)，同版本行为由 `UP-04` 单独定义。
+- 缺口：固定版本确认升级执行无覆盖（switch 流水线本身有 Rust 与 Docker 断言，但
+  `lkit update --version` 封装层无）。
 
 ## UP-04
 

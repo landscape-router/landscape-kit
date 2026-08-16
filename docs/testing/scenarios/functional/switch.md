@@ -27,7 +27,9 @@
 
 - 测试层：Rust workflow/CLI
 - 状态：`待补充`
-- 说明：实现已有保护，缺少直接场景断言。
+- 说明：`workflows/switch.rs` 已实现 `SWITCH_TARGET_VERSION_ALREADY_ACTIVE` 保护，
+  无任何测试引用；需要一个 Rust workflow 测试（切换目标等于当前 active version →
+  参数错误、不创建事务）。
 
 ## SW-04
 
@@ -85,7 +87,10 @@
 
 - 测试层：CLI/Docker E2E
 - 状态：`待补充`
-- 说明：行为已定义但当前场景未直接断言输出和备份；见 [`lkit switch`](../../../commands/switch.md#停止服务后的切换)。
+- 说明：行为已定义（switch.rs：服务运行中 + `--allow-no-backup` → 警告"忽略该标志"、
+  事务 `no_backup: false`、照常创建 `.lkb`）但当前场景未直接断言输出和备份；
+  Docker S4 只覆盖"服务已停止 + `--allow-no-backup`"路径，运行中传该参数无任何
+  断言；见 [`lkit switch`](../../../commands/switch.md#停止服务后的切换)。
 
 ## SW-11
 

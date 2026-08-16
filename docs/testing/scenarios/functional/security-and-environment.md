@@ -14,7 +14,9 @@
 
 - 测试层：Rust 单元、CLI E2E
 - 状态：`部分覆盖`
-- 说明：输入和日志过滤分别覆盖，缺少统一端到端日志扫描；见 [输出约束](../../../commands/output-and-exit-codes.md)。
+- 说明：输入和日志过滤分别覆盖（Debug/CLI 参数脱敏、token 校验、事务日志仅 phase 行）；
+  缺少统一端到端日志扫描（Docker E2E 已有固定口令与 fixture token，可对
+  `territory/logs/` 与命令输出做统一扫描断言）；见 [输出约束](../../../commands/output-and-exit-codes.md)。
 
 ## SEC-03
 
@@ -22,7 +24,10 @@
 
 - 测试层：Rust/CLI/Docker E2E
 - 状态：`部分覆盖`
-- 说明：`0/1/2/5` 分层覆盖；`6` 尚缺直接场景，见 [退出码](../../../commands/output-and-exit-codes.md)。
+- 说明：`0/1/2/5` 分层覆盖；`6` 的实现存在于各命令（repair/switch/restore/migrate/
+  reinit 的 `RollbackFailed` 分支均映射退出码 6），但只有 network 有直接断言
+  （`network_rollback_failure_preserves_scene_and_marks_transaction_failed`），
+  其余命令的 `6` 缺 CLI 层断言；见 [退出码](../../../commands/output-and-exit-codes.md)。
 
 ## ENV-01
 

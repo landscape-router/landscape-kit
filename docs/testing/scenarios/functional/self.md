@@ -48,17 +48,16 @@
 - 测试层：Fixture E2E（待补充）
 - 状态：`待补充`
 - 证据：[`lkit self`](../../../commands/self.md#upgrade)
-- 说明：断言下载对应架构二进制与 `SHA256SUMS`、校验与 `--version` 自检通过后原子替换；
+- 说明：全链路（下载→SHA256SUMS 校验→自检→原子替换→daemon restart）无任何测试；仅解析/辅助函数有单测（`installs_staged_binary_atomically`、`extracts_exactly_one_manifest_checksum`）。
   daemon `is-active` 时执行 restart 并加载新二进制。
-
 ## SS-06
 
 **`self upgrade` 与目标版本相同返回 `0`，不修改任何文件**
 
 - 测试层：Fixture E2E（待补充）
 - 状态：`待补充`
+- 说明：`upgrade()` 的同版本分支（返回 `0`、不修改文件）无测试。
 - 证据：[`lkit self`](../../../commands/self.md#upgrade)
-
 ## SS-07
 
 **`self upgrade` 下载/校验/自检/替换失败保留原二进制**
@@ -66,22 +65,21 @@
 - 测试层：Fixture E2E（待补充）
 - 状态：`待补充`
 - 证据：[`lkit self`](../../../commands/self.md#upgrade)
-- 说明：SHA256 不匹配、自检失败或替换失败时原 `/usr/local/bin/lkit` 保持可用，返回 `1`。
-
+- 说明：SHA256 不匹配、自检失败或替换失败时原 `/usr/local/bin/lkit` 保持可用，返回 `1`；各失败分支均无测试（仅有 rename 助手测试）。
 ## SS-08
 
 **`self upgrade` daemon 未注册时仅更新 CLI 并提示 `self install`**
 
 - 测试层：Fixture E2E（待补充）
 - 状态：`待补充`
+- 说明：daemon 未注册（`refresh_daemon` 的 Missing 分支）时仅更新 CLI 并提示 `self install`，无测试。
 - 证据：[`lkit self`](../../../commands/self.md#upgrade)
-
 ## SS-09
 
 **daemon 全局唯一：lkit 地盘 pidfile 存活实例存在时拒绝启动**
 
 - 测试层：Rust workflow、Fixture E2E（待补充）
-- 状态：`待补充`
+- 状态：`部分覆盖`
 - 证据：[`lkit self`](../../../commands/self.md)、[安装布局与状态](../../../deployment/layout-and-state.md)
 - 说明：同一 pidfile 存活实例存在时 `self install`/daemon 启动拒绝并返回失败，不产生
   第二个 daemon。

@@ -22,7 +22,9 @@
 
 - 测试层：Rust repository 测试
 - 状态：`部分覆盖`
-- 说明：provider 与下载逻辑分别覆盖，缺少完整 CLI 首装链路；见 [`lkit install`](../../../commands/install.md)。
+- 说明：provider（latest/release 解析、URL 校验）与下载逻辑分别覆盖；完整 CLI 首装
+  始终使用 HTTP fixture 仓库，默认 GitHub provider 链路无 CLI 层测试；见
+  [`lkit install`](../../../commands/install.md)。
 
 ## INS-04
 

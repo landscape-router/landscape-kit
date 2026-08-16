@@ -47,5 +47,6 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 - 测试层：核心功能（单元测试辅助路径，发布仓库不可达时触发）
 - 状态：`部分覆盖`
 - 证据：[migrate 命令](../../commands/migrate.md)、`pack_static_zip`（crates/lkit-cli/src/workflows/migrate/mod.rs）
-- 缺口：下载成功路径与下载失败回退路径的自动化直接断言。
+- 缺口：`fetch_static_zip` 的下载成功/失败两分支零测试；`pack_static_zip` 只在测试
+  setup 中被动执行，无回退断言（注入仓库不可达即可触发回退）。
 - 说明：本地缺 `static.zip` 时先尝试从发布仓库下载该版本，失败后从 `static/` 现场打包并按仓库解包规则自校验。

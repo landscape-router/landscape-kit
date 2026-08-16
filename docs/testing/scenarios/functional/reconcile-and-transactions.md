@@ -14,15 +14,19 @@
 
 - 测试层：Rust workflow/CLI E2E
 - 状态：`部分覆盖`
-- 说明：变化检测逻辑存在，Docker 场景尚未覆盖；见 [`lkit reconcile`](../../../commands/reconcile.md)。
+- 说明：变化检测逻辑存在（`same_version_install` 的 unit 变化分支），无任何直接测试；
+  Docker S9 只覆盖初始化文件变化，未覆盖 unit 内容变化（确认、`--accept-service-change`、
+  更新 `definition_sha256`）；见 [`lkit reconcile`](../../../commands/reconcile.md)。
 
 ## REC-03
 
 **显式仓库覆盖无需二次确认且验证活动版本资产身份**
 
 - 测试层：Rust workflow/CLI E2E
-- 状态：`部分覆盖`
-- 说明：仓库校验逻辑已有测试，缺少 reconcile CLI 场景。
+- 状态：`已覆盖`
+- 证据：`corrupted_config_blocks_repository_commands_but_not_plain_reconcile` 与
+  `explicit_repository_bypasses_preset_config_without_modifying_it`
+  （crates/lkit-cli/tests/install_fixture_e2e/install.rs，正负路径均已覆盖）
 
 ## REC-04
 
@@ -62,7 +66,10 @@
 
 - 测试层：Rust 事务测试、Docker E2E
 - 状态：`部分覆盖`
-- 说明：preparing switch 有 Docker 场景，其余主要为低层测试；见 [S8](../extended.md#s8-中断事务恢复)。
+- 说明：install（activating）与 switch（preparing + Docker S8 确定性现场）已覆盖；
+  repair 只有 preparing 一档，activating/verifying（含 static/binary 备份恢复）无测试；
+  migrate 的 `recover_migrate`/`rollback_migrate` 全分支零测试；见
+  [S8](../extended.md#s8-中断事务恢复)。
 
 ## TX-04
 

@@ -9,6 +9,8 @@
 - 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../crates/lkit-cli/src/commands/reinit.rs)
 - 说明：无有效状态返回参数错误；宿主网络服务未接管返回参数错误，
   不创建事务、不写文件。
+- 缺口：commands/reinit.rs 的拒绝分支（未安装/非 systemd/未接管，退出码 `2`）无
+  命令层测试。
 
 ## REI-02
 
@@ -18,6 +20,7 @@
 - 状态：`待补充`
 - 证据：[网络重配置](../../../network/reinit.md)、[网络发现](../../../../crates/lkit-cli/src/network/discovery.rs)
 - 说明：拒绝或非交互缺少 `--yes` 时不创建事务、不创建 `.lkb`、不停止服务,退出码 `2`。
+- 缺口：凭据与网络计划先于事务创建的收集顺序与拒绝零副作用无测试。
 
 ## REI-03
 
@@ -77,8 +80,10 @@
 - 测试层：CLI fixture E2E
 - 状态：`待补充`
 - 证据：[reinit 工作流](../../../../crates/lkit-cli/src/workflows/reinit.rs)
-- 说明：通过 fixture 注入新配置启动失败场景尚未覆盖；回滚优先使用事务目录旧 data
-  现场，回滚失败保留现场、事务标记 `failed`，返回 `6`。
+- 说明：通过 fixture 注入新配置启动失败场景尚未覆盖（`REI-08`）；回滚优先使用事务
+  目录旧 data 现场，回滚失败保留现场、事务标记 `failed`，返回 `6`。
+- 缺口：激活/健康检查失败自动回滚（退出码 `5`）与回滚失败（退出码 `6`）无 fixture
+  注入场景；switch/restore 的同类回滚测试不覆盖 reinit。
 
 ## REI-09
 
