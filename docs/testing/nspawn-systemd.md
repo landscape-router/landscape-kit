@@ -20,10 +20,9 @@
 
 ## 当前节点不处理卸载
 
-卸载（`lkit uninstall`）场景当前不在此测试中验证：委托的 uninstall 需要交互确认，
-而 daemon 执行子进程没有 controlling terminal（`cannot open /dev/tty; interactive
-confirmation is not possible`），确认委托机制（如前端确认后以 `--console-confirmed`
-注入）尚未实现。以下场景待文档明确需求后再补充：
+卸载（`lkit uninstall`）场景当前不在此测试中验证。交互确认的委托机制
+（`--console-confirmed` 注入、非交互 `--yes` 与 daemon 委托清单）已实现并有单元与
+fixture E2E 覆盖，但以下真实 systemd 场景尚未纳入 smoke 抽样：
 
 - 委托 uninstall 的完整执行与提交；
 - 前端会话被杀后 daemon 子进程组独立完成卸载；
@@ -33,9 +32,10 @@ confirmation is not possible`），确认委托机制（如前端确认后以 `-
 ## 执行策略
 
 该测试低频、手动或在 systemd 集成契约变化时运行，适合发现 unit 格式、真实 manager
-调用和 worker 生命周期的兼容性回归。它不作为每个 PR 或普通发布的必需门禁，也不要求
-为每个业务场景建立真实 systemd 版本。安装与生命周期的发布判断以 Rust fixture E2E
-和 Docker 功能 E2E 为主，避免 nspawn 的 rootfs 下载、PID 1 启动和宿主差异阻碍发布。
+调用和 daemon 委托执行器（`daemon_worker` 子进程）生命周期的兼容性回归。它不作为
+每个 PR 或普通发布的必需门禁，也不要求为每个业务场景建立真实 systemd 版本。安装与
+生命周期的发布判断以 Rust fixture E2E 和 Docker 功能 E2E 为主，避免 nspawn 的
+rootfs 下载、PID 1 启动和宿主差异阻碍发布。
 
 ## 运行
 

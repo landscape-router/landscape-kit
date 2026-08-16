@@ -34,8 +34,9 @@
 **真实 manager 存在 foreign unit 时接管失败，失败状态不残留**
 
 - 测试层：systemd-nspawn
-- 状态：`低频 smoke`
-- 证据：[nspawn 兼容性 smoke](../nspawn-systemd.md)
+- 状态：`待补充`
+- 说明：nspawn 兼容性 smoke 当前只抽样 unit 注册、启停与 daemon 委托契约，尚未包含
+  foreign unit 所有权冲突的接管失败路径（见 [nspawn 兼容性 smoke](../nspawn-systemd.md)）。
 
 ## SYS-05
 
