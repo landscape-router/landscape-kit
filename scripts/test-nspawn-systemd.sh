@@ -414,8 +414,8 @@ PY
   machine_shell "systemctl enable --quiet landscape-router.service"
   echo "   restore: start"
   machine_shell "systemctl start landscape-router.service"
-  echo "   restore: is-active"
-  machine_shell "systemctl is-active --quiet landscape-router.service"
+  echo "   restore: wait-active"
+  machine_shell 'for i in $(seq 1 100); do systemctl is-active --quiet landscape-router.service && break; sleep 0.1; done; systemctl is-active --quiet landscape-router.service'
 }
 
 # S-1 委托提交与结果回收:CLI 写请求、daemon 认领、子进程完成真实卸载、结果回。
