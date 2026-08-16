@@ -515,7 +515,6 @@ esac
             dir.join("units/landscape-router.service"),
         )
         .unwrap();
-        let unit_origin_canonical = unit_origin.canonicalize().unwrap();
         // lkit 常驻服务(全局 unit)不受卸载影响:注册链接必须原样保留。
         let lkit_origin = dir.join("lkit.service.origin");
         std::fs::write(&lkit_origin, "[Unit]\n[Service]\n").unwrap();
@@ -560,30 +559,15 @@ esac
                 .unwrap()
                 .is_none()
         );
-        let tx = transaction_json(&territory);
-        assert_eq!(tx["phase"], "committed");
-        assert_eq!(
-            tx["systemd_before"]["registration"]["kind"], "symlink",
-            "systemd_before must record the registration before the uninstall"
-        );
-        assert_eq!(
-            tx["systemd_before"]["registration"]["target"],
-            unit_origin_canonical.to_str().unwrap()
-        );
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    fn transaction_json(territory: &std::path::Path) -> serde_json::Value {
-        let entries: Vec<_> = std::fs::read_dir(territory.join("transactions"))
+        let leftovers: Vec<_> = std::fs::read_dir(territory.join("transactions"))
             .unwrap()
             .filter_map(Result::ok)
             .collect();
-        assert!(!entries.is_empty());
-        let newest = entries
-            .into_iter()
-            .max_by(|a, b| a.file_name().cmp(&b.file_name()))
-            .unwrap();
-        serde_json::from_slice(&std::fs::read(newest.path()).unwrap()).unwrap()
+        assert!(
+            leftovers.is_empty(),
+            "uninstall must purge the root transactions"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

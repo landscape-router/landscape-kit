@@ -78,6 +78,10 @@ pub async fn run(args: &Uninstall) -> ExitCode {
             return exit_code(&error);
         }
     };
+    let recovered_uninstall = matches!(
+        unfinished.as_ref().map(|transaction| transaction.operation),
+        Some(transaction::Operation::Uninstall)
+    );
     if let Some(transaction) = unfinished {
         if let Err(error) = transaction::recover_interrupted(
             &normalized,
@@ -98,9 +102,17 @@ pub async fn run(args: &Uninstall) -> ExitCode {
             return exit_code(&error);
         }
     }) else {
-        // 中断的卸载事务已被前向完成:卸载目标已经达到,视为成功。
-        if let Ok(Some(_)) =
-            transaction::find_committed_operation(&normalized, transaction::Operation::Uninstall)
+        // 中断的卸载事务已被前向完成,或本次调用刚完成中断卸载的恢复:
+        // 卸载目标已经达到,视为成功。卸载完成路径会清理本根事务,因此
+        // 无法再依赖 committed 卸载事务识别,以前向完成的现场为准。
+        if recovered_uninstall
+            || matches!(
+                transaction::find_committed_operation(
+                    &normalized,
+                    transaction::Operation::Uninstall
+                ),
+                Ok(Some(_))
+            )
         {
             println!(
                 "uninstall: {}",

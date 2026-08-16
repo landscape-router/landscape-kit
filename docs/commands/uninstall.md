@@ -39,9 +39,12 @@ lkit 地盘(`/root/.lkit/`)原样保留:
 
 - `config.toml` 由用户维护,`lkit` 在任何模式下都不创建、更新或删除它,见
   [配置文件](../deployment/config.md);
-- `backups/` 与 `transactions/` 是卸载的恢复现场与保护备份存放点,默认保留;输出会提示
-  用户取走 `.lkb` 并确认删除后自行清理;
-- `logs/` 与 `run/`(含 `install.lock`)同样保留,不属于 landscape 卸载范围。
+- `backups/` 是保护备份存放点,默认保留;输出会提示用户取走 `.lkb` 并确认删除后
+  自行清理;
+- 本安装的历史事务与事务日志(`transactions/` 与 `logs/` 中属于本根的记录)在卸载
+  完成后删除:卸载后不再有现场价值,新安装不关注上一个安装的残留;`transactions/`
+  与 `logs/` 目录本身保留;
+- `run/`(含 `install.lock`)同样保留,不属于 landscape 卸载范围。
 
 `--keep-data`:只卸载服务与程序,保留 landscape 根的 `data/`(含 `landscape_init.toml`
 与数据库)和 `config.toml`,删除其余全部受管内容与 `current`。安装视为已卸载,

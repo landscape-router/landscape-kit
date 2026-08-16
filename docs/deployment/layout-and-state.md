@@ -146,10 +146,12 @@ landscape 地盘及敏感文件由 `root:root` 所有。包含配置、数据库
 
 `lkit uninstall` 是唯一显式清理入口,完整语义见 [`lkit uninstall`](../commands/uninstall.md)。
 卸载删除 landscape 根下的全部受管内容(`releases/`、`data/`、`service/` 与 `current`),
-并保留 lkit 地盘(`config.toml`、`backups/`、`transactions/`、`logs/` 与 `run/`)
-原样不动:
+并保留 lkit 地盘(`config.toml`、`backups/`、`run/` 与 `transactions/`、`logs/` 目录本身):
 
-- 保护 `.lkb` 与事务现场存放在 lkit 地盘,卸载不删除,供用户取走备份和人工诊断;
+- 保护 `.lkb` 存放在 `backups/`,卸载不删除,供用户取走备份;
+- 本安装的事务与事务日志在卸载完成后删除(卸载自身的事务记录一并清理):
+  卸载后不再有现场价值,新安装不关注上一个安装的残留;只按事务中的
+  `canonical_install_root` 清理本根记录,不触碰其他安装根的历史;
 - `--keep-data` 额外保留 landscape 根的 `data/`;
 - 不存在 `--purge-root`:lkit 地盘不属于 landscape 卸载范围。
 

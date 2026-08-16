@@ -488,6 +488,44 @@ pub(crate) fn persist(
     write_transaction(root, transaction)
 }
 
+/// 卸载完成后清理本安装根的历史事务与日志(含卸载事务自身)。事务记录只属于
+/// 该根,卸载后不再有现场价值;新安装不应关注上一个安装的残留。只按事务中的
+/// `canonical_install_root` 过滤本根,不触碰其他根的历史。`backups/`、
+/// `config.toml` 与 `run/` 不属于清理范围。幂等,单个文件删除失败不中止。
+pub(crate) fn purge_root(root: &InstallRoot) -> Result<(), InstallError> {
+    let dir = layout::territory_transactions_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let matches = match value
+            .get("canonical_install_root")
+            .and_then(|value| value.as_str())
+        {
+            Some(canonical) => Path::new(canonical) == root.canonical,
+            None => false,
+        };
+        if !matches {
+            continue;
+        }
+        if let Some(log_path) = value.get("log_path").and_then(|value| value.as_str()) {
+            let _ = std::fs::remove_file(layout::territory_relative(log_path));
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    Ok(())
+}
+
 /// 终端事务属于其他根的旧历史(uninstall 保留 committed/rolled_back/failed 记录,
 /// 或曾安装在其他根上)时,新根的扫描应当跳过而不是当作损坏。
 fn is_foreign_terminal_transaction(path: &Path, root: &InstallRoot) -> bool {

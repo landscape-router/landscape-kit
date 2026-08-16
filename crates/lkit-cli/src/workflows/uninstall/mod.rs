@@ -142,6 +142,9 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
         Ok(()) => {
             super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
             cleanup_runtime_dirs(root)?;
+            // 卸载完成后本根的事务与日志不再有现场价值;新安装不应关注上一个
+            // 安装的残留(backups/、config.toml 与 run/ 保留,见卸载语义)。
+            let _ = super::transaction::purge_root(root);
             Ok(UninstallOutcome::Committed {
                 version,
                 backup_id: transaction

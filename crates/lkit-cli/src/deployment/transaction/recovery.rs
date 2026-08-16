@@ -158,6 +158,8 @@ fn recover_uninstall(
             crate::workflows::uninstall::complete_uninstall(root, transaction, systemd)?;
             transaction::mark_phase(root, transaction, Phase::Committed)?;
             crate::workflows::uninstall::cleanup_runtime_dirs(root)?;
+            // 与正常卸载完成路径一致:最终标记后清理本根事务与日志。
+            let _ = transaction::purge_root(root);
             Ok(())
         }
         phase => Err(InstallError::BlockedByTransaction(format!(
@@ -655,8 +657,14 @@ mod tests {
         );
         assert!(territory.join("backups").is_dir());
         assert!(territory.join("transactions").is_dir());
-        let tx = load_finished(&root, &territory);
-        assert_eq!(tx.phase, Phase::Committed);
+        let leftovers: Vec<_> = std::fs::read_dir(territory.join("transactions"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "uninstall forward completion must purge the root transactions"
+        );
         let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
