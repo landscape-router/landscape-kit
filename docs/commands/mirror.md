@@ -95,6 +95,14 @@ apt 换源先按源文件格式（one-line `sources.list` 与 deb822 `*.sources`
 - 不符合规范的行也尽力修复：一行里多出的 URL（重复粘贴、或误放在 components 位置）
   同样识别为 URI 一并重写，避免换源后"一半镜像一半官方"；缺 suites/components、
   括号不配对等无法安全猜测的行保持原样；
+- 重写后重复的条目自动去重：同一类型（`deb`/`deb-src`）、同一仓库目标（协议
+  http/https 与路径尾 `/` 不区分，与 apt 的判定一致）、同一 suite、行头相同
+  （含 `[options]`，保证 arch 等约束一致）的启用条目，若某条 components 是另一条
+  的子集，则删除子集条目（保留 components 超集的那一条）。常见场景：两个镜像站
+  各自配置了同 suite 的条目，换源后落到同一镜像，apt 会报 "configured multiple
+  times"——换源时自动合并。components 互相不构成子集（如 `main contrib` 与
+  `main non-free`）时不动；已处于目标镜像但存在重复条目的文件也会被修复
+  （有实际改动，不算 no-op）；
  - 除官方主机外，已识别的十一个公共镜像（USTC、腾讯云、华为云、阿里云、NJU、
    SJTU、ZJU、LZU、HUST、BFSU、TUNA）之间也可以互转：选择其中一个时，其余镜像的
    URL 会一并替换为所选镜像；自定义内网镜像等未识别主机不受影响；

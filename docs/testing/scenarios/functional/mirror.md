@@ -27,11 +27,15 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
   不重复替换、主机名子串不误替换、已识别镜像（USTC/腾讯云/华为云/阿里云/NJU/SJTU/
   ZJU/LZU/HUST/BFSU/TUNA 十一个）之间互转且自定义
   主机不受影响、Debian security 默认保留官方（`--replace-security` 才替换）、Ubuntu
-  security 始终随主仓库替换；带显式端口或凭证的 URL 按归一化后的主机匹配重写（端口
-  丢弃、凭证保留，IPv6 字面量除外）；不符合规范的一行多 URL（第二个 URL 落在
-  components 位置）同样识别为 URI 一并重写，其余字节原样保留；无可识别 URL 时条目
-  与文件字节级原样保留（`rewrite` 返回 `None` 不写文件）；已处于目标镜像/官方状态
-  时 `apply` 为成功 no-op（不保留备份、不触碰已有备份）。
+  security 始终随主仓库替换；重写后重复条目自动去重（同类型/同仓库目标/同 suite/
+  同行头、components 为子集的启用条目删除子集那条；协议与尾斜杠不区分、deb-src
+  与 deb 不合并、不同 suite 与 `[options]` 不合并、注释行不参与、partial overlap
+  不动、已处于目标镜像的重复文件同样修复）；带显式端口或凭证的 URL 按归一化后的
+  主机匹配重写（端口丢弃、凭证保留，IPv6 字面量除外）；不符合规范的一行多 URL
+  （第二个 URL 落在 components 位置）同样识别为 URI 一并重写，其余字节原样保留；
+  无可识别 URL 时条目与文件字节级原样保留（`rewrite` 返回 `None` 不写文件）；
+  已处于目标镜像/官方状态且无重复条目时 `apply` 为成功 no-op（不保留备份、不触碰
+  已有备份）。
 
 ## MIR-08
 

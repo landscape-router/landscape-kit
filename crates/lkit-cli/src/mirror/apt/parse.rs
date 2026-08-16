@@ -15,6 +15,8 @@ use super::super::{Family, MirrorName, RECOGNIZED_MIRROR_HOSTS, mirror_host};
 pub(crate) struct AptEntry {
     /// 条目的原始文本（含行终止符；deb822 为整个 stanza）。
     pub(crate) raw: String,
+    /// 条目在源文件中的字节区间（one-line 为整行，deb822 为整个 stanza）。
+    pub(crate) span: (usize, usize),
     /// 条目是否启用（未被 `#` 注释）。
     pub(crate) enabled: bool,
     /// `deb` / `deb-src`（one-line 单个；deb822 的 Types 可多个）。
@@ -106,6 +108,7 @@ fn parse_one_line_with_diagnostics(text: &str) -> (Vec<AptEntry>, Vec<ParseIssue
     let mut offset = 0usize;
     for (index, line) in text.split_inclusive('\n').enumerate() {
         let (mut entry, issue) = parse_one_line_entry(line);
+        entry.span = (offset, offset + line.len());
         for uri in &mut entry.uris {
             uri.span = (uri.span.0 + offset, uri.span.1 + offset);
         }
@@ -137,6 +140,7 @@ fn parse_one_line_entry(line: &str) -> (AptEntry, Option<ParseIssueKind>) {
     let deb_type = &line[type_start..pos];
     let mut entry = AptEntry {
         raw: line.to_string(),
+        span: (0, line.len()),
         enabled,
         deb_types: Vec::new(),
         uris: Vec::new(),
@@ -227,7 +231,8 @@ fn parse_deb822_with_diagnostics(text: &str) -> (Vec<AptEntry>, Vec<ParseIssue>)
     for (line_index, line) in text.split_inclusive('\n').enumerate() {
         if line.trim().is_empty() {
             if start < cur {
-                let (entry, kinds) = parse_deb822_stanza(&text[start..cur], start);
+                let (mut entry, kinds) = parse_deb822_stanza(&text[start..cur], start);
+                entry.span = (start, cur);
                 entries.push(entry);
                 issues.extend(kinds.into_iter().map(|(offset, kind)| ParseIssue {
                     line: stanza_start_line + offset,
@@ -240,7 +245,8 @@ fn parse_deb822_with_diagnostics(text: &str) -> (Vec<AptEntry>, Vec<ParseIssue>)
         cur += line.len();
     }
     if start < text.len() {
-        let (entry, kinds) = parse_deb822_stanza(&text[start..], start);
+        let (mut entry, kinds) = parse_deb822_stanza(&text[start..], start);
+        entry.span = (start, text.len());
         entries.push(entry);
         issues.extend(kinds.into_iter().map(|(offset, kind)| ParseIssue {
             line: stanza_start_line + offset,
@@ -255,6 +261,7 @@ fn parse_deb822_with_diagnostics(text: &str) -> (Vec<AptEntry>, Vec<ParseIssue>)
 fn parse_deb822_stanza(stanza: &str, base: usize) -> (AptEntry, Vec<(usize, ParseIssueKind)>) {
     let mut entry = AptEntry {
         raw: stanza.to_string(),
+        span: (base, base + stanza.len()),
         enabled: true,
         deb_types: Vec::new(),
         uris: Vec::new(),
@@ -586,7 +593,17 @@ fn rewrite_uri(uri: &str, pairs: &[(String, String)]) -> Option<String> {
     })
 }
 
-/// 对整个源文件做条目级 URL 重写。没有可替换内容时返回 `None`（文件不写）。
+/// 对整个源文件做条目级 URL 重写，并把重写后重复的条目去重。
+///
+/// 去重规则：重写后（URI 已替换为同一镜像）相同的启用条目——相同的类型
+/// （`deb`/`deb-src`）、URI 之前的行头（含 `[options]`，保证 arch 等约束一致）、
+/// 重写后的 URI 与 suites——若某条的 components 是另一条的**子集**，则删除
+/// 子集条目（保留 components 超集的那一条）。components 互相不构成子集时不动
+/// （无法在不改 components 字段的前提下合并）。deb822 stanza 同样按行头判定，
+/// 行头不同（如带额外字段）的 stanza 不合并。
+///
+/// 返回 `None` 表示没有任何改动（文件不写）——包括"已处于目标状态且无重复条目"
+/// 的 no-op 场景；"已处于目标状态但存在可去重的重复条目"会返回去重后的文本。
 pub(crate) fn rewrite(
     content: &str,
     family: Family,
@@ -595,6 +612,7 @@ pub(crate) fn rewrite(
 ) -> Option<String> {
     let pairs = replacement_pairs(family, mirror, replace_security);
     let entries = parse_sources(content);
+    let deletions = duplicate_deletions(&entries, &pairs);
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for entry in &entries {
         for uri in &entry.uris {
@@ -603,10 +621,96 @@ pub(crate) fn rewrite(
             }
         }
     }
-    if edits.is_empty() {
+    if edits.is_empty() && deletions.is_empty() {
         return None;
     }
+    // 整行/整个 stanza 的删除优先：丢弃落在删除区间内的 URI 重写编辑。
+    edits.retain(|(start, end, _)| {
+        !deletions
+            .iter()
+            .any(|(delete_start, delete_end)| *start >= *delete_start && *end <= *delete_end)
+    });
+    edits.extend(
+        deletions
+            .into_iter()
+            .map(|(start, end)| (start, end, String::new())),
+    );
+    edits.sort_by_key(|(start, _, _)| *start);
     Some(splice(content, &edits))
+}
+
+/// 去重签名：`deb_types`、行头、归一化后的 URI 列表、suites。
+type DedupKey = (Vec<String>, String, Vec<String>, Vec<String>);
+
+/// 计算需要整行删除的重复条目区间。仅比较启用条目；见 [`rewrite`] 的规则说明。
+fn duplicate_deletions(entries: &[AptEntry], pairs: &[(String, String)]) -> Vec<(usize, usize)> {
+    let mut groups: std::collections::HashMap<DedupKey, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if !entry.enabled || entry.deb_types.is_empty() || entry.uris.is_empty() {
+            continue;
+        }
+        let head = entry_head(entry);
+        // 归一化比较：apt 对 `http://`/`https://` 与路径末尾 `/` 不做区分，
+        // 去重必须同样忽略（否则换源后 http/https 两条会继续触发 apt 的
+        // "configured multiple times" 警告）。
+        let uris: Vec<String> = entry
+            .uris
+            .iter()
+            .map(|uri| {
+                let rewritten = rewrite_uri(&uri.value, pairs).unwrap_or_else(|| uri.value.clone());
+                normalize_target(&rewritten)
+            })
+            .collect();
+        groups
+            .entry((entry.deb_types.clone(), head, uris, entry.suites.clone()))
+            .or_default()
+            .push(index);
+    }
+    let mut deletions = Vec::new();
+    for indices in groups.values() {
+        if indices.len() < 2 {
+            continue;
+        }
+        // 保留 components 最多的一条（平局保留靠前的）；只删除 components 是其
+        // 子集的条目。
+        let mut keeper = indices[0];
+        for index in &indices[1..] {
+            if entries[*index].components.len() > entries[keeper].components.len() {
+                keeper = *index;
+            }
+        }
+        for index in indices {
+            let components = &entries[*index].components;
+            let keeper_components = &entries[keeper].components;
+            if *index != keeper
+                && components
+                    .iter()
+                    .all(|component| keeper_components.contains(component))
+            {
+                deletions.push(entries[*index].span);
+            }
+        }
+    }
+    deletions
+}
+
+/// 归一化仓库目标：去掉 scheme 与路径末尾的 `/`（apt 对这两者不区分）。
+fn normalize_target(uri: &str) -> String {
+    let rest = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    rest.trim_end_matches('/').to_string()
+}
+
+/// 条目在首个 URI 之前的行头（one-line：类型 + `[options]`；deb822：stanza
+/// 首 URI 之前的所有字段行）。用于保守判定"除 components 外完全相同"。
+fn entry_head(entry: &AptEntry) -> String {
+    let first_uri = entry
+        .uris
+        .iter()
+        .map(|uri| uri.span.0)
+        .min()
+        .unwrap_or(entry.span.1);
+    entry.raw[..first_uri.saturating_sub(entry.span.0).min(entry.raw.len())].to_string()
 }
 
 /// 内容是否已处于目标状态：目标镜像主机（或官方主机）的 URL 已存在。
@@ -1001,6 +1105,137 @@ mod tests {
         let content = "deb http://mirrors.tuna.tsinghua.edu.cn/debian bookworm main\n";
         let rewritten = rewrite(content, Family::Debian, MirrorName::Tuna, false);
         assert!(rewritten.is_none());
+    }
+
+    #[test]
+    fn dedups_duplicate_entries_after_rewrite() {
+        // 用户场景：两个镜像站各自配了同 suite 的条目，换源后落到同一镜像，
+        // components 子集的重复条目应整行删除。
+        let content = concat!(
+            "deb https://mirrors.aliyun.com/debian trixie contrib main non-free-firmware\n",
+            "deb http://mirror.nju.edu.cn/debian/ trixie main non-free-firmware\n",
+            "deb-src http://mirror.nju.edu.cn/debian/ trixie main non-free-firmware\n",
+        );
+        let rewritten = rewrite(content, Family::Debian, MirrorName::Huawei, false).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "deb https://mirrors.huaweicloud.com/debian trixie contrib main non-free-firmware\n",
+                "deb-src http://mirrors.huaweicloud.com/debian/ trixie main non-free-firmware\n",
+            ),
+            "the subset duplicate is removed, deb-src (a different type) stays: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn dedup_keeps_entries_with_different_suites_or_types() {
+        let content = concat!(
+            "deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie main\n",
+            "deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-updates main\n",
+            "deb-src https://mirrors.tuna.tsinghua.edu.cn/debian trixie main\n",
+        );
+        let rewritten = rewrite(content, Family::Debian, MirrorName::Aliyun, false).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "deb https://mirrors.aliyun.com/debian trixie main\n",
+                "deb https://mirrors.aliyun.com/debian trixie-updates main\n",
+                "deb-src https://mirrors.aliyun.com/debian trixie main\n",
+            ),
+            "different suites and deb-src types are not duplicates: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn dedup_happens_even_when_already_on_target() {
+        // 已处于目标镜像但存在重复条目：仍然返回去重后的文本（修复已有坏文件）。
+        let content = concat!(
+            "deb https://mirrors.huaweicloud.com/debian trixie contrib main non-free-firmware\n",
+            "deb http://mirrors.huaweicloud.com/debian/ trixie main non-free-firmware\n",
+        );
+        let rewritten = rewrite(content, Family::Debian, MirrorName::Huawei, false).unwrap();
+        assert_eq!(
+            rewritten
+                .matches("mirrors.huaweicloud.com/debian trixie")
+                .count(),
+            1,
+            "duplicates are merged even without URI changes: {rewritten}"
+        );
+        // 无重复的 already-on-target 文件仍然是 no-op。
+        let clean = "deb https://mirrors.huaweicloud.com/debian trixie main non-free-firmware\n";
+        assert!(rewrite(clean, Family::Debian, MirrorName::Huawei, false).is_none());
+    }
+
+    #[test]
+    fn dedup_skips_partial_overlap_and_comment_options() {
+        // components 互相不构成子集：无法安全合并，两行都保留。
+        let overlap = concat!(
+            "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main contrib\n",
+            "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main non-free\n",
+        );
+        let rewritten = rewrite(overlap, Family::Debian, MirrorName::Aliyun, false).unwrap();
+        assert_eq!(
+            rewritten
+                .matches("deb https://mirrors.aliyun.com/debian bookworm")
+                .count(),
+            2,
+            "partial overlap must stay untouched: {rewritten}"
+        );
+        // `[options]` 不同（如 arch 约束）不算重复。
+        let options = concat!(
+            "deb [arch=amd64] https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main\n",
+            "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main\n",
+        );
+        let rewritten = rewrite(options, Family::Debian, MirrorName::Aliyun, false).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "deb [arch=amd64] https://mirrors.aliyun.com/debian bookworm main\n",
+                "deb https://mirrors.aliyun.com/debian bookworm main\n",
+            ),
+            "different [options] heads must not be merged: {rewritten}"
+        );
+        // 被注释的重复行不参与去重。
+        let commented = concat!(
+            "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main\n",
+            "# deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main\n",
+        );
+        let rewritten = rewrite(commented, Family::Debian, MirrorName::Aliyun, false).unwrap();
+        assert_eq!(
+            rewritten,
+            concat!(
+                "deb https://mirrors.aliyun.com/debian bookworm main\n",
+                "# deb https://mirrors.aliyun.com/debian bookworm main\n",
+            ),
+            "commented entries are not duplicates and stay byte-for-byte: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn dedups_deb822_stanzas_with_subset_components() {
+        let content = concat!(
+            "Types: deb\n",
+            "URIs: https://mirrors.aliyun.com/debian\n",
+            "Suites: trixie\n",
+            "Components: contrib main non-free-firmware\n",
+            "\n",
+            "Types: deb\n",
+            "URIs: https://mirror.nju.edu.cn/debian\n",
+            "Suites: trixie\n",
+            "Components: main non-free-firmware\n",
+        );
+        let rewritten = rewrite(content, Family::Debian, MirrorName::Huawei, false).unwrap();
+        assert_eq!(
+            rewritten
+                .matches("URIs: https://mirrors.huaweicloud.com/debian")
+                .count(),
+            1,
+            "the subset stanza must be removed: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("Components: contrib main non-free-firmware"),
+            "the superset stanza is kept: {rewritten}"
+        );
     }
 
     #[test]
