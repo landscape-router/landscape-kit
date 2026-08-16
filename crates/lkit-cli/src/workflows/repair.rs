@@ -390,20 +390,25 @@ mod tests {
     use super::super::repository::provider_for;
     use super::super::repository::test_server::{TestResponse, TestServer};
     use super::super::state::{
-        ArchiveAsset, Assets, InitializationState, ServiceState, StateArchitecture,
-        StateServiceManager, WebserverAsset,
+        ArchiveAsset, Assets, InitializationState, STATE_LAYOUT_VERSION, STATE_SCHEMA_VERSION,
+        ServiceState, StateArchitecture, StateServiceManager, WebserverAsset,
     };
     use super::*;
 
     const TRUSTED_PAYLOAD: &[u8] = b"trusted webserver payload";
     const DRIFTED_PAYLOAD: &[u8] = b"drifted webserver payload";
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let root =
+    /// 建立隔离测试现场:landscape 根与 lkit 地盘并列在临时目录树下,
+    /// 地盘由 `test_territory` 指向,返回 (landscape 根, 地盘守卫)。
+    fn temp_root(name: &str) -> (std::path::PathBuf, layout::TerritoryOverride) {
+        let temp =
             std::env::temp_dir().join(format!("lkit-repair-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        root
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = layout::test_territory(&territory);
+        (temp.join("landscape"), guard)
     }
 
     fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
@@ -476,18 +481,23 @@ mod tests {
     fn start_repository(
         name: &str,
         files: HashMap<String, Vec<u8>>,
-    ) -> (TestServer, InstallRoot, ReleaseProvider) {
+    ) -> (
+        TestServer,
+        InstallRoot,
+        ReleaseProvider,
+        layout::TerritoryOverride,
+    ) {
         let server = TestServer::start(move |path| match files.get(path) {
             Some(body) => TestResponse::ok(body.clone()),
             None => TestResponse::status(404, "Not Found", Vec::new()),
         });
-        let root = temp_root(name);
+        let (root, guard) = temp_root(name);
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root,
         };
         let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
-        (server, install_root, provider)
+        (server, install_root, provider, guard)
     }
 
     fn install_state(
@@ -499,8 +509,8 @@ mod tests {
     ) -> InstallState {
         let (webserver_sha, webserver_size) = sha256_bytes(TRUSTED_PAYLOAD);
         InstallState {
-            schema_version: 1,
-            layout_version: 1,
+            schema_version: STATE_SCHEMA_VERSION,
+            layout_version: STATE_LAYOUT_VERSION,
             install_root: root.install_root.display().to_string(),
             canonical_install_root: root.canonical.display().to_string(),
             active_version: "1.2.3".into(),
@@ -615,8 +625,8 @@ mod tests {
         .unwrap();
     }
 
-    fn load_transaction_json(root: &InstallRoot) -> serde_json::Value {
-        let entries: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
+    fn load_transaction_json() -> serde_json::Value {
+        let entries: Vec<_> = std::fs::read_dir(layout::territory_transactions_dir())
             .unwrap()
             .filter_map(Result::ok)
             .collect();
@@ -633,7 +643,7 @@ mod tests {
         let static_zip = build_static_zip("<h1>new</h1>");
         let (static_sha, static_size) = sha256_bytes(&static_zip);
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>new</h1>");
-        let (_server, root, provider) = start_repository("static-ok", files);
+        let (_server, root, provider, _guard) = start_repository("static-ok", files);
         activate_version(&root, "1.2.3");
         std::fs::write(
             root.canonical.join("current/static/index.html"),
@@ -654,7 +664,7 @@ mod tests {
             std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
             "<h1>new</h1>"
         );
-        let entries: Vec<_> = std::fs::read_dir(root.canonical.join("transactions"))
+        let entries: Vec<_> = std::fs::read_dir(layout::territory_transactions_dir())
             .unwrap()
             .filter_map(Result::ok)
             .collect();
@@ -673,10 +683,10 @@ mod tests {
             "static backup must preserve the previous pages"
         );
         assert!(
-            !root.canonical.join("config.toml").exists(),
+            !layout::territory_config_file().exists(),
             "repair must not create config.toml"
         );
-        let _ = std::fs::remove_dir_all(&root.install_root);
+        let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
     }
 
     #[tokio::test]
@@ -684,7 +694,7 @@ mod tests {
         let static_zip = build_static_zip("<h1>new</h1>");
         let (static_sha, static_size) = sha256_bytes(&static_zip);
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>new</h1>");
-        let (_server, root, provider) = start_repository("static-systemd", files);
+        let (_server, root, provider, _guard) = start_repository("static-systemd", files);
         activate_version(&root, "1.2.3");
         std::fs::write(
             root.canonical.join("current/static/index.html"),
@@ -709,16 +719,16 @@ mod tests {
         assert_eq!(updated.service.manager, StateServiceManager::Systemd);
         assert!(updated.service.verified);
         assert!(
-            !root.canonical.join("backups").exists(),
+            !layout::territory_backups_dir().exists(),
             "static repair must not create a .lkb backup"
         );
-        let _ = std::fs::remove_dir_all(&root.install_root);
+        let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
     }
 
     #[tokio::test]
     async fn refuses_static_repair_from_a_repository_with_different_assets() {
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>other</h1>");
-        let (_server, root, provider) = start_repository("static-mismatch", files);
+        let (_server, root, provider, _guard) = start_repository("static-mismatch", files);
         activate_version(&root, "1.2.3");
         let state = install_state(
             &root,
@@ -737,7 +747,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        let _ = std::fs::remove_dir_all(&root.install_root);
+        let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
     }
 
     #[tokio::test]
@@ -757,7 +767,7 @@ mod tests {
             },
         }
         });
-        let root = temp_root("binary-repair");
+        let (root, _guard) = temp_root("binary-repair");
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -839,7 +849,7 @@ esac
         assert!(matches!(outcome, RepairOutcome::Committed));
 
         assert_eq!(std::fs::read(&binary).unwrap(), TRUSTED_PAYLOAD);
-        let entries: Vec<_> = std::fs::read_dir(install_root.canonical.join("transactions"))
+        let entries: Vec<_> = std::fs::read_dir(layout::territory_transactions_dir())
             .unwrap()
             .filter_map(Result::ok)
             .collect();
@@ -853,15 +863,7 @@ esac
             DRIFTED_PAYLOAD,
             "the pre-repair binary must be preserved in the transaction diagnostics directory"
         );
-        assert!(
-            install_root
-                .canonical
-                .join("backups")
-                .read_dir()
-                .unwrap()
-                .count()
-                >= 2
-        );
+        assert!(layout::territory_backups_dir().read_dir().unwrap().count() >= 2);
         let state = super::super::state::load_state(&install_root)
             .unwrap()
             .unwrap();
@@ -873,10 +875,10 @@ esac
                 .is_none()
         );
         assert!(
-            !install_root.canonical.join("config.toml").exists(),
+            !layout::territory_config_file().exists(),
             "repair must not create config.toml"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     #[tokio::test]
@@ -896,7 +898,7 @@ esac
             },
         }
         });
-        let root = temp_root("binary-repair-rollback");
+        let (root, _guard) = temp_root("binary-repair-rollback");
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -1000,7 +1002,7 @@ esac
             .unwrap();
         let (drifted_sha, _) = sha256_bytes(DRIFTED_PAYLOAD);
         assert_eq!(state.assets.webserver.sha256, drifted_sha);
-        let tx = load_transaction_json(&install_root);
+        let tx = load_transaction_json();
         assert_eq!(tx["phase"], "rolled_back");
         assert_eq!(tx["operation"], "repair");
         assert!(tx["backup"].is_object());
@@ -1010,11 +1012,11 @@ esac
                 .is_none()
         );
         assert!(
-            !install_root.canonical.join("config.toml").exists(),
+            !layout::territory_config_file().exists(),
             "repair must not create config.toml"
         );
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     #[tokio::test]
@@ -1034,7 +1036,7 @@ esac
             },
         }
         });
-        let root = temp_root("binary-repair-rollback-failed");
+        let (root, _guard) = temp_root("binary-repair-rollback-failed");
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -1121,16 +1123,14 @@ esac
         };
         assert!(!reason.is_empty());
 
-        let tx = load_transaction_json(&install_root);
+        let tx = load_transaction_json();
         assert_eq!(
             tx["phase"], "failed",
             "a failed rollback must leave the transaction in the failed phase"
         );
         assert_eq!(tx["operation"], "repair");
-        let tx_dir = install_root
-            .canonical
-            .join("transactions")
-            .join(tx["transaction_id"].as_str().unwrap());
+        let tx_dir =
+            layout::territory_transactions_dir().join(tx["transaction_id"].as_str().unwrap());
         assert!(
             tx_dir.join("failed-data").is_dir(),
             "the interrupted data must be preserved for manual recovery"
@@ -1154,12 +1154,12 @@ esac
                 .is_none()
         );
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     #[test]
     fn observes_pending_initialization_as_complete() {
-        let root = temp_root("observe");
+        let (root, _guard) = temp_root("observe");
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -1183,6 +1183,14 @@ esac
 
         observe_initialization(&install_root, &state).unwrap();
 
+        assert!(
+            layout::territory_state_path().is_file(),
+            "the install state must live in the lkit territory"
+        );
+        assert!(
+            !install_root.canonical.join("state").exists(),
+            "the landscape root must not hold lkit metadata"
+        );
         let updated = super::super::state::load_state(&install_root)
             .unwrap()
             .unwrap();
@@ -1190,12 +1198,12 @@ esac
         assert!(updated.initialization.lock_present);
         assert!(updated.initialization.initialized_at.is_some());
         assert!(!updated.service.verified);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     #[test]
     fn observation_repair_fails_when_lock_disappears() {
-        let root = temp_root("observe-missing");
+        let (root, _guard) = temp_root("observe-missing");
         let install_root = InstallRoot {
             install_root: root.clone(),
             canonical: root.clone(),
@@ -1217,6 +1225,6 @@ esac
             .unwrap()
             .unwrap();
         assert_eq!(updated.initialization.status, InitStatus::Pending);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 }
