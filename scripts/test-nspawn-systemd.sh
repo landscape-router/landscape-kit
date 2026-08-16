@@ -111,7 +111,9 @@ cat >"$release/static/lkit-fixture.json" <<'JSON'
   "http_port": 6300,
   "https_port": 6443,
   "ready_delay_ms": 750,
-  "exit_after_ms": 2000,
+  # 生命周期必须覆盖全部 worker 场景:fixture 过早退出会让 daemon 委托的
+  # config export(卸载保护备份)撞上 Restart=always 的退出/重启窗口。
+  "exit_after_ms": 30000,
   "start_exit_code": 1,
   "export_version": "1.0.0",
   "export_content": "version = \"1.0.0\"\n"
