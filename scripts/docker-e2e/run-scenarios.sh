@@ -127,8 +127,8 @@ lkb_count() {
 }
 
 assert_latest_phase() {
-  local root=${1:-$territory_root}
-  local expected=$2
+  local expected=$1
+  local root=${2:-$territory_root}
   local transaction
   transaction=$(latest_transaction "$root")
   [[ -n "$transaction" ]] || fail "no transaction found under $root"
