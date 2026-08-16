@@ -87,7 +87,8 @@ fn reinit_wizard_completion_moves_to_credentials_step() {
     assert!(app.reinit.plan.is_some());
     assert_eq!(app.reinit.step, ReinitStep::Credentials);
     assert_eq!(
-        app.reinit.selected, 0,
+        app.reinit.selected,
+        ReinitField::AdminUser,
         "the credentials step must start on the admin user field"
     );
 }
@@ -126,7 +127,7 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
     assert_eq!(app.reinit.admin_user, "adminro");
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.reinit.selected, 1);
+    assert_eq!(app.reinit.selected, ReinitField::Password);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     for character in ['S', 'e', 'c', 'r', 'e', 't', '1', '2', '3'] {
         app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
@@ -136,7 +137,8 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(
-        app.reinit.selected, 2,
+        app.reinit.selected,
+        ReinitField::PasswordConfirmation,
         "the password confirmation field must follow the password"
     );
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -144,7 +146,7 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.reinit.selected, 3);
+    assert_eq!(app.reinit.selected, ReinitField::Start);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
         !app.reinit.confirming,

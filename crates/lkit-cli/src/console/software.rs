@@ -41,7 +41,7 @@ pub(crate) struct SoftwarePanel {
     pub(crate) detected: bool,
     /// 与 `Software::all()` 对齐的安装状态。
     pub(crate) installed: Vec<bool>,
-    pub(crate) selected: usize,
+    pub(crate) selected: Option<Software>,
     pub(crate) confirming: Option<SoftwareConfirm>,
     pub(crate) install: Option<SoftwareInstallRun>,
 }
@@ -52,7 +52,7 @@ impl Default for SoftwarePanel {
             host: None,
             detected: false,
             installed: Software::all().into_iter().map(|_| false).collect(),
-            selected: 0,
+            selected: Software::all().first().copied(),
             confirming: None,
             install: None,
         }
@@ -183,15 +183,30 @@ impl ConsoleApp {
         }
         match key.code {
             KeyCode::Up => {
-                self.software.selected = self.software.selected.saturating_sub(1);
+                let all = Software::all();
+                let index = self
+                    .software
+                    .selected
+                    .and_then(|software| all.iter().position(|entry| *entry == software))
+                    .unwrap_or(0);
+                self.software.selected = Some(all[index.saturating_sub(1)]);
             }
             KeyCode::Down => {
-                self.software.selected =
-                    (self.software.selected + 1).min(Software::all().len() - 1);
+                let all = Software::all();
+                let index = self
+                    .software
+                    .selected
+                    .and_then(|software| all.iter().position(|entry| *entry == software))
+                    .unwrap_or(0);
+                self.software.selected = Some(all[(index + 1).min(all.len() - 1)]);
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                let software = Software::all()[self.software.selected];
-                if self.software.installed[self.software.selected] {
+                let software = self.software.selected?;
+                let index = Software::all()
+                    .iter()
+                    .position(|entry| *entry == software)
+                    .unwrap_or(0);
+                if self.software.installed[index] {
                     self.notice = crate::tr!(
                         crate::keys::SOFTWARE_ALREADY_INSTALLED,
                         software = software.label()
@@ -252,7 +267,7 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
             )));
             lines.push(Line::raw(""));
             for (index, software) in Software::all().into_iter().enumerate() {
-                let selected = index == app.software.selected;
+                let selected = app.software.selected == Some(software);
                 let marker = if selected { "> " } else { "  " };
                 let installed = app.software.installed.get(index).copied().unwrap_or(false);
                 let status = if installed {
@@ -293,10 +308,10 @@ pub(crate) fn render_software(frame: &mut Frame<'_>, app: &mut ConsoleApp, area:
     let row_hits: Vec<(u16, Hit)> = if matches!(&app.software.host, Some(Ok(_))) {
         let width = area.width.saturating_sub(2);
         let mut hits = Vec::with_capacity(Software::all().len());
-        for index in 0..Software::all().len() {
+        for (index, software) in Software::all().into_iter().enumerate() {
             hits.push((
                 block_row_of(&lines, index + 2, width),
-                Hit::SoftwareField(index),
+                Hit::SoftwareField(software),
             ));
         }
         hits

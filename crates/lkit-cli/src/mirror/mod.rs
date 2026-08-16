@@ -112,10 +112,16 @@ pub(crate) mod test_support {
 
 /// 已识别的公共镜像主机。换源时除官方 URL 外，这些主机之间的 URL 也会互相转换；
 /// 自定义内网镜像等未识别主机保持原样。
-pub(crate) const RECOGNIZED_MIRROR_HOSTS: [&str; 3] = [
+pub(crate) const RECOGNIZED_MIRROR_HOSTS: [&str; 9] = [
     "mirrors.tuna.tsinghua.edu.cn",
     "mirrors.aliyun.com",
     "mirrors.ustc.edu.cn",
+    "mirror.nju.edu.cn",
+    "mirror.sjtu.edu.cn",
+    "mirrors.zju.edu.cn",
+    "mirror.lzu.edu.cn",
+    "mirrors.bfsu.edu.cn",
+    "mirrors.hust.edu.cn",
 ];
 
 /// 返回镜像主机；`Official` 没有镜像主机（反向映射回官方）。
@@ -124,6 +130,12 @@ pub(crate) fn mirror_host(mirror: MirrorName) -> Option<&'static str> {
         MirrorName::Tuna => Some("mirrors.tuna.tsinghua.edu.cn"),
         MirrorName::Aliyun => Some("mirrors.aliyun.com"),
         MirrorName::Ustc => Some("mirrors.ustc.edu.cn"),
+        MirrorName::Nju => Some("mirror.nju.edu.cn"),
+        MirrorName::Sjtu => Some("mirror.sjtu.edu.cn"),
+        MirrorName::Zju => Some("mirrors.zju.edu.cn"),
+        MirrorName::Lzu => Some("mirror.lzu.edu.cn"),
+        MirrorName::Bfsu => Some("mirrors.bfsu.edu.cn"),
+        MirrorName::Hust => Some("mirrors.hust.edu.cn"),
         MirrorName::Official => None,
     }
 }
@@ -134,12 +146,29 @@ pub(crate) enum MirrorName {
     Tuna,
     Aliyun,
     Ustc,
+    Nju,
+    Sjtu,
+    Zju,
+    Lzu,
+    Bfsu,
+    Hust,
     Official,
 }
 
 impl MirrorName {
-    pub(crate) fn all() -> [Self; 4] {
-        [Self::Tuna, Self::Aliyun, Self::Ustc, Self::Official]
+    pub(crate) const fn all() -> [Self; 10] {
+        [
+            Self::Tuna,
+            Self::Aliyun,
+            Self::Ustc,
+            Self::Nju,
+            Self::Sjtu,
+            Self::Zju,
+            Self::Lzu,
+            Self::Bfsu,
+            Self::Hust,
+            Self::Official,
+        ]
     }
 
     pub(crate) fn id(self) -> &'static str {
@@ -147,6 +176,12 @@ impl MirrorName {
             Self::Tuna => "tuna",
             Self::Aliyun => "aliyun",
             Self::Ustc => "ustc",
+            Self::Nju => "nju",
+            Self::Sjtu => "sjtu",
+            Self::Zju => "zju",
+            Self::Lzu => "lzu",
+            Self::Bfsu => "bfsu",
+            Self::Hust => "hust",
             Self::Official => "official",
         }
     }
@@ -156,6 +191,12 @@ impl MirrorName {
             Self::Tuna => crate::tr!(crate::keys::mirror::MIRROR_TUNA),
             Self::Aliyun => crate::tr!(crate::keys::mirror::MIRROR_ALIYUN),
             Self::Ustc => crate::tr!(crate::keys::mirror::MIRROR_USTC),
+            Self::Nju => crate::tr!(crate::keys::mirror::MIRROR_NJU),
+            Self::Sjtu => crate::tr!(crate::keys::mirror::MIRROR_SJTU),
+            Self::Zju => crate::tr!(crate::keys::mirror::MIRROR_ZJU),
+            Self::Lzu => crate::tr!(crate::keys::mirror::MIRROR_LZU),
+            Self::Bfsu => crate::tr!(crate::keys::mirror::MIRROR_BFSU),
+            Self::Hust => crate::tr!(crate::keys::mirror::MIRROR_HUST),
             Self::Official => crate::tr!(crate::keys::mirror::MIRROR_OFFICIAL),
         }
     }
@@ -240,8 +281,8 @@ pub(crate) fn detect_host() -> Result<Host, MirrorError> {
     detect::detect_from(&paths().os_release)
 }
 
-/// 列出当前主机可切换的镜像（固定四项：清华 TUNA、阿里云、中科大 USTC、官方源）。
-pub(crate) fn list_mirrors() -> [MirrorName; 4] {
+/// 列出当前主机可切换的镜像（公共镜像与官方源）。
+pub(crate) fn list_mirrors() -> [MirrorName; 10] {
     MirrorName::all()
 }
 

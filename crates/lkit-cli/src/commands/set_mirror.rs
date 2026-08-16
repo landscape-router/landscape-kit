@@ -9,7 +9,7 @@ use crate::mirror::{self, Family, Host, MirrorError, MirrorName};
 
 #[derive(Debug, Args)]
 pub struct SetMirror {
-    /// Mirror to apply: tuna, aliyun, ustc or official
+    /// Mirror to apply: tuna, aliyun, ustc, nju, sjtu, zju, lzu, bfsu, hust or official
     #[arg(value_enum, value_name = "MIRROR")]
     pub mirror: Option<MirrorName>,
     /// List available mirrors for this host

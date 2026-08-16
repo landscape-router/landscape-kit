@@ -22,12 +22,29 @@ pub(crate) enum MirrorConfirm {
     Restore,
 }
 
+/// 换源面板的可选行:镜像列表后跟恢复备份动作。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MirrorRow {
+    Mirror(MirrorName),
+    Restore,
+}
+
+impl MirrorRow {
+    /// 全部行的有序列表(与渲染次序一致)。
+    fn rows() -> Vec<Self> {
+        MirrorName::all()
+            .into_iter()
+            .map(Self::Mirror)
+            .chain([Self::Restore])
+            .collect()
+    }
+}
+
 /// 换源面板：显示发行版检测结果，选择镜像或恢复备份。
-/// 行布局：0..4 为四个镜像（TUNA/阿里云/USTC/官方），4 为恢复备份动作。
 pub(crate) struct MirrorPanel {
     pub(crate) host: Option<Result<Host, String>>,
     pub(crate) detected: bool,
-    pub(crate) selected: usize,
+    pub(crate) selected: MirrorRow,
     pub(crate) confirming: Option<MirrorConfirm>,
 }
 
@@ -36,13 +53,11 @@ impl Default for MirrorPanel {
         Self {
             host: None,
             detected: false,
-            selected: 0,
+            selected: MirrorRow::Mirror(MirrorName::all()[0]),
             confirming: None,
         }
     }
 }
-
-const RESTORE_ROW: usize = 4;
 
 impl MirrorPanel {
     /// 进入面板时执行一次发行版检测（只读，快速）。
@@ -176,19 +191,28 @@ impl ConsoleApp {
         }
         match key.code {
             KeyCode::Up => {
-                self.mirror.selected = self.mirror.selected.saturating_sub(1);
+                let rows = MirrorRow::rows();
+                let index = rows
+                    .iter()
+                    .position(|row| *row == self.mirror.selected)
+                    .unwrap_or(0);
+                self.mirror.selected = rows[index.saturating_sub(1)];
             }
             KeyCode::Down => {
-                self.mirror.selected = self.mirror.selected.min(RESTORE_ROW - 1) + 1;
+                let rows = MirrorRow::rows();
+                let index = rows
+                    .iter()
+                    .position(|row| *row == self.mirror.selected)
+                    .unwrap_or(0);
+                self.mirror.selected = rows[(index + 1).min(rows.len() - 1)];
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                self.mirror.confirming = Some(if self.mirror.selected == RESTORE_ROW {
-                    MirrorConfirm::Restore
-                } else {
-                    MirrorConfirm::Apply {
-                        mirror: MirrorName::all()[self.mirror.selected],
+                self.mirror.confirming = Some(match self.mirror.selected {
+                    MirrorRow::Restore => MirrorConfirm::Restore,
+                    MirrorRow::Mirror(mirror) => MirrorConfirm::Apply {
+                        mirror,
                         replace_security: false,
-                    }
+                    },
                 });
             }
             _ => return None,
@@ -197,7 +221,7 @@ impl ConsoleApp {
     }
 }
 
-/// 面板内容行数：主机行、空行、4 个镜像、空行、恢复动作。
+/// 面板内容行数：主机行、空行、镜像列表、空行、恢复动作。
 fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
     let mut lines = Vec::new();
     match &app.mirror.host {
@@ -221,26 +245,35 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
                 manager = host.family.package_manager()
             )));
             lines.push(Line::raw(""));
-            let selected = app.mirror.selected;
-            for (index, mirror) in MirrorName::all().into_iter().enumerate() {
-                let marker = if index == selected { "> " } else { "  " };
+            for mirror in MirrorName::all() {
+                let marker = if app.mirror.selected == MirrorRow::Mirror(mirror) {
+                    "> "
+                } else {
+                    "  "
+                };
                 lines.push(Line::from(Span::styled(
                     format!("{marker}{}", mirror.label()),
-                    Style::default().add_modifier(if index == selected {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
+                    Style::default().add_modifier(
+                        if app.mirror.selected == MirrorRow::Mirror(mirror) {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        },
+                    ),
                 )));
             }
             lines.push(Line::raw(""));
-            let marker = if selected == RESTORE_ROW { "> " } else { "  " };
+            let marker = if app.mirror.selected == MirrorRow::Restore {
+                "> "
+            } else {
+                "  "
+            };
             lines.push(Line::from(Span::styled(
                 format!(
                     "{marker}{}",
                     crate::tr!(crate::keys::CONSOLE_MIRROR_RESTORE_ROW)
                 ),
-                Style::default().add_modifier(if selected == RESTORE_ROW {
+                Style::default().add_modifier(if app.mirror.selected == MirrorRow::Restore {
                     Modifier::BOLD
                 } else {
                     Modifier::empty()
@@ -253,17 +286,20 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
 
 pub(crate) fn render_mirror(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let lines = panel_lines(app);
-    // 命中区：镜像行（内容行 2..6）与恢复动作行（内容行 7）。
+    // 命中区：镜像行（内容行 2..）与恢复动作行（内容行 3 + 镜像数）。
     let row_hits: Vec<(u16, Hit)> = if matches!(&app.mirror.host, Some(Ok(_))) {
         let width = area.width.saturating_sub(2);
-        let mut hits = Vec::with_capacity(5);
-        for index in 0..4 {
+        let mut hits = Vec::with_capacity(MirrorName::all().len() + 1);
+        for (index, mirror) in MirrorName::all().into_iter().enumerate() {
             hits.push((
                 block_row_of(&lines, index + 2, width),
-                Hit::MirrorField(index),
+                Hit::MirrorField(mirror),
             ));
         }
-        hits.push((block_row_of(&lines, 7, width), Hit::MirrorRestore));
+        hits.push((
+            block_row_of(&lines, MirrorName::all().len() + 3, width),
+            Hit::MirrorRestore,
+        ));
         hits
     } else {
         Vec::new()

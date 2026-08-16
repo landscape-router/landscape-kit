@@ -68,6 +68,12 @@ fn mirror_panel_renders_host_and_mirror_options() {
     assert!(content.contains("Tsinghua TUNA"));
     assert!(content.contains("Aliyun"));
     assert!(content.contains("USTC"));
+    assert!(content.contains("Nanjing University"));
+    assert!(content.contains("SJTU"));
+    assert!(content.contains("Zhejiang University"));
+    assert!(content.contains("Lanzhou University"));
+    assert!(content.contains("BFSU"));
+    assert!(content.contains("HUST"));
     assert!(content.contains("Official"));
     assert!(content.contains("Restore the backed-up original sources"));
 }
@@ -87,19 +93,32 @@ fn mirror_panel_detection_failure_is_shown() {
 #[test]
 fn mirror_panel_up_down_moves_selection() {
     let mut app = mirror_ready_app();
-    assert_eq!(app.mirror.selected, 0);
-    for _ in 0..4 {
+    let mirrors = MirrorName::all().len();
+    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Tuna));
+    for _ in 0..mirrors {
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     }
-    assert_eq!(app.mirror.selected, 4, "restore row");
+    assert_eq!(app.mirror.selected, MirrorRow::Restore, "restore row");
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.mirror.selected, 4, "clamped at the restore row");
+    assert_eq!(
+        app.mirror.selected,
+        MirrorRow::Restore,
+        "clamped at the restore row"
+    );
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.mirror.selected, 3);
-    for _ in 0..4 {
+    assert_eq!(
+        app.mirror.selected,
+        MirrorRow::Mirror(MirrorName::all()[mirrors - 1]),
+        "up from the restore row selects the last mirror"
+    );
+    for _ in 0..mirrors {
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     }
-    assert_eq!(app.mirror.selected, 0, "clamped at the first mirror");
+    assert_eq!(
+        app.mirror.selected,
+        MirrorRow::Mirror(MirrorName::Tuna),
+        "clamped at the first mirror"
+    );
 }
 
 #[test]
@@ -124,7 +143,7 @@ fn mirror_panel_enter_opens_apply_confirmation_and_esc_closes() {
 #[test]
 fn mirror_panel_restore_row_opens_restore_confirmation() {
     let mut app = mirror_ready_app();
-    app.mirror.selected = 4;
+    app.mirror.selected = MirrorRow::Restore;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.mirror.confirming, Some(MirrorConfirm::Restore));
 }
@@ -272,7 +291,7 @@ fn mirror_confirmation_dialog_executes_apply() {
     assert_eq!(std::fs::read_to_string(&backup).unwrap(), original);
 
     // 恢复：备份内容写回，备份目录删除。
-    app.mirror.selected = 4;
+    app.mirror.selected = MirrorRow::Restore;
     app.mirror.confirming = Some(MirrorConfirm::Restore);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.notice.contains("restored the original package sources"));
@@ -307,7 +326,7 @@ fn mirror_rows_are_mouse_clickable() {
     // 在面板区域内找到第一行镜像的命中区。
     let mut first_row = None;
     for row in 4..12 {
-        if let Some(Hit::MirrorField(0)) = app.hits.hit_at(40, row) {
+        if let Some(Hit::MirrorField(MirrorName::Tuna)) = app.hits.hit_at(40, row) {
             first_row = Some(row);
             break;
         }
@@ -316,7 +335,7 @@ fn mirror_rows_are_mouse_clickable() {
         panic!("no clickable mirror row found");
     };
     app.handle_mouse(mouse_click(40, row));
-    assert_eq!(app.mirror.selected, 0);
+    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Tuna));
     assert!(matches!(
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
@@ -327,10 +346,10 @@ fn mirror_rows_are_mouse_clickable() {
     app.mirror.confirming = None;
 
     app.handle_mouse(mouse_click(40, row + 1));
-    assert_eq!(app.mirror.selected, 1);
+    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Aliyun));
     app.mirror.confirming = None;
 
-    let restore_hit = (4..12).find_map(|row| {
+    let restore_hit = (4..28).find_map(|row| {
         app.hits
             .hit_at(40, row)
             .is_some_and(|hit| hit == Hit::MirrorRestore)
@@ -340,6 +359,6 @@ fn mirror_rows_are_mouse_clickable() {
         panic!("no clickable restore row found");
     };
     app.handle_mouse(mouse_click(40, restore_row));
-    assert_eq!(app.mirror.selected, 4);
+    assert_eq!(app.mirror.selected, MirrorRow::Restore);
     assert_eq!(app.mirror.confirming, Some(MirrorConfirm::Restore));
 }

@@ -133,7 +133,7 @@ impl ConsoleApp {
                         self.reinit.wizard = false;
                         self.reinit.plan = Some(plan);
                         self.reinit.step = super::super::reinit::ReinitStep::Credentials;
-                        self.reinit.selected = 0;
+                        self.reinit.selected = super::super::reinit::ReinitField::AdminUser;
                         self.reinit.editing = false;
                         self.notice = crate::tr!(crate::keys::CONSOLE_REINIT_ENTER_CREDENTIALS);
                         return None;

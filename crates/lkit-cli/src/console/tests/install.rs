@@ -90,7 +90,7 @@ fn renders_portable_markers_for_install_focus() {
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.install.checks_selected = false;
-    app.install.selected = 0;
+    app.install.selected = InstallField::Version;
 
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
@@ -204,13 +204,13 @@ fn entering_install_starts_background_checks() {
 #[test]
 fn every_install_field_has_contextual_help() {
     let mut form = InstallForm::default();
-    for selected in 0..FORM_FIELDS {
-        form.selected = selected;
+    for field in InstallField::ALL {
+        form.selected = field;
         let (title, description) = form.selected_help();
-        assert!(!title.is_empty(), "field {selected} has no help title");
+        assert!(!title.is_empty(), "field {field:?} has no help title");
         assert!(
             description.len() > 20,
-            "field {selected} has no useful help description"
+            "field {field:?} has no useful help description"
         );
     }
 }
@@ -224,7 +224,7 @@ fn field_navigation_moves_between_checks_and_settings() {
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert!(!app.install.checks_selected);
-    assert_eq!(app.install.selected, 0);
+    assert_eq!(app.install.selected, InstallField::Version);
 
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     assert!(app.install.checks_selected);
@@ -235,25 +235,25 @@ fn field_navigation_skips_hidden_repository_url() {
     let mut app = ConsoleApp::new();
     app.menu_index = 1;
     app.focus = Focus::Panel;
-    app.install.selected = 1;
+    app.install.selected = InstallField::Repository;
     app.install.checks_selected = false;
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.install.selected, 3);
+    assert_eq!(app.install.selected, InstallField::InstallRoot);
 
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.install.selected, 1);
+    assert_eq!(app.install.selected, InstallField::Repository);
 
     app.install.repository = RepositoryMode::Custom;
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.install.selected, 2);
+    assert_eq!(app.install.selected, InstallField::RepositoryUrl);
 }
 
 #[test]
 fn left_returns_from_install_panel_to_navigation() {
     let mut app = ConsoleApp::new();
     app.menu_index = 1;
-    app.install.selected = 1;
+    app.install.selected = InstallField::Repository;
     let repository = app.install.repository;
 
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
@@ -269,7 +269,7 @@ fn right_still_changes_install_choices() {
     let mut app = ConsoleApp::new();
     app.menu_index = 1;
     app.focus = Focus::Panel;
-    app.install.selected = 1;
+    app.install.selected = InstallField::Repository;
     app.install.checks_selected = false;
 
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
@@ -289,7 +289,7 @@ fn install_form_builds_cli_and_domain_request() {
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
         takeover_network: false,
-        selected: 7,
+        selected: InstallField::StartInstallation,
         checks_selected: false,
         editing: false,
     };
@@ -458,7 +458,7 @@ fn warning_checks_allow_form_entry() {
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert!(!app.install.checks_selected);
-    assert_eq!(app.install.selected, 0);
+    assert_eq!(app.install.selected, InstallField::Version);
     assert!(!app.preflight_dialog);
 }
 
@@ -469,7 +469,7 @@ fn start_installation_is_blocked_when_checks_fail() {
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(error_preflight_report());
     app.install.checks_selected = false;
-    app.install.selected = 8;
+    app.install.selected = InstallField::StartInstallation;
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.preflight_dialog);
@@ -478,6 +478,24 @@ fn start_installation_is_blocked_when_checks_fail() {
     app.preflight.state = PreflightState::Complete(pass_preflight_report());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(!app.preflight_dialog);
+}
+
+#[test]
+fn enter_on_start_installation_dispatches_the_install_command() {
+    let mut app = ConsoleApp::new();
+    app.menu_index = 1;
+    app.focus = Focus::Panel;
+    app.preflight.state = PreflightState::Complete(pass_preflight_report());
+    app.install.checks_selected = false;
+    app.install.selected = InstallField::StartInstallation;
+    app.install.takeover_network = false;
+    app.install.password = "Secret123".into();
+    app.install.password_confirmation = "Secret123".into();
+
+    let action = app
+        .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("Enter on the start installation row must dispatch");
+    assert!(matches!(action, ConsoleAction::Command { .. }));
 }
 
 #[test]
@@ -493,7 +511,7 @@ fn mouse_click_install_field_enters_editing_and_checks_switches_back() {
         app.install.editing,
         "clicking the version field must edit it"
     );
-    assert_eq!(app.install.selected, 0);
+    assert_eq!(app.install.selected, InstallField::Version);
     app.handle_mouse(mouse_click(30, 4));
     assert!(app.install.checks_selected);
     assert!(!app.install.editing);

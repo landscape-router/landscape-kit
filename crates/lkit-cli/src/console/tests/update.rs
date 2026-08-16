@@ -38,19 +38,20 @@ fn update_menu_without_installation_shows_requirements() {
 #[test]
 fn update_panel_navigation_edits_version_and_reaches_url_when_custom() {
     let mut app = update_ready_app();
-    assert_eq!(app.update.selected, 0);
+    assert_eq!(app.update.selected, UpdateField::Version);
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.update.selected, 1);
+    assert_eq!(app.update.selected, UpdateField::Repository);
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(
-        app.update.selected, 3,
+        app.update.selected,
+        UpdateField::Start,
         "the hidden URL row must be skipped for non-custom repositories"
     );
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.update.selected, 1);
+    assert_eq!(app.update.selected, UpdateField::Repository);
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.update.selected, 0);
+    assert_eq!(app.update.selected, UpdateField::Version);
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.update.editing);
@@ -65,16 +66,16 @@ fn update_panel_navigation_edits_version_and_reaches_url_when_custom() {
 
     app.update.repository = UpdateRepositoryMode::Custom;
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.update.selected, 1);
+    assert_eq!(app.update.selected, UpdateField::Repository);
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.update.selected, 2);
+    assert_eq!(app.update.selected, UpdateField::RepositoryUrl);
     assert_eq!(app.exit_state, ExitState::Idle);
 }
 
 #[test]
 fn update_repository_cycles_within_available_options() {
     let mut app = update_ready_app();
-    app.update.selected = 1;
+    app.update.selected = UpdateField::Repository;
     app.update.repository = UpdateRepositoryMode::Current;
 
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));

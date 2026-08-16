@@ -48,6 +48,63 @@ pub(crate) enum UpdateRepositoryMode {
     Custom,
 }
 
+/// Update 面板表单字段:声明顺序即表单次序,`Start` 恒为最后一个字段。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UpdateField {
+    Version,
+    Repository,
+    RepositoryUrl,
+    Start,
+}
+
+impl UpdateField {
+    pub(crate) const ALL: [Self; 4] = [
+        Self::Version,
+        Self::Repository,
+        Self::RepositoryUrl,
+        Self::Start,
+    ];
+
+    /// 该字段是否在表单中可见(仓库 URL 仅在 Custom 模式下显示)。
+    fn visible(self, repository: UpdateRepositoryMode) -> bool {
+        match self {
+            Self::RepositoryUrl => repository == UpdateRepositoryMode::Custom,
+            _ => true,
+        }
+    }
+
+    /// 当前模式下可见字段的有序列表(与渲染次序一致)。
+    fn visible_fields(repository: UpdateRepositoryMode) -> Vec<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|field| field.visible(repository))
+            .collect()
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::Version => crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
+            Self::Repository => crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
+            Self::RepositoryUrl => crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
+            Self::Start => String::new(),
+        }
+    }
+
+    fn value(self, panel: &UpdatePanel) -> String {
+        match self {
+            Self::Version => panel.version.clone(),
+            Self::Repository => panel.repository.label(panel.current_source.as_ref()),
+            Self::RepositoryUrl => panel.repository_url.clone(),
+            Self::Start => crate::tr!(crate::keys::CONSOLE_UPDATE_BUTTON).into(),
+        }
+    }
+
+    fn editable(self) -> bool {
+        matches!(self, Self::Version | Self::RepositoryUrl)
+    }
+}
+
 impl UpdateRepositoryMode {
     fn label(self, source: Option<&RepositorySource>) -> String {
         match self {
@@ -93,7 +150,7 @@ pub(crate) struct UpdatePanel {
     pub(crate) version: String,
     pub(crate) repository: UpdateRepositoryMode,
     pub(crate) repository_url: String,
-    pub(crate) selected: usize,
+    pub(crate) selected: UpdateField,
     pub(crate) editing: bool,
     pub(crate) current_source: Option<RepositorySource>,
     pub(crate) config_error: Option<String>,
@@ -107,7 +164,7 @@ impl Default for UpdatePanel {
             version: "latest".into(),
             repository: UpdateRepositoryMode::Github,
             repository_url: plan::DEFAULT_HTTP_MIRROR.into(),
-            selected: 0,
+            selected: UpdateField::Version,
             editing: false,
             current_source: None,
             config_error: None,
@@ -187,8 +244,10 @@ impl UpdatePanel {
 
     pub(crate) fn editable_value_mut(&mut self) -> Option<&mut String> {
         match self.selected {
-            0 => Some(&mut self.version),
-            2 if self.repository == UpdateRepositoryMode::Custom => Some(&mut self.repository_url),
+            UpdateField::Version => Some(&mut self.version),
+            UpdateField::RepositoryUrl if self.repository == UpdateRepositoryMode::Custom => {
+                Some(&mut self.repository_url)
+            }
             _ => None,
         }
     }
@@ -276,31 +335,34 @@ impl ConsoleApp {
         }
         match key.code {
             KeyCode::Up => {
-                self.update.selected = match self.update.selected {
-                    0 => 0,
-                    1 => 0,
-                    2 => 1,
-                    _ if self.update.repository == UpdateRepositoryMode::Custom => 2,
-                    _ => 1,
-                };
+                let fields = UpdateField::visible_fields(self.update.repository);
+                let index = fields
+                    .iter()
+                    .position(|field| *field == self.update.selected)
+                    .unwrap_or(0);
+                if index > 0 {
+                    self.update.selected = fields[index - 1];
+                }
             }
             KeyCode::Down => {
-                self.update.selected = match self.update.selected {
-                    0 => 1,
-                    1 if self.update.repository == UpdateRepositoryMode::Custom => 2,
-                    _ => 3,
-                };
+                let fields = UpdateField::visible_fields(self.update.repository);
+                let index = fields
+                    .iter()
+                    .position(|field| *field == self.update.selected)
+                    .unwrap_or(0);
+                self.update.selected = fields[(index + 1).min(fields.len() - 1)];
             }
-            KeyCode::Right if self.update.selected == 1 => self.update.change(true),
+            KeyCode::Right if self.update.selected == UpdateField::Repository => {
+                self.update.change(true)
+            }
             KeyCode::Enter | KeyCode::Char(' ') => match self.update.selected {
-                0 | 2 => self.update.editing = true,
-                1 => self.update.change(true),
-                3 => {
+                UpdateField::Version | UpdateField::RepositoryUrl => self.update.editing = true,
+                UpdateField::Repository => self.update.change(true),
+                UpdateField::Start => {
                     if let Err(error) = self.start_update_resolution() {
                         self.notice = error;
                     }
                 }
-                _ => {}
             },
             _ => return None,
         }
@@ -479,40 +541,18 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         lines.push(Line::styled(error.clone(), Style::default().fg(Color::Red)));
         lines.push(Line::raw(""));
     }
-    let rows: [(String, String, bool); 4] = [
-        (
-            crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
-            app.update.version.clone(),
-            true,
-        ),
-        (
-            crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
-            app.update
-                .repository
-                .label(app.update.current_source.as_ref()),
-            false,
-        ),
-        (
-            crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
-            app.update.repository_url.clone(),
-            true,
-        ),
-        (
-            String::new(),
-            crate::tr!(crate::keys::CONSOLE_UPDATE_BUTTON),
-            false,
-        ),
-    ];
-    for (index, (label, value, editable)) in rows.iter().enumerate() {
-        if index == 2 && app.update.repository != UpdateRepositoryMode::Custom {
+    for field in UpdateField::ALL {
+        if !field.visible(app.update.repository) {
             continue;
         }
+        let (label, value) = (field.label(), field.value(&app.update));
+        let editable = field.editable();
         app.hits.block_row(
             area,
             block_row_of(&lines, lines.len(), content_width),
-            Hit::UpdateField(index),
+            Hit::UpdateField(field),
         );
-        let selected = focused && app.update.selected == index;
+        let selected = focused && app.update.selected == field;
         let selected_style = if selected {
             Style::default()
                 .fg(Color::Black)
@@ -523,14 +563,14 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         };
         let value_style = if selected {
             selected_style
-        } else if index == 3 {
+        } else if field == UpdateField::Start {
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
-        let marker = if selected && app.update.editing && *editable {
+        let marker = if selected && app.update.editing && editable {
             "_"
         } else {
             ""
@@ -538,7 +578,7 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         let line = Line::from(vec![
             Span::styled(if selected { "> " } else { "  " }, selected_style),
             Span::styled(
-                display_pad(label, 17),
+                display_pad(&label, 17),
                 if selected {
                     selected_style
                 } else {

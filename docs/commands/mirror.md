@@ -2,7 +2,8 @@
 
 切换当前主机的 Linux 软件包管理器软件源（换源）。支持 apt（Debian/Ubuntu）、dnf/yum
 （Fedora、CentOS 7、CentOS Stream、Rocky、AlmaLinux）与 pacman（Arch Linux），预置
-清华 TUNA、阿里云、中科大 USTC 三个国内镜像和官方源恢复。
+清华 TUNA、阿里云、中科大 USTC 与六所大学镜像（南大 NJU、上交 SJTU、浙大 ZJU、
+兰大 LZU、北外 BFSU、华科 HUST）和官方源恢复。
 
 ```text
 lkit set-mirror <MIRROR> [--yes] [--replace-security]
@@ -12,7 +13,8 @@ lkit set-mirror --check
 lkit set-mirror --restore [--yes]
 ```
 
-`MIRROR` 为 `tuna`、`aliyun`、`ustc` 或 `official`。无参数且连接终端时进入交互选择：
+`MIRROR` 为 `tuna`、`aliyun`、`ustc`、`nju`、`sjtu`、`zju`、`lzu`、`bfsu`、`hust` 或
+`official`。无参数且连接终端时进入交互选择：
 先检测发行版，再列出可用镜像供选择，确认后执行。`--non-interactive` 且无参数时报参数
 使用错误（退出码 `2`）。
 
@@ -65,9 +67,9 @@ apt 换源先按源文件格式（one-line `sources.list` 与 deb822 `*.sources`
 - 不符合规范的行也尽力修复：一行里多出的 URL（重复粘贴、或误放在 components 位置）
   同样识别为 URI 一并重写，避免换源后"一半镜像一半官方"；缺 suites/components、
   括号不配对等无法安全猜测的行保持原样；
-- 除官方主机外，已识别的三个公共镜像（TUNA、阿里云、USTC）之间也可以互转：选择
-  其中一个时，另外两个镜像的 URL 会一并替换为所选镜像；自定义内网镜像等未识别主机
-  不受影响；
+- 除官方主机外，已识别的九个公共镜像（TUNA、阿里云、USTC、NJU、SJTU、ZJU、LZU、
+  BFSU、HUST）之间也可以互转：选择其中一个时，其余镜像的 URL 会一并替换为所选
+  镜像；自定义内网镜像等未识别主机不受影响；
 - Debian 的独立 security 仓库（`deb.debian.org/debian-security` 与
   `security.debian.org/debian-security`）默认**不替换**，保持官方源（安全补丁讲究
   时效，部分镜像站也不镜像 security）；需要一并替换时加 `--replace-security`。
@@ -102,8 +104,9 @@ dnf/yum 按仓库块（`[section]`）解析：
   映射到镜像的 `centos-stream`；Rocky：`dl.rockylinux.org/$contentdir`；AlmaLinux：
   `repo.almalinux.org/almalinux`；
 - 没有 `baseurl=` 的仓库块原样保留并计入跳过统计，避免把仓库改成空配置；
-- 自定义主机 URL 不受影响；已识别的三个公共镜像（TUNA、阿里云、USTC）之间可互转，
-  选择其中一个时另外两个的 URL 一并替换为所选镜像。
+- 自定义主机 URL 不受影响；已识别的九个公共镜像（TUNA、阿里云、USTC、NJU、SJTU、
+  ZJU、LZU、BFSU、HUST）之间可互转，选择其中一个时其余镜像的 URL 一并替换为所选
+  镜像。
 
 pacman 直接生成新的 `mirrorlist`：注释头说明来源，随后是单个选中的
 `Server = https://<镜像>/archlinux/$repo/os/$arch`（官方源使用
@@ -138,7 +141,7 @@ pacman 直接生成新的 `mirrorlist`：注释头说明来源，随后是单个
 ## 控制台入口
 
 交互控制台（裸 `lkit`）侧栏新增“Mirror（换源）”面板：进入面板时检测发行版并显示
-主机摘要，提供四个镜像选项与“恢复备份的原软件源”动作；Enter 打开居中确认层，Debian
+主机摘要，提供十个镜像选项与“恢复备份的原软件源”动作；Enter 打开居中确认层，Debian
 主机确认层内有一行默认不勾选的“同时替换 security 仓库”开关（Space/←/→ 切换，
 也可点击），确认后在控制台内同步执行（与 CLI 相同的备份、重写与恢复语义），结果写入
 底栏。面板不依赖 Landscape 安装状态，未安装或已安装均可使用。

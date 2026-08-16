@@ -29,7 +29,6 @@ pub(crate) const CONSOLE_CONFIRM_PASSWORD_HELP: &str = "console.confirm_password
 // TODO(network-takeover): 恢复网络接管开关时放开以下两个 key 及对应的 locale 条目。
 // pub(crate) const CONSOLE_NETWORK_TAKEOVER_HELP: &str = "console.network_takeover_help";
 pub(crate) const CONSOLE_START_INSTALLATION_HELP: &str = "console.start_installation_help";
-pub(crate) const CONSOLE_INSTALL_HELP_FALLBACK_DESC: &str = "console.install_help_fallback_desc";
 pub(crate) const CONSOLE_PASSWORD_CONFIRMATION_MISMATCH: &str =
     "console.password_confirmation_mismatch";
 pub(crate) const CONSOLE_INVALID_WAN_GATEWAY: &str = "console.invalid_wan_gateway";

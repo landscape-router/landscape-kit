@@ -384,6 +384,34 @@ mod tests {
     }
 
     #[test]
+    fn switches_between_university_mirrors() {
+        for (from, target) in [
+            (MirrorName::Tuna, MirrorName::Nju),
+            (MirrorName::Nju, MirrorName::Sjtu),
+            (MirrorName::Sjtu, MirrorName::Zju),
+            (MirrorName::Zju, MirrorName::Lzu),
+            (MirrorName::Lzu, MirrorName::Bfsu),
+            (MirrorName::Bfsu, MirrorName::Hust),
+            (MirrorName::Hust, MirrorName::Tuna),
+        ] {
+            let from_host = mirror_host(from).unwrap();
+            let target_host = mirror_host(target).unwrap();
+            let content = format!(
+                "[baseos]\nbaseurl=https://{from_host}/rockylinux/$releasever/BaseOS/$basearch/os/\n"
+            );
+            let rewritten = rewrite(&content, Family::Rocky, target).unwrap();
+            assert!(
+                rewritten.content.contains(&format!(
+                    "baseurl=https://{target_host}/rockylinux/$releasever/BaseOS/"
+                )),
+                "{from:?} -> {target:?}: {}",
+                rewritten.content
+            );
+            assert!(!rewritten.content.contains(from_host));
+        }
+    }
+
+    #[test]
     fn keeps_custom_hosts_when_switching_between_mirrors() {
         let content = concat!(
             "[baseos]\n",

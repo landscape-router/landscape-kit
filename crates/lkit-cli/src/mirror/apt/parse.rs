@@ -1026,6 +1026,30 @@ mod tests {
     }
 
     #[test]
+    fn switches_between_university_mirrors() {
+        // 六所大学镜像都在已识别主机列表内，可互相转换。
+        for (from, target) in [
+            (MirrorName::Tuna, MirrorName::Nju),
+            (MirrorName::Nju, MirrorName::Sjtu),
+            (MirrorName::Sjtu, MirrorName::Zju),
+            (MirrorName::Zju, MirrorName::Lzu),
+            (MirrorName::Lzu, MirrorName::Bfsu),
+            (MirrorName::Bfsu, MirrorName::Hust),
+            (MirrorName::Hust, MirrorName::Tuna),
+        ] {
+            let from_host = mirror_host(from).unwrap();
+            let target_host = mirror_host(target).unwrap();
+            let content = format!("deb https://{from_host}/debian bookworm main\n");
+            let rewritten = rewrite(&content, Family::Debian, target, false).unwrap();
+            assert!(
+                rewritten.contains(&format!("https://{target_host}/debian bookworm")),
+                "{from:?} -> {target:?}: {rewritten}"
+            );
+            assert!(!rewritten.contains(from_host));
+        }
+    }
+
+    #[test]
     fn switches_ports_before_main_path_between_mirrors() {
         let content = concat!(
             "deb http://mirrors.aliyun.com/ubuntu-ports noble main\n",

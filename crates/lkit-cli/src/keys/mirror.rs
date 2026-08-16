@@ -1,6 +1,12 @@
 pub(crate) const MIRROR_TUNA: &str = "mirror.tuna";
 pub(crate) const MIRROR_ALIYUN: &str = "mirror.aliyun";
 pub(crate) const MIRROR_USTC: &str = "mirror.ustc";
+pub(crate) const MIRROR_NJU: &str = "mirror.nju";
+pub(crate) const MIRROR_SJTU: &str = "mirror.sjtu";
+pub(crate) const MIRROR_ZJU: &str = "mirror.zju";
+pub(crate) const MIRROR_LZU: &str = "mirror.lzu";
+pub(crate) const MIRROR_BFSU: &str = "mirror.bfsu";
+pub(crate) const MIRROR_HUST: &str = "mirror.hust";
 pub(crate) const MIRROR_OFFICIAL: &str = "mirror.official";
 pub(crate) const FAMILY_DEBIAN: &str = "family.debian";
 pub(crate) const FAMILY_UBUNTU: &str = "family.ubuntu";

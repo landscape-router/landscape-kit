@@ -26,7 +26,6 @@ console.confirm_password_help = "Enter the administrator password again to preve
 # TODO(network-takeover): restore this entry together with the network takeover toggle.
 console.network_takeover_help = "Allow Landscape to manage the entire system's network. Enabling stops the NetworkManager and networking services. If you know how to handle conflicts between Landscape and NetworkManager/networking, you can turn this option off."
 console.start_installation_help = "Validate the form, leave the console, and start the installation using these settings."
-console.install_help_fallback_desc = "Configure the Landscape installation."
 console.password_confirmation_mismatch = "password confirmation does not match"
 console.invalid_wan_gateway = "invalid WAN gateway"
 console.invalid_lan_dhcp_range_start = "invalid LAN DHCP range start"

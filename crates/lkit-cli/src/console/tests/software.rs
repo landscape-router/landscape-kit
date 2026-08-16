@@ -68,11 +68,15 @@ fn software_panel_detection_failure_is_shown() {
 #[test]
 fn software_panel_up_down_clamps_at_single_row() {
     let mut app = software_ready_app();
-    assert_eq!(app.software.selected, 0);
+    assert_eq!(app.software.selected, Some(Software::Docker));
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.software.selected, 0, "only one software row");
+    assert_eq!(
+        app.software.selected,
+        Some(Software::Docker),
+        "only one software row"
+    );
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.software.selected, 0);
+    assert_eq!(app.software.selected, Some(Software::Docker));
 }
 
 #[test]
@@ -207,14 +211,14 @@ fn software_rows_are_mouse_clickable() {
     let row = (4..12).find_map(|row| {
         app.hits
             .hit_at(40, row)
-            .is_some_and(|hit| hit == Hit::SoftwareField(0))
+            .is_some_and(|hit| hit == Hit::SoftwareField(Software::Docker))
             .then_some(row)
     });
     let Some(row) = row else {
         panic!("no clickable software row found");
     };
     app.handle_mouse(mouse_click(40, row));
-    assert_eq!(app.software.selected, 0);
+    assert_eq!(app.software.selected, Some(Software::Docker));
     assert!(app.software.confirming.is_some());
 }
 

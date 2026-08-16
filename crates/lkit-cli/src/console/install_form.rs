@@ -17,9 +17,85 @@ use crate::interaction::credentials;
 use crate::network::config::NetworkPlan;
 
 // TODO(network-takeover): 处理完不同发行版网络服务差异后恢复网络接管开关:
-// `FORM_FIELDS` 改回 10,恢复下方被注释的字段 8 代码,并把
-// `InstallForm::default` 的 `takeover_network` 改回 false。
-pub(crate) const FORM_FIELDS: usize = 8;
+// 在 `InstallField::ALL` 中于 `PasswordConfirmation` 之后插入 `NetworkTakeover`
+// 变体(表单高度 `FORM_FIELDS` 自动加一),并把 `InstallForm::default` 的
+// `takeover_network` 改回 false。
+pub(crate) const FORM_FIELDS: usize = InstallField::ALL.len();
+
+/// 安装表单字段:声明顺序即表单次序,`StartInstallation` 恒为最后一个字段。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstallField {
+    Version,
+    Repository,
+    RepositoryUrl,
+    InstallRoot,
+    AdminUser,
+    Password,
+    PasswordConfirmation,
+    // TODO(network-takeover): 恢复网络接管开关时在此插入 NetworkTakeover。
+    StartInstallation,
+}
+
+impl InstallField {
+    pub(crate) const ALL: [Self; 8] = [
+        Self::Version,
+        Self::Repository,
+        Self::RepositoryUrl,
+        Self::InstallRoot,
+        Self::AdminUser,
+        Self::Password,
+        Self::PasswordConfirmation,
+        Self::StartInstallation,
+    ];
+
+    /// 该字段是否在表单中可见(仓库 URL 仅在 Custom 模式下显示)。
+    fn visible(self, repository: RepositoryMode) -> bool {
+        match self {
+            Self::RepositoryUrl => repository == RepositoryMode::Custom,
+            _ => true,
+        }
+    }
+
+    /// 当前模式下可见字段的有序列表(与渲染次序一致)。
+    fn visible_fields(repository: RepositoryMode) -> Vec<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|field| field.visible(repository))
+            .collect()
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::Version => crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
+            Self::Repository => crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
+            Self::RepositoryUrl => crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
+            Self::InstallRoot => crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_LABEL),
+            Self::AdminUser => crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
+            Self::Password => crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
+            Self::PasswordConfirmation => {
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL)
+            }
+            Self::StartInstallation => String::new(),
+        }
+    }
+
+    fn value(self, form: &InstallForm) -> String {
+        match self {
+            Self::Version => form.version.clone(),
+            Self::Repository => form.repository.label(),
+            Self::RepositoryUrl => form.repository_url.clone(),
+            Self::InstallRoot => form.install_dir.clone(),
+            Self::AdminUser => form.admin_user.clone(),
+            Self::Password => mask(&form.password),
+            Self::PasswordConfirmation => mask(&form.password_confirmation),
+            Self::StartInstallation => {
+                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON).into()
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RepositoryMode {
     Default,
@@ -62,7 +138,7 @@ pub(crate) struct InstallForm {
     pub(crate) password: String,
     pub(crate) password_confirmation: String,
     pub(crate) takeover_network: bool,
-    pub(crate) selected: usize,
+    pub(crate) selected: InstallField,
     pub(crate) checks_selected: bool,
     pub(crate) editing: bool,
 }
@@ -81,7 +157,7 @@ impl Default for InstallForm {
             // TODO(network-takeover): 开关暂隐藏且恒为 true,console 安装始终走网络接管;
             // 处理完不同发行版网络服务差异后恢复开关并把默认改回 false。
             takeover_network: true,
-            selected: 0,
+            selected: InstallField::Version,
             checks_selected: true,
             editing: false,
         }
@@ -93,113 +169,117 @@ impl InstallForm {
         if self.checks_selected {
             return;
         }
-        if self.selected == 0 {
+        let fields = InstallField::visible_fields(self.repository);
+        if self.selected == fields[0] {
             self.checks_selected = true;
             return;
         }
-        self.selected = self.selected.saturating_sub(1);
-        if self.selected == 2 && self.repository != RepositoryMode::Custom {
-            self.selected = 1;
-        }
+        let index = fields
+            .iter()
+            .position(|field| *field == self.selected)
+            .unwrap_or(0);
+        self.selected = fields[index.saturating_sub(1)];
     }
 
     pub(crate) fn select_next(&mut self) {
         if self.checks_selected {
             self.checks_selected = false;
-            self.selected = 0;
+            self.selected = InstallField::visible_fields(self.repository)[0];
             return;
         }
-        self.selected = (self.selected + 1).min(FORM_FIELDS - 1);
-        if self.selected == 2 && self.repository != RepositoryMode::Custom {
-            self.selected = 3;
-        }
+        let fields = InstallField::visible_fields(self.repository);
+        let index = fields
+            .iter()
+            .position(|field| *field == self.selected)
+            .unwrap_or(0);
+        self.selected = fields[(index + 1).min(fields.len() - 1)];
     }
 
     pub(crate) fn selected_help(&self) -> (String, String) {
         match self.selected {
-            0 => (
+            InstallField::Version => (
                 crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
                 crate::tr!(crate::keys::CONSOLE_VERSION_HELP),
             ),
-            1 => (
+            InstallField::Repository => (
                 crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
                 crate::tr!(crate::keys::CONSOLE_REPOSITORY_HELP),
             ),
-            2 => (
+            InstallField::RepositoryUrl => (
                 crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
                 crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_HELP),
             ),
-            3 => (
+            InstallField::InstallRoot => (
                 crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_LABEL),
                 crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_HELP),
             ),
-            4 => (
+            InstallField::AdminUser => (
                 crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
                 crate::tr!(crate::keys::CONSOLE_ADMIN_USER_HELP),
             ),
-            5 => (
+            InstallField::Password => (
                 crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
                 crate::tr!(crate::keys::CONSOLE_PASSWORD_HELP),
             ),
-            6 => (
+            InstallField::PasswordConfirmation => (
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_HELP),
             ),
-            // TODO(network-takeover): 恢复网络接管开关时,该字段回到索引 7,
-            // 开始安装回到索引 8,并放开下面被注释的接管 arm。
-            // 7 => (
+            // TODO(network-takeover): 恢复网络接管开关时放开下面被注释的接管 arm。
+            // InstallField::NetworkTakeover => (
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_HELP),
             // ),
-            7 => (
+            InstallField::StartInstallation => (
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_LABEL),
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_HELP),
-            ),
-            _ => (
-                crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
-                crate::tr!(crate::keys::CONSOLE_INSTALL_HELP_FALLBACK_DESC),
             ),
         }
     }
 
     pub(crate) fn editable_value_mut(&mut self) -> Option<&mut String> {
         match self.selected {
-            0 => Some(&mut self.version),
-            2 if self.repository == RepositoryMode::Custom => Some(&mut self.repository_url),
-            3 => Some(&mut self.install_dir),
-            4 => Some(&mut self.admin_user),
-            5 => Some(&mut self.password),
-            6 => Some(&mut self.password_confirmation),
+            InstallField::Version => Some(&mut self.version),
+            InstallField::RepositoryUrl if self.repository == RepositoryMode::Custom => {
+                Some(&mut self.repository_url)
+            }
+            InstallField::InstallRoot => Some(&mut self.install_dir),
+            InstallField::AdminUser => Some(&mut self.admin_user),
+            InstallField::Password => Some(&mut self.password),
+            InstallField::PasswordConfirmation => Some(&mut self.password_confirmation),
             _ => None,
         }
     }
 
     pub(crate) fn change_choice(&mut self, forward: bool) {
         match self.selected {
-            1 => self.repository.change(forward),
+            InstallField::Repository => self.repository.change(forward),
             // TODO(network-takeover): 恢复网络接管开关时放开:
-            // 7 => self.takeover_network = !self.takeover_network,
+            // InstallField::NetworkTakeover => self.takeover_network = !self.takeover_network,
             _ => {}
         }
     }
 
     pub(crate) fn activate(&mut self) -> Result<Option<ConsoleAction>, String> {
         match self.selected {
-            0 | 3 | 4 | 5 | 6 => {
+            InstallField::Version
+            | InstallField::InstallRoot
+            | InstallField::AdminUser
+            | InstallField::Password
+            | InstallField::PasswordConfirmation => {
                 self.editing = true;
                 Ok(None)
             }
-            2 if self.repository == RepositoryMode::Custom => {
+            InstallField::RepositoryUrl if self.repository == RepositoryMode::Custom => {
                 self.editing = true;
                 Ok(None)
             }
-            // TODO(network-takeover): 恢复网络接管开关时改回 `1 | 7 | 8`。
-            1 | 7 => {
+            InstallField::Repository => {
                 self.change_choice(true);
                 Ok(None)
             }
-            // TODO(network-takeover): 恢复网络接管开关时改回 `9`。
-            8 => self.command().map(Some),
+            // TODO(network-takeover): 恢复网络接管开关时在此加入接管切换 arm。
+            InstallField::StartInstallation => self.command().map(Some),
             _ => Ok(None),
         }
     }
@@ -309,36 +389,12 @@ pub(crate) fn render_install(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: 
 }
 pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let form = &app.install;
-    let values = [
-        form.version.clone(),
-        form.repository.label().into(),
-        form.repository_url.clone(),
-        form.install_dir.clone(),
-        form.admin_user.clone(),
-        mask(&form.password),
-        mask(&form.password_confirmation),
-        // TODO(network-takeover): 恢复网络接管开关时放开该行。
-        // if form.takeover_network { "[x]" } else { "[ ]" }.into(),
-        crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON).into(),
-    ];
-    let labels = [
-        crate::tr!(crate::keys::CONSOLE_VERSION_LABEL),
-        crate::tr!(crate::keys::CONSOLE_REPOSITORY_LABEL),
-        crate::tr!(crate::keys::CONSOLE_REPOSITORY_URL_LABEL),
-        crate::tr!(crate::keys::CONSOLE_INSTALL_ROOT_LABEL),
-        crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
-        crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
-        crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
-        // TODO(network-takeover): 恢复网络接管开关时放开该行。
-        // crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
-        String::new(),
-    ];
-    let mut form_rows: Vec<(usize, Line)> = Vec::new();
-    for (index, (label, value)) in labels.iter().zip(values).enumerate() {
-        if index == 2 && form.repository != RepositoryMode::Custom {
+    let mut form_rows: Vec<(InstallField, Line)> = Vec::new();
+    for field in InstallField::ALL {
+        if !field.visible(form.repository) {
             continue;
         }
-        let selected = app.focus == Focus::Panel && !form.checks_selected && form.selected == index;
+        let selected = app.focus == Focus::Panel && !form.checks_selected && form.selected == field;
         let selected_style = if selected {
             Style::default()
                 .fg(Color::Black)
@@ -349,7 +405,7 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
         };
         let value_style = if selected {
             selected_style
-        } else if index == 8 {
+        } else if field == InstallField::StartInstallation {
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD)
@@ -359,21 +415,21 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
         let line = Line::from(vec![
             Span::styled(if selected { "> " } else { "  " }, selected_style),
             Span::styled(
-                display_pad(label, 17),
+                display_pad(&field.label(), 17),
                 if selected {
                     selected_style
                 } else {
                     Style::default().fg(Color::DarkGray)
                 },
             ),
-            Span::styled(value, value_style),
+            Span::styled(field.value(form), value_style),
             Span::styled(
                 if selected && form.editing { "_" } else { "" },
                 selected_style,
             ),
         ]);
         form_rows.push((
-            index,
+            field,
             if selected {
                 line.style(Style::default().bg(Color::Cyan))
             } else {
@@ -383,11 +439,11 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
     }
     let content_width = area.width.saturating_sub(2);
     let lines: Vec<Line> = form_rows.iter().map(|(_, line)| line.clone()).collect();
-    for (row, (index, _)) in form_rows.iter().enumerate() {
+    for (row, (field, _)) in form_rows.iter().enumerate() {
         app.hits.block_row(
             area,
             block_row_of(&lines, row, content_width),
-            Hit::InstallField(*index),
+            Hit::InstallField(*field),
         );
     }
     frame.render_widget(

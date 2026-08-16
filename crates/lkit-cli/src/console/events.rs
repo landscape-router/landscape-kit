@@ -1,8 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::install_form::InstallField;
+use super::mirror::MirrorRow;
 use super::network_wizard::{NetworkWizard, WizardStep};
 use super::preflight::{GateState, PreflightState};
-use super::reinit::ReinitStep;
+use super::reinit::{ReinitField, ReinitStep};
 use super::widgets::{Focus, Hit, Menu};
 use super::{ConsoleAction, ConsoleApp, ExitState};
 
@@ -212,7 +214,7 @@ impl ConsoleApp {
                 if self.menu() == Menu::Install {
                     if self.install.checks_selected {
                         self.preflight.expanded = true;
-                    } else if self.install.selected == 8 {
+                    } else if self.install.selected == InstallField::StartInstallation {
                         match self.preflight_gate() {
                             GateState::None => {
                                 if self.install.takeover_network {
@@ -336,38 +338,38 @@ impl ConsoleApp {
                 self.focus = Focus::Panel;
                 self.install.checks_selected = true;
                 self.install.editing = false;
-                self.install.selected = 0;
+                self.install.selected = InstallField::Version;
                 None
             }
-            Hit::InstallField(index) => {
+            Hit::InstallField(field) => {
                 self.focus = Focus::Panel;
                 self.install.checks_selected = false;
                 self.install.editing = false;
-                self.install.selected = index;
+                self.install.selected = field;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
-            Hit::UpdateField(index) => {
+            Hit::UpdateField(field) => {
                 self.focus = Focus::Panel;
                 self.update.editing = false;
-                self.update.selected = index;
+                self.update.selected = field;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
-            Hit::MirrorField(index) => {
+            Hit::MirrorField(mirror) => {
                 self.focus = Focus::Panel;
-                self.mirror.selected = index;
+                self.mirror.selected = MirrorRow::Mirror(mirror);
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::MirrorRestore => {
                 self.focus = Focus::Panel;
-                self.mirror.selected = 4;
+                self.mirror.selected = MirrorRow::Restore;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::MirrorSecurityToggle => {
                 self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
             }
-            Hit::SoftwareField(index) => {
+            Hit::SoftwareField(software) => {
                 self.focus = Focus::Panel;
-                self.software.selected = index;
+                self.software.selected = Some(software);
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::SoftwareSourceToggle => {
@@ -377,10 +379,10 @@ impl ConsoleApp {
                 self.focus = Focus::Panel;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
-            Hit::ReinitField(index) => {
+            Hit::ReinitField(field) => {
                 self.focus = Focus::Panel;
-                if self.reinit.step == ReinitStep::Credentials && index < 3 {
-                    self.reinit.selected = index;
+                if self.reinit.step == ReinitStep::Credentials && field != ReinitField::Start {
+                    self.reinit.selected = field;
                     self.reinit.editing = true;
                 }
                 None

@@ -2,7 +2,12 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use unicode_width::UnicodeWidthChar;
 
+use super::install_form::InstallField;
 use super::network_wizard::WanMode;
+use super::reinit::ReinitField;
+use super::update::UpdateField;
+use crate::mirror::MirrorName;
+use crate::software::Software;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Menu {
@@ -70,24 +75,24 @@ pub(crate) enum Hit {
     Menu(usize),
     /// 安装面板“环境检查”行。
     InstallChecks,
-    /// 安装面板表单行(索引与 `InstallForm.selected` 一致)。
-    InstallField(usize),
+    /// 安装面板表单行。
+    InstallField(InstallField),
     /// 更新面板表单行。
-    UpdateField(usize),
-    /// 换源面板镜像行（0..4）。
-    MirrorField(usize),
+    UpdateField(UpdateField),
+    /// 换源面板镜像行。
+    MirrorField(MirrorName),
     /// 换源面板“恢复备份”动作行。
     MirrorRestore,
     /// 换源确认层：security 替换开关行。
     MirrorSecurityToggle,
-    /// 软件面板软件行（索引与 `Software::all()` 对齐）。
-    SoftwareField(usize),
+    /// 软件面板软件行。
+    SoftwareField(Software),
     /// 软件确认层：来源切换行。
     SoftwareSourceToggle,
     /// 卸载面板“执行卸载”动作行。
     UninstallAction,
-    /// reinit 面板:可编辑凭据行(0=admin 用户,1=密码)。
-    ReinitField(usize),
+    /// reinit 面板:可编辑凭据行。
+    ReinitField(ReinitField),
     /// reinit 面板:开始/执行动作行(视为 Enter)。
     ReinitAction,
     /// 备份面板行:0 为“创建备份”,其余为备份条目。

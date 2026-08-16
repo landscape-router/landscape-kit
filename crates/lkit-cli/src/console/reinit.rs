@@ -18,6 +18,48 @@ pub(crate) enum ReinitStep {
     Credentials,
 }
 
+/// reinit 凭据步骤的焦点行:三个可编辑字段 + 执行动作行。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReinitField {
+    AdminUser,
+    Password,
+    PasswordConfirmation,
+    Start,
+}
+
+impl ReinitField {
+    pub(crate) const ALL: [Self; 4] = [
+        Self::AdminUser,
+        Self::Password,
+        Self::PasswordConfirmation,
+        Self::Start,
+    ];
+
+    fn editable(self) -> bool {
+        !matches!(self, Self::Start)
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::AdminUser => crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
+            Self::Password => crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
+            Self::PasswordConfirmation => {
+                crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL)
+            }
+            Self::Start => String::new(),
+        }
+    }
+
+    fn value(self, panel: &ReinitPanel) -> String {
+        match self {
+            Self::AdminUser => panel.admin_user.clone(),
+            Self::Password => super::render::mask(&panel.password),
+            Self::PasswordConfirmation => super::render::mask(&panel.password_confirmation),
+            Self::Start => String::new(),
+        }
+    }
+}
+
 /// 重新初始化面板：展示适用性说明与版本摘要，向导收集网络计划，凭据表单收集
 /// 新 admin 用户与密码（两次输入确认，与 install 面板一致），确认层说明清空范围与
 /// 确认窗口后分发结构化 `Reinit` 请求。
@@ -28,7 +70,7 @@ pub(crate) struct ReinitPanel {
     pub(crate) admin_user: String,
     pub(crate) password: String,
     pub(crate) password_confirmation: String,
-    pub(crate) selected: usize,
+    pub(crate) selected: ReinitField,
     pub(crate) editing: bool,
     pub(crate) confirming: bool,
 }
@@ -42,7 +84,7 @@ impl Default for ReinitPanel {
             admin_user: "admin".into(),
             password: String::new(),
             password_confirmation: String::new(),
-            selected: 0,
+            selected: ReinitField::AdminUser,
             editing: false,
             confirming: false,
         }
@@ -70,10 +112,10 @@ pub(crate) fn reinit_eligible(app: &ConsoleApp) -> bool {
 impl ReinitPanel {
     fn editable_value_mut(&mut self) -> Option<&mut String> {
         match self.selected {
-            0 => Some(&mut self.admin_user),
-            1 => Some(&mut self.password),
-            2 => Some(&mut self.password_confirmation),
-            _ => None,
+            ReinitField::AdminUser => Some(&mut self.admin_user),
+            ReinitField::Password => Some(&mut self.password),
+            ReinitField::PasswordConfirmation => Some(&mut self.password_confirmation),
+            ReinitField::Start => None,
         }
     }
 
@@ -140,14 +182,21 @@ impl ConsoleApp {
             },
             ReinitStep::Credentials => match key.code {
                 KeyCode::Up => {
-                    self.reinit.selected = 0;
+                    self.reinit.selected = ReinitField::AdminUser;
                 }
                 KeyCode::Down => {
-                    self.reinit.selected = (self.reinit.selected + 1).min(3);
+                    let fields = ReinitField::ALL;
+                    let index = fields
+                        .iter()
+                        .position(|field| *field == self.reinit.selected)
+                        .unwrap_or(0);
+                    self.reinit.selected = fields[(index + 1).min(fields.len() - 1)];
                 }
                 KeyCode::Enter | KeyCode::Char(' ') => match self.reinit.selected {
-                    0..=2 => self.reinit.editing = true,
-                    3 => {
+                    ReinitField::AdminUser
+                    | ReinitField::Password
+                    | ReinitField::PasswordConfirmation => self.reinit.editing = true,
+                    ReinitField::Start => {
                         if self.reinit.plan.is_none() {
                             self.notice = crate::tr!(crate::keys::CONSOLE_REINIT_PLAN_MISSING);
                             return Some(None);
@@ -158,7 +207,6 @@ impl ConsoleApp {
                         }
                         self.reinit.confirming = true;
                     }
-                    _ => {}
                 },
                 _ => return None,
             },
@@ -248,36 +296,30 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
             }),
         ));
     } else {
-        let rows = [
-            crate::tr!(crate::keys::CONSOLE_ADMIN_USER_LABEL),
-            crate::tr!(crate::keys::CONSOLE_PASSWORD_LABEL),
-            crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
-        ];
-        for (index, label) in rows.iter().enumerate() {
+        for field in ReinitField::ALL {
+            if !field.editable() {
+                continue;
+            }
             let row_index = lines.len();
             if focused {
                 app.hits.add(
                     block_row_area(area, &lines, row_index),
-                    Hit::ReinitField(index),
+                    Hit::ReinitField(field),
                 );
             }
-            let value = match index {
-                0 => app.reinit.admin_user.clone(),
-                1 => super::render::mask(&app.reinit.password),
-                _ => super::render::mask(&app.reinit.password_confirmation),
-            };
-            let cursor = if focused && app.reinit.selected == index {
+            let value = field.value(&app.reinit);
+            let cursor = if focused && app.reinit.selected == field {
                 if app.reinit.editing {
                     format!("{value}▍")
                 } else {
-                    format!("> {label}: {value}")
+                    format!("> {label}: {value}", label = field.label())
                 }
             } else {
-                format!("  {label}: {value}")
+                format!("  {label}: {value}", label = field.label())
             };
             lines.push(Line::styled(
                 cursor,
-                Style::default().add_modifier(if focused && app.reinit.selected == index {
+                Style::default().add_modifier(if focused && app.reinit.selected == field {
                     Modifier::REVERSED
                 } else {
                     Modifier::empty()
@@ -311,17 +353,19 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         lines.push(Line::styled(
             format!(
                 "{} {execute}",
-                if focused && app.reinit.selected == 3 {
+                if focused && app.reinit.selected == ReinitField::Start {
                     ">"
                 } else {
                     " "
                 }
             ),
-            Style::default().add_modifier(if focused && app.reinit.selected == 3 {
-                Modifier::REVERSED | Modifier::BOLD
-            } else {
-                Modifier::BOLD
-            }),
+            Style::default().add_modifier(
+                if focused && app.reinit.selected == ReinitField::Start {
+                    Modifier::REVERSED | Modifier::BOLD
+                } else {
+                    Modifier::BOLD
+                },
+            ),
         ));
     }
     frame.render_widget(

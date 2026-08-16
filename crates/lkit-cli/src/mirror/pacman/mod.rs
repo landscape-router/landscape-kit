@@ -13,6 +13,12 @@ fn mirror_host(mirror: MirrorName) -> &'static str {
         MirrorName::Tuna => "mirrors.tuna.tsinghua.edu.cn",
         MirrorName::Aliyun => "mirrors.aliyun.com",
         MirrorName::Ustc => "mirrors.ustc.edu.cn",
+        MirrorName::Nju => "mirror.nju.edu.cn",
+        MirrorName::Sjtu => "mirror.sjtu.edu.cn",
+        MirrorName::Zju => "mirrors.zju.edu.cn",
+        MirrorName::Lzu => "mirror.lzu.edu.cn",
+        MirrorName::Bfsu => "mirrors.bfsu.edu.cn",
+        MirrorName::Hust => "mirrors.hust.edu.cn",
         MirrorName::Official => "geo.mirror.pkgbuild.com",
     }
 }
@@ -122,6 +128,30 @@ mod tests {
         assert!(
             mirrorlist_content(MirrorName::Ustc)
                 .contains("Server = https://mirrors.ustc.edu.cn/archlinux/$repo/os/$arch")
+        );
+        assert!(
+            mirrorlist_content(MirrorName::Nju)
+                .contains("Server = https://mirror.nju.edu.cn/archlinux/$repo/os/$arch")
+        );
+        assert!(
+            mirrorlist_content(MirrorName::Sjtu)
+                .contains("Server = https://mirror.sjtu.edu.cn/archlinux/$repo/os/$arch")
+        );
+        assert!(
+            mirrorlist_content(MirrorName::Zju)
+                .contains("Server = https://mirrors.zju.edu.cn/archlinux/$repo/os/$arch")
+        );
+        assert!(
+            mirrorlist_content(MirrorName::Lzu)
+                .contains("Server = https://mirror.lzu.edu.cn/archlinux/$repo/os/$arch")
+        );
+        assert!(
+            mirrorlist_content(MirrorName::Bfsu)
+                .contains("Server = https://mirrors.bfsu.edu.cn/archlinux/$repo/os/$arch")
+        );
+        assert!(
+            mirrorlist_content(MirrorName::Hust)
+                .contains("Server = https://mirrors.hust.edu.cn/archlinux/$repo/os/$arch")
         );
         assert!(
             mirrorlist_content(MirrorName::Official)

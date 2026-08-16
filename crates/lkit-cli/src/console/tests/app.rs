@@ -1,3 +1,4 @@
+use super::super::install_form::InstallField;
 use super::super::*;
 use super::super::{network_wizard::WizardStep, update::*, widgets::*};
 use super::support::*;
@@ -115,7 +116,7 @@ fn language_key_remains_text_while_editing() {
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.install.checks_selected = false;
-    app.install.selected = 0;
+    app.install.selected = InstallField::Version;
     app.install.editing = true;
     app.install.version.clear();
 
@@ -505,7 +506,7 @@ fn update_menu_is_only_available_when_installed() {
 fn start_update_validates_before_background_resolution() {
     let mut app = update_ready_app();
     app.update.version = "nightly".into();
-    app.update.selected = 3;
+    app.update.selected = UpdateField::Start;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
         app.update.resolving.is_none(),
@@ -516,7 +517,7 @@ fn start_update_validates_before_background_resolution() {
     let mut app = update_ready_app();
     app.update.repository = UpdateRepositoryMode::Custom;
     app.update.repository_url = "not a url".into();
-    app.update.selected = 3;
+    app.update.selected = UpdateField::Start;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.update.resolving.is_none());
     assert!(!app.notice.is_empty());
@@ -526,7 +527,7 @@ fn start_update_validates_before_background_resolution() {
         .join(format!("lkit-console-update-{}", std::process::id()))
         .display()
         .to_string();
-    app.update.selected = 3;
+    app.update.selected = UpdateField::Start;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
         app.update.resolving.is_some(),
