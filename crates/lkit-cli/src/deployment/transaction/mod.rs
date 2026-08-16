@@ -6,6 +6,7 @@ pub(crate) mod validation;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -487,6 +488,30 @@ pub(crate) fn persist(
     write_transaction(root, transaction)
 }
 
+/// 终端事务属于其他根的旧历史(uninstall 保留 committed/rolled_back/failed 记录,
+/// 或曾安装在其他根上)时,新根的扫描应当跳过而不是当作损坏。
+fn is_foreign_terminal_transaction(path: &Path, root: &InstallRoot) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let Some(phase) = value.get("phase").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    if !matches!(phase, "committed" | "rolled_back" | "failed") {
+        return false;
+    }
+    match value
+        .get("canonical_install_root")
+        .and_then(|value| value.as_str())
+    {
+        Some(canonical) => Path::new(canonical) != root.canonical,
+        None => false,
+    }
+}
+
 pub(crate) fn find_unfinished(root: &InstallRoot) -> Result<Option<TransactionFile>, InstallError> {
     let dir = layout::territory_transactions_dir();
     let entries = match std::fs::read_dir(&dir) {
@@ -498,6 +523,9 @@ pub(crate) fn find_unfinished(root: &InstallRoot) -> Result<Option<TransactionFi
         let entry = entry.map_err(InstallError::Io)?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if is_foreign_terminal_transaction(&path, root) {
             continue;
         }
         let transaction = load_transaction_file(root, &path)?;
@@ -523,6 +551,9 @@ pub(crate) fn find_committed_operation(
         let entry = entry.map_err(InstallError::Io)?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if is_foreign_terminal_transaction(&path, root) {
             continue;
         }
         let transaction = load_transaction_file(root, &path)?;
@@ -642,6 +673,24 @@ mod tests {
             begin(&root, &second),
             Err(InstallError::BlockedByTransaction(_))
         ));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn ignores_terminal_transactions_of_other_roots() {
+        let (_guard, territory, root) = setup("foreign");
+        let foreign_root = new_root(&root.join("previous"));
+        let root = new_root(&root);
+        let transaction = install_transaction(&foreign_root);
+        begin(&foreign_root, &transaction).unwrap();
+        mark_phase(&foreign_root, &transaction, Phase::Committed).unwrap();
+        assert!(find_unfinished(&root).unwrap().is_none());
+        assert!(
+            find_committed_operation(&root, Operation::Uninstall)
+                .unwrap()
+                .is_none()
+        );
+        assert!(find_unfinished(&foreign_root).unwrap().is_none());
         let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 }
