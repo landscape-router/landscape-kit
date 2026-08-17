@@ -262,7 +262,7 @@ fn run_ip(ip_command: &Path, args: &[&str]) -> Result<Vec<u8>, InstallError> {
     Ok(output.stdout)
 }
 
-fn is_physical_ethernet(name: &str, path: &Path) -> Result<bool, InstallError> {
+pub(crate) fn is_physical_ethernet(name: &str, path: &Path) -> Result<bool, InstallError> {
     if name == "lo" || path.join("wireless").exists() || path.join("phy80211").exists() {
         return Ok(false);
     }

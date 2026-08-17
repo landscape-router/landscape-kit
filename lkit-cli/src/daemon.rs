@@ -12,6 +12,8 @@
 //!    (L2 防失联通道)服务端,`[flare]` 段缺失或无 psk 时生成随机 psk 并持久化;
 //!    每周期对比配置指纹,变更时重启 flare 任务拾取新配置。网络接管失败等
 //!    IP 路径不可用时,操作员仍可经 L2 通道连接(见 [`reload_flare`])。
+//!    网卡 DOWN 时 L2 通道无法收发帧,故 daemon 启动、托管 flare 之前会尽力
+//!    拉起所有物理以太网卡(见 [`crate::network::ifup`]),失败只记录不阻断。
 //!
 //! daemon 全局唯一,固定读取 lkit 地盘(`/root/.lkit/`):pidfile 写入
 //! [`layout::territory_pidfile`](crate::deployment::layout::territory_pidfile),
@@ -74,6 +76,12 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     )
     .map_err(InstallError::Io)?;
     write_pidfile(&pidfile)?;
+
+    // flare 的 L2 防失联通道依赖链路层收发帧:网卡 DOWN 时即使 flare 服务端
+    // 在运行也无法交换帧。托管 flare 之前尽力拉起所有物理以太网卡(失败只
+    // 记录日志,不阻断 daemon 启动)。
+    #[cfg(target_os = "linux")]
+    crate::network::ifup::bring_up_physical_interfaces(&runtime.sys_class_net, &runtime.ip_command);
 
     // daemon 恒常托管 Landscape Terrain 服务端(L2 防失联通道)。daemon 退出时
     // drop shutdown 发送端,task 收到关闭通知后优雅退出。

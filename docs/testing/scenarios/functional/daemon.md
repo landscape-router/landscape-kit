@@ -41,6 +41,21 @@
   daemon 作为其触发者与 CLI 复用同一代码路径，daemon 侧的完整失败切换现场
   （activating 阶段 + `.lkb` 配置级回滚）待补充。
 
+## DAE-05
+
+**daemon 启动时尽力拉起所有物理以太网卡，保证 flare L2 防失联通道可用**
+
+- 测试层：Rust 单元测试（`network::ifup`，临时 sysfs 目录 + 假 `ip` 命令）
+- 状态：`已覆盖（单元）`
+- 证据：[flare 协议](../../flare/protocol.md#部署形态)、`lkit-cli/src/network/ifup.rs`
+- 缺口：真实网卡上的行为（对 DOWN 的物理网卡执行 `ip link set dev <name> up`）
+  未纳入 fixture E2E
+- 说明：网卡 DOWN 时 flare 服务端即使运行也无法收发帧，恢复通道失效。daemon
+  启动、托管 flare 之前枚举 `/sys/class/net`，对处于 DOWN 状态的物理以太网卡
+  执行 `ip link set dev <name> up`；跳过 loopback、无线与虚拟设备，无 MAC
+  （`address` 缺失或为空）的网卡也跳过；已 UP 的网卡不发命令；任何失败只
+  记录日志，不阻断 daemon 启动。
+
 ## 委托端到端链路（worker）覆盖现状
 
 `daemon_worker` 的委托请求链路（CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
