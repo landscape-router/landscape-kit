@@ -29,18 +29,19 @@ lkit set-mirror --restore [--yes]
 | --- | --- |
 | Debian | `<镜像>/debian/dists/<代号>/Release` |
 | Ubuntu | `<镜像>/ubuntu/dists/<代号>/Release`（ports 架构走 `/ubuntu-ports/...`） |
-| Fedora | `<镜像>/fedora/linux/releases/<主版本>/Everything/<架构>/os/repodata/repomd.xml`（即换源后实际写入的 URL；部分镜像站如 USTC 用 301 兼容该路径） |
+| Fedora | `<镜像>/fedora/linux/releases/<主版本>/Everything/<架构>/os/repodata/repomd.xml` 与 `<镜像>/fedora/releases/<主版本>/...`（官方树带 `linux` 段，阿里云/腾讯云/清华 TUNA 等国内站无该段，两种布局任一命中即可；部分镜像站如 USTC 用 301 兼容官方路径） |
 | Rocky、AlmaLinux | `<镜像>/rockylinux|<镜像>/almalinux/<主版本>/BaseOS/<架构>/os/repodata/repomd.xml` |
 | Arch | `<镜像>/archlinux/core/os/<架构>/core.db` |
 
 探测结果分三档：
 
 - **可用**：命中 2xx/3xx（重定向已跟随），正常可换；
-- **不可用**：明确 404，说明该镜像没有镜像当前发行版——交互选择与控制台面板中
-  置灰（删除线）且不可选中，导航自动跳过；**显式指定该镜像时直接拒绝**并提示，
-  不修改任何文件；
-- **未知**：网络失败/超时/TLS 异常/403（如 WAF 拦截）等无法确认的情况——仍可选择，
-  但确认（CLI 的 `yes` 确认前 / 控制台确认层）会额外显示一行警告，提示换源可能失败。
+- **不可用**：全部探测目标都明确 404，说明该镜像没有镜像当前发行版——交互选择与
+  控制台面板中置灰（删除线）且不可选中，导航自动跳过；**显式指定该镜像时直接拒绝**
+  并提示，不修改任何文件；
+- **未知**：网络失败/超时/TLS 异常/403（如 WAF 拦截）等无法确认的情况，或候选
+  探测目标中混有未知结果（如一个布局 404、另一个超时）——仍可选择，但确认
+  （CLI 的 `yes` 确认前 / 控制台确认层）会额外显示一行警告，提示换源可能失败。
 
 `--list` 在每个镜像后标注 `[可用]`/`[不可用]`/`[未知]`。探测是只读网络操作，
 不需要 root；结果在面板会话内缓存，重复进入不重新探测。离线时全部镜像按"未知"
