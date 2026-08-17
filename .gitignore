@@ -3,6 +3,9 @@
 debug
 target
 
+# Offline .deb packages for the flare e2e image (fetched by fetch-packages.sh)
+scripts/docker/flare/packages/
+
 # Python bytecode
 __pycache__
 *.pyc

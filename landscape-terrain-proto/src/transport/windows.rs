@@ -46,9 +46,7 @@ impl Link {
                         .find(|d| !d.flags.is_loopback())
                         .map(|d| d.name)
                 })
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, "no non-loopback device")
-                })?;
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no non-loopback device"))?;
             vec![name]
         } else {
             devs.to_vec()
@@ -155,10 +153,7 @@ impl Link {
     }
 
     /// Wait for a frame with the given ethertype.
-    pub async fn recv(
-        &mut self,
-        ethertype: u16,
-    ) -> Result<Frame, Box<dyn std::error::Error>> {
+    pub async fn recv(&mut self, ethertype: u16) -> Result<Frame, Box<dyn std::error::Error>> {
         let (f, _) = self.recv_with_meta(ethertype).await?;
         Ok(f)
     }
@@ -204,9 +199,7 @@ fn spawn_reader(
                     Ok(pkt) => {
                         idle = false;
                         if let Some(f) = Frame::from_raw(&pkt.data) {
-                            if f.ethertype == ethertype
-                                && local_mac.is_none_or(|m| f.src != m)
-                            {
+                            if f.ethertype == ethertype && local_mac.is_none_or(|m| f.src != m) {
                                 if tx.blocking_send((f, i as i32)).is_err() {
                                     return;
                                 }

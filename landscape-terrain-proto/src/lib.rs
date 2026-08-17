@@ -1,6 +1,6 @@
 //! Landscape proto: the shared layer-2 protocol stack.
 //!
-//! - `protocol`: LNDP frame encoding/decoding and the client/server session
+//! - `protocol`: Terrain frame encoding/decoding and the client/server session
 //!   state machines;
 //! - `transport`: ethernet frame parsing plus the platform link layer
 //!   (Linux AF_PACKET, elsewhere libpcap), exposed as an async `Link`;

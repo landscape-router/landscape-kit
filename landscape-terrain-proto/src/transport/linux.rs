@@ -123,10 +123,11 @@ impl Link {
             }
         }
         for idx in &ifindexes {
-            if *idx != 0 && !macs.contains_key(idx) {
-                if let Ok(m) = read_mac_from_ifindex(*idx) {
-                    macs.insert(*idx, m);
-                }
+            if *idx != 0
+                && !macs.contains_key(idx)
+                && let Ok(m) = read_mac_from_ifindex(*idx)
+            {
+                macs.insert(*idx, m);
             }
         }
         let macs = Arc::new(Mutex::new(macs));
@@ -159,7 +160,12 @@ impl Link {
             return name;
         }
         self.names
-            .get(self.ifindexes.iter().position(|&i| i == ifindex).unwrap_or(0))
+            .get(
+                self.ifindexes
+                    .iter()
+                    .position(|&i| i == ifindex)
+                    .unwrap_or(0),
+            )
             .cloned()
             .unwrap_or_else(|| format!("#{ifindex}"))
     }
@@ -258,10 +264,7 @@ impl Link {
     }
 
     /// Wait for a frame with the given ethertype.
-    pub async fn recv(
-        &mut self,
-        ethertype: u16,
-    ) -> Result<Frame, Box<dyn std::error::Error>> {
+    pub async fn recv(&mut self, ethertype: u16) -> Result<Frame, Box<dyn std::error::Error>> {
         let (f, _) = self.recv_with_meta(ethertype).await?;
         Ok(f)
     }
@@ -310,7 +313,13 @@ fn spawn_reader(
             })
             .collect();
         loop {
-            let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, POLL_INTERVAL_MS) };
+            let n = unsafe {
+                libc::poll(
+                    pfds.as_mut_ptr(),
+                    pfds.len() as libc::nfds_t,
+                    POLL_INTERVAL_MS,
+                )
+            };
             if n < 0 {
                 if io::Error::last_os_error().kind() == ErrorKind::Interrupted {
                     continue;
@@ -402,7 +411,10 @@ fn default_interface() -> io::Result<String> {
             return Ok(name);
         }
     }
-    Err(io::Error::new(ErrorKind::NotFound, "no network interface found"))
+    Err(io::Error::new(
+        ErrorKind::NotFound,
+        "no network interface found",
+    ))
 }
 
 fn ifname_from_ifindex(ifindex: i32) -> io::Result<String> {

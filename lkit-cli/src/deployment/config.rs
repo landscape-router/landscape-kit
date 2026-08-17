@@ -40,6 +40,38 @@ pub(crate) struct UiSection {
     pub language: Option<String>,
 }
 
+fn default_device_name() -> String {
+    "landscape-router".to_string()
+}
+
+fn default_ethertype() -> u16 {
+    0x88B6
+}
+
+fn default_forward_ports() -> String {
+    "22,6443".to_string()
+}
+
+/// `[flare]` 配置段:daemon 托管的 Landscape Terrain 服务端(L2 防失联通道)。
+/// 宽容读取:段缺失或损坏时 daemon 不启动 flare 服务,不影响其它功能。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub(crate) struct FlareSection {
+    #[serde(default)]
+    pub psk: Option<String>,
+    #[serde(default = "default_device_name")]
+    pub device_name: String,
+    #[serde(default)]
+    pub mac: Option<String>,
+    #[serde(default)]
+    pub devices: Option<String>,
+    #[serde(default = "default_ethertype")]
+    pub ethertype: u16,
+    #[serde(default = "default_forward_ports")]
+    pub forward_ports: String,
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
 /// 安装根目录顶层的用户可编辑配置文件。
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ConfigFile {
@@ -47,6 +79,8 @@ pub(crate) struct ConfigFile {
     pub repository: RepositorySource,
     #[serde(default)]
     pub ui: Option<UiSection>,
+    #[serde(default)]
+    pub flare: Option<FlareSection>,
 }
 
 /// 读取仓库来源配置。文件不存在时返回 `Ok(None)`,调用方按官方 GitHub 默认处理;
@@ -125,6 +159,15 @@ pub(crate) fn load_language() -> Option<Language> {
         .as_ref()
         .and_then(|ui| ui.language.as_deref())
         .and_then(Language::from_code)
+}
+
+/// 读取 `[flare]` 配置段。宽容读取:文件缺失、TOML 损坏或段缺失时一律返回
+/// `None`,由 daemon 决定不启动 flare 服务,绝不阻断 daemon 主循环。
+pub(crate) fn load_flare() -> Option<FlareSection> {
+    let path = layout::territory_config_file();
+    let text = std::fs::read_to_string(&path).ok()?;
+    let config: ConfigFile = toml::from_str(&text).ok()?;
+    config.flare
 }
 
 /// 把语言预设写回 `config.toml` 的 `[ui] language`。只有交互控制台按 `L` 切换语言时

@@ -2,13 +2,13 @@ mod client;
 
 use clap::Parser;
 use client::{ClientConfig, Forward};
-use landscape_proto::cli::{parse_devs, parse_ethertype, parse_forward, parse_mac};
+use landscape_terrain_proto::cli::{parse_devs, parse_ethertype, parse_forward, parse_mac};
 
 #[derive(Parser)]
-#[command(name = "lndp-client", about = "Connect to a Landscape Router over layer-2")]
+#[command(name = "lflare", about = "Connect to a Landscape Router over layer-2")]
 struct Cli {
     /// Shared secret used for challenge-response authentication; when
-    /// omitted, the LNDP_PSK environment variable is used
+    /// omitted, the LANDSCAPE_FLARE_PSK environment variable is used
     #[arg(long, value_name = "SECRET")]
     psk: Option<String>,
 
@@ -49,10 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let psk = match cli.psk {
         Some(p) => p,
-        None => std::env::var("LNDP_PSK").map_err(|_| {
+        None => std::env::var("LANDSCAPE_FLARE_PSK").map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "--psk or the LNDP_PSK environment variable is required",
+                "--psk or the LANDSCAPE_FLARE_PSK environment variable is required",
             )
         })?,
     };
@@ -61,8 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => Vec::new(),
     };
     if devs.iter().any(|d| d == "any") {
-        return Err("client cannot run on 'any' (all interfaces), specify one device with --dev"
-            .into());
+        return Err(
+            "client cannot run on 'any' (all interfaces), specify one device with --dev".into(),
+        );
     }
     if devs.len() > 1 {
         return Err("client runs on a single device, --dev accepts one device".into());

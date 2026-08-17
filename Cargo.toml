@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "lkit-cli",
+    "landscape-flare",
+    "landscape-terrain-proto",
     "crates/lkit-hostnet",
     "crates/lkit-publish",
     "crates/lkit-repository",
@@ -19,8 +21,9 @@ axum = "0.8"
 axum-server = "0.8"
 aws-config = "1"
 aws-sdk-s3 = "1"
+chacha20poly1305 = "0.10.1"
 chrono = "0.4"
-clap = "4.6.5"
+clap = "4.6.6"
 crossterm = "0.29"
 dotenvy = "0.15.7"
 flate2 = "1"
@@ -29,16 +32,21 @@ glob = "0.3.4"
 libc = "0.2"
 lkit-repository = { path = "crates/lkit-repository" }
 lkit-test-fixture = { path = "crates/lkit-test-fixture" }
+mac_address = "1.1.8"
+pcap = "2.4.0"
+rand = "0.10.2"
 ratatui = { version = "0.30.2", default-features = false }
 rcgen = "0.14"
 reqwest = { version = "0.12", default-features = false }
 rust-i18n = "4.2.1"
 rustls = "0.23"
+scrypt = "0.11"
 semver = "1"
 serde = "1"
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 shell-words = "1"
+smoltcp = { version = "0.12", features = ["medium-ip", "proto-ipv4", "socket-tcp"] }
 tar = "0.4"
 thiserror = "2"
 tokio = "1.53.1"

@@ -1,7 +1,7 @@
-//! Userspace IP/TCP stack (smoltcp) bridged over the LNDP link.
+//! Userspace IP/TCP stack (smoltcp) bridged over the Terrain link.
 //!
 //! Every process runs one `IpStack` (the server keeps one per authenticated
-//! peer). IP packets travel inside LNDP DATA frames between the two stacks; a
+//! peer). IP packets travel inside Terrain DATA frames between the two stacks; a
 //! fixed point-to-point /31 keeps each pair isolated:
 //!
 //! - client: `10.13.0.1`
@@ -10,7 +10,7 @@
 //! TCP connections between the stacks ride on internal port [`INTERNAL_PORT`];
 //! the first two bytes of each stream carry the target port (big endian) the
 //! server should dial on `127.0.0.1`. Reliability, ordering, connection
-//! setup and teardown are all handled by smoltcp's TCP — the LNDP layer only
+//! setup and teardown are all handled by smoltcp's TCP — the Terrain layer only
 //! carries raw IP packets.
 //!
 //! No virtual network interface is created: the device is a pure in-memory
@@ -67,17 +67,27 @@ struct TxTokenImpl<'a> {
 }
 
 impl Device for LndpDevice {
-    type RxToken<'a> = RxTokenImpl
+    type RxToken<'a>
+        = RxTokenImpl
     where
         Self: 'a;
-    type TxToken<'a> = TxTokenImpl<'a>
+    type TxToken<'a>
+        = TxTokenImpl<'a>
     where
         Self: 'a;
 
-    fn receive(&mut self, _timestamp: SmolInstant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        self.rx_queue
-            .pop_front()
-            .map(|pkt| (RxTokenImpl(pkt), TxTokenImpl { queue: &mut self.tx_queue }))
+    fn receive(
+        &mut self,
+        _timestamp: SmolInstant,
+    ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+        self.rx_queue.pop_front().map(|pkt| {
+            (
+                RxTokenImpl(pkt),
+                TxTokenImpl {
+                    queue: &mut self.tx_queue,
+                },
+            )
+        })
     }
 
     fn transmit(&mut self, _timestamp: SmolInstant) -> Option<Self::TxToken<'_>> {
@@ -139,13 +149,13 @@ impl IpStack {
         }
     }
 
-    /// Feed an IP packet received over the LNDP link into the stack.
+    /// Feed an IP packet received over the Terrain link into the stack.
     pub fn push_packet(&mut self, bytes: &[u8]) {
         self.device.rx_queue.push_back(bytes.to_vec());
     }
 
     /// Run the stack (timers, TCP state machines, ingress/egress) and return
-    /// the outbound IP packets that must be sent over the LNDP link.
+    /// the outbound IP packets that must be sent over the Terrain link.
     pub fn poll(&mut self) -> Vec<Vec<u8>> {
         let _ = self
             .iface
@@ -200,7 +210,11 @@ impl IpStack {
     /// If the listener accepted a connection, move it out of the listener and
     /// return `(established_handle, new_listener_handle)` so more connections
     /// can be accepted.
-    pub fn accept(&mut self, listener: SocketHandle, port: u16) -> Option<(SocketHandle, SocketHandle)> {
+    pub fn accept(
+        &mut self,
+        listener: SocketHandle,
+        port: u16,
+    ) -> Option<(SocketHandle, SocketHandle)> {
         if !self.socket(listener).is_open() {
             return None;
         }

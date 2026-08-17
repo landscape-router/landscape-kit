@@ -1,4 +1,4 @@
-//! Shared CLI argument parsers for the lndp-client and lndp-server binaries.
+//! Shared CLI argument parsers for the landscape-flare client and the lkit flare server binaries.
 
 /// Parse `--ethertype`: hex (`0x88b6`) or decimal, restricted to the local
 /// experimental range 0x88B5-0x88B7 used by Landscape.
@@ -8,7 +8,7 @@ pub fn parse_ethertype(s: &str) -> Result<u16, String> {
         None => (s, 10),
     };
     let v = u16::from_str_radix(raw, radix).map_err(|_| format!("invalid ethertype: '{s}'"))?;
-    if !matches!(v, 0x88B5 | 0x88B6 | 0x88B7) {
+    if !(0x88B5..=0x88B7).contains(&v) {
         return Err(format!(
             "ethertype 0x{v:04x} is not a local experimental ethertype (must be 0x88B5-0x88B7)"
         ));
@@ -49,9 +49,9 @@ pub fn parse_devs(s: &str) -> Result<Vec<String>, String> {
 /// Parse a `--forward` value: `LOCAL:DST` (listen on local port LOCAL,
 /// forward to the server's 127.0.0.1:DST).
 pub fn parse_forward(s: &str) -> Result<(u16, u16), String> {
-    let (local, dst) = s.split_once(':').ok_or_else(|| {
-        format!("invalid forward '{s}' (expected LOCAL_PORT:DST_PORT)")
-    })?;
+    let (local, dst) = s
+        .split_once(':')
+        .ok_or_else(|| format!("invalid forward '{s}' (expected LOCAL_PORT:DST_PORT)"))?;
     let local = local
         .trim()
         .parse::<u16>()
@@ -89,8 +89,14 @@ mod tests {
 
     #[test]
     fn mac_parsing() {
-        assert_eq!(parse_mac("aa:bb:cc:dd:ee:ff").unwrap(), [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
-        assert_eq!(parse_mac("AA-BB-CC-DD-EE-01").unwrap(), [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01]);
+        assert_eq!(
+            parse_mac("aa:bb:cc:dd:ee:ff").unwrap(),
+            [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
+        );
+        assert_eq!(
+            parse_mac("AA-BB-CC-DD-EE-01").unwrap(),
+            [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01]
+        );
         assert!(parse_mac("aa:bb:cc:dd:ee").is_err());
         assert!(parse_mac("xx:bb:cc:dd:ee:ff").is_err());
     }

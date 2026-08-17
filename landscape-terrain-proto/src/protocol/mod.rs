@@ -2,9 +2,9 @@ pub mod crypto;
 pub mod frame;
 pub mod session;
 
-/// Magic value "LNDP" = Landscape Net Data Protocol.
+/// Magic value "TERR" = Landscape Terrain Protocol.
 /// First 4 bytes of every frame payload; unknown frames are dropped at parse time.
-pub const MAGIC: u32 = 0x4C4E4450;
+pub const MAGIC: u32 = 0x54455252;
 /// v5: the psk is stretched into a master key with scrypt at startup, and
 /// every derivation (pre-discovery, handshake, session keys and auth
 /// proofs) feeds on the master key; DISCOVER carries a 12-byte nonce so the

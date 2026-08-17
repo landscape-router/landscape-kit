@@ -1,10 +1,10 @@
-//! Live and offline capture/decode helpers, used by `lndp-server sniff`.
+//! Live and offline capture/decode helpers, used by `lkit flare sniff`.
 
 use std::error::Error;
 use std::time::Instant;
 
-use landscape_proto::protocol;
-use landscape_proto::transport::{fmt_mac, Frame, Link};
+use landscape_terrain_proto::protocol;
+use landscape_terrain_proto::transport::{Frame, Link, fmt_mac};
 
 pub fn filter_expr(ethertype: u16) -> String {
     format!("ether proto {:#x}", ethertype)
@@ -25,7 +25,7 @@ pub async fn run_live(link: &mut Link, ethertype: u16) -> Result<(), Box<dyn Err
             Ok((f, ifindex)) => {
                 total += 1;
                 parse_and_print(&f, Some(&link.ifname(ifindex)));
-                if total % 50 == 0 {
+                if total.is_multiple_of(50) {
                     println!(
                         "[stats] {} packets, {:.1}s elapsed",
                         total,
@@ -47,12 +47,11 @@ pub fn run_offline(
     loop {
         match cap.next_packet() {
             Ok(pkt) => {
-                if let Some(f) = Frame::from_raw(&pkt.data) {
-                    if f.ethertype == ethertype {
+                if let Some(f) = Frame::from_raw(pkt.data)
+                    && f.ethertype == ethertype {
                         total += 1;
                         parse_and_print(&f, None);
                     }
-                }
             }
             Err(pcap::Error::TimeoutExpired) => continue,
             Err(_) => break,
@@ -79,7 +78,7 @@ pub fn parse_and_print(f: &Frame, dev: Option<&str>) {
     );
     match protocol::frame::decode(&f.payload) {
         Ok(l) => println!(
-            "{prefix}    LNDP v{} type={}(0x{:02x}) session=0x{:08x} seq={} payload={}B{}",
+            "{prefix}    Terrain v{} type={}(0x{:02x}) session=0x{:08x} seq={} payload={}B{}",
             protocol::VERSION,
             protocol::frame::type_name(l.msg_type),
             l.msg_type,
@@ -102,6 +101,6 @@ pub fn parse_and_print(f: &Frame, dev: Option<&str>) {
                 ""
             }
         ),
-        Err(e) => println!("{prefix}    not an LNDP frame: {e}"),
+        Err(e) => println!("{prefix}    not a Terrain frame: {e}"),
     }
 }

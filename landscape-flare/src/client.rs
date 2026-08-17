@@ -1,18 +1,18 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
-use landscape_proto::ipstack::{
+use landscape_terrain_proto::ipstack::{
     CLIENT_ADDR, INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg,
 };
-use landscape_proto::protocol::crypto::{Dir, MasterKey, SessionCrypto, SessionKeys};
-use landscape_proto::protocol::frame;
-use landscape_proto::protocol::session::{
+use landscape_terrain_proto::protocol::crypto::{Dir, MasterKey, SessionCrypto, SessionKeys};
+use landscape_terrain_proto::protocol::frame;
+use landscape_terrain_proto::protocol::session::{
     ClientPhase, ClientSession, HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, MAX_RETRIES,
 };
-use landscape_proto::protocol::{
+use landscape_terrain_proto::protocol::{
     TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_KEEPALIVE, TYPE_RESP, TYPE_TEARDOWN,
 };
-use landscape_proto::transport::{Frame, Link, fmt_mac};
+use landscape_terrain_proto::transport::{Frame, Link, fmt_mac};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -185,11 +185,11 @@ async fn handshake(
             continue;
         };
         let server_mac = resp_frame.src;
-        let resp_lndp = frame::decode(&resp_frame.payload)?;
+        let resp_proto = frame::decode(&resp_frame.payload)?;
         // Opening the RESP proves the server holds the psk, and the echoed
         // discover_id proves it answers this very attempt: everything else
         // is a rogue or a replay.
-        let Some((resp, auth_req)) = sess.on_resp(&resp_lndp, cfg.user, master) else {
+        let Some((resp, auth_req)) = sess.on_resp(&resp_proto, cfg.user, master) else {
             println!("  response failed server authentication, rediscovering");
             continue;
         };
@@ -230,8 +230,8 @@ async fn handshake(
             println!("  auth timeout, rediscovering");
             continue;
         };
-        let auth_lndp = frame::decode(&auth_frame.payload)?;
-        sess.on_auth_frame(&auth_lndp, master);
+        let auth_proto = frame::decode(&auth_frame.payload)?;
+        sess.on_auth_frame(&auth_proto, master);
         if sess.session_id().is_some() {
             return Ok(Some(server_mac));
         }
@@ -264,7 +264,7 @@ fn warn_unadvertised_ports(advertised: &[u16], forwards: &[Forward]) {
 }
 
 /// Block until a frame satisfying `pred` arrives, or the deadline passes.
-/// The predicate sees the full transport frame (src MAC + LNDP header).
+/// The predicate sees the full transport frame (src MAC + Terrain header).
 async fn recv_until(
     tx: &mut Link,
     ethertype: u16,

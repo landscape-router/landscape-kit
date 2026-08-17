@@ -2,16 +2,18 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use landscape_proto::ipstack::{INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg};
-use landscape_proto::protocol::crypto::{
+use landscape_terrain_proto::ipstack::{
+    INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg,
+};
+use landscape_terrain_proto::protocol::crypto::{
     Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SessionCrypto,
 };
-use landscape_proto::protocol::frame;
-use landscape_proto::protocol::session::{self, ServerSession, VerifyResult};
-use landscape_proto::protocol::{
+use landscape_terrain_proto::protocol::frame;
+use landscape_terrain_proto::protocol::session::{self, ServerSession, VerifyResult};
+use landscape_terrain_proto::protocol::{
     TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN,
 };
-use landscape_proto::transport::{Link, fmt_mac};
+use landscape_terrain_proto::transport::{Link, fmt_mac};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -193,7 +195,10 @@ impl AuthGuard {
     }
 }
 
-pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    cfg: &ServerConfig<'_>,
+    shutdown: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if cfg.psk.len() < 12 {
         eprintln!(
             "warning: psk is only {} chars — it is stretched with scrypt at startup, but prefer a long random secret over a passphrase",
@@ -216,7 +221,7 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
     println!(
         "server '{}' ready on {} (ethertype 0x{:04x}, forward ports: {})",
         cfg.device_name,
-        devs_display(&tx.names()),
+        devs_display(tx.names()),
         cfg.ethertype,
         cfg.forward_ports
             .iter()
@@ -228,10 +233,16 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
     let mut poll_timer = tokio::time::interval(POLL_INTERVAL);
     let mut sweep_timer = tokio::time::interval(SWEEP_INTERVAL);
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-    let sig = tokio::spawn(async move {
-        wait_for_shutdown().await;
-        let _ = shutdown_tx.send(());
-    });
+    let sig = match shutdown {
+        Some(rx) => tokio::spawn(async move {
+            let _ = rx.await;
+            let _ = shutdown_tx.send(());
+        }),
+        None => tokio::spawn(async move {
+            wait_for_shutdown().await;
+            let _ = shutdown_tx.send(());
+        }),
+    };
     loop {
         tokio::select! {
             biased;
@@ -415,11 +426,10 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                                 println!("unauthentic auth frame from {} ({reason})", fmt_mac(&mac));
                             }
                         }
-                        if drop_peer {
-                            if let Some(mut peer) = peers.remove(&mac) {
+                        if drop_peer
+                            && let Some(mut peer) = peers.remove(&mac) {
                                 teardown_peer(&mut peer);
                             }
-                        }
                     }
                     TYPE_KEEPALIVE => {
                         let Some(peer) = peers.get_mut(&mac) else {
@@ -465,17 +475,15 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                     }
                     TYPE_TEARDOWN => {
                         let mut drop_peer = false;
-                        if let Some(peer) = peers.get_mut(&mac) {
-                            if peer.sess.session_id() == Some(l.session_id) {
-                                if let Some(crypto) = peer.crypto.as_mut() {
+                        if let Some(peer) = peers.get_mut(&mac)
+                            && peer.sess.session_id() == Some(l.session_id)
+                                && let Some(crypto) = peer.crypto.as_mut() {
                                     if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
                                         drop_peer = true;
                                     } else if !fail_allow(&mut fail_rate, &mac) {
                                         continue;
                                     }
                                 }
-                            }
-                        }
                         if drop_peer {
                             println!("client {} sent teardown, dropping session", fmt_mac(&mac));
                             if let Some(mut peer) = peers.remove(&mac) {
@@ -491,8 +499,8 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                 }
             }
             Some(((mac, h), msg)) = to_rx.recv() => {
-                if let Some(peer) = peers.get_mut(&mac) {
-                    if peer.conns.contains_key(&h) {
+                if let Some(peer) = peers.get_mut(&mac)
+                    && peer.conns.contains_key(&h) {
                         match msg {
                             StackMsg::Data(b) => peer.pending_tx.entry(h).or_default().push_back(b),
                             StackMsg::Close => {
@@ -502,16 +510,14 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                             }
                         }
                     }
-                }
             }
             _ = poll_timer.tick() => {
                 let macs: Vec<[u8; 6]> = peers.keys().copied().collect();
                 for mac in macs {
-                    if let Some(peer) = peers.get_mut(&mac) {
-                        if let Some(sid) = peer.sess.session_id() {
+                    if let Some(peer) = peers.get_mut(&mac)
+                        && let Some(sid) = peer.sess.session_id() {
                             pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid)?;
                         }
-                    }
                 }
             }
             _ = sweep_timer.tick() => {
@@ -525,12 +531,11 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
                     .map(|(m, _)| *m)
                     .collect();
                 for mac in stale {
-                    if let Some(peer) = peers.get_mut(&mac) {
-                        if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
+                    if let Some(peer) = peers.get_mut(&mac)
+                        && let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
                             let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
                             let _ = tx.send_on(peer.ifindex, &mac, cfg.ethertype, &raw);
                         }
-                    }
                     if let Some(mut peer) = peers.remove(&mac) {
                         teardown_peer(&mut peer);
                         println!("  peer {} timed out, dropped", fmt_mac(&mac));
@@ -546,21 +551,18 @@ pub async fn run(cfg: &ServerConfig<'_>) -> Result<(), Box<dyn std::error::Error
     // The loop is synchronous (fast sendto syscalls), but bound it anyway:
     // a wedged driver must not hold the exit hostage.
     let peers_left = peers.len();
-    let notified = tokio::time::timeout(
-        Duration::from_secs(2),
-        async {
-            let mut n = 0;
-            for (mac, peer) in peers.iter_mut() {
-                if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
-                    let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
-                    if tx.send_on(peer.ifindex, mac, cfg.ethertype, &raw).is_ok() {
-                        n += 1;
-                    }
+    let notified = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut n = 0;
+        for (mac, peer) in peers.iter_mut() {
+            if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
+                let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
+                if tx.send_on(peer.ifindex, mac, cfg.ethertype, &raw).is_ok() {
+                    n += 1;
                 }
             }
-            n
-        },
-    )
+        }
+        n
+    })
     .await
     .unwrap_or(0);
     println!("server shutdown, {notified}/{peers_left} peer(s) notified");
@@ -634,8 +636,8 @@ fn pump_peer(
         return Ok(());
     };
 
-    if let Some(listener) = peer.listener {
-        if let Some((h, new_listener)) = stack.accept(listener, INTERNAL_PORT) {
+    if let Some(listener) = peer.listener
+        && let Some((h, new_listener)) = stack.accept(listener, INTERNAL_PORT) {
             peer.listener = Some(new_listener);
             let (from_tx, from_rx) = mpsc::channel(512);
             peer.conns.insert(h, ServerConn { from_tx });
@@ -647,7 +649,6 @@ fn pump_peer(
                 peer.allowed.clone(),
             ));
         }
-    }
 
     for pkt in stack.poll() {
         let raw = crypto.seal(TYPE_DATA, sid, &pkt);
@@ -815,10 +816,12 @@ mod tests {
 
     #[test]
     fn auth_guard_window_resets_stale_failures() {
-        let mut g = AuthGuard::default();
         // Failures older than the window must not accumulate.
-        g.window_start = Some(Instant::now() - AUTH_WINDOW - Duration::from_secs(1));
-        g.fails = MAX_AUTH_FAILS - 1;
+        let mut g = AuthGuard {
+            window_start: Some(Instant::now() - AUTH_WINDOW - Duration::from_secs(1)),
+            fails: MAX_AUTH_FAILS - 1,
+            ..AuthGuard::default()
+        };
         g.record_failure();
         assert_eq!(g.fails, 1);
         assert!(!g.blocked());

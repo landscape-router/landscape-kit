@@ -71,6 +71,10 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     .map_err(InstallError::Io)?;
     write_pidfile(&pidfile)?;
 
+    // `[flare]` 配置段存在时,daemon 托管 Landscape Terrain 服务端(L2 防失联
+    // 通道)。daemon 退出时 drop shutdown 发送端,task 收到关闭通知后优雅退出。
+    let flare_shutdown = spawn_flare();
+
     unsafe {
         let handler: extern "C" fn(libc::c_int) = handle_termination;
         libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
@@ -93,8 +97,42 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
             break;
         }
     }
+    drop(flare_shutdown);
     let _ = std::fs::remove_file(&pidfile);
     Ok(())
+}
+
+/// 按 `[flare]` 配置段启动 flare 服务端,返回 shutdown 发送端供 daemon 退出时
+/// 触发优雅关闭。配置缺失、无 psk 或非 Linux 平台时返回 `None`(不启动)。
+#[cfg(target_os = "linux")]
+fn spawn_flare() -> Option<tokio::sync::oneshot::Sender<()>> {
+    let section = crate::deployment::config::load_flare()?;
+    let psk = section.psk.as_deref()?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut args = crate::commands::flare::ServeArgs {
+        psk: Some(psk.to_string()),
+        device_name: section.device_name,
+        mac: None,
+        dev: section.devices.unwrap_or_else(|| "any".to_string()),
+        ethertype: section.ethertype,
+        forward_ports: section.forward_ports,
+        token: section.token,
+    };
+    if let Some(mac) = section.mac.as_deref() {
+        args.mac = landscape_terrain_proto::cli::parse_mac(mac).ok();
+    }
+    tokio::spawn(async move {
+        if let Err(error) = crate::commands::flare::run_serve(&args, Some(rx)).await {
+            eprintln!("lkit daemon: flare server failed: {error}");
+        }
+    });
+    Some(tx)
+}
+
+/// 非 Linux 平台不提供 flare 服务。
+#[cfg(not(target_os = "linux"))]
+fn spawn_flare() -> Option<tokio::sync::oneshot::Sender<()>> {
+    None
 }
 
 /// 扫描并执行委托请求。请求文件由 CLI 写入

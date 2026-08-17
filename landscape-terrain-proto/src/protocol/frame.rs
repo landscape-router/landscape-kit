@@ -25,7 +25,7 @@ impl fmt::Display for FrameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FrameError::TooShort => write!(f, "frame shorter than header"),
-            FrameError::BadMagic => write!(f, "bad magic, not an LNDP frame"),
+            FrameError::BadMagic => write!(f, "bad magic, not a Terrain frame"),
             FrameError::BadVersion => write!(f, "unsupported protocol version"),
             FrameError::BadPayload => write!(f, "malformed payload"),
             FrameError::BadUtf8 => write!(f, "non-utf8 string in payload"),
@@ -71,7 +71,12 @@ pub fn decode(data: &[u8]) -> Result<Frame<'_>, FrameError> {
 
 /// The 16-byte frame header. Session frames use it as the AEAD associated
 /// data, so any tampering with the header is detected at decrypt time.
-pub fn encode_header(msg_type: u8, session_id: u32, seq: u32, payload_len: u16) -> [u8; HEADER_LEN] {
+pub fn encode_header(
+    msg_type: u8,
+    session_id: u32,
+    seq: u32,
+    payload_len: u16,
+) -> [u8; HEADER_LEN] {
     let mut buf = [0u8; HEADER_LEN];
     buf[0..4].copy_from_slice(&MAGIC.to_be_bytes());
     buf[4] = VERSION;
@@ -87,7 +92,12 @@ pub fn encode_header(msg_type: u8, session_id: u32, seq: u32, payload_len: u16) 
 /// KEEPALIVE or TEARDOWN.
 pub fn encode(msg_type: u8, session_id: u32, seq: u32, payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(HEADER_LEN + payload.len());
-    buf.extend_from_slice(&encode_header(msg_type, session_id, seq, payload.len() as u16));
+    buf.extend_from_slice(&encode_header(
+        msg_type,
+        session_id,
+        seq,
+        payload.len() as u16,
+    ));
     buf.extend_from_slice(payload);
     buf
 }
@@ -217,12 +227,12 @@ pub struct AuthReq {
     pub user: String,
     /// Client nonce for the mutual challenge.
     pub nonce: u64,
-    /// sha256("lndp-auth-c2s" || psk || server_nonce || client_nonce)
+    /// sha256("terrain-auth-c2s" || psk || server_nonce || client_nonce)
     pub proof: [u8; 32],
 }
 
 /// AUTH_REQ plaintext payload: user name + client nonce + proof
-/// (sha256("lndp-auth-c2s" || psk || server_nonce || client_nonce)).
+/// (sha256("terrain-auth-c2s" || psk || server_nonce || client_nonce)).
 /// The wire frame is the payload sealed with the handshake keys.
 pub fn encode_auth_req_payload(user: &str, nonce: u64, proof: &[u8; 32]) -> Vec<u8> {
     let mut p = Vec::new();
@@ -245,7 +255,7 @@ pub fn decode_auth_req_payload(payload: &[u8]) -> Result<AuthReq, FrameError> {
 }
 
 /// AUTH_ACK plaintext payload: the server's proof of psk knowledge
-/// (sha256("lndp-auth-s2c" || psk || server_nonce || client_nonce));
+/// (sha256("terrain-auth-s2c" || psk || server_nonce || client_nonce));
 /// the session id is carried in the frame header. The wire frame is the
 /// payload sealed with the handshake keys.
 pub fn encode_auth_ack_payload(server_proof: &[u8; 32]) -> Vec<u8> {
@@ -290,9 +300,24 @@ mod tests {
     #[test]
     fn roundtrip_all_messages() {
         let frames = [
-            encode(TYPE_DISCOVER, 0, 0, &encode_discover_payload(7, "pc-a", None)),
-            encode(TYPE_DISCOVER, 0, 0, &encode_discover_payload(8, "pc-b", Some("landscape-token"))),
-            encode(TYPE_RESP, 0, 0, &encode_resp_payload(9, "landscape-router", &[22, 6443])),
+            encode(
+                TYPE_DISCOVER,
+                0,
+                0,
+                &encode_discover_payload(7, "pc-a", None),
+            ),
+            encode(
+                TYPE_DISCOVER,
+                0,
+                0,
+                &encode_discover_payload(8, "pc-b", Some("landscape-token")),
+            ),
+            encode(
+                TYPE_RESP,
+                0,
+                0,
+                &encode_resp_payload(9, "landscape-router", &[22, 6443]),
+            ),
             encode_auth_nack("bad token"),
         ];
         for raw in frames {

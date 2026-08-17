@@ -54,10 +54,17 @@ scripts under `scripts/`, never in unit tests.
 
 ## Project Layout
 
-- `lkit-cli/` — the `lkit` binary crate (the shipped executable).
+- `lkit-cli/` — the `lkit` binary crate (the shipped executable); hosts the flare server
+  (`src/flare/`, wired as the `lkit flare serve|sniff` subcommand and the daemon `[flare]`
+  config section).
+- `landscape-terrain-proto/` — the Terrain L2 protocol library (publishable crate, own
+  version line; wire magic `TERR`, crypto labels `terrain-*`).
+- `landscape-flare/` — the L2 client crate; binary `lflare` / `lflare.exe` (Linux
+  AF_PACKET, Windows libpcap; `vendor/npcap-sdk/` is tracked).
 - `crates/` — internal Cargo workspace library members: `lkit-hostnet`, `lkit-publish`, `lkit-repository`, `lkit-test-fixture`.
 - `docs/` — specifications and design documents at the repository root (moved from `lkit-cli/docs`).
-- `scripts/` — integration test scripts.
+- `scripts/` — integration test scripts (flare e2e: `scripts/test-flare.sh` +
+  `scripts/docker/flare/`).
 
 ## Documentation
 

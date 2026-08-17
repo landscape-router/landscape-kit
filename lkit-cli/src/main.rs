@@ -6,6 +6,7 @@ mod console;
 mod daemon;
 mod daemon_worker;
 mod deployment;
+mod flare;
 mod i18n;
 mod interaction;
 mod keys;
@@ -158,6 +159,7 @@ async fn run_command(
         Commands::Software(args) => commands::software::run(&args),
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
         Commands::Self_(args) => commands::lkit_self::run(&args).await,
+        Commands::Flare(args) => commands::flare::run(&args).await,
         Commands::Daemon(args) => daemon::run(&args).await,
     }
 }

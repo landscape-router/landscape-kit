@@ -116,7 +116,10 @@ mod tests {
 
         let owned = frame.to_owned();
         assert_eq!(owned.payload, vec![1, 2, 3]);
-        assert_eq!(Frame::from_raw(&raw).expect("owned").src, [0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+        assert_eq!(
+            Frame::from_raw(&raw).expect("owned").src,
+            [0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]
+        );
     }
 
     #[test]

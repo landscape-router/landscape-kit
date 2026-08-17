@@ -1,0 +1,47 @@
+name: Test flare e2e
+
+on:
+  push:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - landscape-flare/**
+      - landscape-terrain-proto/**
+      - lkit-cli/**
+      - scripts/docker/flare/**
+      - scripts/test-flare.sh
+      - .github/workflows/test-flare.yml
+      - .github/workflows/test-rust.yml
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - landscape-flare/**
+      - landscape-terrain-proto/**
+      - lkit-cli/**
+      - scripts/docker/flare/**
+      - scripts/test-flare.sh
+      - .github/workflows/test-flare.yml
+      - .github/workflows/test-rust.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flare-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Flare L2 e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build workspace
+        run: cargo build --locked --workspace
+      - name: Run flare e2e
+        run: scripts/test-flare.sh

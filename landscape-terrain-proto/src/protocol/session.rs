@@ -11,12 +11,12 @@ pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 pub const MAX_RETRIES: u32 = 5;
 pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Client->server proof: sha256("lndp-auth-c2s" || master || s_nonce || c_nonce).
+/// Client->server proof: sha256("terrain-auth-c2s" || master || s_nonce || c_nonce).
 pub fn auth_proof_c2s(master: &MasterKey, s_nonce: u64, c_nonce: u64) -> [u8; 32] {
     auth_proof(AUTH_LABEL_C2S, master.as_bytes(), s_nonce, c_nonce)
 }
 
-/// Server->client proof: sha256("lndp-auth-s2c" || master || s_nonce || c_nonce).
+/// Server->client proof: sha256("terrain-auth-s2c" || master || s_nonce || c_nonce).
 /// The client verifies it, so the server must know the psk too (mutual auth).
 pub fn auth_proof_s2c(master: &MasterKey, s_nonce: u64, c_nonce: u64) -> [u8; 32] {
     auth_proof(AUTH_LABEL_S2C, master.as_bytes(), s_nonce, c_nonce)
@@ -140,18 +140,20 @@ impl ClientSession {
                         server_nonce,
                         client_nonce,
                         hkey,
-                    } => hkey.open_frame(Dir::S2C, HS_AUTH_ACK, frame).and_then(|plain| {
-                        let server_proof = frame::decode_auth_ack_payload(&plain).ok()?;
-                        (ct_eq(
-                            &server_proof,
-                            &auth_proof_s2c(master, *server_nonce, *client_nonce),
-                        ))
-                        .then_some(SessionKeys::derive(
-                            master,
-                            *server_nonce,
-                            *client_nonce,
-                        ))
-                    }),
+                    } => hkey
+                        .open_frame(Dir::S2C, HS_AUTH_ACK, frame)
+                        .and_then(|plain| {
+                            let server_proof = frame::decode_auth_ack_payload(&plain).ok()?;
+                            (ct_eq(
+                                &server_proof,
+                                &auth_proof_s2c(master, *server_nonce, *client_nonce),
+                            ))
+                            .then_some(SessionKeys::derive(
+                                master,
+                                *server_nonce,
+                                *client_nonce,
+                            ))
+                        }),
                     _ => None,
                 };
                 match opened {
@@ -216,10 +218,7 @@ pub enum VerifyResult {
     /// auth attempt, so it counts toward the per-MAC lockout. Carries the
     /// handshake keys so the caller can seal the AUTH_NACK (the sender
     /// necessarily holds them too).
-    Rejected {
-        reason: String,
-        hkey: HandshakeKeys,
-    },
+    Rejected { reason: String, hkey: HandshakeKeys },
     /// A frame that failed to even open (wrong tag) or was malformed: not
     /// an auth attempt at all. It does not count toward lockout and the
     /// pending nonce is preserved, so a MAC-spoofed garbage frame can
@@ -554,7 +553,10 @@ mod tests {
         let nack_raw = sealed_nack("locked out for 59s", master(), s_nonce);
         let nack = frame::decode(&nack_raw).unwrap();
         client.on_auth_frame(&nack, master());
-        assert_eq!(client.phase, ClientPhase::Rejected("locked out for 59s".into()));
+        assert_eq!(
+            client.phase,
+            ClientPhase::Rejected("locked out for 59s".into())
+        );
     }
 
     #[test]

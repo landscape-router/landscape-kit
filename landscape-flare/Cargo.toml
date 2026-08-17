@@ -1,9 +1,13 @@
 [package]
-name = "lndp-client"
+name = "landscape-flare"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "lflare"
+path = "src/main.rs"
+
 [dependencies]
-clap = { version = "4.6.6", features = ["derive"] }
-landscape-proto = { path = "../proto" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
+clap = { workspace = true, features = ["derive"] }
+landscape-terrain-proto = { path = "../landscape-terrain-proto" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }

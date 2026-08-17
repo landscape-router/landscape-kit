@@ -1,0 +1,2 @@
+[env]
+LIBPCAP_LIBDIR = { value = "landscape-flare/vendor/npcap-sdk/Lib/x64", relative = true }

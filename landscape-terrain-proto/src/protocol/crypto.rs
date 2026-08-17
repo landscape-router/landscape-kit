@@ -1,4 +1,4 @@
-//! Session cryptography for LNDP v5.
+//! Session cryptography for Terrain v5.
 //!
 //! The psk is never used directly: at startup both sides stretch it into a
 //! 32-byte master key with scrypt (a memory-hard KDF), so an offline
@@ -55,7 +55,7 @@ const DISCOVER_NONCE_LEN: usize = 12;
 
 /// scrypt cost parameters for the master-key derivation (run once per
 /// process at startup): 2^15 blocks, r=8, p=1 ≈ 32 MiB / ~100 ms on
-/// desktop hardware. Override the exponent with the `LNDP_SCRYPT_LOG_N`
+/// desktop hardware. Override the exponent with the `LANDSCAPE_TERRAIN_SCRYPT_LOG_N`
 /// environment variable (clamped to 10..=20) for constrained devices or
 /// fast test suites — both peers must agree on it, since the derived key
 /// depends on it.
@@ -63,7 +63,7 @@ pub const SCRYPT_LOG_N: u8 = 15;
 pub const SCRYPT_R: u32 = 8;
 pub const SCRYPT_P: u32 = 1;
 
-/// Parse the `LNDP_SCRYPT_LOG_N` override: missing, unparseable or
+/// Parse the `LANDSCAPE_TERRAIN_SCRYPT_LOG_N` override: missing, unparseable or
 /// out-of-range values fall back to the default exponent.
 fn parse_scrypt_log_n(raw: Option<&str>) -> u8 {
     raw.and_then(|v| v.parse::<u8>().ok())
@@ -78,14 +78,19 @@ fn parse_scrypt_log_n(raw: Option<&str>) -> u8 {
 pub struct MasterKey([u8; 32]);
 
 impl MasterKey {
-    /// scrypt(psk, "lndp-v5-master", log_n, r=8, p=1) → 32 bytes.
+    /// scrypt(psk, "terrain-v5-master", log_n, r=8, p=1) → 32 bytes.
     /// Call once per process; the cost is paid by the peer once, and by an
     /// offline attacker once per psk guess.
     pub fn derive(psk: &[u8]) -> Self {
-        let log_n = parse_scrypt_log_n(std::env::var("LNDP_SCRYPT_LOG_N").ok().as_deref());
+        let log_n = parse_scrypt_log_n(
+            std::env::var("LANDSCAPE_TERRAIN_SCRYPT_LOG_N")
+                .ok()
+                .as_deref(),
+        );
         let params = Params::new(log_n, SCRYPT_R, SCRYPT_P, 32).expect("valid scrypt params");
         let mut out = [0u8; 32];
-        scrypt(psk, b"lndp-v5-master", &params, &mut out).expect("scrypt derivation cannot fail");
+        scrypt(psk, b"terrain-v5-master", &params, &mut out)
+            .expect("scrypt derivation cannot fail");
         Self(out)
     }
 
@@ -106,8 +111,8 @@ pub enum Dir {
 impl Dir {
     fn key_label(self) -> &'static [u8] {
         match self {
-            Dir::C2S => b"lndp-key-c2s",
-            Dir::S2C => b"lndp-key-s2c",
+            Dir::C2S => b"terrain-key-c2s",
+            Dir::S2C => b"terrain-key-s2c",
         }
     }
 
@@ -119,8 +124,8 @@ impl Dir {
     }
 }
 
-pub const AUTH_LABEL_C2S: &[u8] = b"lndp-auth-c2s";
-pub const AUTH_LABEL_S2C: &[u8] = b"lndp-auth-s2c";
+pub const AUTH_LABEL_C2S: &[u8] = b"terrain-auth-c2s";
+pub const AUTH_LABEL_S2C: &[u8] = b"terrain-auth-s2c";
 
 /// sha256(label || key || server_nonce || client_nonce)
 fn h(label: &[u8], key: &[u8], server_nonce: u64, client_nonce: u64) -> [u8; 32] {
@@ -166,7 +171,7 @@ pub struct PreSharedKey([u8; 32]);
 
 impl PreSharedKey {
     pub fn derive(master: &MasterKey) -> Self {
-        Self(h(b"lndp-hkey0", master.as_bytes(), 0, 0))
+        Self(h(b"terrain-hkey0", master.as_bytes(), 0, 0))
     }
 
     /// Build a sealed DISCOVER frame: nonce(12) || ciphertext || tag.
@@ -236,10 +241,10 @@ pub struct HandshakeKeys {
 
 impl HandshakeKeys {
     pub fn derive(master: &MasterKey, server_nonce: u64) -> Self {
-        let salt = h(b"lndp-hsalt", master.as_bytes(), server_nonce, 0);
+        let salt = h(b"terrain-hsalt", master.as_bytes(), server_nonce, 0);
         Self {
-            c2s: h(b"lndp-hkey-c2s", master.as_bytes(), server_nonce, 0),
-            s2c: h(b"lndp-hkey-s2c", master.as_bytes(), server_nonce, 0),
+            c2s: h(b"terrain-hkey-c2s", master.as_bytes(), server_nonce, 0),
+            s2c: h(b"terrain-hkey-s2c", master.as_bytes(), server_nonce, 0),
             salt: salt[..SALT_LEN].try_into().unwrap(),
         }
     }
@@ -361,7 +366,12 @@ pub struct SessionKeys {
 
 impl SessionKeys {
     pub fn derive(master: &MasterKey, server_nonce: u64, client_nonce: u64) -> Self {
-        let salt = h(b"lndp-salt", master.as_bytes(), server_nonce, client_nonce);
+        let salt = h(
+            b"terrain-salt",
+            master.as_bytes(),
+            server_nonce,
+            client_nonce,
+        );
         Self {
             c2s: h(
                 Dir::C2S.key_label(),

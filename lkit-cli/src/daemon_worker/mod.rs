@@ -52,6 +52,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         Commands::Software(_) => false,
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
+        Commands::Flare(_) => false,
         Commands::Network(args) => {
             matches!(
                 args.action,
@@ -86,6 +87,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Software(_) => None,
         Commands::Self_(_) => None,
         Commands::Daemon(_) => None,
+        Commands::Flare(_) => None,
         Commands::Install(args) => args.test_runtime.as_deref(),
         Commands::Migrate(args) => args.test_runtime.as_deref(),
         Commands::Switch(args) => args.test_runtime.as_deref(),
