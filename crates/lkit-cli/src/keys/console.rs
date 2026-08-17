@@ -94,6 +94,8 @@ pub(crate) const CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ESC: &str =
     "console.cancel_network_wizard_press_esc";
 pub(crate) const CONSOLE_CANCEL_WIZARD: &str = "console.cancel_wizard";
 pub(crate) const CONSOLE_READY: &str = "console.ready";
+#[cfg(not(test))]
+pub(crate) const CONSOLE_LANGUAGE_SAVE_FAILED: &str = "console.language_save_failed";
 pub(crate) const CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION: &str = "console.exit_landscape_kit_question";
 pub(crate) const CONSOLE_PRESS_ENTER_TO_EXIT: &str = "console.press_enter_to_exit";
 pub(crate) const CONSOLE_PRESS_ESC_TO_CANCEL: &str = "console.press_esc_to_cancel";

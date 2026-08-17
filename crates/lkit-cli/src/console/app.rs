@@ -175,10 +175,17 @@ impl ConsoleApp {
         self.software.poll(&mut self.notice);
     }
 
+    /// 切换语言并写回 `config.toml` 的 `[ui] language`,下次会话沿用。测试环境不写盘,
+    /// 保证单元测试零系统副作用;写回失败(如配置损坏)时显示提示,会话内切换仍然生效。
     pub(super) fn toggle_language(&mut self) {
-        crate::i18n::configure(crate::i18n::current().toggled());
+        let language = crate::i18n::current().toggled();
+        crate::i18n::configure(language);
         self.exit_state = ExitState::Idle;
         self.notice = "Ready".into();
+        #[cfg(not(test))]
+        if let Err(error) = crate::deployment::config::write_language(language) {
+            self.notice = crate::tr!(crate::keys::CONSOLE_LANGUAGE_SAVE_FAILED, error = error);
+        }
         self.snapshot = Snapshot::load();
         if !self.menu_available(self.menu()) {
             self.menu_index = 0;

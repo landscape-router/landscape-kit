@@ -282,3 +282,28 @@ fn unsupported_or_corrupt_config_language_falls_back_to_english() {
     );
     assert!(stderr(&output).contains("no .lkb backups found"));
 }
+
+#[test]
+fn cli_commands_read_but_never_write_the_language_preset() {
+    let (territory, landscape) = empty_world("config-readonly");
+    with_config_language(&territory, "zh");
+    write_backup_state(&territory, &landscape);
+    let before = std::fs::read(territory.join("config.toml")).unwrap();
+
+    for args in [
+        vec!["backup", "list"],
+        vec!["--lang", "en", "backup", "list"],
+        vec!["backup", "list", "--lang", "zh"],
+    ] {
+        let output = lkit(&args, &territory, None);
+        assert_eq!(output.status.code(), Some(1));
+    }
+    let after = lkit(&["--help"], &territory, None);
+    assert!(after.status.success());
+
+    assert_eq!(
+        std::fs::read(territory.join("config.toml")).unwrap(),
+        before,
+        "CLI commands must read the language preset but never modify config.toml"
+    );
+}

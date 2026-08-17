@@ -237,6 +237,8 @@ Install）返回侧栏；Install 使用 Up/Down 在检查汇总和表单字段�
 
 切换语言后会重新读取安装状态；如果部署前检查已启动或完成，会用新语言重新执行检查，
 避免保留旧语言的检查说明。切换后从控制台启动的命令和 systemd worker 继承新语言。
+切换同时原子写回 `config.toml` 的 `[ui] language`（见[语言预设](../deployment/config.md)），
+下次会话沿用；写回失败（如配置损坏）时显示提示，本次会话的切换不受影响。
 
 控制台的 RAII terminal guard 在正常退出和错误返回时关闭 raw mode、离开 alternate
 screen 并显示光标。进入 alternate screen 时先显式清屏并回到左上角，离开时先清屏再

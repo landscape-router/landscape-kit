@@ -96,8 +96,11 @@ location = "https://repo.example.com/landscape/"
 配置预设覆盖 CLI 输出、Ratatui 控制台、交互提示、进度与命令结果；clap 帮助与参数
 错误在命令行解析阶段渲染，无法使用配置预设的语言，`--lang` 与 `LKIT_LANG` 可以。
 
-`lkit` 不写回 `[ui] language`：交互控制台按 `L` 键切换语言只影响本次会话，不修改
-`config.toml`。
+交互控制台按 `L` 切换语言会原子写回 `[ui] language`，下次会话沿用；写回经
+tmp + rename 完成，保留注释、未知 section/字段与原有顺序，并发读写安全，不会撕裂。
+`config.toml` 缺失时切换会创建带默认仓库来源与语言的最小配置；TOML 损坏时切换
+仍生效（只影响本次会话）但显示提示，且不改动原文件。CLI 命令只读配置预设，
+`--lang` 与 `LKIT_LANG` 覆盖不写回文件。
 
 ## 来源变化与资产身份
 

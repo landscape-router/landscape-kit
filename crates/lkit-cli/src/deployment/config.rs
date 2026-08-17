@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use super::layout;
@@ -123,6 +125,82 @@ pub(crate) fn load_language() -> Option<Language> {
         .as_ref()
         .and_then(|ui| ui.language.as_deref())
         .and_then(Language::from_code)
+}
+
+/// 把语言预设写回 `config.toml` 的 `[ui] language`。只有交互控制台按 `L` 切换语言时
+/// 调用,CLI 命令只读不写回。用 `toml_edit` 定点修改,保留注释、未知 section/字段与
+/// 原有顺序;写回经 tmp + rename 原子完成,并发读方只会看到旧或新文件,不会撕裂。
+/// 对单字段偏好,并发切换表现为最后写入者生效,无需安装锁。
+///
+/// 文件缺失时创建带默认仓库来源与 `[ui] language` 的最小配置,与"文件缺失"的默认
+/// 回退语义一致;TOML 损坏时返回错误且不改动原文件,会话内切换仍然生效。
+pub(crate) fn write_language(language: Language) -> Result<(), InstallError> {
+    let path = layout::territory_config_file();
+    let mut document = match std::fs::read_to_string(&path) {
+        Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
+            InstallError::CorruptedState(format!(
+                "{} is not a valid config file: {error}; fix or delete it to switch the language",
+                path.display()
+            ))
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut document = toml_edit::DocumentMut::new();
+            document["schema_version"] = toml_edit::value(1i64);
+            let mut repository = toml_edit::Table::new();
+            repository["kind"] = toml_edit::value("github");
+            repository["location"] =
+                toml_edit::value(crate::release::repository::github::DEFAULT_REPOSITORY);
+            document["repository"] = toml_edit::Item::Table(repository);
+            let mut ui = toml_edit::Table::new();
+            ui["language"] = toml_edit::value(language.code());
+            document["ui"] = toml_edit::Item::Table(ui);
+            return atomic_write(&path, &document.to_string());
+        }
+        Err(error) => {
+            return Err(InstallError::Io(std::io::Error::new(
+                error.kind(),
+                format!("failed to read {}: {error}", path.display()),
+            )));
+        }
+    };
+    match document.get_mut("ui") {
+        Some(item) if !item.is_table() => {
+            *item = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        None => {
+            document["ui"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        _ => {}
+    }
+    document["ui"]["language"] = toml_edit::value(language.code());
+    atomic_write(&path, &document.to_string())
+}
+
+/// 原子写回:独占临时文件写全量内容并 `sync_all`,再 rename 到目标路径。临时文件放在
+/// `run/` 下,失败残留也不会被地盘的顶层内容检查当作未知文件。
+fn atomic_write(path: &Path, content: &str) -> Result<(), InstallError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let run_dir = layout::territory_run_dir();
+    std::fs::create_dir_all(&run_dir).map_err(InstallError::Io)?;
+    let tmp = run_dir.join("config.toml.tmp");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(InstallError::Io)?;
+    if let Err(error) = file.write_all(content.as_bytes()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(InstallError::Io(error));
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(InstallError::Io(error));
+    }
+    std::fs::rename(&tmp, path).map_err(InstallError::Io)
 }
 
 #[cfg(test)]
@@ -499,6 +577,139 @@ language = 42
             load_language(),
             None,
             "wrong field type must be ignored for language"
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn write_language_creates_a_minimal_config_on_missing_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (_guard, territory) = setup("write-missing");
+        write_language(Language::Zh).unwrap();
+        assert_eq!(load_language(), Some(Language::Zh));
+        assert_eq!(
+            load_repository().unwrap().unwrap(),
+            github_source(),
+            "the created config must keep the default repository semantics"
+        );
+        let path = territory.join("config.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[ui]"));
+        assert!(text.contains("language = \"zh\""));
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(metadata.mode() & 0o077, 0, "config must be root-only");
+        assert!(
+            !territory.join("run/config.toml.tmp").exists(),
+            "the atomic write must not leave a temp file behind"
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn write_language_updates_the_existing_preset() {
+        let (_guard, territory) = setup("write-update");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[ui]
+language = "en"
+"#,
+        )
+        .unwrap();
+        write_language(Language::Zh).unwrap();
+        assert_eq!(load_language(), Some(Language::Zh));
+        write_language(Language::En).unwrap();
+        assert_eq!(load_language(), Some(Language::En));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn write_language_preserves_unknown_sections_comments_and_order() {
+        let (_guard, territory) = setup("write-preserve");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"# user comment
+schema_version = 1
+
+[repository]
+kind = "http"
+location = "https://repo.example.com/landscape/"
+
+[future]
+key = "value"
+
+[ui]
+language = "en"
+"#,
+        )
+        .unwrap();
+        write_language(Language::Zh).unwrap();
+        let text = std::fs::read_to_string(territory.join("config.toml")).unwrap();
+        assert!(text.contains("# user comment"), "comments must survive");
+        assert!(text.contains("[future]"), "unknown sections must survive");
+        assert!(text.contains("key = \"value\""));
+        assert!(text.contains("https://repo.example.com/landscape/"));
+        assert!(text.contains("language = \"zh\""));
+        assert_eq!(load_language(), Some(Language::Zh));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn write_language_adds_a_missing_ui_section() {
+        let (_guard, territory) = setup("write-ui-missing");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+"#,
+        )
+        .unwrap();
+        write_language(Language::Zh).unwrap();
+        assert_eq!(load_language(), Some(Language::Zh));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn write_language_replaces_a_non_table_ui_value() {
+        let (_guard, territory) = setup("write-ui-scalar");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+ui = 42
+"#,
+        )
+        .unwrap();
+        write_language(Language::Zh).unwrap();
+        assert_eq!(load_language(), Some(Language::Zh));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn write_language_refuses_corrupt_config_without_modifying_it() {
+        let (_guard, territory) = setup("write-corrupt");
+        std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
+        assert!(matches!(
+            write_language(Language::Zh),
+            Err(InstallError::CorruptedState(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(territory.join("config.toml")).unwrap(),
+            "not toml [[[",
+            "a corrupt config must be left untouched"
         );
         let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }

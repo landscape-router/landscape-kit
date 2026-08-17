@@ -81,6 +81,7 @@ console.cancel_network_wizard_press_enter = "按 Enter 取消向导并返回 Ins
 console.cancel_network_wizard_press_esc = "按 Esc 关闭并继续向导。"
 console.cancel_wizard = "取消向导"
 console.ready = "就绪"
+console.language_save_failed = "无法把语言偏好写入 config.toml：%{error}"
 console.exit_landscape_kit_question = "退出 Landscape Kit？"
 console.press_enter_to_exit = "按 Enter 退出。"
 console.press_esc_to_cancel = "按 Esc 取消。"

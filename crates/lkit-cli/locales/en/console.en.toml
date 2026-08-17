@@ -81,6 +81,7 @@ console.cancel_network_wizard_press_enter = "Press Enter to cancel the wizard an
 console.cancel_network_wizard_press_esc = "Press Esc to close and continue."
 console.cancel_wizard = "Cancel wizard"
 console.ready = "Ready"
+console.language_save_failed = "Failed to save the language preference to config.toml: %{error}"
 console.exit_landscape_kit_question = "Exit Landscape Kit?"
 console.press_enter_to_exit = "Press Enter to exit."
 console.press_esc_to_cancel = "Press Esc to cancel."

@@ -245,3 +245,50 @@ fn ctrl_c_leaves_bare_lkit_console_and_restores_terminal() {
         "console Ctrl+C did not restore terminal echo"
     );
 }
+
+#[test]
+fn language_toggle_persists_across_console_sessions() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let (mut command, world) = bare_console_command();
+    let config_path = world.path("territory").join("config.toml");
+    assert!(
+        !config_path.exists(),
+        "the world must start without a config"
+    );
+
+    let mut pty = Pty::open();
+    command.env("LKIT_LANG", "en");
+    attach_pty(&mut command, &pty);
+    let mut child = command.spawn().unwrap();
+    pty.read_until("L  Language: English (en)", Duration::from_secs(10));
+    pty.master.write_all(b"l").unwrap();
+    pty.read_until("L  语言：中文 (zh)", Duration::from_secs(5));
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("[ui]"), "config: {config}");
+    assert!(config.contains("language = \"zh\""), "config: {config}");
+    pty.master.write_all(b"\x1b\x1b\r").unwrap();
+    let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
+    let status = child.wait().unwrap();
+    assert!(status.success(), "console exit failed: {exited:?}");
+
+    // 第二个会话没有 --lang/LKIT_LANG 与中文 locale,配置预设决定语言。
+    let mut command = Command::new(LKIT);
+    command.env("LKIT_TERRITORY", world.path("territory"));
+    command.env_remove("LKIT_LANG");
+    command.env("LC_ALL", "C");
+    let mut pty = Pty::open();
+    attach_pty(&mut command, &pty);
+    let mut child = command.spawn().unwrap();
+    pty.read_until("L  语言：中文 (zh)", Duration::from_secs(10));
+    pty.master.write_all(b"l").unwrap();
+    pty.read_until("L  Language: English (en)", Duration::from_secs(5));
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("language = \"en\""), "config: {config}");
+    pty.master.write_all(b"\x1b\x1b\r").unwrap();
+    let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
+    let status = child.wait().unwrap();
+    assert!(status.success(), "console exit failed: {exited:?}");
+}
