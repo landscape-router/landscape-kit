@@ -1,5 +1,6 @@
 mod app;
 mod backup;
+mod daemon;
 mod install;
 mod mirror;
 mod reinit;

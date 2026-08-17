@@ -91,6 +91,10 @@ pub(crate) enum Hit {
     SoftwareSourceToggle,
     /// 卸载面板“执行卸载”动作行。
     UninstallAction,
+    /// Overview 面板“部署 daemon”动作行(视为 Enter)。
+    OverviewDeploy,
+    /// 安装阻断弹框内“部署 daemon”按钮(视为按 D)。
+    DeployDaemon,
     /// reinit 面板:可编辑凭据行。
     ReinitField(ReinitField),
     /// reinit 面板:开始/执行动作行(视为 Enter)。

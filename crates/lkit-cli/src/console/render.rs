@@ -9,6 +9,7 @@ use super::backup::{
     render_backup, render_backup_create_dialog, render_backup_create_progress,
     render_backup_delete_confirmation, render_backup_restore_confirmation,
 };
+use super::daemon_panel::{render_daemon_deploy_confirmation, render_daemon_deploy_progress};
 use super::install_form::render_install;
 use super::mirror::{render_mirror, render_mirror_confirmation};
 use super::network_wizard::{Snapshot, render_network_wizard, render_pending_takeover};
@@ -18,7 +19,7 @@ use super::software::{render_software, render_software_confirmation, render_soft
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
-use super::widgets::{Clicks, Focus, Hit, Menu};
+use super::widgets::{Clicks, Focus, Hit, Menu, block_row_of};
 use super::{ConsoleApp, ExitState};
 use crate::i18n::Language;
 
@@ -93,6 +94,13 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     if app.menu() == Menu::Reinit && app.reinit.confirming {
         render_reinit_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Overview && app.deploy_daemon_confirming {
+        render_daemon_deploy_confirmation(frame, app);
+    }
+    // 部署可从 Overview 动作行或安装阻断弹框发起,进度弹层不限定菜单。
+    if app.deploy_daemon.is_some() {
+        render_daemon_deploy_progress(frame, app);
     }
 }
 
@@ -274,8 +282,8 @@ fn render_panel(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         Menu::Uninstall => render_uninstall(frame, app, area),
     }
 }
-fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
-    let lines = match &app.snapshot {
+fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
+    let mut lines = match &app.snapshot {
         Snapshot::RootRequired => vec![
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_ROOT_PRIVILEGES_REQUIRED),
@@ -339,6 +347,54 @@ fn render_overview(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             Line::raw(error),
         ],
     };
+    // Overview 常驻展示 lkit daemon 运行状态:root 会话的安装与生命周期命令
+    // 都委托给 daemon,未运行时应尽早可见,而不是开始安装后才失败。
+    let running = crate::daemon_worker::daemon_is_running();
+    lines.push(Line::raw(""));
+    lines.push(if running {
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING),
+            Style::default().fg(Color::Green),
+        )
+    } else {
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_DAEMON_NOT_RUNNING),
+            Style::default().fg(Color::Red),
+        )
+    });
+    // daemon 未运行时提供「部署 daemon」动作行:确认后在 TUI 内后台执行
+    // `lkit self install`,不退出控制台。
+    if !running {
+        let focused = app.focus == Focus::Panel;
+        let selected_style = if focused {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let value_style = if focused {
+            selected_style
+        } else {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        };
+        let row = lines.len();
+        lines.push(Line::from(vec![
+            Span::styled(if focused { "> " } else { "  " }, selected_style),
+            Span::styled(
+                crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON),
+                value_style,
+            ),
+        ]));
+        app.hits.block_row(
+            area,
+            block_row_of(&lines, row, area.width.saturating_sub(2)),
+            Hit::OverviewDeploy,
+        );
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel_block(

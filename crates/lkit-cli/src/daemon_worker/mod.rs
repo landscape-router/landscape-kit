@@ -122,6 +122,13 @@ pub(crate) fn daemon_is_running() -> bool {
     crate::daemon::process_alive(pid)
 }
 
+/// 委托前置条件是否未满足:root 下全局常驻 daemon 未运行。控制台在进入与
+/// 开始安装前用它在 TUI 内提前提示/阻断,避免用户填写完安装参数、退出
+/// 控制台委托时才失败;非 root 内联执行,不要求 daemon,恒为 false。
+pub(crate) fn delegation_blocked() -> bool {
+    (unsafe { libc::geteuid() == 0 }) && !daemon_is_running()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn delegate(
     interrupt: &InterruptGuard,
@@ -332,5 +339,32 @@ mod tests {
         ] {
             assert!(!delegates_for(args), "unexpected delegation for {args:?}");
         }
+    }
+
+    #[test]
+    fn daemon_is_running_follows_the_territory_pidfile() {
+        let territory =
+            std::env::temp_dir().join(format!("lkit-daemon-running-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(territory.join("run")).unwrap();
+        let _guard = crate::deployment::layout::test_territory(&territory);
+        let pidfile = crate::deployment::layout::territory_pidfile();
+
+        assert!(
+            !daemon_is_running(),
+            "missing pidfile must mean not running"
+        );
+        std::fs::write(&pidfile, "99999999\n").unwrap();
+        assert!(!daemon_is_running(), "a dead pid must mean not running");
+        std::fs::write(&pidfile, format!("{}\n", std::process::id())).unwrap();
+        assert!(daemon_is_running(), "a live pid must mean running");
+        std::fs::write(&pidfile, "not a pid").unwrap();
+        assert!(
+            !daemon_is_running(),
+            "an unparsable pidfile must mean not running"
+        );
+
+        drop(_guard);
+        let _ = std::fs::remove_dir_all(&territory);
     }
 }

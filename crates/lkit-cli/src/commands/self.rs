@@ -102,7 +102,11 @@ pub struct UpgradeArgs {
 
 pub async fn run(args: &SelfCommand) -> ExitCode {
     match run_inner(args).await {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(Some(message)) => {
+            println!("self: {message}");
+            ExitCode::SUCCESS
+        }
+        Ok(None) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("self: {error}");
             exit_code(&error)
@@ -120,7 +124,7 @@ fn exit_code(error: &InstallError) -> ExitCode {
     }
 }
 
-async fn run_inner(args: &SelfCommand) -> Result<(), InstallError> {
+async fn run_inner(args: &SelfCommand) -> Result<Option<String>, InstallError> {
     let runtime = resolve_runtime(args)?;
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(
@@ -129,10 +133,23 @@ async fn run_inner(args: &SelfCommand) -> Result<(), InstallError> {
     }
     let _lock = lock::acquire_install_lock()?;
     match &args.action {
-        SelfAction::Install(_) => install(&runtime),
-        SelfAction::Upgrade(args) => upgrade(&runtime, args).await,
-        SelfAction::Remove(_) => remove(&runtime),
+        SelfAction::Install(_) => install(&runtime).map(Some),
+        SelfAction::Upgrade(args) => upgrade(&runtime, args).await.map(|()| None),
+        SelfAction::Remove(_) => remove(&runtime).map(Some),
     }
+}
+
+/// 交互控制台在 TUI 内执行 `lkit self install`:与 CLI 相同的 root 检查、安装锁
+/// 与 systemd 语义,返回结果消息由控制台展示而不直接打印(控制台不另起 lkit
+/// 进程、不解析 CLI 文本输出)。
+pub(crate) fn install_daemon() -> Result<String, InstallError> {
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(InstallError::UnsupportedPlatform(
+            "self commands require root".into(),
+        ));
+    }
+    let _lock = lock::acquire_install_lock()?;
+    install(&InstallRuntime::production())
 }
 
 /// `self` 固定使用 systemd:unit 原件、注册链接、MainPID 校验都是 systemd 语义。
@@ -146,7 +163,7 @@ fn require_systemd(runtime: &InstallRuntime) -> Result<&Systemd, InstallError> {
     }
 }
 
-fn install(runtime: &InstallRuntime) -> Result<(), InstallError> {
+fn install(runtime: &InstallRuntime) -> Result<String, InstallError> {
     let systemd = require_systemd(runtime)?;
     let service = ManagedService::LkitDaemon;
     let binary = lkit_binary();
@@ -184,8 +201,7 @@ fn install(runtime: &InstallRuntime) -> Result<(), InstallError> {
         cleanup_partial_install(systemd, service, &origin);
         return Err(error);
     }
-    println!("self: {}", crate::tr!(crate::keys::SELF_INSTALLED));
-    Ok(())
+    Ok(crate::tr!(crate::keys::SELF_INSTALLED))
 }
 
 /// 注册/启动失败后的尽力清理:停止、注销并删除定义原件。
@@ -199,7 +215,7 @@ fn cleanup_partial_install(systemd: &Systemd, service: ManagedService, origin: &
     let _ = remove_file_if_present(origin);
 }
 
-fn remove(runtime: &InstallRuntime) -> Result<(), InstallError> {
+fn remove(runtime: &InstallRuntime) -> Result<String, InstallError> {
     let systemd = require_systemd(runtime)?;
     let service = ManagedService::LkitDaemon;
     if systemd.is_active(service)? {
@@ -222,8 +238,7 @@ fn remove(runtime: &InstallRuntime) -> Result<(), InstallError> {
     }
     remove_file_if_present(&origin)?;
     remove_empty_dir_if_present(&unit_origin_dir())?;
-    println!("self: {}", crate::tr!(crate::keys::SELF_REMOVED));
-    Ok(())
+    Ok(crate::tr!(crate::keys::SELF_REMOVED))
 }
 
 async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), InstallError> {

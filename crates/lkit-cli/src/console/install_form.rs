@@ -309,6 +309,11 @@ impl InstallForm {
         &mut self,
         network_plan: Option<NetworkPlan>,
     ) -> Result<ConsoleAction, String> {
+        // 提前检查委托前置条件:root 下 daemon 未运行时留在 TUI 内提示,
+        // 而不是退出控制台后在 delegate() 才失败(用户已完成全部安装参数)。
+        if crate::daemon_worker::delegation_blocked() {
+            return Err(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
+        }
         self.validate()?;
         let version = self.version.trim();
         let requested_install_dir = PathBuf::from(&self.install_dir);

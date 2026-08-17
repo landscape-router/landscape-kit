@@ -179,7 +179,11 @@ pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇
 
 检查包含 lkit 常驻服务项（与 `lkit check` 相同，见 [`check`](../check.md)）：root 下
 daemon 未运行时报告 `error` 并建议 `lkit self install`，未部署 daemon 前无法进入安装
-表单；非 root 会话只报告 `warning`，不阻断。
+表单；非 root 会话只报告 `warning`，不阻断。阻断弹框内直接提供“[ 部署 lkit 常驻
+服务 ]”按钮（按 `D` 或点击）：在 TUI 内后台执行 `lkit self install`，完成后预检自动
+重跑、报告更新后表单门禁自然放行；弹框内长文本自动换行不截断。部署成功后（无论从
+Overview 动作行还是阻断弹框发起）预检都会自动重跑，不需要手动按 `R` 刷新过期的
+daemon 检查结果。
 
 检查尚未运行或仍在运行时，用户不能离开检查汇总进入表单，焦点保持在汇总并显示等待状态。
 检查完成后，Pass 和 warning 都允许进入表单；warning 继续显示其风险提示。Error、unknown

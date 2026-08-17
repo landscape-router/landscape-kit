@@ -1,5 +1,6 @@
 use super::ConsoleAction;
 use super::backup::{BackupListState, BackupPanel};
+use super::daemon_panel::DeployResult;
 use super::install_form::InstallForm;
 use super::mirror::MirrorPanel;
 use super::network_wizard::{NetworkWizard, Snapshot};
@@ -38,6 +39,9 @@ pub(super) struct ConsoleApp {
     pub(super) uninstall: UninstallPanel,
     pub(super) takeover_choice: usize,
     pub(super) hits: Clicks,
+    /// Overview「部署 daemon」动作的确认层与后台执行状态。
+    pub(super) deploy_daemon_confirming: bool,
+    pub(super) deploy_daemon: Option<std::sync::mpsc::Receiver<DeployResult>>,
 }
 
 impl ConsoleApp {
@@ -64,6 +68,8 @@ impl ConsoleApp {
             uninstall: UninstallPanel::default(),
             takeover_choice: 0,
             hits: Clicks::default(),
+            deploy_daemon_confirming: false,
+            deploy_daemon: None,
         }
     }
 
@@ -135,6 +141,7 @@ impl ConsoleApp {
         if self.takeover_pending() {
             return;
         }
+        self.poll_daemon_deploy();
         if self.menu() == Menu::Install
             && self.install_available()
             && matches!(&self.preflight.state, PreflightState::NotRun)
@@ -298,6 +305,14 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_DETAILS)
             } else {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_LIST)
+            }
+        } else if self.menu() == Menu::Overview && self.focus == Focus::Panel {
+            if self.deploy_daemon_confirming {
+                crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_HINT_CONFIRM)
+            } else if self.daemon_deploy_available() {
+                crate::tr!(crate::keys::CONSOLE_OVERVIEW_HINT_DEPLOY)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_HINT_PANEL)
             }
         } else {
             match (self.focus, self.menu()) {

@@ -170,10 +170,12 @@
   daemon 未运行，底栏提示行直接显示警告；Overview 面板常驻显示 daemon 运行状态行，
   未运行时显示“部署 lkit 常驻服务”动作行：Enter 打开确认层，确认后在 TUI 内后台
   线程执行 `lkit self install`（进度弹层，结果写底栏，不退出控制台），成功后状态行
-  变绿、动作行消失。
+  变绿、动作行消失、预检自动重跑。安装阻断弹框内因 daemon 检查被拦时直接提供部署
+  按钮（`D` 键或点击），部署完成后表单门禁自动放行。
 - 缺口：`delegation_blocked` 的 root 分支依赖真实 euid，标准单测环境（非 root）只
   覆盖 `daemon_is_running` 的 pidfile 语义、检查函数分支与部署后台线程的失败路径
-  （非 root 得到 root 权限错误）；root 环境的真实 systemd 部署与 TUI 现场待补充。
+  （非 root 得到 root 权限错误）；root 环境的真实 systemd 部署与 TUI 现场（含部署
+  成功后预检自动重跑）待补充。
 
 ## UI-15
 

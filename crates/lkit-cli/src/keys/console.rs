@@ -47,6 +47,8 @@ pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_BLOCK_INSTALLATION: &str =
 pub(crate) const CONSOLE_CHECKS_DID_NOT_PASS: &str = "console.checks_did_not_pass";
 pub(crate) const CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R: &str =
     "console.dialog_enter_details_esc_close_r";
+pub(crate) const CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R_DEPLOY: &str =
+    "console.dialog_enter_details_esc_close_r_deploy";
 pub(crate) const CONSOLE_INSTALL_BLOCKED: &str = "console.install_blocked";
 pub(crate) const CONSOLE_LANDSCAPE_NETWORK_TAKEOVER: &str = "console.landscape_network_takeover";
 pub(crate) const CONSOLE_SELECT_WAN_INTERFACE: &str = "console.select_wan_interface";
@@ -123,6 +125,22 @@ pub(crate) const CONSOLE_FAILED: &str = "console.failed";
 pub(crate) const CONSOLE_CHECKS_HAVE_NOT_RUN: &str = "console.checks_have_not_run";
 pub(crate) const CONSOLE_PREFLIGHT_COUNTS: &str = "console.preflight_counts";
 pub(crate) const CONSOLE_START_INSTALLATION_BUTTON: &str = "console.start_installation_button";
+pub(crate) const CONSOLE_DAEMON_NOT_RUNNING_NOTICE: &str = "console.daemon_not_running_notice";
+pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING: &str =
+    "console.overview_lkit_daemon_running";
+pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_NOT_RUNNING: &str =
+    "console.overview_lkit_daemon_not_running";
+pub(crate) const CONSOLE_OVERVIEW_DEPLOY_DAEMON: &str = "console.overview_deploy_daemon";
+pub(crate) const CONSOLE_OVERVIEW_HINT_DEPLOY: &str = "console.overview_hint_deploy";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_TITLE: &str = "console.deploy_daemon_title";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_QUESTION: &str = "console.deploy_daemon_question";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_PLAN: &str = "console.deploy_daemon_plan";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_PRESS_ENTER: &str = "console.deploy_daemon_press_enter";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_PRESS_ESC: &str = "console.deploy_daemon_press_esc";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_RUNNING: &str = "console.deploy_daemon_running";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_HINT_CONFIRM: &str = "console.deploy_daemon_hint_confirm";
+pub(crate) const CONSOLE_DEPLOY_DAEMON_WORKER_STOPPED: &str =
+    "console.deploy_daemon_worker_stopped";
 pub(crate) const CONSOLE_ABOUT_PREFIX: &str = "console.about_prefix";
 pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_HELP: &str = "console.environment_checks_help";
 pub(crate) const CONSOLE_VERSION_LABEL: &str = "console.version_label";

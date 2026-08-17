@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::ConsoleApp;
 use super::render::{panel_block, register_dialog_hits};
-use super::widgets::{Focus, Hit};
+use super::widgets::{Focus, Hit, block_row_of};
 use crate::check;
 use crate::check::model::{CheckReport, Status};
 
@@ -100,6 +100,12 @@ impl ConsoleApp {
             },
         }
     }
+
+    /// 预检报告是否因 daemon 未运行而被阻断:弹框内提供「部署 daemon」按钮,
+    /// 而不是只提示命令行 `lkit self install`。
+    pub(crate) fn preflight_daemon_blocked(&self) -> bool {
+        matches!(&self.preflight.state, PreflightState::Complete(report) if daemon_check_blocks(report))
+    }
 }
 pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let lines: Vec<Line<'_>> = match &app.preflight.state {
@@ -130,8 +136,24 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
                 }
             }
             lines.push(Line::raw(""));
+            // daemon 未运行属于委托前置失败:弹框内直接提供部署按钮,
+            // 而不是只提示命令行 `lkit self install`。
+            let daemon_blocked = daemon_check_blocks(report);
+            if daemon_blocked {
+                lines.push(Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                lines.push(Line::raw(""));
+            }
             lines.push(Line::styled(
-                crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R),
+                if daemon_blocked {
+                    crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R_DEPLOY)
+                } else {
+                    crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R)
+                },
                 Style::default().fg(Color::DarkGray),
             ));
             lines
@@ -140,7 +162,10 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
     };
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = (lines.len() as u16 + 2).min(screen.height.saturating_sub(2));
+    // 弹窗内容允许换行,高度按最后一行在内容宽度下的换行后行号计算,不截断。
+    let content_width = width.saturating_sub(2);
+    let height = (block_row_of(&lines, lines.len().saturating_sub(1), content_width) + 3)
+        .min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -148,10 +173,36 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
         height,
     );
     register_dialog_hits(&mut app.hits, screen, area);
+    // 部署按钮行后于弹层注册命中区(后注册者优先),点击直接部署。
+    if app.preflight_daemon_blocked() {
+        let button_text = crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON);
+        let button_index = lines
+            .iter()
+            .position(|line| {
+                let text: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                text.contains(&button_text)
+            })
+            .expect("the deploy button line must be part of the dialog");
+        let row = block_row_of(&lines, button_index, content_width);
+        app.hits.add(
+            Rect::new(
+                area.x.saturating_add(1),
+                area.y.saturating_add(1).saturating_add(row),
+                content_width,
+                1,
+            ),
+            Hit::DeployDaemon,
+        );
+    }
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
             .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_INSTALL_BLOCKED))),
         area,
     );
@@ -172,6 +223,18 @@ fn blocking_items(report: &CheckReport) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// 预检报告是否被 lkit 常驻服务检查项阻断(daemon 未运行)。
+fn daemon_check_blocks(report: &CheckReport) -> bool {
+    report
+        .groups
+        .iter()
+        .flat_map(|group| group.results.iter())
+        .any(|result| {
+            result.id == "service.lkit_daemon"
+                && matches!(result.status, Status::Error | Status::Unknown)
+        })
 }
 pub(crate) fn render_preflight_summary(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let (status, detail, color) = match &app.preflight.state {

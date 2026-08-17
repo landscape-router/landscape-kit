@@ -55,6 +55,9 @@ impl ConsoleApp {
         if self.software.install.is_some() {
             return None;
         }
+        if self.deploy_daemon.is_some() {
+            return None;
+        }
         if self.preflight_dialog {
             match key.code {
                 KeyCode::Enter => {
@@ -68,6 +71,14 @@ impl ConsoleApp {
                 KeyCode::Char('r' | 'R') => {
                     self.preflight_dialog = false;
                     self.preflight.restart();
+                }
+                // daemon 未运行被阻断时直接部署:后台执行 `lkit self install`,
+                // 完成后预检自动重跑并放行。
+                KeyCode::Char('d' | 'D') if self.preflight_daemon_blocked() => {
+                    if let Err(error) = self.start_daemon_deploy() {
+                        self.notice = error;
+                    }
+                    self.preflight_dialog = false;
                 }
                 _ => {}
             }
@@ -117,6 +128,12 @@ impl ConsoleApp {
         if self.menu() == Menu::Reinit
             && self.focus == Focus::Panel
             && let Some(action) = self.handle_reinit_key(key)
+        {
+            return action;
+        }
+        if self.menu() == Menu::Overview
+            && self.focus == Focus::Panel
+            && let Some(action) = self.handle_overview_key(key)
         {
             return action;
         }
@@ -264,6 +281,33 @@ impl ConsoleApp {
         None
     }
 
+    /// Overview 面板键处理:daemon 未运行时 Enter 打开「部署 daemon」确认层,
+    /// 确认层 Enter 在后台线程执行 `lkit self install`(留在 TUI 内,不退出),
+    /// Esc 关闭确认层。确认层开启时消费全部按键;其余按键返回 `None` 交给
+    /// 通用处理(保持 Esc Esc 退出、Left 返回侧栏等标准语义)。
+    pub(super) fn handle_overview_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
+        if self.deploy_daemon_confirming {
+            match key.code {
+                KeyCode::Enter => {
+                    if let Err(error) = self.start_daemon_deploy() {
+                        self.notice = error;
+                    }
+                    self.deploy_daemon_confirming = false;
+                }
+                KeyCode::Esc => self.deploy_daemon_confirming = false,
+                _ => {}
+            }
+            return Some(None);
+        }
+        match key.code {
+            KeyCode::Enter | KeyCode::Char(' ') if self.daemon_deploy_available() => {
+                self.deploy_daemon_confirming = true;
+                Some(None)
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn handle_editing_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
         match key.code {
             KeyCode::Enter | KeyCode::Esc => self.install.editing = false,
@@ -374,6 +418,13 @@ impl ConsoleApp {
             Hit::UninstallAction => {
                 self.focus = Focus::Panel;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::OverviewDeploy => {
+                self.focus = Focus::Panel;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::DeployDaemon => {
+                self.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
             }
             Hit::ReinitField(field) => {
                 self.focus = Focus::Panel;

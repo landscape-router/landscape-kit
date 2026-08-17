@@ -1,5 +1,6 @@
 mod app;
 mod backup;
+mod daemon_panel;
 mod events;
 mod install_form;
 mod mirror;
@@ -56,6 +57,11 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
     }
     let mut terminal = ConsoleTerminal::start()?;
     let mut app = ConsoleApp::new();
+    // 进入控制台即检查 daemon:root 下 daemon 未运行时提前在底栏提示,
+    // 避免用户填写完安装参数、退出控制台委托时才得到 "daemon is not running"。
+    if crate::daemon_worker::delegation_blocked() {
+        app.notice = crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE);
+    }
     loop {
         app.update();
         terminal
