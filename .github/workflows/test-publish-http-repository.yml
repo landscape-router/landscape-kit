@@ -1,6 +1,14 @@
 name: Test publish-http-repository
 
 on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/lkit-publish/**
+      - crates/lkit-repository/**
+      - scripts/test-publish-http-repository.sh
+      - .github/workflows/test-publish-http-repository.yml
   push:
     branches: [dev, main]
     paths:

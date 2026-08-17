@@ -1,6 +1,14 @@
 name: Test Docker software install
 
 on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - lkit-cli/**
+      - scripts/docker-software/**
+      - scripts/test-docker-software.sh
+      - .github/workflows/test-docker-software.yml
   push:
     branches: [dev, main]
     paths:

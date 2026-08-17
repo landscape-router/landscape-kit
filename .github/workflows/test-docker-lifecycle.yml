@@ -3,9 +3,13 @@ name: Test Docker functional lifecycle
 on:
   pull_request:
     paths:
+      - .dockerignore
       - Cargo.lock
       - Cargo.toml
-      - crates/**
+      - lkit-cli/**
+      - crates/lkit-publish/**
+      - crates/lkit-repository/**
+      - crates/lkit-test-fixture/**
       - scripts/docker-e2e/**
       - scripts/test-docker-lifecycle.sh
       - .github/workflows/test-docker-lifecycle.yml

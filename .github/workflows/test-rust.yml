@@ -6,6 +6,7 @@ on:
       - Cargo.lock
       - Cargo.toml
       - crates/**
+      - lkit-cli/**
       - .github/workflows/test-rust.yml
   push:
     branches: [dev, main]
@@ -13,6 +14,7 @@ on:
       - Cargo.lock
       - Cargo.toml
       - crates/**
+      - lkit-cli/**
       - .github/workflows/test-rust.yml
   workflow_dispatch:
 
