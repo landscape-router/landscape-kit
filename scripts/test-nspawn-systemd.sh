@@ -320,10 +320,15 @@ machine_shell "test \"\$(systemctl show --property=MainPID --value landscape-rou
 echo "== deploy the resident daemon via self install"
 machine_shell \
   "/usr/local/bin/lkit self install --test-runtime /var/lib/lkit-nspawn/runtime.json"
+echo "   self: enabled"
 machine_shell "systemctl is-enabled --quiet lkit.service"
+echo "   self: active"
 machine_shell "systemctl is-active --quiet lkit.service"
+echo "   self: mainpid"
 machine_shell "test \"\$(systemctl show --property=MainPID --value lkit.service)\" -gt 1"
+echo "   self: killmode"
 machine_shell "systemctl show --property=KillMode --value lkit.service | grep -qx process"
+echo "   self: pidfile"
 machine_shell "test -f /root/.lkit/run/lkit.pid"
 
 # 真实 systemd 契约:受管服务可停止并重新启动(不涉及卸载/注销)。
