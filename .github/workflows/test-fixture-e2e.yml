@@ -1,4 +1,4 @@
-name: Test e2e fixture
+name: Test fixture e2e
 
 on:
   push:
