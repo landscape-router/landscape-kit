@@ -9,35 +9,6 @@ use ratatui::backend::TestBackend;
 use ratatui::style::Color;
 
 #[test]
-fn install_form_requires_the_flare_psk() {
-    let mut form = InstallForm {
-        password: "Secret123".into(),
-        password_confirmation: "Secret123".into(),
-        ..InstallForm::default()
-    };
-    let error = form.command().err().expect("empty flare psk must fail");
-    assert!(
-        error.contains("flare recovery psk is required"),
-        "the error must explain the requirement, got: {error}"
-    );
-}
-
-#[test]
-fn install_form_rejects_a_short_flare_psk() {
-    let mut form = InstallForm {
-        password: "Secret123".into(),
-        password_confirmation: "Secret123".into(),
-        flare_psk: "short".into(),
-        ..InstallForm::default()
-    };
-    let error = form.command().err().expect("short flare psk must fail");
-    assert!(
-        error.contains("at least 12 characters"),
-        "the error must mention the minimum length, got: {error}"
-    );
-}
-
-#[test]
 fn renders_sidebar_and_install_form() {
     let _language = LanguageGuard::set(Language::En);
     let backend = TestBackend::new(100, 28);
@@ -57,7 +28,6 @@ fn renders_sidebar_and_install_form() {
     assert!(content.contains("Navigation"));
     assert!(content.contains("Install root"));
     assert!(content.contains("Confirm password"));
-    assert!(content.contains("Flare recovery psk"));
     assert!(content.contains("Start installation"));
     assert!(!content.contains("Repository URL"));
     assert!(content.contains("Environment checks"));
@@ -329,7 +299,6 @@ fn install_form_builds_cli_and_domain_request() {
         admin_user: "operator".into(),
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
-        flare_psk: "recovery-secret-long-enough".into(),
         takeover_network: false,
         selected: InstallField::StartInstallation,
         checks_selected: false,
@@ -347,20 +316,11 @@ fn install_form_builds_cli_and_domain_request() {
         Some(Some("https://example.com/releases/".into()))
     );
     assert!(!format!("{install:?}").contains("Secret123"));
-    assert!(format!("{install:?}").contains("interactive_flare_psk: Some(\"[REDACTED]\")"));
     assert_eq!(install.interactive_password.as_deref(), Some("Secret123"));
-    assert_eq!(
-        install.interactive_flare_psk.as_deref(),
-        Some("recovery-secret-long-enough")
-    );
     assert!(install.password_file.is_none());
     assert_eq!(args[0], "install");
     assert!(args.windows(2).any(|pair| pair == ["--version", "1.2.3"]));
     assert!(args.iter().all(|argument| !argument.contains("Secret123")));
-    assert!(
-        args.iter()
-            .all(|argument| !argument.contains("recovery-secret"))
-    );
 }
 
 #[test]
@@ -368,7 +328,6 @@ fn install_form_defaults_to_network_takeover() {
     let mut form = InstallForm {
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
-        flare_psk: "recovery-secret-long-enough".into(),
         ..InstallForm::default()
     };
     assert!(form.takeover_network);
@@ -387,7 +346,6 @@ fn install_form_maps_repository_modes_to_cli_flags() {
     let base = InstallForm {
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
-        flare_psk: "recovery-secret-long-enough".into(),
         ..InstallForm::default()
     };
     for (mode, repository, expected) in [
@@ -544,7 +502,6 @@ fn enter_on_start_installation_dispatches_the_install_command() {
     app.install.takeover_network = false;
     app.install.password = "Secret123".into();
     app.install.password_confirmation = "Secret123".into();
-    app.install.flare_psk = "recovery-secret-long-enough".into();
 
     let action = app
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))

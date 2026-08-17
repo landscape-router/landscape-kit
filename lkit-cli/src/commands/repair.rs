@@ -39,8 +39,6 @@ pub async fn run(args: &Repair) -> ExitCode {
         admin_user: None,
         password_file: None,
         interactive_password: None,
-        flare_psk_file: None,
-        interactive_flare_psk: None,
         repair_static: !binary,
         repair_binary: binary,
         allow_no_backup: false,

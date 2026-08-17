@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::sync::atomic::Ordering;
 
+use super::daemon_panel::PskDialogField;
 use super::install_form::InstallField;
 use super::mirror::MirrorRow;
 use super::network_wizard::{NetworkWizard, WizardStep};
@@ -113,16 +114,23 @@ impl ConsoleApp {
         if self.flare.open {
             return self.handle_flare_dialog_key(key);
         }
+        if self.show_psk {
+            self.handle_show_psk_key(key);
+            return None;
+        }
+        // 部署确认弹窗可从 Overview 动作行或安装阻断弹框发起,消费全部按键。
+        if self.deploy_daemon_confirming {
+            self.handle_deploy_psk_key(key);
+            return None;
+        }
         if self.preflight_dialog {
             match key.code {
-                // daemon 未运行被阻断时 Enter 执行部署(按钮常显选中态,
-                // Enter 即主动作):后台执行 `lkit self install`,
-                // 完成后预检自动重跑并放行。
+                // daemon 未运行被阻断时 Enter 打开「部署 daemon」确认弹窗
+                // (内嵌急救恢复码输入与二次确认),确认后在后台执行
+                // `lkit self install`,完成后预检自动重跑并放行。
                 KeyCode::Enter if self.preflight_daemon_blocked() => {
-                    if let Err(error) = self.start_daemon_deploy() {
-                        self.notice = error;
-                    }
                     self.preflight_dialog = false;
+                    self.open_deploy_dialog();
                 }
                 KeyCode::Enter => {
                     if matches!(&self.preflight.state, PreflightState::Complete(_)) {
@@ -138,10 +146,8 @@ impl ConsoleApp {
                 }
                 // daemon 未运行被阻断时直接部署:D 与 Enter 同义。
                 KeyCode::Char('d' | 'D') if self.preflight_daemon_blocked() => {
-                    if let Err(error) = self.start_daemon_deploy() {
-                        self.notice = error;
-                    }
                     self.preflight_dialog = false;
+                    self.open_deploy_dialog();
                 }
                 _ => {}
             }
@@ -357,27 +363,21 @@ impl ConsoleApp {
         None
     }
 
-    /// Overview 面板键处理:daemon 未运行时 Enter 打开「部署 daemon」确认层,
-    /// 确认层 Enter 在后台线程执行 `lkit self install`(留在 TUI 内,不退出),
-    /// Esc 关闭确认层。确认层开启时消费全部按键;`f` 打开 flare 恢复通道弹窗。
+    /// Overview 面板键处理:daemon 未运行时 Enter 打开「部署 daemon」确认弹窗
+    /// (内嵌急救恢复码输入与二次确认,输入不一致拒绝部署),方向键/Tab 在
+    /// psk、确认与「开始部署」动作行间移动,Enter 在字段上进入编辑、在动作行上
+    /// 后台执行 `lkit self install`(留在 TUI 内,不退出)。daemon 运行时
+    /// Enter/空格打开「查看/修改急救恢复码」弹窗。`f` 打开 flare 恢复通道弹窗。
     /// 其余按键返回 `None` 交给通用处理(保持 Esc 返回菜单选择等标准语义)。
     pub(super) fn handle_overview_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
-        if self.deploy_daemon_confirming {
-            match key.code {
-                KeyCode::Enter => {
-                    if let Err(error) = self.start_daemon_deploy() {
-                        self.notice = error;
-                    }
-                    self.deploy_daemon_confirming = false;
-                }
-                KeyCode::Esc => self.deploy_daemon_confirming = false,
-                _ => {}
-            }
-            return Some(None);
-        }
         match key.code {
             KeyCode::Enter | KeyCode::Char(' ') if self.daemon_deploy_available() => {
-                self.deploy_daemon_confirming = true;
+                self.open_deploy_dialog();
+                Some(None)
+            }
+            // daemon 运行时 Enter/空格打开「查看/修改急救恢复码」弹窗。
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.open_show_psk();
                 Some(None)
             }
             KeyCode::Char('f' | 'F') => {
@@ -386,6 +386,137 @@ impl ConsoleApp {
             }
             _ => None,
         }
+    }
+
+    /// 部署确认弹窗键处理:方向键/Tab 在 psk、二次确认与「开始部署」动作行间
+    /// 移动;Enter 在输入字段上进入编辑(编辑中 Enter/Esc 提交),在动作行上
+    /// 校验并启动部署;直接输入即进入编辑;Esc 关闭弹窗。
+    fn handle_deploy_psk_key(&mut self, key: KeyEvent) {
+        if self.deploy_psk_editing {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => self.deploy_psk_editing = false,
+                KeyCode::Backspace => {
+                    self.deploy_psk_value_mut().map(String::pop);
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self
+                            .deploy_psk_value_mut()
+                            .is_some_and(|value| value.chars().count() < 1024) =>
+                {
+                    if let Some(value) = self.deploy_psk_value_mut() {
+                        value.push(character);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Enter => {
+                if self.deploy_psk_field == PskDialogField::Action {
+                    self.deploy_with_validated_psk();
+                } else {
+                    self.deploy_psk_editing = true;
+                }
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                self.deploy_psk_field = self.deploy_psk_field.previous();
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                self.deploy_psk_field = self.deploy_psk_field.next();
+            }
+            // 直接输入即进入编辑并追加字符,无需先按编辑键。
+            KeyCode::Char(character)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self
+                        .deploy_psk_value_mut()
+                        .is_some_and(|value| value.chars().count() < 1024) =>
+            {
+                self.deploy_psk_editing = true;
+                if let Some(value) = self.deploy_psk_value_mut() {
+                    value.push(character);
+                }
+            }
+            KeyCode::Esc => self.deploy_daemon_confirming = false,
+            _ => {}
+        }
+    }
+
+    /// 查看/修改弹窗键处理:方向键/Tab 在 psk、二次确认与「保存」动作行间
+    /// 移动;Enter 在输入字段上进入编辑(编辑中 Enter/Esc 提交),在动作行上
+    /// 校验一致后写回配置;直接输入即进入编辑;Esc 关闭弹窗。
+    fn handle_show_psk_key(&mut self, key: KeyEvent) {
+        if self.show_psk_editing {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => self.show_psk_editing = false,
+                KeyCode::Backspace => {
+                    self.show_psk_value_mut().map(String::pop);
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self
+                            .show_psk_value_mut()
+                            .is_some_and(|value| value.chars().count() < 1024) =>
+                {
+                    if let Some(value) = self.show_psk_value_mut() {
+                        value.push(character);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Enter => {
+                if self.show_psk_field == PskDialogField::Action {
+                    self.save_show_psk_dialog();
+                } else {
+                    self.show_psk_editing = true;
+                }
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                self.show_psk_field = self.show_psk_field.previous();
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                self.show_psk_field = self.show_psk_field.next();
+            }
+            // 直接输入即进入编辑并追加字符,无需先按编辑键。
+            KeyCode::Char(character)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self
+                        .show_psk_value_mut()
+                        .is_some_and(|value| value.chars().count() < 1024) =>
+            {
+                self.show_psk_editing = true;
+                if let Some(value) = self.show_psk_value_mut() {
+                    value.push(character);
+                }
+            }
+            KeyCode::Esc => self.show_psk = false,
+            _ => {}
+        }
+    }
+
+    /// 校验并启动 daemon 部署:急救恢复码非空时要求长度至少 12 且与二次确认
+    /// 一致,否则提示并留在弹窗;通过后后台执行 `lkit self install`(留空由
+    /// daemon 自动生成)。
+    fn deploy_with_validated_psk(&mut self) {
+        let psk = self.deploy_psk.trim();
+        if !psk.is_empty() && psk.len() < crate::deployment::config::FLARE_PSK_MIN_LENGTH {
+            self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT);
+            return;
+        }
+        if !psk.is_empty() && self.deploy_psk_confirmation.trim() != psk {
+            self.notice = crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH);
+            return;
+        }
+        if let Err(error) = self.start_daemon_deploy() {
+            self.notice = error;
+        }
+        self.deploy_daemon_confirming = false;
+        self.deploy_psk_editing = false;
+        self.deploy_psk_field = PskDialogField::Psk;
     }
 
     /// flare 弹窗键处理:弹窗开启时消费全部按键。Enter 保存(校验失败留在
@@ -568,6 +699,10 @@ impl ConsoleApp {
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::OverviewDeploy => {
+                self.focus = Focus::Panel;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::OverviewShowPsk => {
                 self.focus = Focus::Panel;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }

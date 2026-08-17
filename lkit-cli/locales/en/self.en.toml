@@ -3,3 +3,5 @@ self.removed = "lkit daemon service was stopped and removed"
 self.upgraded = "lkit upgraded to %{version}"
 self.already_latest = "lkit is already at version %{version}"
 self.daemon_not_installed_hint = "the lkit daemon is not installed; run `lkit self install` to deploy it"
+
+self.enter_flare_psk = "Enter the flare recovery psk (L2 recovery channel of the daemon-hosted flare server, used when Landscape network configuration breaks; at least 12 characters)"

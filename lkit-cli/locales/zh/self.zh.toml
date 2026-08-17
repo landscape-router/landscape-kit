@@ -3,3 +3,5 @@ self.removed = "lkit 常驻服务已停止并移除"
 self.upgraded = "lkit 已升级到 %{version}"
 self.already_latest = "lkit 已是最新版本 %{version}"
 self.daemon_not_installed_hint = "lkit 常驻服务尚未安装;运行 `lkit self install` 部署"
+
+self.enter_flare_psk = "输入急救恢复码（daemon 托管 flare 服务端的 L2 恢复通道密钥，用于 Landscape 网络配置错误时恢复；至少 12 个字符）"

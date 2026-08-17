@@ -28,14 +28,6 @@ pub struct Install {
     /// Password captured by the interactive console. Never populated by CLI parsing.
     #[arg(skip)]
     pub(crate) interactive_password: Option<String>,
-    /// Flare recovery psk read from a restricted file: the L2 recovery channel
-    /// secret used when Landscape network configuration breaks
-    #[arg(long, value_name = "PATH")]
-    pub flare_psk_file: Option<PathBuf>,
-    /// Flare recovery psk captured by the interactive console. Never populated
-    /// by CLI parsing.
-    #[arg(skip)]
-    pub(crate) interactive_flare_psk: Option<String>,
     /// Prompt the user to manually clean the existing directory before a clean install
     #[arg(long)]
     pub force: bool,
@@ -65,11 +57,6 @@ impl std::fmt::Debug for Install {
             .field(
                 "interactive_password",
                 &self.interactive_password.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field("flare_psk_file", &self.flare_psk_file)
-            .field(
-                "interactive_flare_psk",
-                &self.interactive_flare_psk.as_ref().map(|_| "[REDACTED]"),
             )
             .field("force", &self.force)
             .field("takeover_network", &self.takeover_network)
@@ -101,8 +88,6 @@ pub async fn run(args: &Install) -> ExitCode {
         admin_user: args.admin_user.clone(),
         password_file: args.password_file.clone(),
         interactive_password: args.interactive_password.clone(),
-        flare_psk_file: args.flare_psk_file.clone(),
-        interactive_flare_psk: args.interactive_flare_psk.clone(),
         repair_static: false,
         repair_binary: false,
         allow_no_backup: false,
@@ -138,8 +123,6 @@ mod tests {
             admin_user: None,
             password_file: None,
             interactive_password: None,
-            flare_psk_file: None,
-            interactive_flare_psk: None,
             force: false,
             takeover_network: false,
             network_plan: None,
@@ -174,16 +157,6 @@ mod tests {
     fn parses_network_takeover_flag() {
         let install = parse(&["install", "--takeover-network"]).unwrap();
         assert!(install.takeover_network);
-    }
-
-    #[test]
-    fn parses_the_flare_psk_file_flag() {
-        let install = parse(&["install", "--flare-psk-file", "/run/secrets/flare"]).unwrap();
-        assert_eq!(
-            install.flare_psk_file.as_deref(),
-            Some(std::path::Path::new("/run/secrets/flare"))
-        );
-        assert!(install.interactive_flare_psk.is_none());
     }
 
     #[test]

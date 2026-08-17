@@ -101,6 +101,8 @@ pub(crate) enum Hit {
     UninstallAction,
     /// Overview 面板“部署 daemon”动作行(视为 Enter)。
     OverviewDeploy,
+    /// Overview 面板“查看急救恢复码”动作行(视为 Enter)。
+    OverviewShowPsk,
     /// 安装阻断弹框内“部署 daemon”按钮(视为按 D)。
     DeployDaemon,
     /// reinit 面板:可编辑凭据行。

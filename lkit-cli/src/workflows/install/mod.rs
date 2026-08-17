@@ -42,8 +42,7 @@ pub(crate) struct FirstInstallOutcome {
     pub pending_network_address: Option<std::net::Ipv4Addr>,
 }
 
-/// 首次安装上下文。`network`/`runtime` 仅在网络接管安装时提供,`flare_psk` 由
-/// 安装供给链路(控制台/`--flare-psk-file`)强制提供。
+/// 首次安装上下文。`network`/`runtime` 仅在网络接管安装时提供。
 pub(crate) struct FirstInstallArgs<'a, P: DocsProbe> {
     pub root: &'a InstallRoot,
     pub provider: &'a ReleaseProvider,
@@ -53,9 +52,6 @@ pub(crate) struct FirstInstallArgs<'a, P: DocsProbe> {
     pub health_options: &'a HealthOptions<P>,
     pub network: Option<&'a crate::network::config::NetworkPlan>,
     pub runtime: Option<&'a InstallRuntime>,
-    /// L2 恢复通道(flare)psk:在安装事务开始前写入 `[flare]` 配置段,保证
-    /// daemon 托管的 flare 服务在网络接管发生前就使用该 psk 上线。
-    pub flare_psk: Option<String>,
 }
 
 pub(crate) async fn first_install<P: DocsProbe>(
@@ -75,7 +71,6 @@ pub(crate) async fn first_install<P: DocsProbe>(
         health_options,
         network: None,
         runtime: None,
-        flare_psk: None,
     })
     .await
 }
@@ -98,7 +93,6 @@ async fn first_install_impl<P: DocsProbe>(
         health_options,
         network,
         runtime,
-        flare_psk,
     } = args;
     let architecture = Architecture::host().ok_or_else(|| {
         InstallError::UnsupportedPlatform(crate::tr!(
@@ -113,11 +107,6 @@ async fn first_install_impl<P: DocsProbe>(
         TargetVersion::Version(version) => provider.release(version, architecture).await?,
     };
     require_manager(manager)?;
-    // flare 恢复通道配置在事务开始前落盘:daemon 下一个周期(约 2s)即拾取,
-    // 早于任何网络接管动作,保证网络服务被停之前 L2 通道已用本 psk 上线。
-    if let Some(psk) = flare_psk {
-        write_flare_config(&psk)?;
-    }
     if network.is_some() {
         ensure_network_takeover_data_empty(root)?;
     }
@@ -284,19 +273,6 @@ async fn first_install_impl<P: DocsProbe>(
     }
 }
 
-/// 把安装时提供的 flare psk 写入 lkit 地盘 `config.toml` 的 `[flare]` 段:
-/// 保留既有字段(设备、token 等),仅覆盖 psk。文件缺失时创建最小配置。
-fn write_flare_config(psk: &str) -> Result<(), InstallError> {
-    use crate::deployment::config::{default_flare_section, load_flare, save_flare};
-
-    let mut section = match load_flare() {
-        Some(section) => section,
-        None => default_flare_section(),
-    };
-    section.psk = Some(psk.to_string());
-    save_flare(&section)
-}
-
 fn ensure_network_takeover_data_empty(root: &InstallRoot) -> Result<(), InstallError> {
     let data = root.canonical.join("data");
     let metadata = match std::fs::symlink_metadata(&data) {
@@ -320,54 +296,6 @@ fn ensure_network_takeover_data_empty(root: &InstallRoot) -> Result<(), InstallE
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod flare_config_tests {
-    use super::write_flare_config;
-    use crate::deployment::config::{FlareSection, default_flare_section, load_flare, save_flare};
-    use crate::deployment::layout;
-
-    fn territory(name: &str) -> (layout::TerritoryOverride, std::path::PathBuf) {
-        let temp =
-            std::env::temp_dir().join(format!("lkit-install-flare-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp);
-        std::fs::create_dir_all(&temp).unwrap();
-        let guard = layout::test_territory(&temp);
-        (guard, temp)
-    }
-
-    #[test]
-    fn write_flare_config_creates_a_minimal_section_when_missing() {
-        let (guard, temp) = territory("missing");
-        assert!(load_flare().is_none());
-        write_flare_config("an-operator-chosen-secret").unwrap();
-        let section = load_flare().unwrap();
-        assert_eq!(section.psk.as_deref(), Some("an-operator-chosen-secret"));
-        drop(guard);
-        let _ = std::fs::remove_dir_all(&temp);
-    }
-
-    #[test]
-    fn write_flare_config_preserves_existing_fields() {
-        let (guard, temp) = territory("preserve");
-        save_flare(&FlareSection {
-            psk: Some("old-secret".into()),
-            devices: Some("eth0".into()),
-            ..default_flare_section()
-        })
-        .unwrap();
-        write_flare_config("a-new-operator-secret").unwrap();
-        let section = load_flare().unwrap();
-        assert_eq!(section.psk.as_deref(), Some("a-new-operator-secret"));
-        assert_eq!(
-            section.devices.as_deref(),
-            Some("eth0"),
-            "existing flare fields must be preserved"
-        );
-        drop(guard);
-        let _ = std::fs::remove_dir_all(&temp);
-    }
 }
 
 #[cfg(test)]

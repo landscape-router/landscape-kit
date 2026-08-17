@@ -76,7 +76,7 @@ pub struct SelfCommand {
 #[derive(Debug, Subcommand)]
 pub enum SelfAction {
     /// 注册全局常驻 daemon 并启动
-    Install(SelfArgs),
+    Install(InstallSelfArgs),
     /// 升级 /usr/local/bin/lkit 与常驻 daemon
     Upgrade(UpgradeArgs),
     /// 停止、注销并删除常驻 daemon(幂等)
@@ -85,6 +85,19 @@ pub enum SelfAction {
 
 #[derive(Debug, Args)]
 pub struct SelfArgs {
+    #[cfg(feature = "test-support")]
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub test_runtime: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct InstallSelfArgs {
+    /// Flare recovery psk read from a restricted file (root-only): the L2
+    /// recovery channel secret of the daemon-hosted flare server, used when
+    /// Landscape network configuration breaks. Omitted: keep the configured
+    /// psk, prompt in an interactive terminal, or let the daemon generate one
+    #[arg(long, value_name = "PATH")]
+    pub flare_psk_file: Option<PathBuf>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -133,23 +146,83 @@ async fn run_inner(args: &SelfCommand) -> Result<Option<String>, InstallError> {
     }
     let _lock = lock::acquire_install_lock()?;
     match &args.action {
-        SelfAction::Install(_) => install(&runtime).map(Some),
+        SelfAction::Install(args) => {
+            let flare_psk = resolve_flare_psk(args, &runtime)?;
+            install(&runtime, flare_psk.as_deref()).map(Some)
+        }
         SelfAction::Upgrade(args) => upgrade(&runtime, args).await.map(|()| None),
         SelfAction::Remove(_) => remove(&runtime).map(Some),
     }
 }
 
+/// 解析 flare 恢复 psk:`--flare-psk-file` 优先;既有 `[flare]` 已配置 psk 时
+/// 不覆盖;否则在交互终端提示输入(带用途说明),非交互环境回落 daemon 自动
+/// 生成(恒常启动兜底),不阻断部署。
+fn resolve_flare_psk(
+    args: &InstallSelfArgs,
+    runtime: &InstallRuntime,
+) -> Result<Option<String>, InstallError> {
+    use crate::deployment::config::load_flare;
+
+    if let Some(path) = args.flare_psk_file.as_deref() {
+        let psk = crate::interaction::credentials::read_password_file(path, runtime.managed_uid)?;
+        validate_flare_psk(&psk)?;
+        return Ok(Some(psk));
+    }
+    if load_flare().is_some_and(|section| section.psk.is_some()) {
+        return Ok(None);
+    }
+    match crate::interaction::interactive::read_password(&crate::tr!(
+        crate::keys::SELF_ENTER_FLARE_PSK
+    )) {
+        Ok(psk) => {
+            validate_flare_psk(&psk)?;
+            Ok(Some(psk))
+        }
+        // 无终端(脚本/后台):daemon 首启自动生成并持久化。
+        Err(InstallError::NonInteractive(_)) => {
+            println!(
+                "self: no flare psk configured; the daemon generates one on first start, view or set it with `lkit flare setup`"
+            );
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_flare_psk(psk: &str) -> Result<(), InstallError> {
+    use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
+
+    if psk.len() < FLARE_PSK_MIN_LENGTH {
+        return Err(InstallError::ParameterUsage(format!(
+            "the flare psk must be at least {FLARE_PSK_MIN_LENGTH} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// 把 flare psk 写入 `config.toml` 的 `[flare]` 段(保留既有字段),在 daemon
+/// 启动前完成,保证 daemon 首启即用该 psk 托管 flare 服务。
+fn write_flare_psk(psk: &str) -> Result<(), InstallError> {
+    use crate::deployment::config::{default_flare_section, load_flare, save_flare};
+
+    let mut section = load_flare().unwrap_or_else(default_flare_section);
+    section.psk = Some(psk.to_string());
+    save_flare(&section)
+}
+
 /// 交互控制台在 TUI 内执行 `lkit self install`:与 CLI 相同的 root 检查、安装锁
 /// 与 systemd 语义,返回结果消息由控制台展示而不直接打印(控制台不另起 lkit
-/// 进程、不解析 CLI 文本输出)。
-pub(crate) fn install_daemon() -> Result<String, InstallError> {
+/// 进程、不解析 CLI 文本输出)。`psk` 为 TUI 部署弹窗收集的急救恢复码:提供时
+/// 在 daemon 启动前写回 `[flare]` 段,`None` 时由 daemon 首启自动生成。
+pub(crate) fn install_daemon(psk: Option<String>) -> Result<String, InstallError> {
     if unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(
             "self commands require root".into(),
         ));
     }
     let _lock = lock::acquire_install_lock()?;
-    install(&InstallRuntime::production())
+    install(&InstallRuntime::production(), psk.as_deref())
 }
 
 /// `self` 固定使用 systemd:unit 原件、注册链接、MainPID 校验都是 systemd 语义。
@@ -163,7 +236,7 @@ fn require_systemd(runtime: &InstallRuntime) -> Result<&Systemd, InstallError> {
     }
 }
 
-fn install(runtime: &InstallRuntime) -> Result<String, InstallError> {
+fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, InstallError> {
     let systemd = require_systemd(runtime)?;
     let service = ManagedService::LkitDaemon;
     let binary = lkit_binary();
@@ -179,6 +252,10 @@ fn install(runtime: &InstallRuntime) -> Result<String, InstallError> {
     let content = systemd.render_definition(service, &binary)?;
     systemd.validate_definition(service, &content, &binary)?;
     write_unit_origin(&origin, &content)?;
+    // flare 恢复通道配置在 daemon 启动前落盘:daemon 首启即用该 psk 托管 flare。
+    if let Some(psk) = flare_psk {
+        write_flare_psk(psk)?;
+    }
     let result = (|| -> Result<(), InstallError> {
         systemd.register(service, &origin)?;
         systemd.enable(service)?;
@@ -573,11 +650,11 @@ fn resolve_runtime(_args: &SelfCommand) -> Result<InstallRuntime, InstallError> 
 #[cfg(feature = "test-support")]
 fn test_runtime(args: &SelfCommand) -> Option<&Path> {
     match &args.action {
-        SelfAction::Install(args) | SelfAction::Remove(args) => args.test_runtime.as_deref(),
+        SelfAction::Install(args) => args.test_runtime.as_deref(),
+        SelfAction::Remove(args) => args.test_runtime.as_deref(),
         SelfAction::Upgrade(args) => args.test_runtime.as_deref(),
     }
 }
-
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
@@ -603,6 +680,13 @@ mod tests {
         let command = <SelfCommand as Args>::augment_args(Command::new("self"));
         let matches = command.try_get_matches_from(args)?;
         SelfCommand::from_arg_matches(&matches)
+    }
+
+    /// 以当前用户为 managed_uid 的运行时,供读取 root-only psk 文件。
+    fn test_runtime() -> InstallRuntime {
+        let mut runtime = InstallRuntime::production();
+        runtime.managed_uid = unsafe { libc::geteuid() };
+        runtime
     }
 
     #[test]
@@ -634,6 +718,165 @@ mod tests {
         assert!(parse(&["self", "install", "--install-dir", "/srv/x"]).is_err());
         assert!(parse(&["self", "remove", "--install-dir", "/srv/x"]).is_err());
         assert!(parse(&["self", "upgrade", "--install-dir", "/srv/x"]).is_err());
+    }
+
+    #[test]
+    fn parses_the_flare_psk_file_flag_on_install_only() {
+        let install =
+            parse(&["self", "install", "--flare-psk-file", "/run/secrets/flare"]).unwrap();
+        match install.action {
+            SelfAction::Install(args) => assert_eq!(
+                args.flare_psk_file.as_deref(),
+                Some(std::path::Path::new("/run/secrets/flare"))
+            ),
+            _ => panic!("expected install"),
+        }
+        assert!(
+            parse(&["self", "remove", "--flare-psk-file", "/x"]).is_err(),
+            "remove must not accept the flare psk file"
+        );
+    }
+
+    #[test]
+    fn resolves_the_flare_psk_from_a_restricted_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let territory =
+            std::env::temp_dir().join(format!("lkit-self-flare-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let psk_file = territory.join("psk");
+        std::fs::write(&psk_file, b"an-operator-chosen-secret\n").unwrap();
+        std::fs::set_permissions(&psk_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let runtime = test_runtime();
+        let args = InstallSelfArgs {
+            flare_psk_file: Some(psk_file),
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        };
+        assert_eq!(
+            resolve_flare_psk(&args, &runtime).unwrap(),
+            Some("an-operator-chosen-secret".to_string())
+        );
+        assert!(
+            crate::deployment::config::load_flare().is_none(),
+            "resolution alone must not write the config"
+        );
+        write_flare_psk("an-operator-chosen-secret").unwrap();
+        assert_eq!(
+            crate::deployment::config::load_flare()
+                .unwrap()
+                .psk
+                .as_deref(),
+            Some("an-operator-chosen-secret")
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&territory);
+    }
+
+    #[test]
+    fn keeps_an_existing_flare_psk_without_prompting() {
+        let territory =
+            std::env::temp_dir().join(format!("lkit-self-flare-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        crate::deployment::config::save_flare(&crate::deployment::config::FlareSection {
+            psk: Some("an-existing-recovery-secret".into()),
+            ..crate::deployment::config::default_flare_section()
+        })
+        .unwrap();
+        let runtime = test_runtime();
+        let args = InstallSelfArgs {
+            flare_psk_file: None,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        };
+        assert_eq!(
+            resolve_flare_psk(&args, &runtime).unwrap(),
+            None,
+            "an existing psk must not be replaced or re-prompted"
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&territory);
+    }
+
+    #[test]
+    fn non_interactive_without_a_psk_falls_back_to_daemon_generation() {
+        let _interactive_guard = crate::interaction::interactive::test_guard();
+        crate::interaction::interactive::configure(true);
+        let territory =
+            std::env::temp_dir().join(format!("lkit-self-flare-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let runtime = test_runtime();
+        let args = InstallSelfArgs {
+            flare_psk_file: None,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        };
+        let resolved = resolve_flare_psk(&args, &runtime);
+        crate::interaction::interactive::configure(false);
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&territory);
+        assert_eq!(
+            resolved.unwrap(),
+            None,
+            "non-interactive resolution must fall back to daemon auto-generation"
+        );
+    }
+
+    #[test]
+    fn rejects_a_short_flare_psk_from_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let territory =
+            std::env::temp_dir().join(format!("lkit-self-flare-short-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let psk_file = territory.join("psk");
+        std::fs::write(&psk_file, b"short\n").unwrap();
+        std::fs::set_permissions(&psk_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let runtime = test_runtime();
+        let args = InstallSelfArgs {
+            flare_psk_file: Some(psk_file),
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        };
+        assert!(matches!(
+            resolve_flare_psk(&args, &runtime),
+            Err(InstallError::ParameterUsage(_))
+        ));
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&territory);
+    }
+
+    #[test]
+    fn write_flare_psk_preserves_existing_fields() {
+        let territory =
+            std::env::temp_dir().join(format!("lkit-self-flare-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        crate::deployment::config::save_flare(&crate::deployment::config::FlareSection {
+            psk: Some("old-secret".into()),
+            devices: Some("eth0".into()),
+            ..crate::deployment::config::default_flare_section()
+        })
+        .unwrap();
+        write_flare_psk("a-new-operator-secret").unwrap();
+        let section = crate::deployment::config::load_flare().unwrap();
+        assert_eq!(section.psk.as_deref(), Some("a-new-operator-secret"));
+        assert_eq!(
+            section.devices.as_deref(),
+            Some("eth0"),
+            "existing flare fields must be preserved"
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&territory);
     }
 
     #[test]

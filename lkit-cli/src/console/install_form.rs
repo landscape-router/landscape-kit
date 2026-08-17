@@ -32,13 +32,12 @@ pub(crate) enum InstallField {
     AdminUser,
     Password,
     PasswordConfirmation,
-    FlarePsk,
     // TODO(network-takeover): 恢复网络接管开关时在此插入 NetworkTakeover。
     StartInstallation,
 }
 
 impl InstallField {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Version,
         Self::Repository,
         Self::RepositoryUrl,
@@ -46,7 +45,6 @@ impl InstallField {
         Self::AdminUser,
         Self::Password,
         Self::PasswordConfirmation,
-        Self::FlarePsk,
         Self::StartInstallation,
     ];
 
@@ -78,7 +76,6 @@ impl InstallField {
             Self::PasswordConfirmation => {
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL)
             }
-            Self::FlarePsk => crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL),
             Self::StartInstallation => String::new(),
         }
     }
@@ -92,7 +89,6 @@ impl InstallField {
             Self::AdminUser => form.admin_user.clone(),
             Self::Password => mask(&form.password),
             Self::PasswordConfirmation => mask(&form.password_confirmation),
-            Self::FlarePsk => mask(&form.flare_psk),
             Self::StartInstallation => {
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON)
             }
@@ -141,7 +137,6 @@ pub(crate) struct InstallForm {
     pub(crate) admin_user: String,
     pub(crate) password: String,
     pub(crate) password_confirmation: String,
-    pub(crate) flare_psk: String,
     pub(crate) takeover_network: bool,
     pub(crate) selected: InstallField,
     pub(crate) checks_selected: bool,
@@ -159,7 +154,6 @@ impl Default for InstallForm {
             admin_user: "admin".into(),
             password: String::new(),
             password_confirmation: String::new(),
-            flare_psk: String::new(),
             // TODO(network-takeover): 开关暂隐藏且恒为 true,console 安装始终走网络接管;
             // 处理完不同发行版网络服务差异后恢复开关并把默认改回 false。
             takeover_network: true,
@@ -231,10 +225,6 @@ impl InstallForm {
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_LABEL),
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_PASSWORD_HELP),
             ),
-            InstallField::FlarePsk => (
-                crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL),
-                crate::tr!(crate::keys::CONSOLE_FLARE_PSK_HELP),
-            ),
             // TODO(network-takeover): 恢复网络接管开关时放开下面被注释的接管 arm。
             // InstallField::NetworkTakeover => (
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
@@ -257,7 +247,6 @@ impl InstallForm {
             InstallField::AdminUser => Some(&mut self.admin_user),
             InstallField::Password => Some(&mut self.password),
             InstallField::PasswordConfirmation => Some(&mut self.password_confirmation),
-            InstallField::FlarePsk => Some(&mut self.flare_psk),
             _ => None,
         }
     }
@@ -276,8 +265,7 @@ impl InstallForm {
             | InstallField::InstallRoot
             | InstallField::AdminUser
             | InstallField::Password
-            | InstallField::PasswordConfirmation
-            | InstallField::FlarePsk => {
+            | InstallField::PasswordConfirmation => {
                 self.editing = true;
                 Ok(None)
             }
@@ -310,12 +298,6 @@ impl InstallForm {
             ));
         }
         credentials::validate_password(&self.password).map_err(|error| error.to_string())?;
-        if self.flare_psk.is_empty() {
-            return Err(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_REQUIRED));
-        }
-        if self.flare_psk.len() < crate::deployment::config::FLARE_PSK_MIN_LENGTH {
-            return Err(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT));
-        }
         Ok(())
     }
 
@@ -354,7 +336,6 @@ impl InstallForm {
         };
         let password = std::mem::take(&mut self.password);
         self.password_confirmation.clear();
-        let flare_psk = std::mem::take(&mut self.flare_psk);
         let install = Install {
             version: Some(version.to_string()),
             repository: repository.clone(),
@@ -362,8 +343,6 @@ impl InstallForm {
             admin_user: Some(self.admin_user.clone()),
             password_file: None,
             interactive_password: Some(password),
-            flare_psk_file: None,
-            interactive_flare_psk: Some(flare_psk),
             force: false,
             takeover_network: self.takeover_network,
             network_plan,

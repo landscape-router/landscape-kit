@@ -197,26 +197,6 @@ pub(crate) async fn delegate(
     network_plan: Option<NetworkPlan>,
     full_screen: bool,
 ) -> Result<ExitCode, DelegateError> {
-    delegate_with_flare_psk(
-        interrupt,
-        &mut args,
-        interactive_password,
-        None,
-        network_plan,
-        full_screen,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn delegate_with_flare_psk(
-    interrupt: &InterruptGuard,
-    args: &mut Vec<String>,
-    interactive_password: Option<String>,
-    interactive_flare_psk: Option<String>,
-    network_plan: Option<NetworkPlan>,
-    full_screen: bool,
-) -> Result<ExitCode, DelegateError> {
     if !daemon_is_running() {
         return Err(DelegateError::usage(
             "the lkit daemon is not running; deploy it with `lkit self install`",
@@ -227,7 +207,7 @@ pub(crate) async fn delegate_with_flare_psk(
             "the lkit daemon cannot spawn worker commands: its executable was deleted or replaced; restore the executable and restart the daemon",
         ));
     }
-    let operation = operation_screen(args);
+    let operation = operation_screen(&args);
     let operation_id = Uuid::now_v7().to_string();
     let directory = PathBuf::from(OPERATIONS_DIR);
     std::fs::create_dir_all(&directory).map_err(|error| {
@@ -245,7 +225,6 @@ pub(crate) async fn delegate_with_flare_psk(
     let cancel_path = directory.join(format!("{operation_id}{CANCEL_FILE_SUFFIX}"));
     let credential_path = directory.join(format!("{operation_id}.credential"));
     let network_plan_path = directory.join(format!("{operation_id}.network.json"));
-    let flare_psk_path = directory.join(format!("{operation_id}.flare-psk"));
     let mut environment = string_environment().map_err(DelegateError::infrastructure)?;
     environment.retain(|(key, _)| key != crate::i18n::LANGUAGE_ENV);
     environment.push((
@@ -258,7 +237,7 @@ pub(crate) async fn delegate_with_flare_psk(
     let has_credential = interactive_password.is_some();
     if let Some(password) = interactive_password {
         create_private_secret_file(&credential_path, password.as_bytes()).map_err(|error| {
-            cleanup_files(&[&credential_path, &network_plan_path, &flare_psk_path]);
+            cleanup_files(&[&credential_path, &network_plan_path]);
             DelegateError::infrastructure(error)
         })?;
         args.extend([
@@ -269,7 +248,7 @@ pub(crate) async fn delegate_with_flare_psk(
     let has_network_plan = network_plan.is_some();
     if let Some(network_plan) = network_plan {
         if let Err(error) = write_private_json(&network_plan_path, &network_plan) {
-            cleanup_files(&[&credential_path, &network_plan_path, &flare_psk_path]);
+            cleanup_files(&[&credential_path, &network_plan_path]);
             return Err(DelegateError::infrastructure(error));
         }
         args.extend([
@@ -277,20 +256,9 @@ pub(crate) async fn delegate_with_flare_psk(
             network_plan_path.display().to_string(),
         ]);
     }
-    let has_flare_psk = interactive_flare_psk.is_some();
-    if let Some(psk) = interactive_flare_psk {
-        if let Err(error) = create_private_secret_file(&flare_psk_path, psk.as_bytes()) {
-            cleanup_files(&[&credential_path, &network_plan_path, &flare_psk_path]);
-            return Err(DelegateError::infrastructure(error));
-        }
-        args.extend([
-            "--flare-psk-file".into(),
-            flare_psk_path.display().to_string(),
-        ]);
-    }
     let request = WorkerRequest {
         schema_version: 2,
-        args: std::mem::take(args),
+        args: std::mem::take(&mut args),
         environment,
         working_directory,
         result_path: result_path.clone(),
@@ -301,19 +269,13 @@ pub(crate) async fn delegate_with_flare_psk(
         presentation_path: presentation_path.clone(),
         credential_path: has_credential.then(|| credential_path.clone()),
         network_plan_path: has_network_plan.then(|| network_plan_path.clone()),
-        flare_psk_path: has_flare_psk.then(|| flare_psk_path.clone()),
     };
     if let Err(error) = write_private_json(&request_path, &request) {
-        cleanup_files(&[&credential_path, &network_plan_path, &flare_psk_path]);
+        cleanup_files(&[&credential_path, &network_plan_path]);
         return Err(DelegateError::infrastructure(error));
     }
     if let Err(error) = create_private_file(&presentation_path) {
-        cleanup_files(&[
-            &request_path,
-            &credential_path,
-            &network_plan_path,
-            &flare_psk_path,
-        ]);
+        cleanup_files(&[&request_path, &credential_path, &network_plan_path]);
         return Err(DelegateError::infrastructure(error));
     }
 
@@ -328,7 +290,6 @@ pub(crate) async fn delegate_with_flare_psk(
             &cancel_path,
             &credential_path,
             &network_plan_path,
-            &flare_psk_path,
         ]);
         if full_screen {
             crate::interaction::presentation::show_cancelled_screen(interrupt)
@@ -358,7 +319,6 @@ pub(crate) async fn delegate_with_flare_psk(
             &cancel_path,
             &credential_path,
             &network_plan_path,
-            &flare_psk_path,
         ]);
         if full_screen {
             crate::interaction::presentation::show_cancelled_screen(interrupt)
@@ -375,7 +335,6 @@ pub(crate) async fn delegate_with_flare_psk(
         &cancel_path,
         &credential_path,
         &network_plan_path,
-        &flare_psk_path,
     ]);
     let _ = RemoveFile::new(&cancel_path);
     match result {

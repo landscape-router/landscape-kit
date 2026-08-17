@@ -27,8 +27,6 @@ pub(super) struct WorkerRequest {
     pub(super) credential_path: Option<PathBuf>,
     #[serde(default)]
     pub(super) network_plan_path: Option<PathBuf>,
-    #[serde(default)]
-    pub(super) flare_psk_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -101,24 +99,6 @@ pub(super) fn validate_network_plan_path(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("inspect internal network plan file: {error}"))?;
     if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
         return Err("internal network plan must be a root-only regular file".into());
-    }
-    Ok(())
-}
-
-pub(super) fn validate_flare_psk_path(path: &Path) -> Result<(), String> {
-    if path.parent() != Some(Path::new(OPERATIONS_DIR))
-        || !path
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().ends_with(".flare-psk"))
-    {
-        return Err(format!(
-            "internal flare psk path must be under {OPERATIONS_DIR}"
-        ));
-    }
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| format!("inspect internal flare psk file: {error}"))?;
-    if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
-        return Err("internal flare psk file must be a root-only regular file".into());
     }
     Ok(())
 }
@@ -231,38 +211,5 @@ mod tests {
             let _credential = RemoveFile::new(&path);
         }
         assert!(!path.exists());
-    }
-
-    #[test]
-    fn flare_psk_path_rejects_foreign_locations_and_suffixes() {
-        use std::os::unix::fs::PermissionsExt;
-
-        // 校验优先检查路径位置与后缀(不触碰文件元数据),可离线断言;
-        // root 权限与 0600 的元数据校验由 fixture e2e(真实 install 委托)覆盖。
-        let dir = std::env::temp_dir().join(format!(
-            "lkit-worker-flare-psk-{}-{}",
-            std::process::id(),
-            Uuid::now_v7()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let outside = dir.join("op.flare-psk");
-        std::fs::write(&outside, b"a-recovery-secret").unwrap();
-        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(
-            validate_flare_psk_path(&outside).is_err(),
-            "a flare psk file outside the operations directory must be rejected"
-        );
-        let operations = std::path::Path::new(OPERATIONS_DIR);
-        let wrong_suffix = operations.join(format!("{}.credential", Uuid::now_v7()));
-        assert!(
-            validate_flare_psk_path(&wrong_suffix).is_err(),
-            "a wrong file suffix must be rejected"
-        );
-        assert!(
-            validate_flare_psk_path(&operations.join(format!("{}.flare-psk", Uuid::now_v7())))
-                .is_err(),
-            "a missing file must be rejected by the metadata check"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

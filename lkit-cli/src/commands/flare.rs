@@ -366,7 +366,7 @@ mod tests {
 }
 
 /// 显示或更新 daemon 托管的 `[flare]` 配置段。带任一修改选项时,在既有配置
-/// 基础上覆盖对应字段并写回 `config.toml`(daemon 下一个周期自动拾取);
+/// 基础上覆盖对应字段并写回 `config.toml`(daemon 最多 2 秒后自动拾取);
 /// 不带选项时打印当前有效配置,psk 一并显示,供分发给 `lflare` 恢复客户端。
 #[cfg(target_os = "linux")]
 fn run_setup(args: &SetupArgs) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,6 +1,6 @@
 use super::ConsoleAction;
 use super::backup::{BackupListState, BackupPanel};
-use super::daemon_panel::DeployResult;
+use super::daemon_panel::{DeployResult, PskDialogField};
 use super::flare_panel::FlareDialog;
 use super::install_form::InstallForm;
 use super::mirror::MirrorPanel;
@@ -43,6 +43,21 @@ pub(super) struct ConsoleApp {
     pub(super) hits: Clicks,
     /// Overview「部署 daemon」动作的确认层与后台执行状态。
     pub(super) deploy_daemon_confirming: bool,
+    /// 部署确认弹窗中输入的急救恢复码(flare psk,编辑中为明文,渲染时掩码)。
+    /// 留空则由 daemon 首启自动生成。
+    pub(super) deploy_psk: String,
+    /// 急救恢复码的二次确认输入:两次不一致时拒绝部署。
+    pub(super) deploy_psk_confirmation: String,
+    /// 部署确认弹窗当前选中的单元(psk、确认或开始部署动作行)。
+    pub(super) deploy_psk_field: PskDialogField,
+    pub(super) deploy_psk_editing: bool,
+    /// Overview「查看/修改急救恢复码」弹窗:展示当前 `[flare]` 段 psk 明文,
+    /// 内嵌 psk 与二次确认两个输入框,保存时校验一致后写回。
+    pub(super) show_psk: bool,
+    pub(super) show_psk_value: String,
+    pub(super) show_psk_confirmation: String,
+    pub(super) show_psk_field: PskDialogField,
+    pub(super) show_psk_editing: bool,
     pub(super) deploy_daemon: Option<std::sync::mpsc::Receiver<DeployResult>>,
 }
 
@@ -72,6 +87,15 @@ impl ConsoleApp {
             takeover_choice: 0,
             hits: Clicks::default(),
             deploy_daemon_confirming: false,
+            deploy_psk: String::new(),
+            deploy_psk_confirmation: String::new(),
+            deploy_psk_field: PskDialogField::Psk,
+            deploy_psk_editing: false,
+            show_psk: false,
+            show_psk_value: String::new(),
+            show_psk_confirmation: String::new(),
+            show_psk_field: PskDialogField::Psk,
+            show_psk_editing: false,
             deploy_daemon: None,
         }
     }
@@ -214,6 +238,45 @@ impl ConsoleApp {
         if self.exit_state == ExitState::Confirming {
             return;
         }
+        // 部署弹窗:粘贴直接追加到当前聚焦的急救恢复码字段(自动进入编辑态)。
+        if self.deploy_daemon_confirming {
+            self.deploy_psk_editing = true;
+            if let Some(target) = self.deploy_psk_value_mut() {
+                let remaining = 1024_usize.saturating_sub(target.chars().count());
+                target.extend(
+                    value
+                        .chars()
+                        .filter(|character| !character.is_control())
+                        .take(remaining),
+                );
+            }
+            return;
+        }
+        // 查看/修改弹窗:粘贴直接追加到当前聚焦的字段(自动进入编辑态)。
+        if self.show_psk {
+            self.show_psk_editing = true;
+            if let Some(target) = self.show_psk_value_mut() {
+                let remaining = 1024_usize.saturating_sub(target.chars().count());
+                target.extend(
+                    value
+                        .chars()
+                        .filter(|character| !character.is_control())
+                        .take(remaining),
+                );
+            }
+            return;
+        }
+        // flare 弹窗:粘贴直接追加到急救恢复码。
+        if self.flare.open {
+            let remaining = 1024_usize.saturating_sub(self.flare.psk.chars().count());
+            self.flare.psk.extend(
+                value
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(remaining),
+            );
+            return;
+        }
         if let Some(wizard) = self.network_wizard.as_mut() {
             if wizard.editing
                 && let Some(target) = wizard.value_mut()
@@ -247,7 +310,12 @@ impl ConsoleApp {
     }
 
     pub(super) fn hints(&self) -> String {
-        if self.exit_state == ExitState::Confirming {
+        // 部署确认与查看/修改弹窗可跨菜单出现,优先于菜单相关提示。
+        if self.deploy_daemon_confirming {
+            crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_HINT_CONFIRM)
+        } else if self.show_psk {
+            crate::tr!(crate::keys::CONSOLE_SHOW_PSK_HINT)
+        } else if self.exit_state == ExitState::Confirming {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ENTER_CONFIRM_ESC_CANCEL)
         } else if self.exit_state == ExitState::Armed {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ESC_AGAIN)
@@ -316,9 +384,7 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_LIST)
             }
         } else if self.menu() == Menu::Overview && self.focus == Focus::Panel {
-            if self.deploy_daemon_confirming {
-                crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_HINT_CONFIRM)
-            } else if self.daemon_deploy_available() {
+            if self.daemon_deploy_available() {
                 crate::tr!(crate::keys::CONSOLE_OVERVIEW_HINT_DEPLOY)
             } else {
                 crate::tr!(crate::keys::CONSOLE_OVERVIEW_HINT_FLARE)

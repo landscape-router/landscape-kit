@@ -109,7 +109,7 @@ async fn run_command(
     };
 
     if delegated {
-        let mut args = match delegated_args {
+        let args = match delegated_args {
             Some(args) => args,
             None => match daemon_worker::string_args() {
                 Ok(args) => args,
@@ -124,20 +124,15 @@ async fn run_command(
             Commands::Reinit(reinit) => reinit.interactive_password.take(),
             _ => None,
         };
-        let interactive_flare_psk = match &mut command {
-            Commands::Install(install) => install.interactive_flare_psk.take(),
-            _ => None,
-        };
         let network_plan = match &mut command {
             Commands::Install(install) => install.network_plan.take(),
             Commands::Reinit(reinit) => reinit.network_plan.take(),
             _ => None,
         };
-        return match daemon_worker::delegate_with_flare_psk(
+        return match daemon_worker::delegate(
             &interrupt,
-            &mut args,
+            args,
             interactive_password,
-            interactive_flare_psk,
             network_plan,
             from_console,
         )

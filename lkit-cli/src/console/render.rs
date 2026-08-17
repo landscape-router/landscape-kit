@@ -10,7 +10,9 @@ use super::backup::{
     render_backup_create_progress, render_backup_delete_confirmation,
     render_backup_restore_confirmation,
 };
-use super::daemon_panel::{render_daemon_deploy_confirmation, render_daemon_deploy_progress};
+use super::daemon_panel::{
+    render_daemon_deploy_confirmation, render_daemon_deploy_progress, render_show_psk_dialog,
+};
 use super::flare_panel::render_flare_dialog;
 use super::install_form::render_install;
 use super::mirror::{render_mirror, render_mirror_confirmation};
@@ -117,8 +119,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     if app.menu() == Menu::Reinit && app.reinit.confirming {
         render_reinit_confirmation(frame, app);
     }
-    if app.menu() == Menu::Overview && app.deploy_daemon_confirming {
+    // 部署确认弹窗可从 Overview 动作行或安装阻断弹框发起,不限定菜单。
+    if app.deploy_daemon_confirming {
         render_daemon_deploy_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Overview && app.show_psk {
+        render_show_psk_dialog(frame, app);
     }
     if app.flare.open {
         render_flare_dialog(frame, app);
@@ -363,8 +369,8 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     // 左栏:Landscape 安装信息。
     let landscape_lines = overview_landscape_lines(app);
-    // 右栏:lkit 常驻服务(版本 + daemon 运行状态 + 部署动作行)。
-    let (lkit_lines, deploy_row) = overview_lkit_lines(focused);
+    // 右栏:lkit 常驻服务(版本 + daemon 运行状态 + 动作行)。
+    let (lkit_lines, action_rows) = overview_lkit_lines(focused);
     // 窄面板回退为上下堆叠,保证 72 列终端(面板约 46 列)可用。
     if area.width < 52 {
         let mut lines = landscape_lines;
@@ -377,11 +383,11 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         ));
         let lkit_start = lines.len();
         lines.extend(lkit_lines);
-        if let Some(row) = deploy_row {
+        for (row, hit) in action_rows {
             app.hits.block_row(
                 area,
                 block_row_of(&lines, lkit_start + row, area.width.saturating_sub(2)),
-                Hit::OverviewDeploy,
+                hit,
             );
         }
         frame.render_widget(
@@ -407,12 +413,12 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
             .wrap(Wrap { trim: false }),
         landscape_area,
     );
-    if let Some(row) = deploy_row {
+    for (row, hit) in action_rows {
         // 右栏无边框:直接注册内容区坐标(不用 block_row 的边框偏移)。
         let content_row = block_row_of(&lkit_lines, row, lkit_area.width);
         app.hits.add(
             Rect::new(lkit_area.x, lkit_area.y + content_row, lkit_area.width, 1),
-            Hit::OverviewDeploy,
+            hit,
         );
     }
     frame.render_widget(
@@ -489,8 +495,8 @@ fn overview_landscape_lines(app: &ConsoleApp) -> Vec<Line<'static>> {
     }
 }
 
-/// Overview 右栏:lkit 常驻服务。返回行与部署动作行行号(仅 daemon 未运行时)。
-fn overview_lkit_lines(focused: bool) -> (Vec<Line<'static>>, Option<usize>) {
+/// Overview 右栏:lkit 常驻服务。返回行与动作行(行号,命中区)列表。
+fn overview_lkit_lines(focused: bool) -> (Vec<Line<'static>>, Vec<(usize, Hit)>) {
     let version = env!("CARGO_PKG_VERSION");
     let running = crate::daemon_worker::daemon_is_running();
     let mut lines = vec![
@@ -517,36 +523,48 @@ fn overview_lkit_lines(focused: bool) -> (Vec<Line<'static>>, Option<usize>) {
             Style::default().fg(Color::Red),
         )
     });
+    let selected_style = if focused {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let action_style = if focused {
+        selected_style
+    } else {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    };
     // daemon 未运行时提供「部署 daemon」动作行:确认后在 TUI 内后台执行
     // `lkit self install`,不退出控制台。
+    let mut action_rows = Vec::new();
     if !running {
         let deploy_row = lines.len();
-        let selected_style = if focused {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        let value_style = if focused {
-            selected_style
-        } else {
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD)
-        };
         lines.push(Line::from(vec![
             Span::styled(if focused { "> " } else { "  " }, selected_style),
             Span::styled(
                 crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON),
-                value_style,
+                action_style,
             ),
         ]));
-        (lines, Some(deploy_row))
+        action_rows.push((deploy_row, Hit::OverviewDeploy));
     } else {
-        (lines, None)
+        // daemon 运行时提供「查看急救恢复码」动作行:弹出展示当前 `[flare]`
+        // 段 psk 明文,供分发给恢复操作员。
+        let show_row = lines.len();
+        lines.push(Line::from(vec![
+            Span::styled(if focused { "> " } else { "  " }, selected_style),
+            Span::styled(
+                crate::tr!(crate::keys::CONSOLE_OVERVIEW_SHOW_PSK),
+                action_style,
+            ),
+        ]));
+        action_rows.push((show_row, Hit::OverviewShowPsk));
     }
+    (lines, action_rows)
 }
 pub(crate) fn panel_block(title: &str, focused: bool) -> Block<'static> {
     let title = if focused {

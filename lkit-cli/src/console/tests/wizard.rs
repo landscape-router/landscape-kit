@@ -175,7 +175,6 @@ fn network_wizard_confirm_requires_enter_to_start() {
     let mut app = ConsoleApp::new();
     app.install.password = "Secret123".into();
     app.install.password_confirmation = "Secret123".into();
-    app.install.flare_psk = "recovery-secret-long-enough".into();
     app.network_wizard = Some(sample_network_wizard());
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
