@@ -29,14 +29,17 @@
 - **S-1 委托提交与结果回收**：CLI 全程等待委托的 uninstall 提交，断言状态删除、
   注册链接移除、`current` 移除、服务停止、保护 `.lkb` 保留、daemon 存活；
 - **S-2 前端断开**：请求写入后 SIGKILL 前端进程，daemon 脱离会话独立完成卸载；
-- **S-3 cancel 文件取消**：委托执行中写 cancel 文件（等价于可取消阶段 Ctrl+C 的
-  委托侧信号）→ daemon 以 SIGTERM 终止子进程组并写回非 0 结果，前端拿到退出码；
-  下个周期前向完成中断的卸载（恢复语义）。委托的 uninstall 没有下载阶段，前端
-  Ctrl+C 被忽略（仅 `Downloading` 阶段可取消）；
+- **S-3 cancel 文件取消**：委托执行中（等 worker 事务文件出现后再写入 cancel
+  文件，保证取消落在可恢复现场；等价于可取消阶段 Ctrl+C 的委托侧信号）→ daemon
+  以 SIGTERM 终止子进程组并写回非 0 结果，前端拿到退出码；恢复语义随中断点：
+  取消落在 `Preparing`（现场未变）时恢复只把事务标记 `failed`、state 保留，
+  落在 `Preparing` 之后则前向完成中断的卸载（state 删除）。委托的 uninstall
+  没有下载阶段，前端 Ctrl+C 被忽略（仅 `Downloading` 阶段可取消）；
 - **S-4 daemon 未运行**：`systemctl stop lkit.service` 后委托请求必须拒绝
   （退出码 `2` + "daemon is not running"），不卡住；
-- **S-5 语言转发**：CLI 的 `LKIT_LANG=zh` 进入委托请求，worker 子进程用同一语言
-  输出（中文缺失安装文案）。
+- **S-5 语言转发**：先完成一次正常卸载，再以 `LKIT_LANG=zh` 委托卸载触发
+  "requires an existing installation"（退出码 `2`），断言 worker 输出为中文，
+  验证 CLI 的 `LKIT_LANG` 进入委托请求、worker 子进程使用同一语言输出。
 
 尚未纳入 smoke 抽样：systemd unit 注册链接所有权冲突的失败路径（不停止服务、
 不删除外部文件）。

@@ -28,7 +28,7 @@
 - 测试层：systemd-nspawn
 - 状态：`低频 smoke`
 - 证据：[nspawn 兼容性 smoke](../nspawn-systemd.md)
-- 说明：smoke 覆盖委托提交（S-1）、前端断开后 daemon 独立完成（S-2）、Ctrl+C
+- 说明：smoke 覆盖委托提交（S-1）、前端断开后 daemon 独立完成（S-2）、cancel 文件
   取消与 daemon 恢复（S-3）、daemon 未运行拒绝（S-4）、`LKIT_LANG` 转发（S-5）。
 
 ## SYS-04
