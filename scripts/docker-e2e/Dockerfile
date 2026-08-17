@@ -5,6 +5,7 @@ FROM ${RUST_IMAGE} AS builder
 WORKDIR /workspace
 COPY Cargo.toml Cargo.lock rustfmt.toml rust-toolchain.toml ./
 COPY crates ./crates
+COPY lkit-cli ./lkit-cli
 RUN cargo build --locked --profile dist --features test-support -p lkit-cli --bin lkit \
     && cargo build --locked --release -p lkit-publish --bin lkit-publish \
     && cargo build --locked --release -p lkit-test-fixture \
