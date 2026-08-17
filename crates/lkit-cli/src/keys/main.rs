@@ -30,6 +30,7 @@ pub(crate) const MAIN_SET_MIRROR_RESTORE_HELP: &str = "main.set_mirror_restore_h
 pub(crate) const MAIN_SET_MIRROR_CHECK_HELP: &str = "main.set_mirror_check_help";
 pub(crate) const MAIN_SET_MIRROR_REPLACE_SECURITY_HELP: &str =
     "main.set_mirror_replace_security_help";
+pub(crate) const MAIN_SET_MIRROR_KEEP_CDROM_HELP: &str = "main.set_mirror_keep_cdrom_help";
 pub(crate) const MAIN_SET_MIRROR_YES_HELP: &str = "main.set_mirror_yes_help";
 pub(crate) const MAIN_UPDATE_ABOUT: &str = "main.update_about";
 pub(crate) const MAIN_UPDATE_VERSION_HELP: &str = "main.update_version_help";

@@ -85,12 +85,24 @@ debian)
   sources_assert_not "mirrors.tuna.tsinghua.edu.cn/debian" /etc/apt/sources.list /etc/apt/sources.list.d/*
   sources_assert_not "mirrors.aliyun.com/debian" /etc/apt/sources.list /etc/apt/sources.list.d/*
 
-  # 仅 CD 源场景：无任何可识别 URL，换源应转换为镜像并保留 suites/components。
+  # 仅 CD 源场景：默认注释 CD 源并合成镜像条目（避免换源后系统无可用源）。
   rm -f /etc/apt/sources.list.d/*
   cat >/etc/apt/sources.list <<'EOF'
 deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - Official amd64 DVD Binary-1 20240210-10:16]/ bookworm contrib main non-free
 EOF
   "$lkit" set-mirror tuna --yes
+  ok "comment the only CD-ROM source and add the mirror"
+  assert_contains /etc/apt/sources.list "# deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_"
+  assert_contains /etc/apt/sources.list \
+    "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main contrib non-free"
+  "$lkit" set-mirror --restore --yes
+  assert_contains /etc/apt/sources.list "deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_"
+
+  # 仅 CD 源 + --keep-cdrom：转换为镜像并保留 suites/components。
+  cat >/etc/apt/sources.list <<'EOF'
+deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - Official amd64 DVD Binary-1 20240210-10:16]/ bookworm contrib main non-free
+EOF
+  "$lkit" set-mirror tuna --yes --keep-cdrom
   ok "convert the only CD-ROM source"
   assert_contains /etc/apt/sources.list \
     "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm contrib main non-free"
@@ -161,12 +173,20 @@ ubuntu)
   sources_assert "$official_main/$mirror_path" /etc/apt/sources.list /etc/apt/sources.list.d/*
   sources_assert_not "mirrors.tuna.tsinghua.edu.cn" /etc/apt/sources.list /etc/apt/sources.list.d/*
 
-  # 仅 CD 源场景：x86_64 转 /ubuntu，arm64 等 ports 架构转 /ubuntu-ports。
+  # 仅 CD 源场景：默认注释 CD 源并合成镜像条目；--keep-cdrom 时转换。
+  # x86_64 转 /ubuntu，arm64 等 ports 架构转 /ubuntu-ports。
   rm -f /etc/apt/sources.list.d/*
   cat >/etc/apt/sources.list <<'EOF'
 deb cdrom:[Ubuntu 24.04 LTS _Noble Numbat_ - Release amd64 (20240423)]/ noble main restricted
 EOF
   "$lkit" set-mirror tuna --yes
+  ok "comment the only CD-ROM source and add the mirror"
+  assert_contains /etc/apt/sources.list "# deb cdrom:[Ubuntu 24.04"
+  assert_contains /etc/apt/sources.list \
+    "deb https://mirrors.tuna.tsinghua.edu.cn/$mirror_path noble"
+  "$lkit" set-mirror --restore --yes
+  assert_contains /etc/apt/sources.list "deb cdrom:[Ubuntu 24.04"
+  "$lkit" set-mirror tuna --yes --keep-cdrom
   ok "convert the only CD-ROM source"
   assert_contains /etc/apt/sources.list \
     "deb https://mirrors.tuna.tsinghua.edu.cn/$mirror_path noble main restricted"

@@ -779,6 +779,28 @@ pub(crate) fn convert_cdrom_with_arch(
     Some(splice(content, &edits))
 }
 
+/// 把启用的 one-line `deb cdrom:` 条目注释掉（在缩进后插入 `# `），其余内容
+/// 字节级不动。返回（注释后的整个文件文本, 被注释的条目数）；没有可注释的
+/// cdrom 条目时返回 `None`。deb822 stanza 无法安全整段注释，跳过（cdrom 也
+/// 几乎只出现在 one-line 的 sources.list）。
+pub(crate) fn comment_cdrom(content: &str) -> Option<(String, usize)> {
+    let mut edits = Vec::new();
+    let mut count = 0usize;
+    for entry in parse_sources(content) {
+        if !entry.enabled || !entry.is_cdrom() || entry.deb_types.is_empty() {
+            continue;
+        }
+        let indent = entry.raw.len() - entry.raw.trim_start().len();
+        let insert = entry.span.0 + indent;
+        edits.push((insert, insert, "# ".to_string()));
+        count += 1;
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    Some((splice(content, &edits), count))
+}
+
 /// 生成新源条目（兜底：没有 cdrom 条目可转换时追加）。
 /// Ubuntu 在 arm64 等 ports 架构上使用 `/ubuntu-ports` 与 `ports.ubuntu.com`。
 pub(crate) fn synth_lines(
@@ -891,6 +913,41 @@ mod tests {
         );
         assert_eq!(entry.suites, vec!["bookworm"]);
         assert_eq!(entry.components, vec!["contrib", "main"]);
+    }
+
+    #[test]
+    fn comments_enabled_cdrom_entries_only() {
+        let content = concat!(
+            "deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_]/ bookworm main\n",
+            "  deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - DVD 2]/ bookworm contrib\n",
+            "# deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - DVD 3]/ bookworm contrib\n",
+            "deb http://deb.debian.org/debian bookworm main\n",
+        );
+        let (commented, count) = comment_cdrom(content).unwrap();
+        assert_eq!(count, 2, "only the two enabled cdrom entries are commented");
+        assert_eq!(
+            commented,
+            concat!(
+                "# deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_]/ bookworm main\n",
+                "  # deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - DVD 2]/ bookworm contrib\n",
+                "# deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_ - DVD 3]/ bookworm contrib\n",
+                "deb http://deb.debian.org/debian bookworm main\n",
+            ),
+            "enabled cdrom lines get a `# ` after their indentation; everything else is untouched"
+        );
+    }
+
+    #[test]
+    fn comment_cdrom_returns_none_without_enabled_cdrom_entries() {
+        let none = "deb http://deb.debian.org/debian bookworm main\n";
+        assert!(comment_cdrom(none).is_none());
+        let disabled = "# deb cdrom:[Debian GNU/Linux 12.5.0 _Bookworm_]/ bookworm main\n";
+        assert!(
+            comment_cdrom(disabled).is_none(),
+            "disabled cdrom entries must not be re-commented"
+        );
+        let empty = "";
+        assert!(comment_cdrom(empty).is_none());
     }
 
     #[test]

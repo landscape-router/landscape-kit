@@ -85,6 +85,8 @@ pub(crate) enum Hit {
     MirrorRestore,
     /// 换源确认层：security 替换开关行。
     MirrorSecurityToggle,
+    /// 换源确认层：CD-ROM 源注释开关行。
+    MirrorCdromToggle,
     /// 软件面板软件行。
     SoftwareField(Software),
     /// 软件确认层：来源切换行。

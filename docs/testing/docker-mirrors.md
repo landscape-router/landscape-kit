@@ -11,7 +11,7 @@
 
 | 容器镜像 | 家族 | 覆盖点 |
 | --- | --- | --- |
-| `debian:bookworm` | apt（deb822，新版镜像无 `sources.list`） | one-line 与 deb822 两种布局、Debian security 默认保留官方、`--replace-security`、CD 源兜底 |
+| `debian:bookworm` | apt（deb822，新版镜像无 `sources.list`） | one-line 与 deb822 两种布局、Debian security 默认保留官方、`--replace-security`、CD 源默认注释+合成与 `--keep-cdrom` 转换两种兜底 |
 | `ubuntu:24.04` | apt（deb822） | Ubuntu security 并入主仓库路径、x86_64 与 aarch64（CI）两种架构下 CD 源兜底（`/ubuntu` vs `/ubuntu-ports`、`archive.ubuntu.com` vs `ports.ubuntu.com`） |
 | `fedora:latest` | dnf | `#baseurl=` 解注释与重写、metalink 注释、fedora/epel 映射 |
 | `archlinux:latest` | pacman | mirrorlist 整体重新生成（单 Server） |
@@ -37,11 +37,12 @@
 ```
 
 Debian 与 Ubuntu 额外执行"仅 CD 源"场景（Ubuntu 同时覆盖"空源文件"与 `--check` 由
-Debian 覆盖）：清空受管文件，只留一行 `deb cdrom:[...]`，`set-mirror tuna` 应把该行
-转换为镜像源（保留 suites/components），`--restore` 还原 cdrom 行；随后把
-`sources.list` 置空，`set-mirror tuna` 应合成完整的新条目（提示 "added a new Debian
-source entry"）；最后写入一条无法识别的行，`set-mirror --check` 应非零退出并指出
-行号，干净文件退出 0。
+Debian 覆盖）：清空受管文件，只留一行 `deb cdrom:[...]`，`set-mirror tuna` 默认应
+注释掉该行并合成镜像条目（避免系统无可用源），`--restore` 还原 cdrom 行；再用
+`set-mirror tuna --keep-cdrom` 验证转换路径（cdrom 行转换为镜像、保留
+suites/components）；随后把 `sources.list` 置空，`set-mirror tuna` 应合成完整的新
+条目（提示 "added a new Debian source entry"）；最后写入一条无法识别的行，
+`set-mirror --check` 应非零退出并指出行号，干净文件退出 0。
 
 ## 环境适配
 

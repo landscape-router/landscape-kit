@@ -31,6 +31,7 @@ impl SourcesBackend for DnfBackend {
         &self,
         mirror: MirrorName,
         _replace_security: bool,
+        _disable_cdrom: bool,
     ) -> Result<ApplyReport, MirrorError> {
         apply(&self.family, mirror)
     }

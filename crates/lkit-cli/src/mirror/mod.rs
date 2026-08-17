@@ -303,14 +303,16 @@ pub(crate) fn show_sources(host: &Host) -> Result<String, MirrorError> {
 }
 
 /// 把软件源切换到指定镜像。修改前备份原文件，备份目录见 [`BACKUP_ROOT`]。
-/// `replace_security` 控制 Debian 独立 security 仓库是否一并替换（默认不替换）。
+/// `replace_security` 控制 Debian 独立 security 仓库是否一并替换（默认不替换）；
+/// `disable_cdrom` 控制是否注释启用的 `deb cdrom:` 条目（默认注释）。
 /// 返回本次修改与跳过的文件统计。
 pub(crate) fn apply(
     host: &Host,
     mirror: MirrorName,
     replace_security: bool,
+    disable_cdrom: bool,
 ) -> Result<ApplyReport, MirrorError> {
-    backend::backend(host).apply(mirror, replace_security)
+    backend::backend(host).apply(mirror, replace_security, disable_cdrom)
 }
 
 /// 从 [`BACKUP_ROOT`] 恢复原软件源，成功后删除备份。
@@ -337,6 +339,8 @@ pub(crate) struct ApplyReport {
     pub backup_path: Option<PathBuf>,
     /// 常规 URL 重写之外的兜底路径（仅 apt 家族可能产生）。
     pub fallback: Option<Fallback>,
+    /// apt：被注释掉的启用 `deb cdrom:` 条目数（默认换源时注释 CD 源）。
+    pub cdrom_commented: usize,
     /// apt：格式检查发现的无法识别行数（仅诊断，这些行已原样保留）。
     pub unrecognized_lines: usize,
 }
@@ -346,8 +350,18 @@ pub(crate) struct ApplyReport {
 pub(crate) enum Fallback {
     /// 把现有的 `deb cdrom:` 条目转换为所选镜像（保留其 suites/components）。
     CdromConverted,
+    /// 注释掉 `deb cdrom:` 条目并追加所选镜像源（默认禁用 CD 源时的兜底）。
+    CdromDisabled,
     /// 用检测到的代号合成新源条目并追加。
     SourceAdded,
+}
+
+/// 当前主机的受管源文件中是否存在启用的 `deb cdrom:` 条目（仅 apt 家族）。
+pub(crate) fn has_enabled_cdrom(host: &Host) -> bool {
+    match host.family {
+        Family::Debian | Family::Ubuntu => apt::has_enabled_cdrom(),
+        _ => false,
+    }
 }
 
 /// 备份目录：`<backup_root>/<family-id>/`。

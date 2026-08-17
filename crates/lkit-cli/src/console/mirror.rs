@@ -20,8 +20,45 @@ pub(crate) enum MirrorConfirm {
         mirror: MirrorName,
         /// 是否同时替换 Debian 独立 security 仓库（默认不替换）。
         replace_security: bool,
+        /// 是否注释启用的 `deb cdrom:` 条目（默认注释）。
+        disable_cdrom: bool,
+        /// 确认层开关行的键盘焦点：[`apply_toggle_rows`] 返回列表中的下标。
+        toggle: usize,
     },
     Restore,
+}
+
+/// 确认层里可切换的开关行。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MirrorToggleRow {
+    /// 注释 `deb cdrom:` 条目（apt 家族可见）。
+    Cdrom,
+    /// 同时替换 Debian security 仓库（Debian 可见）。
+    Security,
+}
+
+/// 当前主机确认层可见的开关行（顺序即焦点顺序）。
+pub(crate) fn apply_toggle_rows(host: &Host) -> Vec<MirrorToggleRow> {
+    match host.family {
+        crate::mirror::Family::Debian => vec![MirrorToggleRow::Cdrom, MirrorToggleRow::Security],
+        crate::mirror::Family::Ubuntu => vec![MirrorToggleRow::Cdrom],
+        _ => Vec::new(),
+    }
+}
+
+/// 把确认层的开关焦点移到 `target` 行（点击命中行时先移焦点再切换）。
+pub(crate) fn focus_mirror_toggle(
+    confirming: &mut Option<MirrorConfirm>,
+    host: &Host,
+    target: MirrorToggleRow,
+) {
+    if let Some(MirrorConfirm::Apply { toggle, .. }) = confirming
+        && let Some(index) = apply_toggle_rows(host)
+            .iter()
+            .position(|row| *row == target)
+    {
+        *toggle = index;
+    }
 }
 
 /// 换源面板的可选行:镜像列表后跟恢复备份动作。
@@ -166,7 +203,9 @@ impl ConsoleApp {
             MirrorConfirm::Apply {
                 mirror,
                 replace_security,
-            } => match crate::mirror::apply(host, mirror, replace_security) {
+                disable_cdrom,
+                ..
+            } => match crate::mirror::apply(host, mirror, replace_security, disable_cdrom) {
                 Ok(report) if report.changed_files == 0 => {
                     self.notice = crate::tr!(
                         crate::keys::SET_MIRROR_NO_CHANGE,
@@ -189,6 +228,13 @@ impl ConsoleApp {
                                 crate::tr!(crate::keys::SET_MIRROR_CDROM_CONVERTED)
                             );
                         }
+                        Some(crate::mirror::Fallback::CdromDisabled) => {
+                            self.notice = format!(
+                                "{}\n{}",
+                                self.notice,
+                                crate::tr!(crate::keys::SET_MIRROR_CDROM_DISABLED)
+                            );
+                        }
                         Some(crate::mirror::Fallback::SourceAdded) => {
                             self.notice = format!(
                                 "{}\n{}",
@@ -200,6 +246,16 @@ impl ConsoleApp {
                             );
                         }
                         None => {}
+                    }
+                    if report.cdrom_commented > 0 {
+                        self.notice = format!(
+                            "{}\n{}",
+                            self.notice,
+                            crate::tr!(
+                                crate::keys::SET_MIRROR_CDROM_COMMENTED,
+                                count = report.cdrom_commented
+                            )
+                        );
                     }
                     if report.skipped_repositories > 0 {
                         self.notice = format!(
@@ -246,22 +302,56 @@ impl ConsoleApp {
                     self.mirror.confirming = None;
                     return Some(None);
                 }
-                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
-                    // 开关行：仅换源确认层且主机为 Debian 家族时可切换。
-                    let is_debian = matches!(
-                        &self.mirror.host,
-                        Some(Ok(host)) if host.family == crate::mirror::Family::Debian
-                    );
+                KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Char(' ')
+                | KeyCode::Left
+                | KeyCode::Right => {
                     if let MirrorConfirm::Apply {
                         mirror,
                         replace_security,
+                        disable_cdrom,
+                        toggle,
                     } = confirm
-                        && is_debian
                     {
-                        self.mirror.confirming = Some(MirrorConfirm::Apply {
-                            mirror,
-                            replace_security: !replace_security,
-                        });
+                        let rows = self
+                            .mirror
+                            .host
+                            .as_ref()
+                            .and_then(|result| result.as_ref().ok())
+                            .map(apply_toggle_rows)
+                            .unwrap_or_default();
+                        match key.code {
+                            // ↑/↓ 在可见开关行之间移动焦点。
+                            KeyCode::Up => {
+                                self.mirror.confirming = Some(MirrorConfirm::Apply {
+                                    mirror,
+                                    replace_security,
+                                    disable_cdrom,
+                                    toggle: toggle.saturating_sub(1),
+                                });
+                            }
+                            KeyCode::Down => {
+                                self.mirror.confirming = Some(MirrorConfirm::Apply {
+                                    mirror,
+                                    replace_security,
+                                    disable_cdrom,
+                                    toggle: (toggle + 1).min(rows.len().saturating_sub(1)),
+                                });
+                            }
+                            // 空格/←/→ 切换焦点所在的开关行。
+                            _ => {
+                                let row = rows.get(toggle).copied();
+                                self.mirror.confirming = Some(MirrorConfirm::Apply {
+                                    mirror,
+                                    replace_security: replace_security
+                                        ^ (row == Some(MirrorToggleRow::Security)),
+                                    disable_cdrom: disable_cdrom
+                                        ^ (row == Some(MirrorToggleRow::Cdrom)),
+                                    toggle,
+                                });
+                            }
+                        }
                     }
                     return Some(None);
                 }
@@ -303,6 +393,8 @@ impl ConsoleApp {
                     MirrorRow::Mirror(mirror) => MirrorConfirm::Apply {
                         mirror,
                         replace_security: false,
+                        disable_cdrom: true,
+                        toggle: 0,
                     },
                 });
             }
@@ -442,7 +534,7 @@ pub(crate) fn render_mirror(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
 pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 60.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 10.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -451,34 +543,48 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     );
     register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
-    let (title, question, security_row) = match &app.mirror.confirming {
+    // 可见开关行：`(行类型, 渲染行, 是否勾选)`。
+    let mut toggle_rows: Vec<(MirrorToggleRow, Line<'static>, bool)> = Vec::new();
+    let (title, question) = match &app.mirror.confirming {
         Some(MirrorConfirm::Apply {
             mirror,
             replace_security,
+            disable_cdrom,
+            toggle,
         }) => {
             let host = app
                 .mirror
                 .host
                 .as_ref()
                 .and_then(|result| result.as_ref().ok());
-            let security_row =
-                if host.is_some_and(|host| host.family == crate::mirror::Family::Debian) {
-                    let marker = if *replace_security { "[x]" } else { "[ ]" };
-                    Some(Line::styled(
-                        format!(
-                            "{} {}",
-                            marker,
-                            crate::tr!(crate::keys::CONSOLE_MIRROR_SECURITY_ROW)
+            if let Some(host) = host {
+                for (index, row) in apply_toggle_rows(host).into_iter().enumerate() {
+                    let (checked, label) = match row {
+                        MirrorToggleRow::Cdrom => (
+                            *disable_cdrom,
+                            crate::tr!(crate::keys::CONSOLE_MIRROR_CDROM_ROW),
                         ),
-                        Style::default().fg(if *replace_security {
-                            Color::Cyan
-                        } else {
-                            Color::DarkGray
-                        }),
-                    ))
-                } else {
-                    None
-                };
+                        MirrorToggleRow::Security => (
+                            *replace_security,
+                            crate::tr!(crate::keys::CONSOLE_MIRROR_SECURITY_ROW),
+                        ),
+                    };
+                    let marker = if checked { "[x]" } else { "[ ]" };
+                    let mut style = Style::default().fg(if checked {
+                        Color::Cyan
+                    } else {
+                        Color::DarkGray
+                    });
+                    if *toggle == index {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    toggle_rows.push((
+                        row,
+                        Line::styled(format!("{marker} {label}"), style),
+                        checked,
+                    ));
+                }
+            }
             (
                 crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_APPLY_TITLE),
                 crate::tr!(
@@ -486,13 +592,11 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
                     family = host.map(|host| host.family.label()).unwrap_or_default(),
                     mirror = mirror.label()
                 ),
-                security_row,
             )
         }
         Some(MirrorConfirm::Restore) => (
             crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_RESTORE_TITLE),
             crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_RESTORE),
-            None,
         ),
         // 渲染入口（render.rs）已保证 confirming 非 None。
         None => unreachable!(),
@@ -511,14 +615,26 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         ));
         lines.push(Line::raw(""));
     }
-    if let Some(security_row) = security_row {
-        lines.push(security_row);
+    // 开关行与命中区：点击某行先把焦点移过去再切换。
+    let toggle_hits: Vec<(MirrorToggleRow, usize)> = if !toggle_rows.is_empty() {
+        let mut hits = Vec::with_capacity(toggle_rows.len());
+        for (row, line, _) in &toggle_rows {
+            lines.push(line.clone());
+            hits.push((*row, lines.len() - 1));
+        }
         lines.push(Line::raw(""));
-        // 开关行命中区：点击切换 security 替换。
-        let row = lines.len() - 2;
-        let content_width = area.width.saturating_sub(2);
-        let hit_row = block_row_of(&lines, row, content_width);
-        app.hits.block_row(area, hit_row, Hit::MirrorSecurityToggle);
+        hits
+    } else {
+        Vec::new()
+    };
+    let content_width = area.width.saturating_sub(2);
+    for (row, line_index) in toggle_hits {
+        let hit_row = block_row_of(&lines, line_index, content_width);
+        let hit = match row {
+            MirrorToggleRow::Cdrom => Hit::MirrorCdromToggle,
+            MirrorToggleRow::Security => Hit::MirrorSecurityToggle,
+        };
+        app.hits.block_row(area, hit_row, hit);
     }
     lines.push(Line::styled(
         crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_ENTER),

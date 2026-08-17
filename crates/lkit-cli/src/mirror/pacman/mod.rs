@@ -34,6 +34,7 @@ impl SourcesBackend for PacmanBackend {
         &self,
         mirror: MirrorName,
         _replace_security: bool,
+        _disable_cdrom: bool,
     ) -> Result<ApplyReport, MirrorError> {
         apply(mirror)
     }
@@ -82,6 +83,7 @@ fn apply(mirror: MirrorName) -> Result<ApplyReport, MirrorError> {
         skipped_repositories: 0,
         backup_path: Some(backup_path),
         fallback: None,
+        cdrom_commented: 0,
         unrecognized_lines: 0,
     })
 }

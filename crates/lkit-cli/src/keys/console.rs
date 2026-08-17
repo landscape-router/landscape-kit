@@ -249,6 +249,7 @@ pub(crate) const CONSOLE_MIRROR_DETECT_FAILED: &str = "console.mirror_detect_fai
 pub(crate) const CONSOLE_MIRROR_HOST: &str = "console.mirror_host";
 pub(crate) const CONSOLE_MIRROR_RESTORE_ROW: &str = "console.mirror_restore_row";
 pub(crate) const CONSOLE_MIRROR_SECURITY_ROW: &str = "console.mirror_security_row";
+pub(crate) const CONSOLE_MIRROR_CDROM_ROW: &str = "console.mirror_cdrom_row";
 pub(crate) const CONSOLE_MIRROR_CONFIRM_APPLY_TITLE: &str = "console.mirror_confirm_apply_title";
 pub(crate) const CONSOLE_MIRROR_CONFIRM_APPLY: &str = "console.mirror_confirm_apply";
 pub(crate) const CONSOLE_MIRROR_CONFIRM_RESTORE_TITLE: &str =

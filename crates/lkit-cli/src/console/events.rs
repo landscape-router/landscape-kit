@@ -405,6 +405,24 @@ impl ConsoleApp {
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::MirrorSecurityToggle => {
+                // 点击行即焦点：先把开关焦点移到该行再切换。
+                if let Some(Ok(host)) = &self.mirror.host {
+                    super::mirror::focus_mirror_toggle(
+                        &mut self.mirror.confirming,
+                        host,
+                        super::mirror::MirrorToggleRow::Security,
+                    );
+                }
+                self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            }
+            Hit::MirrorCdromToggle => {
+                if let Some(Ok(host)) = &self.mirror.host {
+                    super::mirror::focus_mirror_toggle(
+                        &mut self.mirror.confirming,
+                        host,
+                        super::mirror::MirrorToggleRow::Cdrom,
+                    );
+                }
                 self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
             }
             Hit::SoftwareField(software) => {

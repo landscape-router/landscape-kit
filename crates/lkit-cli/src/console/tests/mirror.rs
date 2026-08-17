@@ -149,6 +149,8 @@ fn mirror_panel_enter_opens_apply_confirmation_and_esc_closes() {
         Some(MirrorConfirm::Apply {
             mirror: MirrorName::all()[0],
             replace_security: false,
+            disable_cdrom: true,
+            toggle: 0,
         })
     );
 
@@ -171,6 +173,8 @@ fn mirror_confirmation_dialog_renders() {
     app.mirror.confirming = Some(MirrorConfirm::Apply {
         mirror: MirrorName::Aliyun,
         replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
     });
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
@@ -179,13 +183,17 @@ fn mirror_confirmation_dialog_renders() {
     assert!(content.contains("Aliyun"));
     assert!(content.contains("Press Enter to confirm"));
     assert!(
+        content.contains("[x] Comment out the CD-ROM source entry"),
+        "the cdrom toggle must be shown and checked by default"
+    );
+    assert!(
         content.contains("[ ] Also replace the Debian security repository"),
         "the security toggle must be shown and unchecked by default"
     );
 }
 
 #[test]
-fn mirror_confirmation_security_toggle_switches_with_space() {
+fn mirror_confirmation_cdrom_toggle_is_checked_and_switches_with_space() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = debian_ready_app();
     let space = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
@@ -194,15 +202,68 @@ fn mirror_confirmation_security_toggle_switches_with_space() {
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
             replace_security: false,
+            disable_cdrom: true,
+            toggle: 0,
             ..
         })
     ));
+
+    // 焦点默认在 CD 源行：空格取消勾选（保留 CD 源）。
+    app.handle_key(space);
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply {
+            disable_cdrom: false,
+            toggle: 0,
+            ..
+        })
+    ));
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("[ ] Comment out the CD-ROM source entry"));
 
     app.handle_key(space);
     assert!(matches!(
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
+            disable_cdrom: true,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn mirror_confirmation_security_toggle_switches_with_space() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = debian_ready_app();
+    let space = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+    let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply {
+            replace_security: false,
+            disable_cdrom: true,
+            toggle: 0,
+            ..
+        })
+    ));
+
+    // 焦点下移到 security 行后再切换。
+    app.handle_key(down);
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply { toggle: 1, .. })
+    ));
+    app.handle_key(space);
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply {
             replace_security: true,
+            disable_cdrom: true,
+            toggle: 1,
             ..
         })
     ));
@@ -217,6 +278,7 @@ fn mirror_confirmation_security_toggle_switches_with_space() {
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
             replace_security: false,
+            toggle: 1,
             ..
         })
     ));
@@ -233,6 +295,8 @@ fn mirror_confirmation_hides_security_toggle_for_non_debian() {
     app.mirror.confirming = Some(MirrorConfirm::Apply {
         mirror: MirrorName::Tuna,
         replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
     });
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
@@ -244,6 +308,109 @@ fn mirror_confirmation_hides_security_toggle_for_non_debian() {
         app.mirror.confirming,
         Some(MirrorConfirm::Apply {
             replace_security: false,
+            disable_cdrom: true,
+            toggle: 0,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn mirror_confirmation_shows_cdrom_toggle_for_apt_families() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = mirror_ready_app();
+    app.mirror.host = Some(Ok(Host {
+        family: Family::Ubuntu,
+        codename: Some("noble".into()),
+    }));
+    app.mirror.confirming = Some(MirrorConfirm::Apply {
+        mirror: MirrorName::Tuna,
+        replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("[x] Comment out the CD-ROM source entry"),
+        "Ubuntu hosts get the cdrom toggle too: {content}"
+    );
+    assert!(
+        !content.contains("security repository"),
+        "the security toggle stays Debian-only: {content}"
+    );
+    // Ubuntu 上 Space 只切换 CD 源行。
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply {
+            disable_cdrom: false,
+            replace_security: false,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn mirror_confirmation_click_toggles_the_clicked_row() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = debian_ready_app();
+    // 焦点在 CD 源行（默认）；点击 security 行应直接切换 security。
+    app.mirror.confirming = Some(MirrorConfirm::Apply {
+        mirror: MirrorName::Aliyun,
+        replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
+    });
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let mut security_row = None;
+    for row in 0..28 {
+        if app
+            .hits
+            .hit_at(40, row)
+            .is_some_and(|hit| hit == Hit::MirrorSecurityToggle)
+        {
+            security_row = Some(row);
+            break;
+        }
+    }
+    let Some(row) = security_row else {
+        panic!("no clickable security toggle row found");
+    };
+    app.handle_mouse(mouse_click(40, row));
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply {
+            replace_security: true,
+            disable_cdrom: true,
+            ..
+        })
+    ));
+    // 点击 CD 源行：焦点先移到该行，再切换为不注释。
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let mut cdrom_row = None;
+    for row in 0..28 {
+        if app
+            .hits
+            .hit_at(40, row)
+            .is_some_and(|hit| hit == Hit::MirrorCdromToggle)
+        {
+            cdrom_row = Some(row);
+            break;
+        }
+    }
+    let Some(row) = cdrom_row else {
+        panic!("no clickable cdrom toggle row found");
+    };
+    app.handle_mouse(mouse_click(40, row));
+    assert!(matches!(
+        app.mirror.confirming,
+        Some(MirrorConfirm::Apply {
+            replace_security: true,
+            disable_cdrom: false,
+            toggle: 0,
             ..
         })
     ));
@@ -281,6 +448,8 @@ fn mirror_confirmation_dialog_executes_apply() {
     app.mirror.confirming = Some(MirrorConfirm::Apply {
         mirror: MirrorName::Tuna,
         replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
     });
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.mirror.confirming.is_none());
@@ -357,6 +526,8 @@ fn mirror_rows_are_mouse_clickable() {
         Some(MirrorConfirm::Apply {
             mirror: MirrorName::Official,
             replace_security: false,
+            disable_cdrom: true,
+            toggle: 0,
         })
     ));
     app.mirror.confirming = None;
@@ -449,6 +620,8 @@ fn mirror_confirm_dialog_warns_when_availability_is_unknown() {
     app.mirror.confirming = Some(MirrorConfirm::Apply {
         mirror: MirrorName::Sjtu,
         replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
     });
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
@@ -461,6 +634,8 @@ fn mirror_confirm_dialog_warns_when_availability_is_unknown() {
     app.mirror.confirming = Some(MirrorConfirm::Apply {
         mirror: MirrorName::Tuna,
         replace_security: false,
+        disable_cdrom: true,
+        toggle: 0,
     });
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);

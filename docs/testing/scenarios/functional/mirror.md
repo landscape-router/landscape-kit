@@ -35,28 +35,33 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
   （第二个 URL 落在 components 位置）同样识别为 URI 一并重写，其余字节原样保留；
   无可识别 URL 时条目与文件字节级原样保留（`rewrite` 返回 `None` 不写文件）；
   已处于目标镜像/官方状态且无重复条目时 `apply` 为成功 no-op（不保留备份、不触碰
-  已有备份）。
+  已有备份）。换源时默认把启用的 `deb cdrom:` 条目注释掉（缩进后插 `# `，仅
+  one-line；被注释的 cdrom 行不动），即使文件已处于目标镜像也照样注释（算实际
+  改动）；`--keep-cdrom`（`disable_cdrom=false`）时不动 cdrom 行。
 
 ## MIR-08
 
-**仅 CD 源或仅自定义源时换源自动兜底（转换 CD 行或合成新条目）**
+**仅 CD 源或仅自定义源时换源自动兜底（默认注释 CD 行并合成、`--keep-cdrom` 时转换）**
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[`mirror::apt::parse` 测试](../../../../crates/lkit-cli/src/mirror/apt/parse.rs)
   与 [`mirror::apt` apply 测试](../../../../crates/lkit-cli/src/mirror/apt/mod.rs)
 - 说明：没有任何条目可重写且未处于目标状态时，`apply` 不再报错：存在启用的
-  `deb cdrom:` 条目时把该行转换为所选镜像（保留 suites/components，被注释的
-  cdrom 行不转换）；否则用检测到的代号合成新条目追加到 `sources.list`（不存在时
-  创建 `sources.list.d/lkit-mirror.list` 并在备份目录放空占位，`--restore` 后不
-  残留）。`sources.list` 为空文件、只有注释、或系统里完全没有源文件（含
-  `sources.list.d` 目录缺失，自动创建）时同样合成。Ubuntu 按运行时架构（`uname -m`）
-  选择仓库：arm64/armhf/riscv64/ppc64el/s390x 转 `/ubuntu-ports`（官方回落
-  `ports.ubuntu.com`），其余架构转 `/ubuntu`。`test-support` 下验证
-  CD-only、custom-only、空文件、纯注释、无任何源文件五种场景的换源成功、备份与
-  恢复语义（恢复后原内容写回、备份删除）；重复执行同一目标为 no-op 且保留上一轮
-  备份（`--restore` 仍可取回最原始源）。Debian security 合成行默认官方、
-  `--replace-security` 时随镜像；`official` 目标合成官方主机条目。
+  `deb cdrom:` 条目时默认把它**注释掉**并合成镜像条目追加到同一文件（避免注释后
+  系统无可用源，`Fallback::CdromDisabled`）；`--keep-cdrom`（`disable_cdrom=false`）
+  时改为把该行转换为所选镜像（保留 suites/components，被注释的 cdrom 行不转换，
+  `Fallback::CdromConverted`）；否则用检测到的代号合成新条目追加到
+  `sources.list`（不存在时创建 `sources.list.d/lkit-mirror.list` 并在备份目录放空
+  占位，`--restore` 后不残留）。`sources.list` 为空文件、只有注释、或系统里完全
+  没有源文件（含 `sources.list.d` 目录缺失，自动创建）时同样合成。Ubuntu 按运行时
+  架构（`uname -m`）选择仓库：arm64/armhf/riscv64/ppc64el/s390x 转 `/ubuntu-ports`
+  （官方回落 `ports.ubuntu.com`），其余架构转 `/ubuntu`。`test-support` 下验证
+  CD-only（默认注释+合成与 `--keep-cdrom` 转换两条路径）、custom-only、空文件、
+  纯注释、无任何源文件五种场景的换源成功、备份与恢复语义（恢复后原内容写回、
+  备份删除）；重复执行同一目标为 no-op 且保留上一轮备份（`--restore` 仍可取回
+  最原始源）。Debian security 合成行默认官方、`--replace-security` 时随镜像；
+  `official` 目标合成官方主机条目。
 
 ## MIR-03
 
@@ -101,10 +106,11 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 - 测试层：Rust 控制台测试
 - 状态：`已覆盖`
 - 证据：[`console::tests::mirror`](../../../../crates/lkit-cli/src/console/tests/mirror.rs)
-- 说明：菜单导航、面板渲染、行选择边界、确认层打开/关闭、确认执行、Debian 确认层
-  security 开关（默认不勾选、Space 切换、非 Debian 隐藏）与鼠标点击命中；确认执行
-  （`test-support`）在注入的临时路径下断言源文件实际改写为镜像、备份内容为原文件、
-  恢复后原内容写回且备份删除。
+- 说明：菜单导航、面板渲染、行选择边界、确认层打开/关闭、确认执行、CD 源注释
+  开关（默认勾选、空格切换焦点行）与 Debian security 开关（默认不勾选、↑/↓ 移
+  动开关焦点、点击行直接切换对应开关、非 apt 家族全部隐藏）与鼠标点击命中；确认
+  执行（`test-support`）在注入的临时路径下断言源文件实际改写为镜像、备份内容为
+  原文件、恢复后原内容写回且备份删除。
 
 ## MIR-07
 
@@ -130,11 +136,12 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
   `debian:bookworm`/`ubuntu:24.04`/`fedora:latest`/`archlinux:latest` 容器（root，无需
   test-support），依次验证 tuna 切换、`--restore` 恢复（内容逐字节还原、备份删除）、
   aliyun 互转、official 恢复。Debian 覆盖 one-line 与 deb822 两种镜像布局，并验证
-  "仅 CD 源"兜底（cdrom 行转换为镜像、保留 suites/components）、空 sources.list
-  合成条目、`--check` 格式检查（问题文件退出码非 0 且指出行号、干净文件退出 0）；
+  "仅 CD 源"兜底两种路径：默认注释 CD 行并合成镜像条目、`--keep-cdrom` 时 cdrom
+  行转换为镜像（保留 suites/components）、空 sources.list 合成条目、`--check`
+  格式检查（问题文件退出码非 0 且指出行号、干净文件退出 0）；
   Ubuntu 覆盖 deb822 布局、security 并入主仓库路径，且断言按容器架构选择
   `archive.ubuntu.com`/`/ubuntu` 或（CI 的 aarch64 runner 上）
-  `ports.ubuntu.com`/`/ubuntu-ports`（含 CD 源兜底）；
+  `ports.ubuntu.com`/`/ubuntu-ports`（含 CD 源兜底两种路径）；
   Fedora 覆盖 `#baseurl=` 解注释、metalink 注释与 fedora/epel 映射（占位主机先 sed
   为规范官方主机）；Arch 验证 mirrorlist 整体重新生成（恰好一个 Server）。
 - 缺口：Rocky、AlmaLinux 尚未纳入容器矩阵（机制相同，

@@ -27,6 +27,9 @@ pub struct SetMirror {
     /// Also replace the Debian security repository (kept official by default)
     #[arg(long)]
     pub replace_security: bool,
+    /// Keep the CD-ROM source entry (commented out by default; apt only)
+    #[arg(long)]
+    pub keep_cdrom: bool,
     /// Skip the interactive confirmation
     #[arg(long)]
     pub yes: bool,
@@ -55,7 +58,14 @@ pub fn run(args: &SetMirror) -> ExitCode {
     match args.mirror {
         Some(mirror) => {
             let status = mirror::probe(&host, mirror);
-            run_apply(&host, mirror, args.yes, args.replace_security, status)
+            run_apply(
+                &host,
+                mirror,
+                args.yes,
+                args.replace_security,
+                !args.keep_cdrom,
+                status,
+            )
         }
         None => run_interactive(&host),
     }
@@ -113,6 +123,7 @@ fn run_apply(
     mirror: MirrorName,
     yes: bool,
     replace_security: bool,
+    disable_cdrom: bool,
     status: MirrorStatus,
 ) -> ExitCode {
     match status {
@@ -160,7 +171,7 @@ fn run_apply(
             return ExitCode::FAILURE;
         }
     }
-    match mirror::apply(host, mirror, replace_security) {
+    match mirror::apply(host, mirror, replace_security, disable_cdrom) {
         Ok(report) if report.changed_files == 0 => {
             println!(
                 "set-mirror: {}",
@@ -189,6 +200,12 @@ fn run_apply(
                         crate::tr!(crate::keys::SET_MIRROR_CDROM_CONVERTED)
                     );
                 }
+                Some(crate::mirror::Fallback::CdromDisabled) => {
+                    println!(
+                        "set-mirror: {}",
+                        crate::tr!(crate::keys::SET_MIRROR_CDROM_DISABLED)
+                    );
+                }
                 Some(crate::mirror::Fallback::SourceAdded) => {
                     println!(
                         "set-mirror: {}",
@@ -199,6 +216,15 @@ fn run_apply(
                     );
                 }
                 None => {}
+            }
+            if report.cdrom_commented > 0 {
+                println!(
+                    "set-mirror: {}",
+                    crate::tr!(
+                        crate::keys::SET_MIRROR_CDROM_COMMENTED,
+                        count = report.cdrom_commented
+                    )
+                );
             }
             if report.unrecognized_lines > 0 {
                 println!(
@@ -383,15 +409,42 @@ fn run_interactive(host: &Host) -> ExitCode {
         .get(&mirror)
         .copied()
         .unwrap_or(MirrorStatus::Unknown);
+    // 仅 apt 家族且源文件里确实有启用的 CD 源时，询问是否注释（默认注释）。
+    let disable_cdrom = if matches!(host.family, Family::Debian | Family::Ubuntu)
+        && mirror::has_enabled_cdrom(host)
+    {
+        match select_cdrom(&mut tty) {
+            Ok(disable) => disable,
+            Err(code) => return code,
+        }
+    } else {
+        true
+    };
     if mirror == MirrorName::Official {
         // 恢复官方源没有 security 选择：全部恢复为官方。
-        return run_apply(host, mirror, false, true, status);
+        return run_apply(host, mirror, false, true, disable_cdrom, status);
     }
     let replace_security = match select_security(&mut tty, host) {
         Ok(replace) => replace,
         Err(code) => return code,
     };
-    run_apply(host, mirror, false, replace_security, status)
+    run_apply(host, mirror, false, replace_security, disable_cdrom, status)
+}
+
+/// 询问是否注释 `deb cdrom:` 条目，默认注释（第一项）。
+fn select_cdrom(tty: &mut Tty) -> Result<bool, ExitCode> {
+    let options = vec![
+        crate::tr!(crate::keys::SET_MIRROR_CDROM_COMMENT),
+        crate::tr!(crate::keys::SET_MIRROR_CDROM_KEEP),
+    ];
+    match tty.select_one(
+        &crate::tr!(crate::keys::SET_MIRROR_CDROM_PROMPT),
+        &options,
+        Some(0),
+    ) {
+        Ok(selected) => Ok(selected == 0),
+        Err(error) => Err(fail_install(&error)),
+    }
 }
 
 /// 询问是否同时替换 Debian 的独立 security 仓库，默认不替换。

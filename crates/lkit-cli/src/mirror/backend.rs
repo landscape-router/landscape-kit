@@ -10,9 +10,14 @@ pub(crate) trait SourcesBackend {
     fn show(&self) -> Result<String, MirrorError>;
 
     /// 切换到指定镜像。`replace_security` 仅 Debian 家族生效（是否一并替换
-    /// 独立 security 仓库），其余家族忽略该参数。
-    fn apply(&self, mirror: MirrorName, replace_security: bool)
-    -> Result<ApplyReport, MirrorError>;
+    /// 独立 security 仓库），`disable_cdrom` 仅 apt 家族生效（是否注释启用的
+    /// `deb cdrom:` 条目，默认注释）；其余家族忽略这两个参数。
+    fn apply(
+        &self,
+        mirror: MirrorName,
+        replace_security: bool,
+        disable_cdrom: bool,
+    ) -> Result<ApplyReport, MirrorError>;
 
     /// 从上次换源的备份恢复原软件源，成功后删除备份。
     fn restore(&self) -> Result<(), MirrorError>;

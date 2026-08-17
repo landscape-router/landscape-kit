@@ -8,7 +8,7 @@
 最多垫底。
 
 ```text
-lkit set-mirror <MIRROR> [--yes] [--replace-security]
+lkit set-mirror <MIRROR> [--yes] [--replace-security] [--keep-cdrom]
 lkit set-mirror --list
 lkit set-mirror --show
 lkit set-mirror --check
@@ -110,16 +110,22 @@ apt 换源先按源文件格式（one-line `sources.list` 与 deb822 `*.sources`
   `security.debian.org/debian-security`）默认**不替换**，保持官方源（安全补丁讲究
   时效，部分镜像站也不镜像 security）；需要一并替换时加 `--replace-security`。
   Ubuntu 的 security 内容与主仓库合并镜像，没有独立路径，始终随主仓库一起替换，
-  该选项对 Ubuntu 不生效。
+  该选项对 Ubuntu 不生效；
+- 启用的 `deb cdrom:` 条目默认**注释掉**（在行首插入 `# `，保留其余字节；被注释
+  的 cdrom 行不动）。否则换源后 apt 仍会尝试读取安装介质、在 `apt update` 时提示
+  "Media change"，安装介质不在场时还会卡住。需要保留 CD 源时加 `--keep-cdrom`；
+  已处于目标镜像的文件只要有启用的 cdrom 行同样会注释（不算 no-op）。
 
 没有任何条目可重写（例如离线安装后只有 `deb cdrom:` 行、或默认源被换成自定义/内网
 源）且未处于目标状态时，不再报错，而是自动兜底。以下情况都会进入兜底：
 
-- 存在启用的 `deb cdrom:` 条目 → 把该条目转换为所选镜像（保留其 suites/components，
-  如 `deb cdrom:[...]/ bookworm contrib main` → `deb https://mirrors.tuna.../debian
-  bookworm contrib main`）；被注释的 cdrom 行不转换；Ubuntu 在 arm64 等 ports 架构
-  （`uname -m` 判定）上转 `/ubuntu-ports`（官方回落 `ports.ubuntu.com`），其余架构
-  转 `/ubuntu`，避免换源后 apt 找不到包；
+- 存在启用的 `deb cdrom:` 条目且**未**加 `--keep-cdrom` → 把该条目注释掉，并用
+  检测到的发行版代号合成镜像条目追加到同一文件（避免注释后系统没有任何可用源）；
+- 存在启用的 `deb cdrom:` 条目且加了 `--keep-cdrom` → 把该条目转换为所选镜像
+  （保留其 suites/components，如 `deb cdrom:[...]/ bookworm contrib main` →
+  `deb https://mirrors.tuna.../debian bookworm contrib main`）；被注释的 cdrom 行
+  不转换；Ubuntu 在 arm64 等 ports 架构（`uname -m` 判定）上转 `/ubuntu-ports`
+  （官方回落 `ports.ubuntu.com`），其余架构转 `/ubuntu`，避免换源后 apt 找不到包；
 - 否则用检测到的发行版代号合成新条目追加到 `sources.list`（不存在时创建
   `sources.list.d/lkit-mirror.list`）：Debian 追加 `main contrib non-free` 主仓库与
   官方 security 行（`--replace-security` 时 security 一并换到镜像），Ubuntu 追加
@@ -164,20 +170,23 @@ pacman 直接生成新的 `mirrorlist`：注释头说明来源，随后是单个
 修改软件源（换源与恢复）要求 root（euid 0）；`--list` 与 `--show` 只读，不需要 root。
 交互终端中默认要求输入 `yes` 确认（与 `lkit update` 一致），`--yes` 或
 `--non-interactive` 跳过确认。交互选择 Debian 镜像时，在确认前会额外询问是否同时
-替换 security 仓库，默认保留官方（对应 `--replace-security`）。取消确认时输出提示并
+替换 security 仓库，默认保留官方（对应 `--replace-security`）；源文件里存在启用的
+`deb cdrom:` 条目时（Debian/Ubuntu）会再询问是否注释 CD 源，默认注释
+（对应默认行为，`--keep-cdrom` 为保留）。取消确认时输出提示并
 不做任何修改，返回退出码 `1`。
 
 换源成功后打印修改的文件数、备份路径与跳过的仓库数（适用时）；源文件已处于目标
-镜像/官方状态时打印 "nothing was changed" 并以成功退出。apt 走兜底路径（CD 源转换
-或合成新条目）时额外打印对应提示。命令级失败（发行版不支持、没有源文件、没有备份）
-返回退出码 `1` 并打印原因。
+镜像/官方状态时打印 "nothing was changed" 并以成功退出。apt 走兜底路径（CD 源转换、
+CD 源注释或合成新条目）时额外打印对应提示；注释了 CD 源时打印被注释的条目数。
+命令级失败（发行版不支持、没有源文件、没有备份）返回退出码 `1` 并打印原因。
 
 ## 控制台入口
 
 交互控制台（裸 `lkit`）侧栏新增“Mirror（换源）”面板：进入面板时检测发行版并显示
 主机摘要，后台并行探测镜像可用性（面板底部显示"正在检查镜像可用性……"，结果回填
 后不可用镜像置灰不可选），提供十二个镜像选项与“恢复备份的原软件源”动作；Enter 打开
-居中确认层，Debian 主机确认层内有一行默认不勾选的“同时替换 security 仓库”开关
-（Space/←/→ 切换，也可点击），探测为"未知"的镜像在确认层内额外显示一行警告，
-确认后在控制台内同步执行（与 CLI 相同的备份、重写与恢复语义），结果写入底栏。
-面板不依赖 Landscape 安装状态，未安装或已安装均可使用。
+居中确认层，确认层内有两行开关：默认勾选的“注释 CD-ROM 源条目”（apt 家族）与
+默认不勾选的“同时替换 security 仓库”（仅 Debian）；↑/↓ 在开关行间移动焦点、
+空格/←/→ 切换焦点行（也可点击行直接切换），探测为"未知"的镜像在确认层内额外显示
+一行警告，确认后在控制台内同步执行（与 CLI 相同的备份、重写与恢复语义），结果写入
+底栏。面板不依赖 Landscape 安装状态，未安装或已安装均可使用。

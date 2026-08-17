@@ -278,6 +278,9 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                         keys::MAIN_SET_MIRROR_REPLACE_SECURITY_HELP
                     ))
                 })
+                .mut_arg("keep_cdrom", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_KEEP_CDROM_HELP))
+                })
                 .mut_arg("yes", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_SET_MIRROR_YES_HELP))
                 })
