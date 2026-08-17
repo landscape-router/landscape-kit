@@ -10,7 +10,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`software::docker` 测试](../../../../crates/lkit-cli/src/software/docker.rs)
+- 证据：[`software::docker` 测试](../../../../lkit-cli/src/software/docker.rs)
 - 说明：`test-support` 下注入临时路径，断言 apt 的 `docker.list` 按
   `deb [arch=amd64 signed-by=<keyrings>/docker.gpg] <base>/linux/<family> <codename> stable`
   写入官方 URL（Debian bookworm / Ubuntu jammy），dnf 的 `docker-ce.repo` 按
@@ -24,7 +24,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`software::docker` 测试](../../../../crates/lkit-cli/src/software/docker.rs)
+- 证据：[`software::docker` 测试](../../../../lkit-cli/src/software/docker.rs)
 - 说明：TUNA（Ubuntu jammy）、腾讯云与华为云（Ubuntu noble）与阿里云（Rocky 主
   版本号从 `9.3` 取 `9`）写入的仓库文件 URL 指向对应镜像主机，其余字段不变。
 
@@ -34,8 +34,8 @@
 
 - 测试层：Rust 单元 + Rust 控制台测试
 - 状态：`已覆盖`
-- 证据：[`software::docker::docker_installed_detects_existing_binary` 测试](../../../../crates/lkit-cli/src/software/docker.rs)、
-  [`console::tests::software`](../../../../crates/lkit-cli/src/console/tests/software.rs)
+- 证据：[`software::docker::docker_installed_detects_existing_binary` 测试](../../../../lkit-cli/src/software/docker.rs)、
+  [`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
 - 说明：`Software::installed` 检测常见安装路径下的 `docker` 可执行文件（注入临时
   路径验证存在/删除切换）；控制台对已安装软件按 Enter 只提示“已安装”并拒绝打开
   确认层；`lkit software install docker` 对已安装软件直接提示并失败退出。
@@ -46,7 +46,7 @@
 
 - 测试层：Rust 控制台测试
 - 状态：`已覆盖`
-- 证据：[`console::tests::software`](../../../../crates/lkit-cli/src/console/tests/software.rs)
+- 证据：[`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
 - 说明：面板检测失败时显示错误且确认 Enter 不启动安装（无 worker 产生）；非 root
   （`test-support` 下注入 `allow_non_root=false`）确认 Enter 报权限错误、不启动安装；
   面板渲染显示发行版摘要与软件行（含鼠标点击命中）。CLI 非 root 安装报错阻断、
@@ -58,7 +58,7 @@
 
 - 测试层：Rust 控制台测试
 - 状态：`已覆盖`
-- 证据：[`console::tests::software`](../../../../crates/lkit-cli/src/console/tests/software.rs)
+- 证据：[`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
 - 说明：菜单导航（未安装/已安装均可到达 Software）、面板渲染（主机摘要、Docker 行与
   状态）、行选择边界（单行钳制）、确认层打开/关闭、来源循环切换（Space/Right 前进、
   Left 后退，Official→阿里云→腾讯云→华为云→TUNA→USTC 闭环）、确认层渲染（来源行

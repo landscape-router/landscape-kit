@@ -6,7 +6,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
-      - crates/lkit-cli/**
+      - lkit-cli/**
       - scripts/docker-mirrors/**
       - scripts/test-docker-mirrors.sh
       - .github/workflows/test-docker-mirrors.yml

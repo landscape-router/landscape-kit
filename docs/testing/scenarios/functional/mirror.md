@@ -9,7 +9,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`mirror::detect` 测试](../../../../crates/lkit-cli/src/mirror/detect.rs)、[`set-mirror --list`](../../../commands/mirror.md)
+- 证据：[`mirror::detect` 测试](../../../../lkit-cli/src/mirror/detect.rs)、[`set-mirror --list`](../../../commands/mirror.md)
 - 说明：覆盖 Debian/Ubuntu（含 VERSION 行解析代号）、Fedora、Rocky、AlmaLinux、
   Arch；不支持发行版与不可读 os-release 报错。
 
@@ -19,7 +19,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`mirror::apt::parse` 测试](../../../../crates/lkit-cli/src/mirror/apt/parse.rs)
+- 证据：[`mirror::apt::parse` 测试](../../../../lkit-cli/src/mirror/apt/parse.rs)
 - 说明：先按 one-line/deb822 格式解析为条目（类型、URI、suites、components、
   是否注释、CD 源），再对命中的条目做 URI 片段级替换。覆盖 one-line 与 deb822
   格式（含 `[options]`、禁用行、多 URI 的 `URIs:` 行、注释）、Debian
@@ -45,8 +45,8 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`mirror::apt::parse` 测试](../../../../crates/lkit-cli/src/mirror/apt/parse.rs)
-  与 [`mirror::apt` apply 测试](../../../../crates/lkit-cli/src/mirror/apt/mod.rs)
+- 证据：[`mirror::apt::parse` 测试](../../../../lkit-cli/src/mirror/apt/parse.rs)
+  与 [`mirror::apt` apply 测试](../../../../lkit-cli/src/mirror/apt/mod.rs)
 - 说明：没有任何条目可重写且未处于目标状态时，`apply` 不再报错：存在启用的
   `deb cdrom:` 条目时默认把它**注释掉**并合成镜像条目追加到同一文件（避免注释后
   系统无可用源，`Fallback::CdromDisabled`）；`--keep-cdrom`（`disable_cdrom=false`）
@@ -69,7 +69,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`mirror::dnf::parse` 测试](../../../../crates/lkit-cli/src/mirror/dnf/parse.rs)
+- 证据：[`mirror::dnf::parse` 测试](../../../../lkit-cli/src/mirror/dnf/parse.rs)
 - 说明：覆盖 `# baseurl=` 解注释与重写、mirrorlist/metalink 注释、Fedora/EPEL、
   Rocky、Alma 主机映射、官方反向恢复、自定义主机不动、
   已识别镜像之间互转；已处于目标镜像/官方状态时 `apply` 为成功 no-op（不保留备份），
@@ -81,7 +81,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`mirror::pacman` 测试](../../../../crates/lkit-cli/src/mirror/pacman/mod.rs)
+- 证据：[`mirror::pacman` 测试](../../../../lkit-cli/src/mirror/pacman/mod.rs)
 - 说明：十二个镜像各生成恰好一个 `Server =` 行，模板含 `$repo/os/$arch`。
 
 ## MIR-05
@@ -90,8 +90,8 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`mirror::common::restore_files` 测试](../../../../crates/lkit-cli/src/mirror/common.rs)、
-  [`console::tests::mirror`](../../../../crates/lkit-cli/src/console/tests/mirror.rs)
+- 证据：[`mirror::common::restore_files` 测试](../../../../lkit-cli/src/mirror/common.rs)、
+  [`console::tests::mirror`](../../../../lkit-cli/src/console/tests/mirror.rs)
   的 apply/restore 端到端测试
 - 说明：备份保留相对路径，恢复写回目标根目录后删除备份；无备份时恢复报错。控制台
   确认层端到端测试（`test-support` 特性下）注入临时根路径并允许非 root，验证真实
@@ -105,7 +105,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 控制台测试
 - 状态：`已覆盖`
-- 证据：[`console::tests::mirror`](../../../../crates/lkit-cli/src/console/tests/mirror.rs)
+- 证据：[`console::tests::mirror`](../../../../lkit-cli/src/console/tests/mirror.rs)
 - 说明：菜单导航、面板渲染、行选择边界、确认层打开/关闭、确认执行、CD 源注释
   开关（默认勾选、空格切换焦点行）与 Debian security 开关（默认不勾选、↑/↓ 移
   动开关焦点、点击行直接切换对应开关、非 apt 家族全部隐藏）与鼠标点击命中；确认
@@ -153,8 +153,8 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元 + CLI + Docker E2E
 - 状态：`已覆盖`
-- 证据：[`mirror::apt::parse` 诊断测试](../../../../crates/lkit-cli/src/mirror/apt/parse.rs)、
-  [`mirror::apt` check_format 测试](../../../../crates/lkit-cli/src/mirror/apt/mod.rs)、
+- 证据：[`mirror::apt::parse` 诊断测试](../../../../lkit-cli/src/mirror/apt/parse.rs)、
+  [`mirror::apt` check_format 测试](../../../../lkit-cli/src/mirror/apt/mod.rs)、
   [`set-mirror --check`](../../../commands/mirror.md)
 - 说明：解析器按行号报告 `NotADebLine`/`MissingUri`/`NotAField`/`StanzaWithoutUris`
   四类异常（one-line 混入 deb822、括号不配对、缺 URI、deb822 混入 one-line、stanza
@@ -169,8 +169,8 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 
 - 测试层：Rust 单元 + 控制台测试
 - 状态：`已覆盖`
-- 证据：[`mirror::availability` 测试](../../../../crates/lkit-cli/src/mirror/availability.rs)、
-  [`console::tests::mirror`](../../../../crates/lkit-cli/src/console/tests/mirror.rs)
+- 证据：[`mirror::availability` 测试](../../../../lkit-cli/src/mirror/availability.rs)、
+  [`console::tests::mirror`](../../../../lkit-cli/src/console/tests/mirror.rs)
 - 说明：换源前并行 HEAD 探测每个镜像站上"当前发行版"的真实文件（Debian/Ubuntu
   `dists/<代号>/Release`、Fedora 换源后实际写入的
   `fedora/linux/releases/<主版本>/Everything/<架构>/os/repodata/repomd.xml`、

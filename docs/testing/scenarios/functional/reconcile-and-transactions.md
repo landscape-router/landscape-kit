@@ -27,7 +27,7 @@
 - 状态：`已覆盖`
 - 证据：`corrupted_config_blocks_repository_commands_but_not_plain_reconcile` 与
   `explicit_repository_bypasses_preset_config_without_modifying_it`
-  （crates/lkit-cli/tests/install_fixture_e2e/install.rs，正负路径均已覆盖）
+  （lkit-cli/tests/install_fixture_e2e/install.rs，正负路径均已覆盖）
 
 ## REC-04
 

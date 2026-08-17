@@ -6,7 +6,7 @@
 
 - 测试层：Clap 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：内存终端断言品牌、Navigation、Install root 和安装操作均已渲染，不要求测试进程
   连接真实终端；同时断言 Repository URL 默认隐藏、仅在选择 Custom HTTP 后显示，字段导航
   会跳过隐藏行，并验证所有安装字段都有随选择变化的说明。网络接管开关暂隐藏（固定启用，
@@ -18,7 +18,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖精确版本、自定义 HTTP 仓库、安装根目录、管理员、双重掩码密码和 service
   manager；断言密码不出现在 Debug 或 CLI args，并在离开控制台后进入共享命令分发与
   systemd worker 判断。
@@ -29,7 +29,7 @@
 
 - 测试层：PTY CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[控制台恢复契约](../../../interaction/console.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[控制台恢复契约](../../../interaction/console.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：真实 PTY 驱动裸 `lkit`，断言第一次 Esc 只进入等待状态、第二次 Esc 才显示确认层，
   Enter 确认后离开 alternate screen；Ctrl+C 仍立即返回 130，且两条路径均保持 ECHO 启用。
 
@@ -39,7 +39,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[控制台输入规格](../../../interaction/console.md)、[控制台按键测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台输入规格](../../../interaction/console.md)、[控制台按键测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖从侧栏进入 Install 面板后使用 Esc 返回侧栏菜单选择（退出确认只在导航层
   生效，面板内 Esc 不进入退出等待态）；Left 与 Right 在表单内切换仓库枚举且不改变焦点
   （Left 反向、Right 正向，检查汇总态保持不变）。
@@ -50,7 +50,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)、[`lkit check` 规格](../../../check.md)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[`lkit check` 规格](../../../check.md)
 - 说明：覆盖检查汇总、检查与表单间的焦点移动、分组详情、非通过原因与建议，以及 Esc 收起
   详情而不触发退出确认；详情底栏同时显示 `Ctrl+C Exit` 和 `Esc Close`，明确区分退出控制台
   与收起详情；检查任务通过后台线程运行。
@@ -61,7 +61,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台输入规格](../../../interaction/console.md)、[本地化规格](../../../interaction/i18n.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台输入规格](../../../interaction/console.md)、[本地化规格](../../../interaction/i18n.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：断言英文底栏、`L` 切换后的中文导航与中文底栏，并验证文本编辑状态下 `l` 仍写入字段而不切换语言。
 
 ## UI-07
@@ -70,7 +70,7 @@
 
 - 测试层：Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台输入规格](../../../interaction/console.md)、[样式验收标准](../../../interaction/ui/README.md)、[控制台渲染测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台输入规格](../../../interaction/console.md)、[样式验收标准](../../../interaction/ui/README.md)、[控制台渲染测试](../../../../lkit-cli/src/console/)
 - 说明：Overview 和 Install 面板标题显示 `> ` 焦点标记；Install 当前字段使用 `> ` 和基础
   Cyan 背景，不依赖 truecolor 支持。样式令牌（`FOCUS_SELECTED` 等）定义见样式验收标准。
 
@@ -80,7 +80,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖从 Install 表单进入无侧栏网络向导、WAN 配置面板（Static/DHCP client tab、
   静态字段与底部“确认并继续”按钮）、LAN 空集合的 WAN-only 计划，以及 LAN
   列表的 Up/Down、Space、Enter 语义。Install 面板始终启用网络接管（开关暂隐藏），激活
@@ -98,7 +98,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：NotRun/Running 时焦点停留在检查汇总并提示等待；Pass 和 warning 可进入表单；
   Error、unknown 和 worker 失败通过处理弹窗阻断所有进入表单、开始安装和网络向导的路径。
   弹窗支持 Enter 查看详情、Esc 关闭、R 重跑，无强制跳过入口；进入表单后重跑变为阻断状态时，
@@ -110,7 +110,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：WAN 列表显示首个发现 IPv4 和该接口首个默认网关；选中后进入 WAN 配置面板，
   tab 以完整对预填并默认 Static，缺任一项默认 DHCP。Static/DHCP 用 Left/Right 切换，
   静态地址/CIDR 与网关同页编辑，底部“确认并继续”按钮校验并前进；选择 LAN 后在同一页
@@ -123,7 +123,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[备份命令](../../../commands/backup.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[备份命令](../../../commands/backup.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：未安装或非 root 时面板只显示原因提示。已安装时列出备份（与 `backup list`
   同源的后台完整校验），Enter 打开 metadata 详情（**备注排第一**，进入详情自动后台
   `verify` 并写底栏，V 可手动重校验，R 打开恢复确认层但校验失败时弹损坏框），顶部
@@ -139,7 +139,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：已安装时 Update 菜单可选，未安装/非 root/状态不可读时置灰且导航跳过。面板顶部
   显示当前版本，字段为目标版本（默认 latest，`TargetVersion` 校验）、仓库来源（config.toml
   有效时首项为“当前来源”，损坏时显示错误且只留显式选项）与自定义 URL。激活“开始更新”后
@@ -155,7 +155,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend、PTY CLI fixture E2E
 - 状态：`部分覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：安装根存在未完成网络接管（`awaiting_network_confirmation`、`finalizing`、
   `rolling_back`）时，快照进入 `AwaitingNetworkConfirmation`，TUI 启动即渲染阻塞屏而非
   菜单：显示事务 ID、阶段、管理地址（DHCP 租约时显示占位）、确认截止时间与回滚提示。
@@ -171,7 +171,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`部分覆盖`
-- 证据：[`lkit check` 规格](../../../check.md)、[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)、[daemon_worker 测试](../../../../crates/lkit-cli/src/daemon_worker/mod.rs)
+- 证据：[`lkit check` 规格](../../../check.md)、[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[daemon_worker 测试](../../../../lkit-cli/src/daemon_worker/mod.rs)
 - 说明：`lkit check` 与 Install 面板部署前检查包含 `service.lkit_daemon` 项：daemon
   运行中为 `pass`；root 下未运行为 `error` 并建议 `lkit self install`（控制台未部署
   daemon 前无法进入安装表单）；非 root 未运行只报 `warning`。进入控制台时 root 下
@@ -192,7 +192,7 @@
 
 - 测试层：Rust 单元
 - 状态：`部分覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：root 下 daemon 未运行（含检查结果过时的情况）时，“开始安装”与网络向导
   确认摘要不再退出 TUI 委托，而是留在面板内提示“lkit 常驻服务未运行;请用
   `lkit self install` 部署”，避免用户填写完所有安装参数、退出控制台后才得到

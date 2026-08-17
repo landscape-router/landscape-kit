@@ -6,7 +6,7 @@
 
 | Crate | 职责 |
 | --- | --- |
-| `crates/lkit-cli` | `lkit` 二进制：命令层、领域逻辑与 workflow |
+| `lkit-cli` | `lkit` 二进制：命令层、领域逻辑与 workflow |
 | `crates/lkit-publish` | `lkit-publish` 二进制：打包发布并发布到仓库 |
 | `crates/lkit-repository` | 仓库协议库，CLI 与发布器共享 |
 | `crates/lkit-test-fixture` | 测试 fixture：模拟 `systemctl`、HTTPS webserver 与测试仓库 |

@@ -26,7 +26,7 @@
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/daemon.rs)
+- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)
 - 说明：构造带 `network_takeover` 的 `awaiting_network_confirmation` 事务并启动
   daemon，多个周期后事务保持原阶段、安装现场不被触碰、daemon 存活；
   恢复循环显式跳过 `awaiting_network_confirmation`/`finalizing`/`rolling_back`。

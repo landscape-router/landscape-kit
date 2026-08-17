@@ -23,7 +23,7 @@ cargo test -p lkit-cli <module-filter>
 
 - Run unit tests for the current change only (e.g. `cargo test -p lkit-cli <module-filter>`),
   never the full test suite after every code change.
-- The e2e fixture suite (`crates/lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs in CI
+- The e2e fixture suite (`lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs in CI
   on every push and as a PR check via `.github/workflows/test-e2e.yml`, not locally before each
   commit. To run it manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
 
@@ -35,13 +35,13 @@ scripts under `scripts/`, never in unit tests.
 
 - Unit tests may only touch temporary directories; lkit's fixed territory `/root/.lkit/` is
   reachable only through `deployment::layout`'s `LKIT_TERRITORY` env override
-  (see `test_territory()` in `crates/lkit-cli/src/deployment/layout.rs`). Never write to
+  (see `test_territory()` in `lkit-cli/src/deployment/layout.rs`). Never write to
   `/root/.lkit`, `/etc/systemd`, `/usr/local`, or any real host path in a unit test.
 - Never spawn real processes (`lkit daemon`, `landscape-webserver`, `systemctl`, ...), bind
   ports, or drive real systemd/network state from unit tests. Use the fake managers and
   fixtures the codebase already provides.
 - System-level scenarios that cannot be isolated (real daemon deployment, network takeover,
-  service manager backends) belong in `crates/lkit-cli/tests/install_fixture_e2e/`, which
+  service manager backends) belong in `lkit-cli/tests/install_fixture_e2e/`, which
   runs only in CI or containers: every test there starts with an `e2e_enabled()` gate and
   requires the `LKIT_E2E=1` environment variable to actually run.
 - When verifying locally, always scope unit tests to the `lkit` binary and an exact module:
@@ -54,8 +54,9 @@ scripts under `scripts/`, never in unit tests.
 
 ## Project Layout
 
-- `crates/` — Cargo workspace members: `lkit-cli` (the `lkit` binary), `lkit-publish`, `lkit-repository`, `lkit-test-fixture`.
-- `docs/` — specifications and design documents at the repository root (moved from `crates/lkit-cli/docs`).
+- `lkit-cli/` — the `lkit` binary crate (the shipped executable).
+- `crates/` — internal Cargo workspace library members: `lkit-hostnet`, `lkit-publish`, `lkit-repository`, `lkit-test-fixture`.
+- `docs/` — specifications and design documents at the repository root (moved from `lkit-cli/docs`).
 - `scripts/` — integration test scripts.
 
 ## Documentation

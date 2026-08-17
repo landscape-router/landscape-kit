@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "crates/lkit-cli",
+    "lkit-cli",
     "crates/lkit-hostnet",
     "crates/lkit-publish",
     "crates/lkit-repository",
     "crates/lkit-test-fixture",
 ]
-default-members = ["crates/lkit-cli"]
+default-members = ["lkit-cli"]
 resolver = "3"
 
 [workspace.package]

@@ -6,7 +6,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
-      - crates/lkit-cli/**
+      - lkit-cli/**
       - scripts/docker-software/**
       - scripts/test-docker-software.sh
       - .github/workflows/test-docker-software.yml

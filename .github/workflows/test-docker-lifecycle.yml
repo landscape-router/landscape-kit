@@ -15,7 +15,7 @@ on:
       - .dockerignore
       - Cargo.lock
       - Cargo.toml
-      - crates/lkit-cli/**
+      - lkit-cli/**
       - crates/lkit-publish/**
       - crates/lkit-repository/**
       - crates/lkit-test-fixture/**

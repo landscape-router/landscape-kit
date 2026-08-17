@@ -6,7 +6,7 @@
 
 - 测试层：CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
-- 证据：[首次安装场景](../lifecycle.md#首次安装)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[首次安装场景](../lifecycle.md#首次安装)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 
 ## INS-02
 
@@ -41,7 +41,7 @@
 - 测试层：Rust workflow
 - 状态：`已覆盖`
 - 证据：`first_install_fails_without_available_systemd`
-  （crates/lkit-cli/src/workflows/install/first_install_tests.rs）；无 systemd 平台为
+  （lkit-cli/src/workflows/install/first_install_tests.rs）；无 systemd 平台为
   unsupported，见[首次安装语义](../../../commands/install.md)。
 
 ## INS-07
@@ -68,7 +68,7 @@
 
 - 测试层：Rust workflow、CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[首次安装失败](../../../workflows/lifecycle.md#首次安装失败)、[失败清理 E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[首次安装失败](../../../workflows/lifecycle.md#首次安装失败)、[失败清理 E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：Rust workflow 分别注入资产 404、损坏后端 zstd 和非法 static zip，并断言发布
   临时目录、目标 release、current、初始化文件和成功 state 均不存在且事务终结；CLI
   fixture E2E 另行验证启动健康检查失败后的服务、unit 与 resolv.conf 恢复。
@@ -87,7 +87,7 @@
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`release/artifacts.rs`](../../../../crates/lkit-cli/src/release/artifacts.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
+- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`release/artifacts.rs`](../../../../lkit-cli/src/release/artifacts.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
 - 说明：`build_release` 在下载前校验已有 `releases/<version>` 目录（真实目录非符号链接、后端二进制与 `static/index.html` 齐全、`static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致），可信则直接复用并跳过下载；不可信或残缺目录阻断且不修改。单元测试覆盖复用、摘要漂移、符号链接与残缺目录阻断，switch 集成测试覆盖回滚残留目录复用后不再请求目标资产，Docker E2E S14 覆盖失败切换回滚后残留目录复用的完整 CLI 落盘路径。
 
 ## INS-12
@@ -104,7 +104,7 @@
 
 - 测试层：Rust Ratatui TestBackend、PTY 单元、CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：Ratatui 视图通过内存 TestBackend 验证，不要求测试进程连接真实终端；CLI fixture
   使用 `--password-file` 和捕获输出运行，并断言 stdout/stderr 不含 ANSI 转义序列。
 
@@ -114,7 +114,7 @@
 
 - 测试层：Clap 单元、CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[安装输出规则](../../../commands/install.md)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：`--non-interactive` 在子命令前后均可解析；完整安装使用密码文件并断言输出不含
   ANSI 控制序列。额外 PTY 场景证明终端可用时该参数仍禁止密码提示并要求密码文件。
 
@@ -124,7 +124,7 @@
 
 - 测试层：PTY CLI fixture E2E
 - 状态：`部分覆盖`
-- 证据：[输出与退出码](../../../commands/output-and-exit-codes.md)、[委托执行](../../../deployment/transactions-and-recovery.md#委托执行daemon-托管)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[输出与退出码](../../../commands/output-and-exit-codes.md)、[委托执行](../../../deployment/transactions-and-recovery.md#委托执行daemon-托管)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 缺口：真实 systemd smoke 尚未直接验证 Ctrl+C 会停止委托的子进程组。
 - 说明：PTY 场景在密码回显关闭后发送 SIGINT，断言退出状态为 `130` 且 `ECHO` 已恢复。
 
@@ -134,7 +134,7 @@
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：首次安装完成后断言 `install-state.json` 不包含 `repository` 字段且 lkit 地盘顶层
   不存在 `config.toml`；预置有效配置（HTTP 来源）后不带 `--repository` 执行首次安装，
   安装使用该来源且配置字节保持不变；网络接管 confirm 前后均不创建配置文件。
@@ -147,7 +147,7 @@
 
 - 测试层：CLI fixture E2E、单元测试
 - 状态：`已覆盖`
-- 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
 - 说明：解析优先级为 显式 CLI > `config.toml` > 官方 GitHub。`--repository` 支持精确小写值
   `github`；显式来源完全绕过配置（损坏配置下 reconcile/repair 仍成功，且原文件字节不变，
    预设的配置来源服务器收不到请求）。损坏配置只阻断需要仓库的命令（switch/repair/update

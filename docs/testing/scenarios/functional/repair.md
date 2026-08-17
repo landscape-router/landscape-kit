@@ -32,7 +32,7 @@
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 证据：[Repair 阶段](../../../workflows/lifecycle.md#4-repair-阶段转换)、`binary_repair_rolls_back_when_activation_fails`（crates/lkit-cli/src/workflows/repair.rs）
+- 证据：[Repair 阶段](../../../workflows/lifecycle.md#4-repair-阶段转换)、`binary_repair_rolls_back_when_activation_fails`（lkit-cli/src/workflows/repair.rs）
 - 说明：以落盘二进制作为阶段信号的探测在激活验证期间失败（二进制已被可信内容替换）、回滚从 `.lkb` 重建后恢复为漂移内容时通过；断言 `RepairOutcome::RolledBack`、事务 `rolled_back`、二进制与 state 摘要恢复为修复前内容、`current` 不变。
 
 ## REP-05
@@ -41,7 +41,7 @@
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 证据：`binary_repair_rollback_failure_returns_rollback_failed`（crates/lkit-cli/src/workflows/repair.rs）
+- 证据：`binary_repair_rollback_failure_returns_rollback_failed`（lkit-cli/src/workflows/repair.rs）
 - 说明：探测恒失败时激活失败触发回滚，回滚自身的健康检查也失败，返回 `RepairOutcome::RollbackFailed`（命令层映射退出码 `6`）；事务保持 `failed`，`failed-data`、`replaced-release` 与 `repaired-binary` 诊断现场保留供人工恢复。
 
 ## REP-06

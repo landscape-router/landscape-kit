@@ -15,7 +15,7 @@
 
 - 测试层：CLI fixture E2E、Rust 命令层
 - 状态：`已覆盖`
-- 证据：[backup create](../../../commands/backup.md#backup-create)、`create_writes_manual_backup_without_any_service_manager`、`create_export_failure_leaves_no_final_file`（crates/lkit-cli/src/commands/backup.rs）、`read_api_token` 单测（crates/lkit-cli/src/backup/export.rs）
+- 证据：[backup create](../../../commands/backup.md#backup-create)、`create_writes_manual_backup_without_any_service_manager`、`create_export_failure_leaves_no_final_file`（lkit-cli/src/commands/backup.rs）、`read_api_token` 单测（lkit-cli/src/backup/export.rs）
 - 说明：命令层测试完整走 `backup create` 流程（导出 API、token、归档自校验），断言归档内容为导出配置而非种子文件；导出返回 500 时 `backups/` 不留任何 `.lkb`。
 
 ## BKP-03
@@ -24,7 +24,7 @@
 
 - 测试层：CLI fixture E2E、Rust 单元、Docker E2E
 - 状态：`已覆盖`
-- 证据：[backup list、show 与 verify](../../../commands/backup.md#backup-list)、[容器格式](../../../backup/lkb-and-rollback.md#容器格式-v1)、`list_marks_symlinks_and_unsafe_permissions_invalid`、`list_marks_content_incomplete_backups_invalid`（crates/lkit-cli/src/commands/backup.rs）、Docker E2E S10
+- 证据：[backup list、show 与 verify](../../../commands/backup.md#backup-list)、[容器格式](../../../backup/lkb-and-rollback.md#容器格式-v1)、`list_marks_symlinks_and_unsafe_permissions_invalid`、`list_marks_content_incomplete_backups_invalid`（lkit-cli/src/commands/backup.rs）、Docker E2E S10
 - 说明：CLI `backup list` 保持完整校验（checksum + 安全解包检查必需条目），验证损坏 checksum、header、路径逃逸、符号链接和权限不安全文件不会被误报为有效；Docker E2E S10 覆盖 list/show/verify 成功路径。控制台列表改用快速读取（见 BKP-11），不改变 CLI 语义。
 
 ## BKP-04
@@ -42,7 +42,7 @@
 
 - 测试层：Rust 单元（pty）
 - 状态：`部分覆盖`
-- 证据：[backup create](../../../commands/backup.md#backup-create)、`remark_resolution_uses_flag_or_empty_default`、`rejects_invalid_remarks`（crates/lkit-cli/src/backup/lkb.rs）
+- 证据：[backup create](../../../commands/backup.md#backup-create)、`remark_resolution_uses_flag_or_empty_default`、`rejects_invalid_remarks`（lkit-cli/src/backup/lkb.rs）
 - 说明：`--remark` 优先；非交互或无法打开终端时缺省为空；超过 256 字符或含控制字符时返回参数错误 `2`。
 - 缺口：`/dev/tty` 交互提示分支无 pty 测试（flag/非交互默认已有直接断言）。
 - 缺口：交互模式经 `/dev/tty` 提示输入的 pty 路径未覆盖（仓库无 pty 测试设施）。
@@ -53,7 +53,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[backup show 与 backup verify](../../../commands/backup.md#backup-show-与-backup-verify)、`rejects_backups_missing_required_entries`、`rejects_directory_entry_named_static_zip`（crates/lkit-cli/src/backup/lkb.rs）、`verify_cleans_up_temp_dirs_and_rejects_incomplete_archives`（crates/lkit-cli/src/commands/backup.rs）、`creates_verifies_and_extracts_backup`（解包目录/文件权限断言）
+- 证据：[backup show 与 backup verify](../../../commands/backup.md#backup-show-与-backup-verify)、`rejects_backups_missing_required_entries`、`rejects_directory_entry_named_static_zip`（lkit-cli/src/backup/lkb.rs）、`verify_cleans_up_temp_dirs_and_rejects_incomplete_archives`（lkit-cli/src/commands/backup.rs）、`creates_verifies_and_extracts_backup`（解包目录/文件权限断言）
 - 说明：归档缺少 `landscape-webserver`、`landscape_init.toml`、`static.zip`（或非普通文件）、`static`、`geo_tmp` 任一必需条目时 verify 返回失败；解包目录与文件分别保持 `0700`/`0600`，verify 临时目录（uuid 命名）在成功与失败路径都不留残留。
 
 ## BKP-07
@@ -62,7 +62,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[backup list](../../../commands/backup.md#backup-list)、`list_marks_symlinks_and_unsafe_permissions_invalid`（crates/lkit-cli/src/commands/backup.rs）
+- 证据：[backup list](../../../commands/backup.md#backup-list)、`list_marks_symlinks_and_unsafe_permissions_invalid`（lkit-cli/src/commands/backup.rs）
 - 说明：权限宽于 `0600`、非 root 所有以及符号链接形式的 `.lkb` 条目标记 invalid 并计入失败；符号链接不被跟随。
 
 ## RST-01
@@ -80,7 +80,7 @@
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[restore 命令](../../../commands/restore.md)、`restores_cross_version_without_systemd`（crates/lkit-cli/src/workflows/restore.rs）、[S13 systemd 跨版本 restore](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[restore 命令](../../../commands/restore.md)、`restores_cross_version_without_systemd`（lkit-cli/src/workflows/restore.rs）、[S13 systemd 跨版本 restore](../../../../scripts/docker-e2e/run-scenarios.sh)
 - 说明：Rust 工作流测试覆盖跨版本恢复；Docker E2E S13 用早期版本备份降级恢复（5.0.0 → 2.0.0），断言事务 `from_version`/`target_version`、保护备份、`config.toml` 来源记录不变，恢复后 state 资产身份与备份内容一致。
 
 ## RST-03
@@ -98,7 +98,7 @@
 
 - 测试层：CLI fixture E2E、Rust workflow
 - 状态：`已覆盖`
-- 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、`restore_blocks_without_allow_no_backup_when_protection_fails`、`restore_continues_with_allow_no_backup_when_protection_fails`（crates/lkit-cli/src/workflows/restore.rs）
+- 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、`restore_blocks_without_allow_no_backup_when_protection_fails`、`restore_continues_with_allow_no_backup_when_protection_fails`（lkit-cli/src/workflows/restore.rs）
 - 说明：导出失败时默认阻断且现场不变；`--allow-no-backup` 继续时事务记录 `no_backup: true`、`backup: null`，restore 正常提交。
 
 ## RST-05
@@ -107,7 +107,7 @@
 
 - 测试层：Rust 事务测试、Docker E2E
 - 状态：`已覆盖`
-- 证据：[事务中断恢复](../../../deployment/transactions-and-recovery.md#中断恢复)、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)、`rollback_restores_previous_data_from_transaction_dir`、`rollback_treats_consumed_previous_data_as_already_restored`、`rollback_failure_marks_the_transaction_failed`（crates/lkit-cli/src/workflows/restore.rs）
+- 证据：[事务中断恢复](../../../deployment/transactions-and-recovery.md#中断恢复)、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)、`rollback_restores_previous_data_from_transaction_dir`、`rollback_treats_consumed_previous_data_as_already_restored`、`rollback_failure_marks_the_transaction_failed`（lkit-cli/src/workflows/restore.rs）
 - 说明：Docker E2E 在目标激活 `verifying` 阶段 kill 掉 `lkit`，断言事务停在非终结阶段且 data 已移入 `previous-data`，下次命令经恢复入口完整回滚（`rolled_back`、data/current/state 恢复）；Rust 测试覆盖回滚失败标记 `failed`（对应退出码 `6`）与 previous-data 幂等恢复。
 
 ## RST-06
@@ -116,7 +116,7 @@
 
 - 测试层：Rust 单元、CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、[BackupMetadata Schema v1](../../../backup/lkb-and-rollback.md#backupmetadata-schema-v1)、`rejects_tampered_files`、`rejects_escaping_tar_entries`、`rejects_backups_missing_required_entries`（crates/lkit-cli/src/backup/lkb.rs）
+- 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、[BackupMetadata Schema v1](../../../backup/lkb-and-rollback.md#backupmetadata-schema-v1)、`rejects_tampered_files`、`rejects_escaping_tar_entries`、`rejects_backups_missing_required_entries`（lkit-cli/src/backup/lkb.rs）
 - 说明：损坏 checksum、header、路径逃逸、符号链接和权限不安全文件不会被误报为有效；架构不匹配与归档缺少必要条目时拒绝，且不停止服务、不改变 current。
 
 ## RST-07
@@ -125,7 +125,7 @@
 
 - 测试层：CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
-- 证据：[激活与提交](../../../commands/restore.md#激活与提交)、`restores_cross_version_with_systemd`（crates/lkit-cli/src/workflows/restore.rs）
+- 证据：[激活与提交](../../../commands/restore.md#激活与提交)、`restores_cross_version_with_systemd`（lkit-cli/src/workflows/restore.rs）
 - 说明：Rust 工作流测试断言提交 `initialization.status: complete`、`service.verified: true`。
 
 ## RST-08
@@ -134,7 +134,7 @@
 
 - 测试层：Rust 工作流、CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、[事务 schema](../../../deployment/transactions-and-recovery.md)、`restore_requires_yes_in_non_interactive_mode`（crates/lkit-cli/src/workflows/restore.rs）
+- 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、[事务 schema](../../../deployment/transactions-and-recovery.md)、`restore_requires_yes_in_non_interactive_mode`（lkit-cli/src/workflows/restore.rs）
 - 说明：非交互缺 `--yes` 返回参数错误 `2`；`transactions/` 无新增文件，`--file` 不产生暂存拷贝，服务与 current 不变。
 
 ## RST-09
@@ -143,7 +143,7 @@
 
 - 测试层：Rust 工作流、Docker E2E
 - 状态：`已覆盖`
-- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`rollback_restores_previous_data_from_transaction_dir`（crates/lkit-cli/src/workflows/restore/rollback.rs）、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`rollback_restores_previous_data_from_transaction_dir`（lkit-cli/src/workflows/restore/rollback.rs）、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
 - 说明：激活失败后自动回滚优先用事务目录中的 `previous-data`、`previous_current` 与 state 恢复原安装；恢复成功事务标记 `rolled_back`。
 
 ## RST-10
@@ -152,7 +152,7 @@
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
-- 证据：[`lkit restore` 命令格式](../../../commands/restore.md)、[`.lkb` 校验](../../../backup/lkb-and-rollback.md)、`rejects_malformed_backup_ids_before_creating_a_transaction`（crates/lkit-cli/src/workflows/restore.rs）、`rejects_directory_entry_named_static_zip`（crates/lkit-cli/src/backup/lkb.rs）
+- 证据：[`lkit restore` 命令格式](../../../commands/restore.md)、[`.lkb` 校验](../../../backup/lkb-and-rollback.md)、`rejects_malformed_backup_ids_before_creating_a_transaction`（lkit-cli/src/workflows/restore.rs）、`rejects_directory_entry_named_static_zip`（lkit-cli/src/backup/lkb.rs）
 - 说明：`--backup` 非 `YYYYMMDD-HHMMSS-8hex` 格式返回参数错误 `2` 且不创建事务；`static.zip` 为目录条目时解包校验拒绝，restore 不会继续。
 
 ## RST-11
@@ -161,7 +161,7 @@
 
 - 测试层：Rust 工作流
 - 状态：`已覆盖`
-- 证据：[`lkit restore`](../../../commands/restore.md)、`restore_proceeds_with_non_interactive_yes`（crates/lkit-cli/src/workflows/restore.rs）
+- 证据：[`lkit restore`](../../../commands/restore.md)、`restore_proceeds_with_non_interactive_yes`（lkit-cli/src/workflows/restore.rs）
 - 说明：`--non-interactive --yes` 时恢复确认以 `--yes` 代替，不再调用 `/dev/tty`。
 
 ## RST-12
@@ -170,7 +170,7 @@
 
 - 测试层：Rust 工作流
 - 状态：`已覆盖`
-- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`same_version_rollback_restores_the_original_release`（crates/lkit-cli/src/workflows/restore.rs）
+- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`same_version_rollback_restores_the_original_release`（lkit-cli/src/workflows/restore.rs）
 - 说明：同版本 restore 激活失败时，被移入事务目录 `replaced-release` 的原 release 被移回；回滚后磁盘二进制/静态资源与回滚前一致，`verify_current_backend` 通过。
 
 ## RST-13
@@ -179,7 +179,7 @@
 
 - 测试层：Rust workflow、Rust 单元（console）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`console_confirmed_skips_interactive_confirmations`（crates/lkit-cli/src/workflows/restore.rs）、`backup_restore_flow_builds_restore_command`（crates/lkit-cli/src/console/tests/backup.rs，断言 `console_confirmed` 与 `--console-confirmed` 参数）
+- 证据：[交互控制台](../../../interaction/console.md)、`console_confirmed_skips_interactive_confirmations`（lkit-cli/src/workflows/restore.rs）、`backup_restore_flow_builds_restore_command`（lkit-cli/src/console/tests/backup.rs，断言 `console_confirmed` 与 `--console-confirmed` 参数）
 - 说明：交互模式下 `console_confirmed` 使恢复工作流跳过恢复计划与 minimal scope 的 tty 确认（worker 是独立进程，无法读取 TUI 输入，继续交互确认会阻塞），恢复正常提交；控制台覆盖层同时展示 minimal scope 数据损失警告，`--backup`/`--yes`/`--console-confirmed` 均传入分发参数。
 - 缺口：真实 systemd worker 内的无 tty 阻塞路径未单独做 E2E 断言（Docker E2E 恢复用例均带 `--non-interactive`）。
 
@@ -189,7 +189,7 @@
 
 - 测试层：Rust 单元（console）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（crates/lkit-cli/src/console/tests/backup.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
+- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（lkit-cli/src/console/tests/backup.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
 - 说明：Enter 打开创建对话框（标题、minimal scope 说明——"将创建 minimal 配置级快照，
   包含恢复所需的最小文件集"、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、
   Enter 提交走与 CLI 相同的备注校验，空备注直接创建。提交后在 TUI 内后台执行与 CLI
@@ -203,7 +203,7 @@
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[`.lkb` 备份与回滚](../../../backup/lkb-and-rollback.md)、`restores_cross_version_without_systemd`（断言恢复后保护备份存在，crates/lkit-cli/src/workflows/restore.rs）、Docker E2E S10/S11/S13（断言 restore 创建保护备份并记录在事务中）
+- 证据：[`.lkb` 备份与回滚](../../../backup/lkb-and-rollback.md)、`restores_cross_version_without_systemd`（断言恢复后保护备份存在，lkit-cli/src/workflows/restore.rs）、Docker E2E S10/S11/S13（断言 restore 创建保护备份并记录在事务中）
 - 说明：保护快照 `auto: true` 且备注为固定本地化文案（`switch 前自动备份`、`repair 前自动备份`、`restore 前自动保护备份`）；Docker E2E 已断言保护备份存在，备注值由 Rust 工作流直接构造时以 `tr!` 生成。
 - 缺口：Docker E2E 未断言保护备份的 remark 具体值（仅断言存在）。
 
@@ -213,7 +213,7 @@
 
 - 测试层：Rust 单元（presentation/screens）、Rust workflow
 - 状态：`已覆盖`
-- 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`、`renders_restore_result_with_its_own_title_not_install_wording`、`restore_in_progress_hint_is_not_installation_wording`（crates/lkit-cli/src/interaction/presentation/screens/restore.rs，断言 restore 页显示 `Restore complete`/`The operation is in progress` 且不含 `Installation` 文案）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（crates/lkit-cli/src/workflows/restore.rs）、`operation_screen` 按子命令选择操作页面组件（crates/lkit-cli/src/interaction/presentation/screens/mod.rs）
+- 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`、`renders_restore_result_with_its_own_title_not_install_wording`、`restore_in_progress_hint_is_not_installation_wording`（lkit-cli/src/interaction/presentation/screens/restore.rs，断言 restore 页显示 `Restore complete`/`The operation is in progress` 且不含 `Installation` 文案）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（lkit-cli/src/workflows/restore.rs）、`operation_screen` 按子命令选择操作页面组件（lkit-cli/src/interaction/presentation/screens/mod.rs）
 - 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；每个委托操作（install/switch/update/repair/restore/reinit）在 `screens/` 下有一个完全独立的页面文件（布局、进行中标题、完成/失败/取消结果页标题与状态框、底栏提示全部各自实现，不复用安装文案），命令行结束提示同样按操作输出（如 `restore: Restore complete`）；install 的字节进度条不受影响。
 - 缺口：真实 worker 进程到全屏页的事件链路未单独 E2E 断言（Docker E2E 在无控制台终端下运行）。
 
@@ -223,7 +223,7 @@
 
 - 测试层：Rust 单元（lkb、presentation、commands）
 - 状态：`已覆盖`
-- 证据：[创建顺序与存放](../../../backup/lkb-and-rollback.md#创建顺序与存放)、`reports_file_count_progress_while_creating`（crates/lkit-cli/src/backup/lkb.rs，断言归档事件数与总数一致：固定 3 个文件 + 目录树文件数，最后事件为落盘校验）、`renders_step_progress_with_test_backend`（crates/lkit-cli/src/interaction/presentation.rs，断言 `N/M files` 百分比 Gauge）、`backup create` 交互终端 stderr 内联进度（crates/lkit-cli/src/commands/backup.rs）
+- 证据：[创建顺序与存放](../../../backup/lkb-and-rollback.md#创建顺序与存放)、`reports_file_count_progress_while_creating`（lkit-cli/src/backup/lkb.rs，断言归档事件数与总数一致：固定 3 个文件 + 目录树文件数，最后事件为落盘校验）、`renders_step_progress_with_test_backend`（lkit-cli/src/interaction/presentation.rs，断言 `N/M files` 百分比 Gauge）、`backup create` 交互终端 stderr 内联进度（lkit-cli/src/commands/backup.rs）
 - 说明：归档按文件数上报进度（导出配置 → 归档 N/M 与当前文件名 → 落盘校验），CLI 在交互终端用 2 行内联 Gauge 显示（如 `50% 3 / 6 files`），非终端或 `--non-interactive` 不显示；进度不影响退出码与输出。
 - 缺口：真实慢速终端上的内联渲染刷新频率未做 E2E 断言。
 
@@ -233,7 +233,7 @@
 
 - 测试层：Rust 单元（lkb、commands）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`streamed_metadata_reader_skips_the_archive_but_keeps_header_checks`（crates/lkit-cli/src/backup/lkb.rs）、`metadata_list_mode_reads_only_the_metadata_region`（crates/lkit-cli/src/commands/backup.rs，断言 `BackupListCheck::Metadata` 只读 header+JSON：归档体被篡改仍可展示，结构性损坏标记 invalid；`Full` 模式两者都拒绝）
+- 证据：[交互控制台](../../../interaction/console.md)、`streamed_metadata_reader_skips_the_archive_but_keeps_header_checks`（lkit-cli/src/backup/lkb.rs）、`metadata_list_mode_reads_only_the_metadata_region`（lkit-cli/src/commands/backup.rs，断言 `BackupListCheck::Metadata` 只读 header+JSON：归档体被篡改仍可展示，结构性损坏标记 invalid；`Full` 模式两者都拒绝）
 - 说明：控制台列表通过 `read_backup_metadata_streamed` 只读 32 字节 header 与 `json_len` 字节 metadata JSON（流式，不读 1 MiB 零填充与归档体），切换面板几乎瞬时；完整校验保留给详情页 V 与 restore 流程。CLI `backup list` 仍使用完整校验。
 
 ## BKP-12
@@ -242,7 +242,7 @@
 
 - 测试层：Rust 单元（commands、console）
 - 状态：`已覆盖`
-- 证据：[`backup delete`](../../../commands/backup.md#backup-delete)、`deletes_a_valid_backup_file`、`refuses_unsafe_or_missing_backups_on_delete`、`delete_requires_yes_in_non_interactive_mode`、`delete_rejects_malformed_ids_and_missing_files`（crates/lkit-cli/src/commands/backup.rs）、`backup_delete_confirms_and_removes_the_backup`、`backup_delete_esc_cancels_confirmation`（crates/lkit-cli/src/console/tests/backup.rs）
+- 证据：[`backup delete`](../../../commands/backup.md#backup-delete)、`deletes_a_valid_backup_file`、`refuses_unsafe_or_missing_backups_on_delete`、`delete_requires_yes_in_non_interactive_mode`、`delete_rejects_malformed_ids_and_missing_files`（lkit-cli/src/commands/backup.rs）、`backup_delete_confirms_and_removes_the_backup`、`backup_delete_esc_cancels_confirmation`（lkit-cli/src/console/tests/backup.rs）
 - 说明：`backup delete` 只接受格式合法的备份 ID；目标必须是 root 所有、权限不宽于 `0600` 的普通文件（符号链接与权限不安全条目拒绝删除，不跟随链接）；交互模式要求输入 `yes` 确认、`--yes` 跳过、非交互缺 `--yes` 返回参数错误 `2`，删除前持安装锁。控制台列表/详情按 D 打开删除确认层（展示 ID、版本与永久删除提示），Enter 在控制台内同步删除并刷新列表，Esc 取消且不改动现场。
 - 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的 pty 路径未覆盖（仓库无 pty 测试设施）；删除仍被未完成事务引用的备份未做专门断言。
 

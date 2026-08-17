@@ -6,7 +6,7 @@ The repository is a Cargo workspace made up of four crates:
 
 | Crate | Role |
 | --- | --- |
-| `crates/lkit-cli` | The `lkit` binary: commands, domain logic, and workflows |
+| `lkit-cli` | The `lkit` binary: commands, domain logic, and workflows |
 | `crates/lkit-publish` | The `lkit-publish` binary: packs releases and publishes them to a repository |
 | `crates/lkit-repository` | Repository protocol library shared by the CLI and the publisher |
 | `crates/lkit-test-fixture` | Test fixtures: simulated `systemctl`, an HTTPS webserver, and a test repository |

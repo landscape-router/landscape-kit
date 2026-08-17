@@ -5,7 +5,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
-      - crates/lkit-cli/**
+      - lkit-cli/**
       - crates/lkit-repository/**
       - scripts/test-qemu-network-takeover.sh
       - .github/workflows/test-qemu-network-takeover.yml
@@ -14,7 +14,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
-      - crates/lkit-cli/**
+      - lkit-cli/**
       - crates/lkit-repository/**
       - scripts/test-qemu-network-takeover.sh
       - .github/workflows/test-qemu-network-takeover.yml

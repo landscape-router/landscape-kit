@@ -17,7 +17,7 @@
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 证据：[版本切换工作流](../../../../crates/lkit-cli/src/workflows/install.rs)、[`lkit switch`](../../../commands/switch.md)
+- 证据：[版本切换工作流](../../../../lkit-cli/src/workflows/install.rs)、[`lkit switch`](../../../commands/switch.md)
 - 说明：使用 `0.22.2 → 0.21.1` 断言返回参数用法错误，`current`、state 和既有事务不变，
   且不下载目标二进制或静态资产。
 
@@ -27,7 +27,7 @@
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/switch.rs)
+- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)
 - 说明：existing 路径在目标版本等于当前 active version 时不进入 switch 流水线，
   直接验证当前安装并返回 `0`（与 `lkit update` 的"已是最新"一致），不创建
   switch 事务、不下载资产、服务保持运行。`switch_version` 内部的
@@ -89,7 +89,7 @@
 
 - 测试层：CLI/Docker E2E
 - 状态：`已覆盖`
-- 证据：[完整 CLI E2E](../../../../crates/lkit-cli/tests/install_fixture_e2e/switch.rs)
+- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)
 - 说明：switch.rs：服务运行中 + `--allow-no-backup` → 警告"已忽略该标志"、
   事务 `no_backup: false`、照常创建 `.lkb`、切换成功、服务保持运行；见
   [`lkit switch`](../../../commands/switch.md#停止服务后的切换)。
@@ -100,7 +100,7 @@
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../crates/lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
+- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
 - 说明：`releases/<目标版本>` 残留（如上次切换失败自动回滚后）时，切换不再重复下载：
   已有目录通过可信校验（真实目录非符号链接、后端二进制与 `static/index.html` 齐全、
   `static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致）后直接复用并跳过下载；
