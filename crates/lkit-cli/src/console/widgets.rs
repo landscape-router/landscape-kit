@@ -164,7 +164,7 @@ impl Clicks {
 }
 
 /// 模拟 Paragraph 在指定宽度下的按字符换行,返回占用的行数。
-fn wrapped_rows(width: u16, text: &str) -> u16 {
+pub(crate) fn wrapped_rows(width: u16, text: &str) -> u16 {
     let width = usize::from(width.max(1));
     let mut rows = 1u16;
     let mut used = 0usize;

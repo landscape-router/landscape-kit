@@ -78,7 +78,7 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
 }
 
 #[test]
-fn long_panel_hint_wraps_instead_of_truncating() {
+fn long_panel_hint_wraps_on_dynamic_status_lines() {
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
     let mut app = backup_ready_app();
@@ -88,7 +88,7 @@ fn long_panel_hint_wraps_instead_of_truncating() {
     let content = terminal_content(&terminal);
     assert!(
         content.contains("Esc Esc Exit prompt"),
-        "the long backup list hint must wrap onto the second status line instead of truncating"
+        "the long backup list hint must wrap onto the second hint line instead of truncating"
     );
 }
 
@@ -544,11 +544,11 @@ fn mouse_click_selects_navigation_menu_and_switches_focus() {
     app.menu_index = 1;
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert_eq!(app.hits.hit_at(10, 5), Some(Hit::Menu(1)));
-    assert_eq!(app.hits.hit_at(10, 6), Some(Hit::Menu(2)));
-    assert_eq!(app.hits.hit_at(30, 4), Some(Hit::InstallChecks));
-    assert_eq!(app.hits.hit_at(50, 20), Some(Hit::Panel));
-    app.handle_mouse(mouse_click(10, 6));
+    assert_eq!(app.hits.hit_at(10, 4), Some(Hit::Menu(1)));
+    assert_eq!(app.hits.hit_at(10, 5), Some(Hit::Menu(2)));
+    assert_eq!(app.hits.hit_at(30, 3), Some(Hit::InstallChecks));
+    assert_eq!(app.hits.hit_at(50, 19), Some(Hit::Panel));
+    app.handle_mouse(mouse_click(10, 5));
     assert_eq!(app.menu_index, 2);
     assert_eq!(app.focus, Focus::Panel);
     app.handle_mouse(mouse_click(5, 25));
@@ -557,7 +557,7 @@ fn mouse_click_selects_navigation_menu_and_switches_focus() {
         Focus::Panel,
         "clicks outside any region are ignored"
     );
-    app.handle_mouse(mouse_click(10, 4));
+    app.handle_mouse(mouse_click(10, 3));
     assert_eq!(app.menu_index, 0);
     assert_eq!(app.focus, Focus::Panel);
 }

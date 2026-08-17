@@ -6,8 +6,9 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use unicode_width::UnicodeWidthStr;
 
 use super::backup::{
-    render_backup, render_backup_create_dialog, render_backup_create_progress,
-    render_backup_delete_confirmation, render_backup_restore_confirmation,
+    render_backup, render_backup_corrupt_dialog, render_backup_create_dialog,
+    render_backup_create_progress, render_backup_delete_confirmation,
+    render_backup_restore_confirmation,
 };
 use super::daemon_panel::{render_daemon_deploy_confirmation, render_daemon_deploy_progress};
 use super::install_form::render_install;
@@ -19,7 +20,7 @@ use super::software::{render_software, render_software_confirmation, render_soft
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
-use super::widgets::{Clicks, Focus, Hit, Menu, block_row_of};
+use super::widgets::{Clicks, Focus, Hit, Menu, block_row_of, wrapped_rows};
 use super::{ConsoleApp, ExitState};
 use crate::i18n::Language;
 
@@ -45,10 +46,13 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         render_network_wizard(frame, wizard, &mut app.hits);
         return;
     }
+    // status 高度随内容行数动态:短内容 3 行(边框+状态+提示),
+    // 长内容最多 5 行,换行不截断、不留空行。
+    let status_height = status_height_for(app, frame.area().width);
     let [header, body, status] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(2),
         Constraint::Min(8),
-        Constraint::Length(5),
+        Constraint::Length(status_height),
     ])
     .areas(frame.area());
     render_header(frame, app, header);
@@ -70,6 +74,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     if app.menu() == Menu::Backup && app.backup.delete_confirming {
         render_backup_delete_confirmation(frame, app);
+    }
+    if app.menu() == Menu::Backup && app.backup.corrupt_dialog {
+        render_backup_corrupt_dialog(frame, app);
     }
     if app.menu() == Menu::Backup && app.backup.editing {
         render_backup_create_dialog(frame, app);
@@ -123,13 +130,24 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         area.width,
         area.height.saturating_sub(1),
     );
-    let [summary, hints] =
-        Layout::vertical([Constraint::Length(2), Constraint::Length(2)]).areas(content);
     let language = language_status(crate::i18n::current(), app.language_switch_available());
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
-        .min(summary.width);
-    let [notice, language_area] =
+        .min(content.width);
+    let notice = if app.notice == "Ready" {
+        crate::tr!(crate::keys::CONSOLE_READY).to_string()
+    } else {
+        app.notice.clone()
+    };
+    let notice_width = content.width.saturating_sub(language_width).max(1);
+    let notice_rows = wrapped_rows(notice_width, &notice).max(1);
+    let hints_rows = wrapped_rows(content.width, &app.hints()).max(1);
+    let [summary, hints] = Layout::vertical([
+        Constraint::Length(notice_rows),
+        Constraint::Length(hints_rows),
+    ])
+    .areas(content);
+    let [notice_area, language_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(language_width)]).areas(summary);
     let notice_color = if app.notice == "Ready" {
         Color::DarkGray
@@ -137,14 +155,10 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         Color::Red
     };
     frame.render_widget(
-        Paragraph::new(if app.notice == "Ready" {
-            crate::tr!(crate::keys::CONSOLE_READY)
-        } else {
-            app.notice.clone()
-        })
-        .wrap(Wrap { trim: true })
-        .style(Style::default().fg(notice_color)),
-        notice,
+        Paragraph::new(notice)
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(notice_color)),
+        notice_area,
     );
     frame.render_widget(
         Paragraph::new(language)
@@ -158,6 +172,21 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             .style(Style::default().fg(Color::DarkGray)),
         hints,
     );
+}
+
+/// 计算 status 区所需行数:1 行边框 + 状态行数 + 提示行数(均至少 1 行)。
+fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
+    let language = language_status(crate::i18n::current(), app.language_switch_available());
+    let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
+        .saturating_add(2)
+        .min(width);
+    let notice = if app.notice == "Ready" {
+        crate::tr!(crate::keys::CONSOLE_READY).to_string()
+    } else {
+        app.notice.clone()
+    };
+    let notice_width = width.saturating_sub(language_width).max(1);
+    1 + wrapped_rows(notice_width, &notice).max(1) + wrapped_rows(width, &app.hints()).max(1)
 }
 
 fn language_status(language: Language, switch_available: bool) -> String {
@@ -202,21 +231,51 @@ fn render_exit_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
 
 fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let (badge, color) = app.snapshot.badge();
+    let (daemon_badge, daemon_color) = if crate::daemon_worker::daemon_is_running() {
+        (
+            crate::tr!(crate::keys::CONSOLE_HEADER_DAEMON_RUNNING),
+            Color::Green,
+        )
+    } else {
+        (
+            crate::tr!(crate::keys::CONSOLE_HEADER_DAEMON_NOT_RUNNING),
+            Color::Red,
+        )
+    };
+    // 窄终端放不下两个徽标时全部隐藏,只保留品牌标题。
+    let title_width = UnicodeWidthStr::width("Landscape Kit");
+    let badge_width = UnicodeWidthStr::width(badge.as_str());
+    let daemon_width = UnicodeWidthStr::width(daemon_badge.as_str());
+    let badges_width = badge_width + daemon_width + 4;
+    let fits = title_width + badges_width + 4 <= usize::from(area.width);
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        "Landscape Kit",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )]))
+    .alignment(Alignment::Left);
+    if !fits {
+        frame.render_widget(title.block(Block::default().borders(Borders::BOTTOM)), area);
+        return;
+    }
+    // 标题靠左、徽标组靠右(space-between 布局)。
+    let [title_area, badges_area] = Layout::horizontal([
+        Constraint::Length(usize::from(area.width) as u16),
+        Constraint::Length(badges_width as u16),
+    ])
+    .areas(area);
+    frame.render_widget(title, title_area);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(
-                "Landscape Kit",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
             Span::styled(badge, Style::default().fg(color)),
+            Span::raw("  "),
+            Span::styled(daemon_badge, Style::default().fg(daemon_color)),
         ]))
-        .alignment(Alignment::Left)
-        .block(Block::default().borders(Borders::BOTTOM)),
-        area,
+        .alignment(Alignment::Right),
+        badges_area,
     );
+    frame.render_widget(Block::default().borders(Borders::BOTTOM), area);
 }
 fn render_navigation(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let items: Vec<ListItem<'_>> = Menu::ALL
@@ -283,7 +342,70 @@ fn render_panel(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     }
 }
 fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
-    let mut lines = match &app.snapshot {
+    let focused = app.focus == Focus::Panel;
+    // 左栏:Landscape 安装信息。
+    let landscape_lines = overview_landscape_lines(app);
+    // 右栏:lkit 常驻服务(版本 + daemon 运行状态 + 部署动作行)。
+    let (lkit_lines, deploy_row) = overview_lkit_lines(focused);
+    // 窄面板回退为上下堆叠,保证 72 列终端(面板约 46 列)可用。
+    if area.width < 52 {
+        let mut lines = landscape_lines;
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let lkit_start = lines.len();
+        lines.extend(lkit_lines);
+        if let Some(row) = deploy_row {
+            app.hits.block_row(
+                area,
+                block_row_of(&lines, lkit_start + row, area.width.saturating_sub(2)),
+                Hit::OverviewDeploy,
+            );
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(panel_block(
+                    &crate::tr!(crate::keys::CONSOLE_OVERVIEW),
+                    focused,
+                ))
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+    // 宽面板左右双栏:左 Landscape,右 lkit 常驻服务,中间竖线分隔。
+    let block = panel_block(&crate::tr!(crate::keys::CONSOLE_OVERVIEW), focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [landscape_area, lkit_area] =
+        Layout::horizontal([Constraint::Min(24), Constraint::Min(24)]).areas(inner);
+    frame.render_widget(
+        Paragraph::new(landscape_lines)
+            .block(Block::default().borders(Borders::RIGHT))
+            .wrap(Wrap { trim: false }),
+        landscape_area,
+    );
+    if let Some(row) = deploy_row {
+        // 右栏无边框:直接注册内容区坐标(不用 block_row 的边框偏移)。
+        let content_row = block_row_of(&lkit_lines, row, lkit_area.width);
+        app.hits.add(
+            Rect::new(lkit_area.x, lkit_area.y + content_row, lkit_area.width, 1),
+            Hit::OverviewDeploy,
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(lkit_lines).wrap(Wrap { trim: false }),
+        lkit_area,
+    );
+}
+
+/// Overview 左栏:Landscape 安装状态与详情。
+fn overview_landscape_lines(app: &ConsoleApp) -> Vec<Line<'static>> {
+    match &app.snapshot {
         Snapshot::RootRequired => vec![
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_ROOT_PRIVILEGES_REQUIRED),
@@ -344,13 +466,28 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
                 Style::default().fg(Color::Red),
             ),
             Line::raw(""),
-            Line::raw(error),
+            Line::raw(error.clone()),
         ],
-    };
-    // Overview 常驻展示 lkit daemon 运行状态:root 会话的安装与生命周期命令
-    // 都委托给 daemon,未运行时应尽早可见,而不是开始安装后才失败。
+    }
+}
+
+/// Overview 右栏:lkit 常驻服务。返回行与部署动作行行号(仅 daemon 未运行时)。
+fn overview_lkit_lines(focused: bool) -> (Vec<Line<'static>>, Option<usize>) {
+    let version = env!("CARGO_PKG_VERSION");
     let running = crate::daemon_worker::daemon_is_running();
-    lines.push(Line::raw(""));
+    let mut lines = vec![
+        Line::styled(
+            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_OVERVIEW_LKIT_VERSION,
+            version = version
+        )),
+        Line::raw(""),
+    ];
     lines.push(if running {
         Line::styled(
             crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING),
@@ -365,7 +502,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     // daemon 未运行时提供「部署 daemon」动作行:确认后在 TUI 内后台执行
     // `lkit self install`,不退出控制台。
     if !running {
-        let focused = app.focus == Focus::Panel;
+        let deploy_row = lines.len();
         let selected_style = if focused {
             Style::default()
                 .fg(Color::Black)
@@ -381,7 +518,6 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD)
         };
-        let row = lines.len();
         lines.push(Line::from(vec![
             Span::styled(if focused { "> " } else { "  " }, selected_style),
             Span::styled(
@@ -389,21 +525,10 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
                 value_style,
             ),
         ]));
-        app.hits.block_row(
-            area,
-            block_row_of(&lines, row, area.width.saturating_sub(2)),
-            Hit::OverviewDeploy,
-        );
+        (lines, Some(deploy_row))
+    } else {
+        (lines, None)
     }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block(
-                &crate::tr!(crate::keys::CONSOLE_OVERVIEW),
-                app.focus == Focus::Panel,
-            ))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
 }
 pub(crate) fn panel_block(title: &str, focused: bool) -> Block<'static> {
     let title = if focused {

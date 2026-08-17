@@ -8,6 +8,14 @@ use crate::commands::Commands;
 
 impl ConsoleApp {
     pub(crate) fn handle_backup_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
+        // 损坏提示弹框:Enter/Esc 关闭,恢复确认前弹出,不触发任何动作。
+        if self.backup.corrupt_dialog {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => self.backup.corrupt_dialog = false,
+                _ => {}
+            }
+            return Some(None);
+        }
         if self.backup.restore_confirming {
             match key.code {
                 KeyCode::Enter => {
@@ -25,9 +33,29 @@ impl ConsoleApp {
                             return Some(None);
                         }
                     };
-                    let backup_id = metadata.backup_id.clone();
-                    self.backup.restore_confirming = false;
-                    return Some(Some(self.backup_restore_action(&backup_id)));
+                    // 恢复执行前完整校验:未校验先启动(提示校验中,留在确认层),
+                    // 校验失败弹损坏框,只有校验通过才提交 Restore 请求。
+                    match &self.backup.verify {
+                        BackupVerifyState::Complete(Ok(_)) => {
+                            let backup_id = metadata.backup_id.clone();
+                            self.backup.restore_confirming = false;
+                            return Some(Some(self.backup_restore_action(&backup_id)));
+                        }
+                        BackupVerifyState::Complete(Err(_)) => {
+                            self.backup.restore_confirming = false;
+                            self.backup.corrupt_dialog = true;
+                            return Some(None);
+                        }
+                        BackupVerifyState::Running(_) => {
+                            self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING);
+                            return Some(None);
+                        }
+                        BackupVerifyState::Idle => {
+                            self.start_backup_verify();
+                            self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING);
+                            return Some(None);
+                        }
+                    }
                 }
                 KeyCode::Esc => self.backup.restore_confirming = false,
                 _ => {}
@@ -87,6 +115,7 @@ impl ConsoleApp {
                     self.backup.details = None;
                     self.backup.details_scroll = 0;
                     self.backup.verify = BackupVerifyState::Idle;
+                    self.backup.corrupt_dialog = false;
                 }
                 KeyCode::Up => {
                     self.backup.details_scroll = self.backup.details_scroll.saturating_sub(1)
@@ -99,7 +128,11 @@ impl ConsoleApp {
                     if let Some(entry) = self.backup.details_entry()
                         && entry.metadata.is_some()
                     {
-                        self.backup.restore_confirming = true;
+                        if self.backup_corrupt() {
+                            self.backup.corrupt_dialog = true;
+                        } else {
+                            self.backup.restore_confirming = true;
+                        }
                     }
                 }
                 KeyCode::Char('d' | 'D') => {
@@ -130,7 +163,10 @@ impl ConsoleApp {
                     if entry.metadata.is_some() {
                         self.backup.details = Some(self.backup.selected - 1);
                         self.backup.details_scroll = 0;
+                        // 进入详情即自动完整校验(读文件 + verify_lkb + 解包),
+                        // 结果写底栏,不阻塞查看;V 键可随时手动重校验。
                         self.backup.verify = BackupVerifyState::Idle;
+                        self.start_backup_verify();
                     } else {
                         self.notice = crate::tr!(
                             crate::keys::CONSOLE_BACKUP_INVALID,
@@ -148,7 +184,11 @@ impl ConsoleApp {
                 if let Some(entry) = self.backup.selected_entry()
                     && entry.metadata.is_some()
                 {
-                    self.backup.restore_confirming = true;
+                    if self.backup_corrupt() {
+                        self.backup.corrupt_dialog = true;
+                    } else {
+                        self.backup.restore_confirming = true;
+                    }
                 } else {
                     self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE);
                 }
@@ -184,8 +224,18 @@ impl ConsoleApp {
         }
     }
 
+    /// 最近一次校验已完成且失败:备份损坏,恢复前(R 键/恢复 Enter)弹框提示。
+    fn backup_corrupt(&self) -> bool {
+        matches!(&self.backup.verify, BackupVerifyState::Complete(Err(_)))
+    }
+
+    /// 校验选中的备份:详情页校验详情条目,列表页校验选中条目。
     fn start_backup_verify(&mut self) {
-        let Some(entry) = self.backup.details_entry() else {
+        let Some(entry) = self
+            .backup
+            .details_entry()
+            .or_else(|| self.backup.selected_entry())
+        else {
             return;
         };
         if matches!(self.backup.verify, BackupVerifyState::Running(_)) {

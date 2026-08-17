@@ -140,10 +140,13 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
             // 而不是只提示命令行 `lkit self install`。
             let daemon_blocked = daemon_check_blocks(report);
             if daemon_blocked {
+                // 按钮常显选中态(黑底青字+Bold):它是弹窗内唯一要突出的动作,
+                // 弹窗没有焦点环,鼠标点击与 D 键都直接部署。
                 lines.push(Line::styled(
                     crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON),
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ));
                 lines.push(Line::raw(""));

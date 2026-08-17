@@ -3,6 +3,8 @@ use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
+use unicode_width::UnicodeWidthChar;
+use unicode_width::UnicodeWidthStr;
 
 use super::super::ConsoleApp;
 use super::super::network_wizard::Snapshot;
@@ -115,19 +117,25 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
                 entry_lines.push(lines.len());
                 match &entry.metadata {
                     Some(metadata) => {
-                        let text = format!(
-                            "{}  {}  {}{}",
-                            metadata.backup_id,
-                            metadata.created_at,
-                            metadata.landscape_version,
-                            if metadata.remark.is_empty() {
-                                String::new()
-                            } else {
-                                format!("  {}", metadata.remark)
-                            }
+                        let available = usize::from(area.width.saturating_sub(2));
+                        let marker = if cursor { "> " } else { "  " };
+                        // 备注排第一,按剩余长度占位:一行内其他信息
+                        // (ID/时间/版本)固定,备注最多占其余宽度并截断。
+                        let fixed = format!(
+                            "{}  {}  {}",
+                            metadata.backup_id, metadata.created_at, metadata.landscape_version
                         );
+                        let fixed_width =
+                            UnicodeWidthStr::width(marker) + UnicodeWidthStr::width(fixed.as_str());
+                        let remark_room = available.saturating_sub(fixed_width + 2);
+                        let text = if remark_room == 0 {
+                            fixed
+                        } else {
+                            let remark = truncate_width(&metadata.remark, remark_room);
+                            format!("{remark}  {fixed}")
+                        };
                         lines.push(Line::styled(
-                            format!("{}{}", if cursor { "> " } else { "  " }, text),
+                            format!("{marker}{text}"),
                             if cursor { highlight } else { Style::default() },
                         ));
                     }
@@ -139,13 +147,17 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
                             .to_string_lossy()
                             .trim_end_matches(".lkb")
                             .to_string();
-                        lines.push(Line::styled(
-                            format!(
+                        let truncated = truncate_width(
+                            &format!(
                                 "{}{}  {}",
                                 if cursor { "> " } else { "  " },
                                 name,
                                 crate::tr!(crate::keys::CONSOLE_BACKUP_INVALID_BADGE)
                             ),
+                            usize::from(area.width.saturating_sub(4)),
+                        );
+                        lines.push(Line::styled(
+                            truncated,
                             if cursor {
                                 highlight
                             } else {
@@ -198,6 +210,12 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Line::raw(""),
+        // 备注排第一:列表行超长被截断,完整内容在这里查看。
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_REMARK_LABEL),
+            metadata.remark
+        )),
         Line::raw(format!(
             "{}  {}",
             crate::tr!(crate::keys::CONSOLE_BACKUP_ID_LABEL),
@@ -227,11 +245,6 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
             "{}  {}",
             crate::tr!(crate::keys::CONSOLE_BACKUP_HOSTNAME_LABEL),
             metadata.hostname
-        )),
-        Line::raw(format!(
-            "{}  {}",
-            crate::tr!(crate::keys::CONSOLE_BACKUP_REMARK_LABEL),
-            metadata.remark
         )),
         Line::raw(format!(
             "{}  {}",
@@ -391,6 +404,46 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
     );
 }
 
+/// 备份损坏提示弹框:校验失败时 R 键/恢复 Enter 触发,Enter/Esc 关闭。
+pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+    let screen = frame.area();
+    let width = 64.min(screen.width.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    register_dialog_hits(&mut app.hits, screen, area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_BACKUP_CORRUPT_TITLE),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_BACKUP_CORRUPT_QUESTION),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::raw(""),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CORRUPT_DIALOG))),
+        area,
+    );
+}
+
 pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Some(metadata) = app
         .backup
@@ -483,4 +536,27 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_TITLE))),
         area,
     );
+}
+
+/// 按显示宽度截断文本:列表行超长时截断为省略号,不换行。
+fn truncate_width(text: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    let width = UnicodeWidthStr::width(text);
+    if width <= max_width {
+        return text.to_string();
+    }
+    if max_width <= 1 {
+        return "…".to_string();
+    }
+    let mut result = String::new();
+    let mut used = 0usize;
+    for character in text.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width > max_width.saturating_sub(1) {
+            break;
+        }
+        result.push(character);
+        used += character_width;
+    }
+    format!("{result}…")
 }

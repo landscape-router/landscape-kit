@@ -62,8 +62,9 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
         .lines()
         .position(|line| line.contains("[ Deploy the lkit daemon ]"))
         .expect("deploy row must render") as u16;
+    // 双栏布局:部署动作行位于右栏(约 62 列起)。
     assert_eq!(
-        app.hits.hit_at(30, row),
+        app.hits.hit_at(65, row),
         Some(Hit::OverviewDeploy),
         "the deploy row must be clickable"
     );
@@ -182,11 +183,11 @@ fn mouse_click_on_deploy_row_opens_the_confirm_layer() {
         .position(|line| line.contains("[ Deploy the lkit daemon ]"))
         .expect("deploy row must render") as u16;
     assert_eq!(
-        app.hits.hit_at(30, row),
+        app.hits.hit_at(65, row),
         Some(Hit::OverviewDeploy),
         "the deploy row must be clickable"
     );
-    app.handle_mouse(mouse_click(30, row));
+    app.handle_mouse(mouse_click(65, row));
     assert!(app.deploy_daemon_confirming);
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);

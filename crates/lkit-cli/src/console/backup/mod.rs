@@ -8,8 +8,9 @@ use crate::backup::lkb::{BackupMetadata, BackupProgress};
 use crate::deployment::lock;
 
 pub(crate) use self::render::{
-    render_backup, render_backup_create_dialog, render_backup_create_progress,
-    render_backup_delete_confirmation, render_backup_restore_confirmation,
+    render_backup, render_backup_corrupt_dialog, render_backup_create_dialog,
+    render_backup_create_progress, render_backup_delete_confirmation,
+    render_backup_restore_confirmation,
 };
 
 /// 备份菜单数据：条目与 CLI `backup list` 同源，metadata 为 `None` 表示损坏。
@@ -28,6 +29,8 @@ pub(crate) enum BackupListState {
 pub(crate) enum BackupVerifyState {
     Idle,
     Running(Receiver<Result<String, String>>),
+    /// 最近一次完整校验的结果:Ok 表示校验通过,Err 表示备份损坏。
+    Complete(Result<String, String>),
 }
 
 enum BackupCreateMessage {
@@ -50,6 +53,8 @@ pub(crate) struct BackupPanel {
     pub(crate) details: Option<usize>,
     pub(crate) details_scroll: u16,
     pub(crate) verify: BackupVerifyState,
+    /// 校验结果显示的损坏提示弹框（备份损坏时 R/恢复 Enter 触发）。
+    pub(crate) corrupt_dialog: bool,
     pub(crate) create: Option<BackupCreateRun>,
     pub(crate) restore_confirming: bool,
     pub(crate) delete_confirming: bool,
@@ -66,6 +71,7 @@ impl Default for BackupPanel {
             details: None,
             details_scroll: 0,
             verify: BackupVerifyState::Idle,
+            corrupt_dialog: false,
             create: None,
             restore_confirming: false,
             delete_confirming: false,
@@ -92,6 +98,7 @@ impl BackupPanel {
         self.details = None;
         self.details_scroll = 0;
         self.verify = BackupVerifyState::Idle;
+        self.corrupt_dialog = false;
         self.create = None;
         self.restore_confirming = false;
         self.delete_confirming = false;
@@ -157,17 +164,18 @@ impl BackupPanel {
         if let BackupVerifyState::Running(receiver) = &self.verify {
             match receiver.try_recv() {
                 Ok(Ok(message)) => {
-                    self.verify = BackupVerifyState::Idle;
+                    self.verify = BackupVerifyState::Complete(Ok(message.clone()));
                     *notice = message;
                 }
                 Ok(Err(error)) => {
-                    self.verify = BackupVerifyState::Idle;
+                    self.verify = BackupVerifyState::Complete(Err(error.clone()));
                     *notice = error;
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
-                    self.verify = BackupVerifyState::Idle;
-                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_WORKER_STOPPED);
+                    let error = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_WORKER_STOPPED);
+                    self.verify = BackupVerifyState::Complete(Err(error.clone()));
+                    *notice = error;
                 }
             }
         }

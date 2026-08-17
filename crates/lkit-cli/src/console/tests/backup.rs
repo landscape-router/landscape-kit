@@ -1,3 +1,4 @@
+use super::super::backup::BackupVerifyState;
 use super::super::widgets::*;
 use super::super::*;
 use super::support::*;
@@ -100,6 +101,9 @@ fn backup_create_runs_in_console_with_progress_dialog() {
 fn backup_restore_flow_builds_restore_command() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = backup_ready_app();
+    // 恢复 Enter 前必须校验通过:注入校验结果。
+    app.backup.verify =
+        BackupVerifyState::Complete(Ok("backup 20260807-131500-ab12cd34 verified".into()));
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(app.backup.selected, 1);
@@ -267,6 +271,99 @@ fn backup_delete_esc_cancels_confirmation() {
 }
 
 #[test]
+fn opening_details_starts_automatic_verify() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.backup.details, Some(0));
+    assert!(
+        matches!(app.backup.verify, BackupVerifyState::Running(_)),
+        "entering details must start the full verification automatically"
+    );
+
+    // 等后台校验结束:示例条目路径不存在,校验失败。
+    // 注意:用 backup.poll 而非 app.update()——update() 首次进入菜单会重置
+    // 列表并调用 start(),把 verify 一并重置为 Idle。
+    for _ in 0..200 {
+        app.backup.poll(&mut app.notice);
+        if matches!(app.backup.verify, BackupVerifyState::Complete(_)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        matches!(app.backup.verify, BackupVerifyState::Complete(Err(_))),
+        "the missing sample file must fail verification"
+    );
+}
+
+#[test]
+fn restore_enter_verifies_before_submitting() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(app.backup.restore_confirming);
+
+    // 未校验(Idle)时 Enter 先启动校验,不提交。
+    let action = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(action.is_none());
+    assert!(app.backup.restore_confirming);
+    assert!(matches!(app.backup.verify, BackupVerifyState::Running(_)));
+
+    // 校验失败后再次 Enter:弹损坏框,不提交。
+    for _ in 0..200 {
+        app.backup.poll(&mut app.notice);
+        if matches!(app.backup.verify, BackupVerifyState::Complete(_)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let action = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(action.is_none());
+    assert!(!app.backup.restore_confirming);
+    assert!(
+        app.backup.corrupt_dialog,
+        "corrupt backups must show the dialog"
+    );
+}
+
+#[test]
+fn restore_enter_rejects_when_verify_failed_and_dialog_closes() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+    app.backup.verify = BackupVerifyState::Complete(Err("backup is corrupt".into()));
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(
+        !app.backup.restore_confirming,
+        "corrupt backups must not open the restore layer"
+    );
+    assert!(app.backup.corrupt_dialog);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("corrupt"),
+        "the corrupt dialog must render"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        !app.backup.corrupt_dialog,
+        "Enter must close the corrupt dialog"
+    );
+    // 弹框关闭后 Esc 回到面板级语义:第一次只进入退出等待态。
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.exit_state, ExitState::Armed);
+}
+
+#[test]
 fn backup_esc_cancels_restore_confirmation_and_details() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = backup_ready_app();
@@ -321,12 +418,12 @@ fn mouse_click_backup_rows_open_details_and_create_dialog() {
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     let mut app = backup_ready_app();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 5));
+    app.handle_mouse(mouse_click(30, 4));
     assert_eq!(app.backup.details, Some(0));
 
     let mut app = backup_ready_app();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 4));
+    app.handle_mouse(mouse_click(30, 3));
     assert!(
         app.backup.editing,
         "clicking the create row must open the remark dialog"
