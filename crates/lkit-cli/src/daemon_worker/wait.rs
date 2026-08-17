@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use crate::interaction::presentation::{
-    InterruptGuard, OperationResult, OperationScreen, WorkerPresentation,
+    CloseOutcome, InterruptGuard, OperationResult, OperationScreen, WorkerPresentation,
 };
 
 use super::daemon_is_running;
@@ -45,6 +45,10 @@ pub(super) fn wait_for_result(
                     return Ok(WaitOutcome::Interrupted);
                 }
                 crate::interaction::presentation::PresentationAction::Close => unreachable!(),
+                // 确认网络接管只由结果页确认层返回(wait_for_close 内处理)。
+                crate::interaction::presentation::PresentationAction::ConfirmTakeover => {
+                    unreachable!()
+                }
             }
         }
         drain_log(stdout_path, &mut stdout, false, &mut presentation)?;
@@ -65,9 +69,15 @@ pub(super) fn wait_for_result(
             drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
             let raw_code = result.exit_code.clamp(0, 255) as u8;
             let code = ExitCode::from(raw_code);
-            presentation.show_result(code == ExitCode::SUCCESS);
-            if full_screen {
-                presentation.wait_for_close(interrupt)?;
+            presentation.show_result(code == ExitCode::SUCCESS, pending_takeover_confirmation());
+            if full_screen
+                && matches!(
+                    presentation.wait_for_close(interrupt)?,
+                    CloseOutcome::ConfirmTakeover
+                )
+            {
+                presentation.finish();
+                return Ok(WaitOutcome::ConfirmTakeover);
             }
             announce_completion(presentation.operation(), raw_code);
             presentation.finish();
@@ -146,6 +156,43 @@ fn completion_message(operation: &dyn OperationScreen, exit_code: u8) -> String 
     }
 }
 
+/// 结果页是否提供「确认网络接管」入口：root 下存在待确认或正在收尾的网络
+/// 接管事务（install/reinit 完成后进入该状态）。自动回滚中的事务不再提供
+/// 确认,与阻塞屏 `takeover_confirm_allowed` 语义一致。
+fn pending_takeover_confirmation() -> bool {
+    if unsafe { libc::geteuid() } != 0 {
+        return false;
+    }
+    takeover_confirmation_pending()
+}
+
+/// 事务层判定：当前安装根存在待确认/收尾中的网络接管事务。与 euid 检查
+/// 分离,便于单元测试用 `test_territory` 构造事务验证。
+fn takeover_confirmation_pending() -> bool {
+    // 待确认的接管安装尚未提交状态:与 `lkit network` 相同,先从已提交
+    // 状态发现根,失败再从未完成事务发现(见 takeover.rs)。
+    let root = match crate::deployment::state::discover_landscape_root() {
+        Ok(Some(root)) => root,
+        _ => {
+            match crate::deployment::state::discover_landscape_root_from_unfinished_transaction() {
+                Ok(Some(root)) => root,
+                _ => return false,
+            }
+        }
+    };
+    let Ok(Some(transaction)) = crate::deployment::transaction::find_unfinished(&root) else {
+        return false;
+    };
+    if transaction.network_takeover.is_none() {
+        return false;
+    }
+    matches!(
+        transaction.phase,
+        crate::deployment::transaction::Phase::AwaitingNetworkConfirmation
+            | crate::deployment::transaction::Phase::Finalizing
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +211,103 @@ mod tests {
         let failure = completion_message(&RestoreScreen, 3);
         assert!(failure.contains("Restore failed"));
         assert!(failure.contains("exit code 3"));
+    }
+
+    /// 构造一个处于指定阶段的网络接管事务,返回临时目录与领地 guard。
+    fn transaction_territory(
+        phase: crate::deployment::transaction::Phase,
+    ) -> (
+        std::path::PathBuf,
+        crate::deployment::layout::TerritoryOverride,
+    ) {
+        let temp = std::env::temp_dir().join(format!(
+            "lkit-wait-takeover-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        let root = crate::deployment::root::normalize_install_root(&temp).unwrap();
+        let mut transaction = crate::deployment::transaction::TransactionFile::new_install(
+            &root,
+            &semver::Version::new(1, 0, 0),
+        )
+        .unwrap();
+        transaction.phase = phase;
+        let id = transaction.transaction_id.clone();
+        transaction.network_takeover =
+            Some(crate::deployment::transaction::NetworkTakeoverTransaction {
+                plan: crate::network::config::NetworkPlan {
+                    mode: crate::network::config::NetworkMode::RoutedLan {
+                        wan: "ens3".into(),
+                        wan_ipv4: None,
+                        lan: vec!["ens4".into()],
+                        management: "192.168.10.1/24".parse().unwrap(),
+                        dhcp_start: "192.168.10.100".parse().unwrap(),
+                        dhcp_end: "192.168.10.254".parse().unwrap(),
+                    },
+                    selected_macs: vec![
+                        crate::network::config::SelectedInterface {
+                            name: "ens3".into(),
+                            mac: "02:00:00:00:00:03".into(),
+                        },
+                        crate::network::config::SelectedInterface {
+                            name: "ens4".into(),
+                            mac: "02:00:00:00:00:04".into(),
+                        },
+                    ],
+                },
+                host_services: Vec::new(),
+                confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
+                rollback_service: format!("lkit-network-{id}-rollback.service"),
+                rollback_timer: format!("lkit-network-{id}-rollback.timer"),
+                boot_rollback_service: format!("lkit-network-{id}-boot-rollback.service"),
+                recovery_binary: "service/lkit-network-recovery".into(),
+                pending_state: format!("transactions/{id}/pending-install-state.json"),
+            });
+        crate::deployment::transaction::persist(&root, &transaction).unwrap();
+        (temp, guard)
+    }
+
+    #[test]
+    fn awaiting_confirmation_transaction_enables_the_result_confirm() {
+        let (temp, _guard) = transaction_territory(
+            crate::deployment::transaction::Phase::AwaitingNetworkConfirmation,
+        );
+        assert!(
+            takeover_confirmation_pending(),
+            "an awaiting network takeover must offer the result confirmation"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn rolling_back_transaction_disables_the_result_confirm() {
+        let (temp, _guard) =
+            transaction_territory(crate::deployment::transaction::Phase::RollingBack);
+        assert!(
+            !takeover_confirmation_pending(),
+            "a rolling back takeover must not offer confirmation"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn no_transaction_disables_the_result_confirm() {
+        let temp = std::env::temp_dir().join(format!("lkit-wait-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let territory = temp.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _guard = crate::deployment::layout::test_territory(&territory);
+        let _ = crate::deployment::root::normalize_install_root(&temp).unwrap();
+        assert!(!takeover_confirmation_pending());
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

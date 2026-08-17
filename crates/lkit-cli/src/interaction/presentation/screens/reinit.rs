@@ -25,6 +25,10 @@ impl OperationScreen for ReinitScreen {
         "reinit"
     }
 
+    fn takeover_confirmable(&self) -> bool {
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
@@ -36,6 +40,7 @@ impl OperationScreen for ReinitScreen {
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
+        takeover_pending: bool,
     ) {
         let [header, body, footer] = Layout::vertical([
             Constraint::Length(3),
@@ -148,7 +153,11 @@ impl OperationScreen for ReinitScreen {
             log_area,
         );
         let hint = if result.is_some() {
-            crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
+            if takeover_pending {
+                crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_HINT)
+            } else {
+                crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
+            }
         } else if confirming_stop {
             crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
         } else if phase == OperationPhase::Downloading {
@@ -213,6 +222,7 @@ mod tests {
                     "",
                     false,
                     result,
+                    false,
                 )
             })
             .unwrap();

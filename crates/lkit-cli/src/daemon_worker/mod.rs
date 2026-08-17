@@ -53,7 +53,12 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Network(args) => {
-            matches!(args.action, NetworkAction::Rollback { automatic: false })
+            matches!(
+                args.action,
+                // 手工 rollback 与 confirm 都委托:两者都会切换/恢复宿主网络,
+                // 发起会话可能在执行中断开,由 daemon 侧完成收尾。
+                NetworkAction::Confirm | NetworkAction::Rollback { automatic: false }
+            )
         }
         Commands::Install(_)
         | Commands::Migrate(_)
@@ -130,7 +135,7 @@ pub(crate) fn delegation_blocked() -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn delegate(
+pub(crate) async fn delegate(
     interrupt: &InterruptGuard,
     mut args: Vec<String>,
     interactive_password: Option<String>,
@@ -272,16 +277,28 @@ pub(crate) fn delegate(
         &network_plan_path,
     ]);
     let _ = RemoveFile::new(&cancel_path);
-    result
-        .map(|outcome| match outcome {
-            WaitOutcome::Completed(code) => code,
-            WaitOutcome::Interrupted => unreachable!("interrupted outcome handled above"),
-        })
-        .map_err(|error| {
-            DelegateError::infrastructure(format!(
-                "the lkit daemon did not finish the operation: {error}"
+    match result {
+        Ok(WaitOutcome::Completed(code)) => Ok(code),
+        // 结果页确认了待确认的网络接管:全屏页已退出,把 `network confirm`
+        // 委托给 daemon 执行(与手工 `lkit network confirm` 同一路径)。
+        // 确认会切换 Landscape 托管网络,发起会话可能因此断开——委托后
+        // 即使前端进程消失,daemon 也会独立完成提交,事务不会停在
+        // 半提交状态;前端存活时照常经请求/结果文件回收输出与退出码。
+        Ok(WaitOutcome::ConfirmTakeover) => {
+            Box::pin(delegate(
+                interrupt,
+                vec!["network".into(), "confirm".into()],
+                None,
+                None,
+                false,
             ))
-        })
+            .await
+        }
+        Ok(WaitOutcome::Interrupted) => unreachable!("interrupted outcome handled above"),
+        Err(error) => Err(DelegateError::infrastructure(format!(
+            "the lkit daemon did not finish the operation: {error}"
+        ))),
+    }
 }
 
 fn cleanup_files(paths: &[&Path]) {
@@ -319,6 +336,7 @@ mod tests {
             &["reinit"][..],
             &["uninstall", "--yes"][..],
             &["network", "rollback"][..],
+            &["network", "confirm"][..],
         ] {
             assert!(delegates_for(args), "expected delegation for {args:?}");
         }
@@ -335,7 +353,6 @@ mod tests {
             &["self", "install"][..],
             &["daemon"][..],
             &["network", "status"][..],
-            &["network", "confirm"][..],
         ] {
             assert!(!delegates_for(args), "unexpected delegation for {args:?}");
         }

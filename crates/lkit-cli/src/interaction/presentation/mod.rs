@@ -19,7 +19,7 @@ pub(crate) use self::events::{
 use self::progress::human_bytes;
 pub(crate) use self::progress::{DownloadProgress, StepProgress};
 pub(crate) use self::signals::{InterruptGuard, show_cancelled_screen};
-pub(crate) use self::worker::{PresentationAction, WorkerPresentation};
+pub(crate) use self::worker::{CloseOutcome, PresentationAction, WorkerPresentation};
 
 pub(crate) fn warning(id: &str, reason: &str, suggestion: &str) {
     eprintln!(

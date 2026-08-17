@@ -36,6 +36,7 @@ impl OperationScreen for UpdateScreen {
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
+        _takeover_pending: bool,
     ) {
         let [header, body, footer] = Layout::vertical([
             Constraint::Length(3),

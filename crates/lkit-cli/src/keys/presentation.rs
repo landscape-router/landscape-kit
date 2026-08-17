@@ -72,3 +72,13 @@ pub(crate) const PRESENTATION_BACKUP_PROGRESS_FINALIZING: &str =
     "presentation.backup_progress_finalizing";
 pub(crate) const PRESENTATION_BACKUP_PROGRESS_DONE: &str = "presentation.backup_progress_done";
 pub(crate) const PRESENTATION_BACKUP_PROGRESS_FAILED: &str = "presentation.backup_progress_failed";
+pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_HINT: &str = "presentation.takeover_confirm_hint";
+pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_TITLE: &str = "presentation.takeover_confirm_title";
+pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_QUESTION: &str =
+    "presentation.takeover_confirm_question";
+pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_FALLBACK: &str =
+    "presentation.takeover_confirm_fallback";
+pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_PRESS_ENTER: &str =
+    "presentation.takeover_confirm_press_enter";
+pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_PRESS_ESC: &str =
+    "presentation.takeover_confirm_press_esc";

@@ -134,7 +134,9 @@ async fn run_command(
             interactive_password,
             network_plan,
             from_console,
-        ) {
+        )
+        .await
+        {
             Ok(code) => code,
             Err(error) => delegate_error_exit(&error),
         };

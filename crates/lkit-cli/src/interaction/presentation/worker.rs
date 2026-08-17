@@ -4,14 +4,21 @@ use std::path::Path;
 use std::time::Duration;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear as ClearScreen, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
     enable_raw_mode,
 };
+use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Alignment, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::events::{DownloadState, DownloadStatus, OperationPhase, PresentationEvent};
 use super::progress::InteractiveDownload;
@@ -30,6 +37,10 @@ pub(crate) struct WorkerPresentation {
     logs: Vec<String>,
     notice: String,
     confirming_stop: bool,
+    /// 结果页时是否存在待确认的网络接管（install/reinit 成功后进入该状态）。
+    takeover_pending: bool,
+    /// 结果页「确认网络接管」确认层是否开启。
+    confirming_takeover: bool,
     pub(super) result: Option<OperationResult>,
 }
 
@@ -37,6 +48,15 @@ pub(crate) struct WorkerPresentation {
 pub(crate) enum PresentationAction {
     Stop,
     Close,
+    /// 结果页确认层确认：调用方退出全屏页后内联执行 `lkit network confirm`。
+    ConfirmTakeover,
+}
+
+/// 结果页等待关闭的结果：普通关闭或确认网络接管。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloseOutcome {
+    Closed,
+    ConfirmTakeover,
 }
 
 impl WorkerPresentation {
@@ -55,6 +75,8 @@ impl WorkerPresentation {
             logs: Vec::new(),
             notice: String::new(),
             confirming_stop: false,
+            takeover_pending: false,
+            confirming_takeover: false,
             result: None,
         }
     }
@@ -137,46 +159,71 @@ impl WorkerPresentation {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            let ctrl_c =
-                key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
-            if self.result.is_some() {
-                if ctrl_c {
-                    return Ok(Some(PresentationAction::Close));
-                }
-                continue;
-            }
-            if self.confirming_stop {
-                match key.code {
-                    KeyCode::Enter => return Ok(Some(PresentationAction::Stop)),
-                    KeyCode::Esc => {
-                        self.confirming_stop = false;
-                        self.notice.clear();
-                    }
-                    _ => {}
-                }
-                continue;
-            }
-            if ctrl_c {
-                if self.is_cancellable() {
-                    return Ok(Some(PresentationAction::Stop));
-                }
-                self.ignore_stop();
-                continue;
-            }
-            if key.code == KeyCode::Esc {
-                if self.is_cancellable() {
-                    self.confirming_stop = true;
-                    self.notice.clear();
-                } else {
-                    self.ignore_stop();
-                }
+            if let Some(action) = self.handle_key(key) {
+                return Ok(Some(action));
             }
         }
         self.render_screen();
         Ok(None)
     }
 
-    pub(crate) fn show_result(&mut self, success: bool) {
+    /// 全屏页键处理：结果页处理确认层/关闭，进行中处理取消确认层/停止。
+    pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<PresentationAction> {
+        let ctrl_c =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        if self.result.is_some() {
+            if self.confirming_takeover {
+                match key.code {
+                    KeyCode::Enter => {
+                        return Some(PresentationAction::ConfirmTakeover);
+                    }
+                    KeyCode::Esc => {
+                        self.confirming_takeover = false;
+                        self.notice.clear();
+                    }
+                    _ => {}
+                }
+                return None;
+            }
+            if ctrl_c {
+                return Some(PresentationAction::Close);
+            }
+            // 结果页存在待确认的网络接管时,Enter 打开确认层。
+            if key.code == KeyCode::Enter && self.takeover_pending {
+                self.confirming_takeover = true;
+            }
+            return None;
+        }
+        if self.confirming_stop {
+            match key.code {
+                KeyCode::Enter => return Some(PresentationAction::Stop),
+                KeyCode::Esc => {
+                    self.confirming_stop = false;
+                    self.notice.clear();
+                }
+                _ => {}
+            }
+            return None;
+        }
+        if ctrl_c {
+            if self.is_cancellable() {
+                return Some(PresentationAction::Stop);
+            }
+            self.ignore_stop();
+            return None;
+        }
+        if key.code == KeyCode::Esc {
+            if self.is_cancellable() {
+                self.confirming_stop = true;
+                self.notice.clear();
+            } else {
+                self.ignore_stop();
+            }
+        }
+        None
+    }
+
+    pub(crate) fn show_result(&mut self, success: bool, takeover_pending: bool) {
         self.result = Some(if success {
             OperationResult::Success
         } else {
@@ -184,25 +231,34 @@ impl WorkerPresentation {
         });
         self.current = None;
         self.confirming_stop = false;
+        self.confirming_takeover = false;
+        self.takeover_pending = takeover_pending;
         self.notice.clear();
         self.render_screen();
     }
 
-    pub(crate) fn wait_for_close(&mut self, interrupt: &InterruptGuard) -> Result<(), String> {
+    pub(crate) fn wait_for_close(
+        &mut self,
+        interrupt: &InterruptGuard,
+    ) -> Result<CloseOutcome, String> {
         if self.screen.is_none() {
-            return Ok(());
+            return Ok(CloseOutcome::Closed);
         }
         loop {
             if interrupt.requested() {
                 interrupt.clear_request();
                 break;
             }
-            if matches!(self.poll_action()?, Some(PresentationAction::Close)) {
-                break;
+            match self.poll_action()? {
+                Some(PresentationAction::Close) => break,
+                Some(PresentationAction::ConfirmTakeover) => {
+                    return Ok(CloseOutcome::ConfirmTakeover);
+                }
+                Some(PresentationAction::Stop) | None => {}
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Ok(())
+        Ok(CloseOutcome::Closed)
     }
 
     pub(crate) fn finish(&mut self) {
@@ -256,6 +312,8 @@ impl WorkerPresentation {
         let logs = &self.logs;
         let notice = &self.notice;
         let confirming_stop = self.confirming_stop;
+        let confirming_takeover = self.confirming_takeover;
+        let takeover_pending = self.takeover_pending;
         let result = self.result;
         let _ = screen.terminal.draw(|frame| {
             operation.render(
@@ -267,13 +325,61 @@ impl WorkerPresentation {
                 notice,
                 confirming_stop,
                 result,
-            )
+                takeover_pending,
+            );
+            if confirming_takeover {
+                render_takeover_confirmation(frame);
+            }
         });
     }
 }
 
 struct FullScreenOperation {
     terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+/// 结果页「确认网络接管」居中确认层：Enter 确认(退出全屏页内联执行
+/// `lkit network confirm`),Esc 关闭。正文先说明断连后果,再给出兜底命令
+/// ——确认失败或会话中断时用管理地址重连执行 `lkit network confirm`,
+/// 期限过期未确认将自动回滚(`lkit network rollback`)。
+fn render_takeover_confirmation(frame: &mut Frame<'_>) {
+    let screen = frame.area();
+    let width = 76.min(screen.width.saturating_sub(2));
+    let height = 12.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_QUESTION),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::styled(
+                crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_FALLBACK),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::raw(""),
+            Line::raw(crate::tr!(
+                crate::keys::PRESENTATION_TAKEOVER_CONFIRM_PRESS_ENTER
+            )),
+            Line::styled(
+                crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_PRESS_ESC),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .block(
+            Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_TITLE)),
+        ),
+        area,
+    );
 }
 
 impl FullScreenOperation {

@@ -25,6 +25,10 @@ impl OperationScreen for InstallScreen {
         "install"
     }
 
+    fn takeover_confirmable(&self) -> bool {
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
@@ -36,6 +40,7 @@ impl OperationScreen for InstallScreen {
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
+        takeover_pending: bool,
     ) {
         let [header, body, footer] = Layout::vertical([
             Constraint::Length(3),
@@ -149,7 +154,11 @@ impl OperationScreen for InstallScreen {
         }
         render_log_panel(frame, log_area, logs);
         let hint = if result.is_some() {
-            crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
+            if takeover_pending {
+                crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_HINT)
+            } else {
+                crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
+            }
         } else if confirming_stop {
             crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
         } else if phase == OperationPhase::Downloading {
@@ -249,6 +258,7 @@ mod tests {
                     "",
                     false,
                     result,
+                    false,
                 )
             })
             .unwrap();
@@ -310,5 +320,34 @@ mod tests {
         assert!(content.contains("network takeover is awaiting confirmation"));
         assert!(content.contains("run `lkit network confirm`"));
         assert!(content.contains("rolled back automatically"));
+    }
+
+    #[test]
+    fn result_footer_offers_takeover_confirmation_when_pending() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                InstallScreen.render(
+                    frame,
+                    OperationPhase::Applying,
+                    None,
+                    None,
+                    &[],
+                    "",
+                    false,
+                    Some(OperationResult::Success),
+                    true,
+                )
+            })
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("Enter Confirm takeover"));
+        assert!(content.contains("Ctrl+C Close"));
     }
 }

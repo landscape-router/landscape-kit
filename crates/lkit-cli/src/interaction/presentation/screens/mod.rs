@@ -36,6 +36,11 @@ pub(crate) trait OperationScreen {
     fn stop_ignored_key(&self) -> &'static str;
     /// 命令行结束提示的前缀（子命令名，与 zh 文案保持一致）。
     fn announce_prefix(&self) -> &'static str;
+    /// 该操作完成后是否可能产生待确认的网络接管（install/reinit 为 true，
+    /// 其余操作网络已在首次安装时接管，不复用确认窗口）。
+    fn takeover_confirmable(&self) -> bool {
+        false
+    }
     /// 渲染整个操作页（完整独立实现）。
     #[allow(clippy::too_many_arguments)]
     fn render(
@@ -48,6 +53,7 @@ pub(crate) trait OperationScreen {
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
+        takeover_pending: bool,
     );
 }
 

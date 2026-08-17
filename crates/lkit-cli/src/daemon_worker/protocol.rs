@@ -38,6 +38,8 @@ pub(super) struct WorkerResult {
 pub(super) enum WaitOutcome {
     Completed(ExitCode),
     Interrupted,
+    /// 结果页上用户确认了待确认的网络接管:调用方应内联执行 `lkit network confirm`。
+    ConfirmTakeover,
 }
 
 pub(crate) fn string_args() -> Result<Vec<String>, String> {
