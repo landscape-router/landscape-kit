@@ -37,6 +37,9 @@
   没有下载阶段，前端 Ctrl+C 被忽略（仅 `Downloading` 阶段可取消）；
 - **S-4 daemon 未运行**：`systemctl stop lkit.service` 后委托请求必须拒绝
   （退出码 `2` + "daemon is not running"），不卡住；
+- **S-4b daemon 二进制被替换**：删除（或移动）daemon 正在使用的可执行文件后，
+  委托请求必须拒绝（退出码 `2` + 提示恢复文件并重启 daemon），而不是像历史上
+  那样无限等待 result.json（daemon 的 worker spawn 报 `ENOENT` 且只写 journald）；
 - **S-5 语言转发**：先完成一次正常卸载，再以 `LKIT_LANG=zh` 委托卸载触发
   "requires an existing installation"（退出码 `2`），断言 worker 输出为中文，
   验证 CLI 的 `LKIT_LANG` 进入委托请求、worker 子进程使用同一语言输出。

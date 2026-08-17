@@ -294,8 +294,9 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 | `repair` | `backup` |
 | `restore` | `self` |
 | `reinit` | `daemon` |
-| `uninstall` | `network status` / `network confirm` |
-| `network rollback`（手工调用） | `network rollback --automatic` 之外的自动回滚路径 |
+| `uninstall` | `network status` |
+| `network confirm` | `network rollback --automatic` 之外的自动回滚路径 |
+| `network rollback`（手工调用） |  |
 
 委托命令在以下两种情形改为直接执行（内联）：
 
@@ -303,9 +304,12 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 - 命令携带 `--test-runtime`（仅 test-support 构建存在；测试与容器脚本用它
   注入 fake systemd/运行时，绕过 daemon 依赖）。
 
-`lkit network rollback --automatic`（timer/boot 自动回滚）位于独立恢复路径，
-不委托；只有手工 `lkit network rollback` 走 daemon，避免 NetworkManager 或
-`networking.service` 恢复后当前 `br_lan` SSH 断开而中止回滚。
+`lkit network confirm` 与手工 `lkit network rollback` 都委托给 daemon：两者都会
+切换/恢复宿主网络（confirm 清除 WAN 继承地址、rollback 恢复被 stop/disable/mask
+的宿主网络服务），发起会话可能因此在执行中断开——委托后即使前端进程消失，
+daemon 也会独立完成提交或回滚，事务不会停在半提交状态。控制台结果页的「确认
+网络接管」与阻塞屏的「确认执行」走同一条委托路径。`lkit network rollback
+--automatic`（timer/boot 自动回滚）位于独立恢复路径，不委托。
 
 CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
 （schema_version 2，含原始参数、最终环境与工作目录、结果路径、cancel 路径、
@@ -341,9 +345,9 @@ SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只�
 - 前端收到显式 Ctrl+C 时先恢复原始终端属性和光标，再写 `<id>.cancel` 文件；daemon
   对子进程组发送 SIGTERM，约 5 秒（25 轮 × 200ms）内未退出则 SIGKILL。前端返回
   `130` 并清理运行时文件；停止失败时输出 warning、保留现场并提示操作可能仍在运行；
-- 手工 `lkit network rollback` 同样委托给 daemon，避免 NetworkManager 或
-  `networking.service` 恢复后当前 `br_lan` SSH 断开而中止回滚；timer/boot 自动回滚
-  已经位于独立恢复路径，不再次委派；
+- 手工 `lkit network rollback` 与 `lkit network confirm` 都委托给 daemon，避免
+  NetworkManager/`networking.service` 恢复或 WAN 地址切换后当前 `br_lan` SSH 断开
+  而中止回滚/提交；timer/boot 自动回滚已经位于独立恢复路径，不再次委派；
 - 交互确认仍通过原终端完成，但 daemon 子进程不接管该终端；若终端在破坏性阶段前
   消失，确认读取失败并安全停止；
 - daemon 不配置自动重试，业务失败不会重复执行整条命令；

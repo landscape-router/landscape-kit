@@ -76,7 +76,7 @@
 
 ## UI-08
 
-**网络接管从 Install 表单进入无侧栏全屏向导**
+**网络接管从 Install 表单进入无侧栏全屏向导,结果页可直接确认接管**
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
@@ -85,7 +85,12 @@
   静态字段与底部“确认并继续”按钮）、LAN 空集合的 WAN-only 计划，以及 LAN
   列表的 Up/Down、Space、Enter 语义。Install 面板始终启用网络接管（开关暂隐藏），激活
   “开始安装”固定进入向导。systemd worker 的安装页在下载阶段可停止，配置阶段
-  忽略停止请求，结果页等待 Ctrl+C。
+  忽略停止请求，结果页等待 Ctrl+C。安装/reinit 完成且存在待确认网络接管事务时，
+  结果页底栏显示确认入口（`Enter Confirm takeover`），确认层正文说明断连后果与兜底
+  语句（`lkit network confirm` / `lkit network rollback`）；确认后退出全屏页内联执行
+  与 CLI 相同的 `lkit network confirm`。待确认/收尾中的事务才提供入口，自动回滚中
+  不提供，与阻塞屏 `takeover_confirm_allowed` 语义一致；阻塞屏仍在重连后承担兜底
+  确认。
 
 ## UI-09
 
@@ -183,7 +188,7 @@
 
 ## UI-15
 
-**激活“开始安装”与网络向导确认摘要前复查 daemon，未运行不退出控制台**
+**激活“开始安装”与网络向导确认摘要前复查 daemon，未运行或无法 spawn worker 不退出控制台**
 
 - 测试层：Rust 单元
 - 状态：`部分覆盖`
@@ -192,6 +197,10 @@
   确认摘要不再退出 TUI 委托，而是留在面板内提示“lkit 常驻服务未运行;请用
   `lkit self install` 部署”，避免用户填写完所有安装参数、退出控制台后才得到
   `the lkit daemon is not running` 错误（CLI 命令模式仍由 `delegate()` 以退出码 `2`
-  拒绝，见 [`SYS-03`](../systemd-smoke.md#sys-03)）。
+  拒绝，见 [`SYS-03`](../systemd-smoke.md#sys-03)）。daemon 在运行但无法 spawn
+  worker（其可执行文件被删除/替换，`/proc/<pid>/exe` 不可用）时同样在进入控制台与
+  激活安装前阻断并提示恢复文件后重启常驻服务，命令模式由 `delegate()` 以退出码 `2`
+  拒绝，不再无限等待；`worker_executable_available` 对 `" (deleted)"` 后缀与文件
+  可执行性的判定有单元测试覆盖（见 [`S-4b`](../../nspawn-systemd.md)）。
 - 缺口：root 分支依赖真实 euid 与地盘 pidfile，标准单测只覆盖非 root（不阻断）
-  路径；root 环境的 TUI 现场行为待补充。
+  路径；root 环境的 TUI 现场行为与 nspawn smoke 的 S-4b 待运行验证。

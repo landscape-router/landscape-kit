@@ -187,7 +187,9 @@ Landscape”动作。动作行校验通过后打开居中确认层，说明清�
 `Reinit` 请求（标记 `--console-confirmed` 与 `--yes`，密码与网络计划经凭据文件和计划
 文件传入 worker）交给共享命令分发并退出 alternate screen，systemd 模式委托 worker，
 在无侧栏全屏重新初始化页显示准备、停止服务、激活与健康检查阶段及结果页，成功进入
-待确认状态后由 `lkit network confirm`/`rollback` 收尾；Esc 取消确认层并留在面板。
+待确认状态后由 `lkit network confirm`/`rollback` 收尾；与 Install 结果页相同，
+reinit 结果页检测到待确认网络接管时同样提供“确认接管”入口（Enter 打开确认层、
+Enter 确认后内联执行 `lkit network confirm`，兜底语句与 Install 一致）；Esc 取消确认层并留在面板。
 
 首次进入 Install 时，控制台在后台调用与 `lkit check` 相同的只读检查并在表单顶部显示
 pass、warning、error 和 unknown 汇总，不阻塞按键与渲染。检查汇总是 Install 的第一个
@@ -221,12 +223,24 @@ ID、阶段、管理地址（DHCP 租约时显示占位）、确认截止时间�
 表单在执行前使用与命令模式相同的版本、用户名、路径和仓库校验。激活“开始安装”与网络
 向导确认摘要时（以及检查结果可能过时的情况下）都会重新检查委托前置条件：root 下
 daemon 未运行时不退出控制台，留在面板内提示“lkit 常驻服务未运行;请用 `lkit self
-install` 部署”，而不是在用户填写完所有安装参数、退出控制台委托时才报错。网络向导完成后把结构化
+install` 部署”，而不是在用户填写完所有安装参数、退出控制台委托时才报错。委托前置
+条件还包括 daemon 能否 spawn 自己的 worker 子进程：daemon 以 `current_exe()` 的路径
+启动 worker，若该可执行文件已被删除或替换（spawn 会报 `ENOENT`，且 daemon 只把错误
+写进 journald，前端会永远等待结果），进入控制台与激活安装都会在 TUI 内提示“lkit
+常驻服务无法启动工作命令：其可执行文件已被删除或替换；请恢复该文件并重启常驻服务”，
+命令模式则由 `delegate()` 以退出码 `2` 拒绝，不再无限等待。网络向导完成后把结构化
 `Install` 请求交给共享命令分发；systemd worker 在同一个无侧栏全屏安装页显示下载、配置、
 网络和服务阶段。下载阶段支持 Ctrl+C 停止，Esc 打开停止确认；进入配置、网络或服务阶段
 后停止请求只显示提示并继续，成功、失败或取消结果页保持到 Ctrl+C。结果页的 Output 面板
 会把网络接管“等待确认”、“重新连接后运行 `lkit network confirm`”以及“未在期限内确认将
-自动回滚”的提示行用黄底黑字加粗醒目标出。关闭结果页后（以及
+自动回滚”的提示行用黄底黑字加粗醒目标出。安装（及 reinit）完成且存在待确认的网络接管
+事务时，结果页底栏显示 `Enter 确认接管  Ctrl+C 关闭`：Enter 打开居中确认层（说明确认后
+网络切换至 Landscape 托管计划、当前会话可能断开，并展示兜底语句——确认失败或会话中断
+时用管理地址重连后运行 `lkit network confirm`，未在期限内确认将自动回滚
+（`lkit network rollback`）），Enter 确认后退出全屏页并把 `network confirm` 委托给
+daemon 执行（与手工命令同一条路径）：确认会切换托管网络，发起会话可能因此断开——
+委托后即使前端进程消失，daemon 也独立完成提交，事务不会停在半提交状态；重连后重新
+进入 `lkit` 即回到主页。Esc 返回结果页。关闭结果页后（以及
 命令模式委托安装结束时），lkit 会在普通终端再输出一次明确的结果提示：成功打印
 `install: installation complete`（或 `安装完成`），失败打印包含退出码的提示，避免用户在
 没有全屏结果页或流式输出被忽略时继续等待。控制台不得启动另一个 lkit
