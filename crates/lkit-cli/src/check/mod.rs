@@ -1,3 +1,4 @@
+pub mod daemon;
 pub mod dependency;
 pub mod dns;
 pub mod kernel;
@@ -38,6 +39,7 @@ pub fn run_all() -> CheckReport {
             crate::tr!(crate::keys::CHECK_DNS_CONFIGURATION_RISKS),
             dns::run(),
         ),
+        (crate::tr!(crate::keys::CHECK_LKIT_DAEMON), daemon::run()),
     ] {
         for result in &results {
             match result.status {
