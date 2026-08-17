@@ -10,6 +10,25 @@ use super::super::render::{display_pad, register_dialog_hits};
 use super::super::widgets::{Clicks, Hit, block_row_of};
 use super::{NetworkWizard, Snapshot, WanMode, WizardStep};
 
+/// 以本地时区格式化时刻，如 `2026-08-17 00:22:18 -04:00`。
+fn local_time(time: chrono::DateTime<chrono::Utc>) -> String {
+    time.with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M:%S %:z")
+        .to_string()
+}
+
+/// 倒计时文本：`1h 5m 30s` / `5m 30s` / `30s`，非负。
+fn format_remaining(seconds: i64) -> String {
+    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 pub(crate) fn render_network_wizard(
     frame: &mut Frame<'_>,
     wizard: &NetworkWizard,
@@ -387,13 +406,15 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
     let confirm_allowed = app.takeover_confirm_allowed();
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 17.min(screen.height.saturating_sub(2));
+    let height = 19.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
         width,
         height,
     );
+    let now = chrono::Utc::now();
+    let remaining = (*deadline - now).num_seconds().max(0);
     let mut lines = vec![
         Line::styled(
             crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_TITLE),
@@ -419,8 +440,23 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
         )),
         Line::raw(crate::tr!(
             crate::keys::CONSOLE_TAKEOVER_PENDING_DEADLINE,
-            deadline = deadline
+            deadline = local_time(*deadline)
         )),
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_TAKEOVER_PENDING_NOW,
+            now = local_time(now)
+        )),
+        Line::styled(
+            crate::tr!(
+                crate::keys::CONSOLE_TAKEOVER_PENDING_COUNTDOWN,
+                remaining = format_remaining(remaining)
+            ),
+            if remaining <= 60 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            },
+        ),
         Line::raw(""),
         Line::raw(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_HINT)),
         Line::raw(""),

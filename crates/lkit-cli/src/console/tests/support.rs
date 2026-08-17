@@ -173,7 +173,7 @@ pub(crate) fn pending_takeover_snapshot() -> Snapshot {
     Snapshot::AwaitingNetworkConfirmation {
         transaction_id: "tx-1".into(),
         phase: "awaiting_network_confirmation",
-        deadline: "2026-08-07T10:00:00Z".into(),
+        deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
         management_address: Some("192.168.10.1/24".into()),
     }
 }

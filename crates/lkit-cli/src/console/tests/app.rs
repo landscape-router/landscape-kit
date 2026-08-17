@@ -461,7 +461,8 @@ fn pending_takeover_blocking_screen_renders_instead_of_menu() {
     assert!(content.contains("tx-1"));
     assert!(content.contains("awaiting_network_confirmation"));
     assert!(content.contains("192.168.10.1/24"));
-    assert!(content.contains("2026-08-07T10:00:00Z"));
+    assert!(content.contains("current time:"));
+    assert!(content.contains("auto rollback in"));
     assert!(content.contains("Later"));
     assert!(content.contains("Confirm now"));
     assert!(!content.contains("Navigation"));
@@ -522,7 +523,7 @@ fn rolling_back_pending_disables_confirm() {
     app.snapshot = Snapshot::AwaitingNetworkConfirmation {
         transaction_id: "tx-1".into(),
         phase: "rolling_back",
-        deadline: "2026-08-07T10:00:00Z".into(),
+        deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
         management_address: None,
     };
     terminal.draw(|frame| render(frame, &mut app)).unwrap();

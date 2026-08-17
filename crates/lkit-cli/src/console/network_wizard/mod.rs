@@ -364,7 +364,7 @@ pub(crate) enum Snapshot {
     AwaitingNetworkConfirmation {
         transaction_id: String,
         phase: &'static str,
-        deadline: String,
+        deadline: chrono::DateTime<chrono::Utc>,
         management_address: Option<String>,
     },
     NotInstalled,
@@ -406,7 +406,7 @@ impl Snapshot {
                 return Ok(Self::AwaitingNetworkConfirmation {
                     transaction_id: transaction.transaction_id.clone(),
                     phase: transaction.phase.key(),
-                    deadline: network.confirmation_deadline.to_rfc3339(),
+                    deadline: network.confirmation_deadline,
                     management_address: network
                         .plan
                         .management_address()
