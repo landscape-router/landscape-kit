@@ -127,11 +127,64 @@ pub(crate) fn daemon_is_running() -> bool {
     crate::daemon::process_alive(pid)
 }
 
-/// 委托前置条件是否未满足:root 下全局常驻 daemon 未运行。控制台在进入与
-/// 开始安装前用它在 TUI 内提前提示/阻断,避免用户填写完安装参数、退出
-/// 控制台委托时才失败;非 root 内联执行,不要求 daemon,恒为 false。
-pub(crate) fn delegation_blocked() -> bool {
-    (unsafe { libc::geteuid() == 0 }) && !daemon_is_running()
+/// 委托前置条件的阻断原因:None 表示可委托(非 root 内联、或 root 下 daemon
+/// 运行且可 spawn worker)。控制台在进入与开始安装前用它在 TUI 内提前提示,
+/// 避免用户填写完安装参数、退出控制台委托时才失败。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DelegationBlock {
+    /// daemon 未运行(未部署或已退出)。
+    DaemonNotRunning,
+    /// daemon 在运行,但其可执行文件已被删除/替换,无法 spawn worker 子进程。
+    /// 这种情况下委托请求会永远等不到 result.json(daemon 只把 spawn 失败
+    /// 写进 journald),必须恢复文件并重启 daemon。
+    WorkerSpawnUnavailable,
+}
+
+pub(crate) fn delegation_block() -> Option<DelegationBlock> {
+    if unsafe { libc::geteuid() != 0 } {
+        return None;
+    }
+    if !daemon_is_running() {
+        return Some(DelegationBlock::DaemonNotRunning);
+    }
+    if !daemon_worker_spawnable() {
+        return Some(DelegationBlock::WorkerSpawnUnavailable);
+    }
+    None
+}
+
+/// daemon 是否还能 spawn 自己的 worker 子进程:daemon 以 `current_exe()`
+/// 的路径启动 worker(见 `executor::execute_request_inner`),若该可执行文件
+/// 已被删除/替换(路径不可用),spawn 报 ENOENT,前端却毫不知情地永远等待
+/// result.json。委托前检查此条件,阻止受影响的活动。
+pub(crate) fn daemon_worker_spawnable() -> bool {
+    let Some(pid) = daemon_pid() else {
+        return false;
+    };
+    let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) else {
+        return false;
+    };
+    worker_executable_available(&exe)
+}
+
+/// 从地盘 pidfile 读取常驻 daemon 的 pid。
+fn daemon_pid() -> Option<u32> {
+    let content = std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok()?;
+    content.trim().parse::<u32>().ok()
+}
+
+/// daemon 的 `current_exe` 路径是否仍可用于 spawn:目标文件存在且可执行。
+/// Linux 在文件被 unlink 后 `readlink /proc/<pid>/exe` 会追加 " (deleted)"
+/// 后缀;若路径上已有替换完成的新文件(常见于 `install -m`/rename 覆盖),
+/// 按新文件判断,否则视为不可用。与 euid 无关,便于单元测试。
+fn worker_executable_available(exe: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let raw = exe.to_string_lossy();
+    let target = raw.strip_suffix(" (deleted)").unwrap_or(&raw);
+    let path = Path::new(target);
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -145,6 +198,11 @@ pub(crate) async fn delegate(
     if !daemon_is_running() {
         return Err(DelegateError::usage(
             "the lkit daemon is not running; deploy it with `lkit self install`",
+        ));
+    }
+    if !daemon_worker_spawnable() {
+        return Err(DelegateError::usage(
+            "the lkit daemon cannot spawn worker commands: its executable was deleted or replaced; restore the executable and restart the daemon",
         ));
     }
     let operation = operation_screen(&args);
@@ -383,5 +441,73 @@ mod tests {
 
         drop(_guard);
         let _ = std::fs::remove_dir_all(&territory);
+    }
+
+    #[test]
+    fn daemon_worker_spawnable_follows_the_pidfile() {
+        let territory =
+            std::env::temp_dir().join(format!("lkit-daemon-spawn-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&territory);
+        std::fs::create_dir_all(territory.join("run")).unwrap();
+        let _guard = crate::deployment::layout::test_territory(&territory);
+        let pidfile = crate::deployment::layout::territory_pidfile();
+
+        std::fs::write(&pidfile, "99999999\n").unwrap();
+        assert!(
+            !daemon_worker_spawnable(),
+            "a dead daemon pid must not be spawnable"
+        );
+        std::fs::write(&pidfile, format!("{}\n", std::process::id())).unwrap();
+        assert!(
+            daemon_worker_spawnable(),
+            "the test process executable must be spawnable"
+        );
+        std::fs::write(&pidfile, "not a pid").unwrap();
+        assert!(
+            !daemon_worker_spawnable(),
+            "an unparsable pidfile must not be spawnable"
+        );
+
+        drop(_guard);
+        let _ = std::fs::remove_dir_all(&territory);
+    }
+
+    #[test]
+    fn worker_executable_available_checks_the_deleted_suffix() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = std::env::temp_dir().join(format!("lkit-spawn-exe-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let path = temp.join("lkit");
+        std::fs::write(&path, b"#!/bin/sh\nexit 0").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(
+            worker_executable_available(&path),
+            "an existing executable must be spawnable"
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            !worker_executable_available(&path),
+            "a non-executable file must not be spawnable"
+        );
+
+        // 文件被 unlink 后 readlink /proc/<pid>/exe 追加 " (deleted)" 后缀;
+        // 路径上已有替换完成的新文件时按新文件判断,否则视为不可用。
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            worker_executable_available(&temp.join("lkit (deleted)")),
+            "a replaced executable must be spawnable through the new file"
+        );
+        assert!(
+            !worker_executable_available(&temp.join("gone (deleted)")),
+            "a missing replaced file must not be spawnable"
+        );
+        assert!(
+            !worker_executable_available(&temp.join("absent")),
+            "a missing file must not be spawnable"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

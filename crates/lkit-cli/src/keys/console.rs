@@ -126,6 +126,8 @@ pub(crate) const CONSOLE_CHECKS_HAVE_NOT_RUN: &str = "console.checks_have_not_ru
 pub(crate) const CONSOLE_PREFLIGHT_COUNTS: &str = "console.preflight_counts";
 pub(crate) const CONSOLE_START_INSTALLATION_BUTTON: &str = "console.start_installation_button";
 pub(crate) const CONSOLE_DAEMON_NOT_RUNNING_NOTICE: &str = "console.daemon_not_running_notice";
+pub(crate) const CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE: &str =
+    "console.daemon_spawn_unavailable_notice";
 pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING: &str =
     "console.overview_lkit_daemon_running";
 pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_NOT_RUNNING: &str =

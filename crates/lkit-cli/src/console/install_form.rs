@@ -309,10 +309,19 @@ impl InstallForm {
         &mut self,
         network_plan: Option<NetworkPlan>,
     ) -> Result<ConsoleAction, String> {
-        // 提前检查委托前置条件:root 下 daemon 未运行时留在 TUI 内提示,
-        // 而不是退出控制台后在 delegate() 才失败(用户已完成全部安装参数)。
-        if crate::daemon_worker::delegation_blocked() {
-            return Err(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
+        // 提前检查委托前置条件:root 下 daemon 未运行或无法 spawn worker 时
+        // 留在 TUI 内提示,而不是退出控制台后在 delegate() 才失败(用户已
+        // 完成全部安装参数)。
+        match crate::daemon_worker::delegation_block() {
+            Some(crate::daemon_worker::DelegationBlock::DaemonNotRunning) => {
+                return Err(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
+            }
+            Some(crate::daemon_worker::DelegationBlock::WorkerSpawnUnavailable) => {
+                return Err(crate::tr!(
+                    crate::keys::CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE
+                ));
+            }
+            None => {}
         }
         self.validate()?;
         let version = self.version.trim();
