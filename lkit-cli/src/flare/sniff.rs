@@ -38,24 +38,30 @@ pub async fn run_live(link: &mut Link, ethertype: u16) -> Result<(), Box<dyn Err
     }
 }
 
-pub fn run_offline(
-    cap: &mut pcap::Capture<pcap::Offline>,
-    ethertype: u16,
-) -> Result<(), Box<dyn Error>> {
+pub fn run_offline(path: &std::path::Path, ethertype: u16) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut total = 0u64;
-    loop {
-        match cap.next_packet() {
-            Ok(pkt) => {
-                if let Some(f) = Frame::from_raw(pkt.data)
-                    && f.ethertype == ethertype {
-                        total += 1;
-                        parse_and_print(&f, None);
-                    }
-            }
-            Err(pcap::Error::TimeoutExpired) => continue,
-            Err(_) => break,
+    // Minimal .pcap reader: 24-byte global header, then 16-byte record
+    // headers (ts_sec ts_usec incl_len orig_len) followed by the frame
+    // bytes. No libpcap runtime dependency.
+    let data = std::fs::read(path)?;
+    if data.len() < 24 {
+        return Err("not a pcap file: shorter than the 24-byte global header".into());
+    }
+    let mut off = 24usize;
+    while off + 16 <= data.len() {
+        let incl_len = u32::from_be_bytes(data[off + 8..off + 12].try_into().unwrap()) as usize;
+        off += 16;
+        if incl_len == 0 || off + incl_len > data.len() {
+            break;
         }
+        if let Some(f) = Frame::from_raw(&data[off..off + incl_len])
+            && f.ethertype == ethertype
+        {
+            total += 1;
+            parse_and_print(&f, None);
+        }
+        off += incl_len;
     }
     println!(
         "done: {} packets, {:.1}s",

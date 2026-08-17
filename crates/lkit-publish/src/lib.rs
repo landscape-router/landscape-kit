@@ -483,7 +483,13 @@ fn hash_file(path: &Path) -> Result<(String, u64), PublishError> {
             path.display()
         )));
     }
-    Ok((format!("{:x}", hasher.finalize()), size))
+    let digest = hasher.finalize();
+    let mut sha256 = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(&mut sha256, "{byte:02x}");
+    }
+    Ok((sha256, size))
 }
 
 fn normalize_public_base_url(value: String) -> Result<Url, PublishError> {

@@ -57,6 +57,3 @@ lkit-test-fixture = { workspace = true, optional = true }
 
 [build-dependencies]
 toml = { workspace = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-pcap = { workspace = true }

@@ -637,18 +637,19 @@ fn pump_peer(
     };
 
     if let Some(listener) = peer.listener
-        && let Some((h, new_listener)) = stack.accept(listener, INTERNAL_PORT) {
-            peer.listener = Some(new_listener);
-            let (from_tx, from_rx) = mpsc::channel(512);
-            peer.conns.insert(h, ServerConn { from_tx });
-            tokio::spawn(server_conn_task(
-                *peer_mac,
-                h,
-                peer.to_tx.clone(),
-                from_rx,
-                peer.allowed.clone(),
-            ));
-        }
+        && let Some((h, new_listener)) = stack.accept(listener, INTERNAL_PORT)
+    {
+        peer.listener = Some(new_listener);
+        let (from_tx, from_rx) = mpsc::channel(512);
+        peer.conns.insert(h, ServerConn { from_tx });
+        tokio::spawn(server_conn_task(
+            *peer_mac,
+            h,
+            peer.to_tx.clone(),
+            from_rx,
+            peer.allowed.clone(),
+        ));
+    }
 
     for pkt in stack.poll() {
         let raw = crypto.seal(TYPE_DATA, sid, &pkt);

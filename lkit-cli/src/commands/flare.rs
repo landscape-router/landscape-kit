@@ -168,10 +168,8 @@ async fn run_sniff(args: &SniffArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     let filter = crate::flare::sniff::filter_expr(args.ethertype);
     if let Some(path) = &args.file {
-        let mut cap = pcap::Capture::from_file(path)?;
-        cap.filter(&filter, true)?;
-        println!("reading pcap file (filter: {filter})");
-        return crate::flare::sniff::run_offline(&mut cap, args.ethertype);
+        println!("reading pcap file: {}", path.display());
+        return crate::flare::sniff::run_offline(path, args.ethertype);
     }
     let devs = parse_devs(&args.dev)?;
     let mut link = Link::open(&devs, args.ethertype, None)?;
