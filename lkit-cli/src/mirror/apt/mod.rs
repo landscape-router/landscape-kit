@@ -337,14 +337,12 @@ mod apply_tests {
     use crate::mirror::test_support::TestPathsGuard;
 
     fn temp_root(tag: &str) -> PathBuf {
-        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let temp = std::env::temp_dir().join(format!(
             "lkit-mirror-{tag}-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            COUNTER.fetch_add(1, Ordering::SeqCst)
         ));
         let _ = fs::remove_dir_all(&temp);
         temp

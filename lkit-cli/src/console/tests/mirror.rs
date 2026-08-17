@@ -495,11 +495,9 @@ fn mirror_confirmation_dialog_executes_apply() {
 
 #[cfg(feature = "test-support")]
 fn unique_suffix() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 #[cfg(feature = "test-support")]

@@ -106,10 +106,8 @@ struct TempRoot {
 
 impl TempRoot {
     fn new(name: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
         let path = std::env::temp_dir().join(format!(
             "lkit-migrate-test-{name}-{}-{unique}",
             std::process::id()
