@@ -272,7 +272,13 @@ fn language_toggle_persists_across_console_sessions() {
     let config = std::fs::read_to_string(&config_path).unwrap();
     assert!(config.contains("[ui]"), "config: {config}");
     assert!(config.contains("language = \"zh\""), "config: {config}");
-    pty.master.write_all(b"\x1b\x1b\r").unwrap();
+    // Esc 需要独立送达:连续写入的 ESC ESC 只触发一次 armed(与
+    // bare_lkit_console_restores_terminal_on_exit 相同的输入时序约束)。
+    pty.master.write_all(b"\x1b").unwrap();
+    pty.read_until("Exit armed", Duration::from_secs(5));
+    pty.master.write_all(b"\x1b").unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    pty.master.write_all(b"\r").unwrap();
     let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
     let status = child.wait().unwrap();
     assert!(status.success(), "console exit failed: {exited:?}");
@@ -287,10 +293,25 @@ fn language_toggle_persists_across_console_sessions() {
     let mut child = command.spawn().unwrap();
     pty.read_until("zh", Duration::from_secs(10));
     pty.master.write_all(b"l").unwrap();
-    pty.read_until("L  Language: English (en)", Duration::from_secs(5));
+    // 中文态初始帧即含 "en" 子串(提示行 "Right/Enter")且英文状态行的 diff
+    // 帧可能分片,这里以 config 写回为切换完成的稳定信号(第一会话已用 "zh"
+    // 验证过切换生效的 UI 反馈)。
+    for _ in 0..50 {
+        if std::fs::read_to_string(&config_path)
+            .map(|config| config.contains("language = \"en\""))
+            .unwrap_or(false)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
     let config = std::fs::read_to_string(&config_path).unwrap();
     assert!(config.contains("language = \"en\""), "config: {config}");
-    pty.master.write_all(b"\x1b\x1b\r").unwrap();
+    pty.master.write_all(b"\x1b").unwrap();
+    pty.read_until("Exit armed", Duration::from_secs(5));
+    pty.master.write_all(b"\x1b").unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    pty.master.write_all(b"\r").unwrap();
     let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
     let status = child.wait().unwrap();
     assert!(status.success(), "console exit failed: {exited:?}");
