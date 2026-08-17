@@ -315,14 +315,23 @@ machine_shell "test -f /root/.lkit/run/lkit.pid"
 
 # 真实 systemd 契约:受管服务可停止并重新启动(不涉及卸载/注销)。
 echo "== stop and restart the managed services"
+echo "   restart: stop landscape"
 machine_shell "systemctl stop landscape-router.service"
+echo "   restart: landscape inactive"
 machine_shell "! systemctl is-active --quiet landscape-router.service"
+echo "   restart: start landscape"
 machine_shell "systemctl start landscape-router.service"
+echo "   restart: landscape active"
 machine_shell "systemctl is-active --quiet landscape-router.service"
+echo "   restart: stop lkit"
 machine_shell "systemctl stop lkit.service"
+echo "   restart: lkit inactive"
 machine_shell "! systemctl is-active --quiet lkit.service"
+echo "   restart: start lkit"
 machine_shell "systemctl start lkit.service"
+echo "   restart: lkit active"
 machine_shell "systemctl is-active --quiet lkit.service"
+echo "   restart: pidfile"
 machine_shell "test -f /root/.lkit/run/lkit.pid"
 
 # ============ worker 委托能力验证 ============
