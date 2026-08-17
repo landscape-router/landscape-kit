@@ -47,15 +47,20 @@ pub(crate) fn probe(host: &Host, mirror: MirrorName) -> MirrorStatus {
         return MirrorStatus::Unknown;
     };
     let mut any_available = false;
+    let mut any_unavailable = false;
     for url in &urls {
         match check(&client, url) {
             MirrorStatus::Available => any_available = true,
-            MirrorStatus::Unavailable => return MirrorStatus::Unavailable,
+            MirrorStatus::Unavailable => any_unavailable = true,
             MirrorStatus::Unknown => {}
         }
     }
+    // 多个候选 URL 时（如 Fedora 的两种镜像布局）任一可用即可；全部明确 404
+    // 才判不可用，避免布局变体 404 误伤整体判定。
     if any_available {
         MirrorStatus::Available
+    } else if any_unavailable {
+        MirrorStatus::Unavailable
     } else {
         MirrorStatus::Unknown
     }
@@ -141,11 +146,21 @@ fn urls_for(
             // 探测的正是换源后写入的 URL（官方后缀 `/linux/releases/...` 保留，
             // 部分镜像站如 USTC 靠 301 兼容该路径）；EPEL 的版本号与 Fedora 主
             // 版本不对应（epel 只有 8/9/10/next），不作为探测目标。
+            //
+            // 镜像站对 Fedora 的布局不统一：官方树是 `/fedora/linux/releases/...`，
+            // 而阿里云/腾讯云/清华 TUNA 等国内站挂载的是
+            // `/fedora/releases/...`（无 `linux` 段），两者都探测。
             let major = releasever?.split('.').next()?.to_string();
-            Some(vec![format!(
-                "https://{target}/fedora/linux/releases/{major}/Everything/{}/os/repodata/repomd.xml",
-                dnf_arch(arch)
-            )])
+            Some(vec![
+                format!(
+                    "https://{target}/fedora/linux/releases/{major}/Everything/{}/os/repodata/repomd.xml",
+                    dnf_arch(arch)
+                ),
+                format!(
+                    "https://{target}/fedora/releases/{major}/Everything/{}/os/repodata/repomd.xml",
+                    dnf_arch(arch)
+                ),
+            ])
         }
         Family::Rocky => {
             let major = releasever?.split('.').next()?.to_string();
@@ -263,7 +278,8 @@ mod tests {
         assert_eq!(
             urls,
             vec![
-                "https://mirrors.bfsu.edu.cn/fedora/linux/releases/42/Everything/armhfp/os/repodata/repomd.xml"
+                "https://mirrors.bfsu.edu.cn/fedora/linux/releases/42/Everything/armhfp/os/repodata/repomd.xml",
+                "https://mirrors.bfsu.edu.cn/fedora/releases/42/Everything/armhfp/os/repodata/repomd.xml",
             ]
         );
     }
