@@ -83,3 +83,14 @@
 - 证据：[`lkit self`](../../../commands/self.md)、[安装布局与状态](../../../deployment/layout-and-state.md)
 - 说明：同一 pidfile 存活实例存在时 `self install`/daemon 启动拒绝并返回失败，不产生
   第二个 daemon。
+## SS-10
+
+**`self install` 供给急救恢复码：daemon 启动前写入 `[flare]` 段**
+
+- 测试层：Rust 单元、Fixture E2E
+- 状态：`已覆盖`
+- 证据：[`lkit self`](../../../commands/self.md#install)、[`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[flare 协议](../../../flare/protocol.md)
+- 说明：`lkit self install --flare-psk-file`（root-only 私密文件）在 daemon 启动前把
+  psk 写入地盘 `config.toml` 的 `[flare]` 段（0600，保留既有字段）；未提供时保留
+  既有 `[flare]`（重复执行不改动配置），交互终端提示输入（≥12 字符），无终端回落
+  daemon 自动生成，不阻断部署。单元测试覆盖文件/保留/短 psk 拒绝/非交互回落分支。

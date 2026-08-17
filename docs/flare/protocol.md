@@ -5,7 +5,8 @@ Terrain 是 Landscape 路由器的 L2 旁路通信协议：当常规网络路径
 用于应急管理连接。
 
 协议名 Terrain，魔数 `TERR`；客户端可执行文件 `lflare`（服务端并入 `lkit flare`）。
-共享密钥通过 `LANDSCAPE_FLARE_PSK` 环境变量或 `--psk` 提供。
+共享密钥 **psk**（中文界面与文档称为**急救恢复码**）通过 `LANDSCAPE_FLARE_PSK`
+环境变量或 `--psk` 提供。
 
 ## 帧格式
 
@@ -82,11 +83,12 @@ psk 从不直接使用：双方启动时用 scrypt 拉伸为 32 字节主密钥�
 | 服务端 | `lkit flare serve`（Linux） | `lkit flare serve --psk … --dev any [--token …]` |
 | 服务端（daemon 托管，恒常启动） | `lkit daemon` 在 Linux 上总是托管 flare 服务端 | 读取 config.toml `[flare]` 段；段缺失/无 psk 时自动生成随机 psk 并持久化（启动时打印一次分发提示），daemon 每周期对比配置指纹，`[flare]` 变更（psk 非空）时重启 flare 任务拾取新配置，psk 被清空则保持现役不切断恢复通道 |
 | 配置供给 | `lkit flare setup`（Linux） | 带 `--psk/--token/--devices/--ethertype/--forward-ports/--mac/--device-name` 时在既有配置上覆盖并写回 `[flare]` 段；空参打印当前有效配置（含 psk，供分发给 `lflare` 恢复客户端）。daemon 下一周期自动拾取 |
-| 配置供给 | `lkit install` | 首次安装强制提供 flare psk：控制台安装表单 `Flare recovery psk` 字段（掩码必填）、非交互 `--flare-psk-file`（root-only 私密文件，经 daemon 委托）。psK 在事务开始前（早于网络接管 arm）写入地盘 config.toml `[flare]` 段，0600 权限，保证网络服务被停之前 L2 通道已用该 psk 上线 |
+| 配置供给 | `lkit self install [--flare-psk-file PATH]` | daemon 部署时供给：给 `--flare-psk-file`（root-only 私密文件）则在 daemon 启动前写回 `[flare]` 段（保留既有字段），daemon 首启即用该 psk 托管 flare；未提供时保留既有 `[flare]`，交互终端会提示输入（带用途说明），无终端则回落 daemon 自动生成（恒常启动兜底）。控制台的「部署 daemon」按钮不提示（后台线程），由 daemon 自动生成，用户经 `f` 弹窗或 `lkit flare setup` 管理 |
 | 抓包诊断 | `lkit flare sniff` | 在线设备或 pcap 文件解码 Terrain 帧 |
 
-`[flare]` 段字段：`psk`（必填，≥12 字符）、`device_name`（默认 `landscape-router`）、
+`[flare]` 段字段：`psk`（急救恢复码，必填，≥12 字符）、`device_name`（默认 `landscape-router`）、
 `mac`、`devices`（默认 `any`）、`ethertype`（默认 `0x88B6`）、`forward_ports`（默认
-`22,6443`）、`token`（发现令牌，可选）。psK 保存在 root-only 的
-`<territory>/config.toml`（0600）；TUI Overview 面板按 `f` 可弹窗查看/修改 flare
+`22,6443`）、`token`（发现令牌，可选）。psK（急救恢复码）保存在 root-only 的
+`<territory>/config.toml`（0600）；`lkit install` 完成时会提示恢复通道就绪
+（`lkit flare setup` 查看 psk）；TUI Overview 面板按 `f` 可弹窗查看/修改 flare
 配置与 psk。

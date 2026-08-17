@@ -8,7 +8,7 @@ lkit 地盘(`/root/.lkit/`),见[安装布局与状态](../deployment/layout-and-
 因此 `self remove` 不要求 landscape 已卸载,`uninstall` 也不影响 daemon。
 
 ```text
-lkit self install
+lkit self install [--flare-psk-file <PATH>]
 lkit self upgrade [--version <TAG>]
 lkit self remove
 ```
@@ -27,7 +27,13 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 3. 校验 `/usr/local/bin/lkit` 可执行,并把 unit 定义原件渲染到全局目录
    `/usr/local/lib/lkit/lkit.service`:`ExecStart=/usr/local/bin/lkit daemon`,
    `User=root`、`Restart=always`、`WantedBy=multi-user.target`;
-4. 注册(注册链接 `/etc/systemd/system/lkit.service` → 全局原件)、启用并启动服务,
+4. （可选）供给 急救恢复码:提供 `--flare-psk-file`(root 所有、`0400`/`0600`
+   私密文件)时,在启动 daemon 前把 psk 写入 lkit 地盘 `config.toml` 的 `[flare]` 段
+   (保留既有字段,文件缺失时创建带默认仓库来源的最小配置),daemon 首启即用该 psk
+   托管 flare 服务;未提供时保留既有 `[flare]` 配置,交互终端会提示输入 psk(带用途
+   说明,至少 12 字符),无终端环境(脚本/控制台后台部署)回落 daemon 自动生成,
+   不阻断部署。psK 用途与查看方式见 [flare 协议](../flare/protocol.md);
+5. 注册(注册链接 `/etc/systemd/system/lkit.service` → 全局原件)、启用并启动服务,
    校验 MainPID 非零。
 
 重复执行时:若旧 daemon 仍在运行,注册完成后执行 `restart` 使其加载当前二进制;
@@ -77,6 +83,9 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
   崩溃消失后,遗留事务由 daemon 自动接管(失败激活回滚、中断恢复、卸载前向
   完成等,详见[事务与中断恢复](../deployment/transactions-and-recovery.md));
   恢复目标从 lkit 地盘的状态与事务发现 landscape 根;
+- **恒常托管 flare 服务端**:Linux 上 daemon 启动即托管 Landscape Terrain
+  (L2 防失联通道)服务端,`[flare]` 段缺失或无 psk 时生成随机 psk 并持久化;
+  每周期对比配置指纹,变更时重启 flare 任务拾取新配置,见[flare 协议](../flare/protocol.md);
 - 网络接管待确认阶段仍由 `lkit network confirm|rollback` 人工处理,daemon 不代替确认;
 - CLI 命令持有安装锁期间 daemon 自动让行,不产生并发冲突。
 

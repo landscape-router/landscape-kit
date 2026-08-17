@@ -45,4 +45,4 @@ server 容器 (lkit flare serve --dev any, fake service on 127.0.0.1:6443)
 | 场景 ID | 场景 | 位置 |
 | --- | --- | --- |
 | `FLR-01` 至 `FLR-18` | 见 [scenarios.md](scenarios.md) | `scripts/flare/e2e-*.sh` + `landscape-terrain-proto` 单元测试 |
-| `FLR-19` 至 `FLR-21` | daemon 托管连接 / 安装供给 psk / 完整故障场景（缺口） | `scripts/flare/e2e-daemon.sh` + `install_fixture_e2e/install.rs` + [scenarios.md](scenarios.md) |
+| `FLR-19` 至 `FLR-21` | daemon 托管连接 / `self install` 供给 psk / 完整故障场景（缺口） | `scripts/flare/e2e-daemon.sh` + `install_fixture_e2e/self_cmd.rs` + [scenarios.md](scenarios.md) |

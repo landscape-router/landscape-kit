@@ -9,8 +9,9 @@
 `lkit` 不会凭空创建 `config.toml`；只有显式的偏好/通道配置动作才会写回该文件：
 
 - 交互控制台按 `L` 切换语言会写回 `[ui] language`（见[语言预设](#语言预设)）；
-- 首次安装强制供给 flare psk 时写回 `[flare]` 段（见[flare 恢复通道](#flare-恢复通道)），
-  daemon 首启无 `[flare]` 时也会生成随机 psk 并写回（恒常托管）；
+- `lkit self install --flare-psk-file` 供给急救恢复码时写回 `[flare]` 段
+  （见[flare 恢复通道](#flare-恢复通道)），daemon 首启无 `[flare]` 时也会生成
+  随机 psk 并写回（恒常托管）；
 - `lkit flare setup` 显式写回 `[flare]` 段。
 
 仓库来源选择不会被任何命令持久化，成功、失败、回滚或中断恢复都不会改变该文件；
@@ -127,16 +128,18 @@ token = "发现令牌"                  # 可选
 
 写入路径：
 
-- **首次安装**：控制台安装表单 `Flare recovery psk` 字段（掩码必填）或非交互
-  `--flare-psk-file`（root-only 私密文件）强制提供 psk；在事务开始前（早于网络接管
-  arm）写回 `[flare]` 段，保证网络服务被停之前 L2 通道已用该 psk 上线；
+- **`lkit self install --flare-psk-file`**：daemon 部署时在启动前写回 `[flare]` 段
+  （保留既有字段）；未提供时保留既有 `[flare]`，交互终端提示输入，无终端回落
+  daemon 自动生成，见 [`lkit self`](../commands/self.md)；
 - **`lkit flare setup`**：带 `--psk/--token/--devices/--ethertype/--forward-ports/
   --mac/--device-name` 时在既有配置上覆盖并写回；空参打印当前有效配置（含 psk，
   供分发给 `lflare` 恢复客户端）；
 - **daemon 首启**：无 `[flare]`/psk 时生成随机 psk 并写回。
 
-psK 随本文件以 `0600` 权限保存（`lkit` 写入时强制）；文件缺失时上述动作会创建带
-默认 `[repository]` 的最小配置，与"文件缺失"的缺省回退语义一致。
+`lkit install` 不写回本文件；首次安装完成时会提示 flare 恢复通道就绪
+（`lkit flare setup` 查看 psk）。psK 随本文件以 `0600` 权限保存（`lkit` 写入时强制）；
+文件缺失时上述动作会创建带默认 `[repository]` 的最小配置，与"文件缺失"的缺省
+回退语义一致。
 
 ## 来源变化与资产身份
 `lkit reconcile --repository` 与同版本 `install`/`switch` 的显式来源诊断：

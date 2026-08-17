@@ -168,15 +168,16 @@
 
 ## FLR-20
 
-**安装供给 flare psk 并写入 `[flare]` 配置段**
+**daemon 部署（`lkit self install`）供给急救恢复码并写入 `[flare]` 配置段**
 
 - 测试层：fixture e2e（`install_fixture_e2e`，CI）
 - 状态：`已覆盖`
-- 证据：[install.rs](../../lkit-cli/tests/install_fixture_e2e/install.rs)（`[flare]` 段断言）、
-   `docs/flare/protocol.md` 部署形态
-- 说明：`lkit install`（含 `--takeover-network`）强制要求 flare psk（控制台字段 /
-   `--flare-psk-file`），在事务开始前（早于网络接管 arm）写回地盘 config.toml
-   的 `[flare]` 段，0600 权限；daemon 下一周期自动拾取。
+- 证据：[self_cmd.rs](../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)（`[flare]` 段断言）、
+   [self.md](../../commands/self.md)、[协议规范](protocol.md)
+- 说明：`lkit self install --flare-psk-file`（root-only 私密文件）在 daemon 启动前把
+   psk 写入地盘 config.toml 的 `[flare]` 段（0600），daemon 首启即用该 psk 托管 flare；
+   未提供时保留既有 `[flare]`，交互终端提示输入，无终端回落 daemon 自动生成。
+   重复 `self install` 不改动已配置的 psk。
 
 ## FLR-21
 
@@ -186,7 +187,7 @@
 - 状态：`缺口`
 - 说明：完整场景需要真实 L2 桥 + 容器内 systemd/网络服务破坏：网络接管失败使 IP
    路径不可用后，操作员经 `lflare` 隧道进入路由器执行 `lkit network rollback`。
-   目前由 FLR-19（daemon 托管可连接）、FLR-20（安装供给 psk 早于接管 arm）与
+   目前由 FLR-19（daemon 托管可连接）、FLR-20（daemon 部署供给 psk，早于接管）与
    接管 fixture e2e（[network.rs](../../lkit-cli/tests/install_fixture_e2e/network.rs)）
    分层覆盖，端到端联动留待后续专用容器脚本。
 - 缺口：完整"接管失败 → lflare 连接 → rollback"的集成验证。
