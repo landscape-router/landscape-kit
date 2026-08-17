@@ -282,7 +282,7 @@ machine_shell_bg() {
 machine_dump() {
   local label="$1"
   echo "===== MACHINE DUMP: $label ====="
-  machine_shell 'echo "--- s3.exit:"; cat /tmp/s3.exit 2>/dev/null; echo "--- s3.out:"; cat /tmp/s3.out 2>/dev/null; echo "--- s3.err:"; cat /tmp/s3.err 2>/dev/null' || true
+  machine_shell 'echo "--- s3.exit:"; cat /tmp/s3.exit 2>/dev/null; echo "--- s3.out:"; cat /tmp/s3.out 2>/dev/null; echo "--- s3.err:"; cat /tmp/s3.err 2>/dev/null; echo "--- result.json:"; cat /run/lkit/operations/*.result.json 2>/dev/null; echo "--- stdout.log:"; cat /run/lkit/operations/*.stdout.log 2>/dev/null; echo "--- stderr.log:"; cat /run/lkit/operations/*.stderr.log 2>/dev/null' || true
   machine_shell 'echo "--- transactions:"; for f in /root/.lkit/transactions/*.json; do [ -e "$f" ] || continue; echo "== $f"; cat "$f"; echo; done' || true
   machine_shell 'echo "--- state:"; cat /root/.lkit/state/install-state.json 2>/dev/null || echo "absent"' || true
   machine_shell 'echo "--- operations:"; ls -la /run/lkit/operations/ 2>/dev/null || echo "none"' || true
@@ -493,7 +493,7 @@ restore_scene
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &
 for i in $(seq 1 600); do T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); [ -n "$T" ] && break; sleep 0.02; done; echo "== S-3 txn=[$T]"; test -n "$T"; OPID=$(ls /run/lkit/operations/ | grep -m1 -oE "^[0-9a-f-]+"); test -n "$OPID"; CANCEL="/run/lkit/operations/$OPID.cancel"; echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
-machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
+machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0' || { machine_dump "S-3 worker-not-cancelled"; exit 1; }
 machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1' || { machine_dump "S-3 recovery-timeout"; exit 1; }
 machine_shell "systemctl is-active --quiet lkit.service"
 machine_shell "systemctl is-active --quiet landscape-router.service"
