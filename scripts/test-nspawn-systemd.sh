@@ -465,7 +465,7 @@ restore_scene
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
 machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
-machine_shell 'echo "== S-3 lkit procs:"; ps -eo pid,args | grep "/usr/local/bin/lkit" | grep -v grep || true'
+machine_shell 'echo "== S-3 all procs:"; ps -ef || true'
 machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -INT || true'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; if ! grep -qx 130 /tmp/s3.exit 2>/dev/null; then echo "== S-3 diagnostics: s3.exit=$(cat /tmp/s3.exit 2>/dev/null)"; echo "== S-3 diagnostics: s3.out:"; cat /tmp/s3.out; echo "== S-3 diagnostics: s3.err:"; cat /tmp/s3.err; echo "== S-3 diagnostics: daemon journal:"; journalctl -u lkit.service --no-pager -n 30; echo "== S-3 diagnostics: operations dir:"; ls -la /run/lkit/operations; exit 1; fi'
 machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
