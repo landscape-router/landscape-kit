@@ -39,8 +39,9 @@
 - 阻断项列表 + 建议;
 - daemon 未运行被阻断时含"部署 lkit 常驻服务"按钮:
   **常显 `FOCUS_SELECTED` 反色**(弹窗无焦点环,它是唯一要突出的动作,
-  鼠标点击与 D 键都直接部署);
-- 底行灰字操作提示(Enter 查看详情 / Esc 关闭 / R 重跑,daemon 阻断时含 D 部署);
+  Enter/D 键与鼠标点击都直接部署);
+- 底行灰字操作提示(Enter 查看详情 / Esc 关闭 / R 重跑,daemon 阻断时
+  Enter 部署 daemon);
 - 弹窗内点击=Enter、弹窗外=Esc。
 
 ## 证据

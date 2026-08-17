@@ -47,8 +47,8 @@ pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_BLOCK_INSTALLATION: &str =
 pub(crate) const CONSOLE_CHECKS_DID_NOT_PASS: &str = "console.checks_did_not_pass";
 pub(crate) const CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R: &str =
     "console.dialog_enter_details_esc_close_r";
-pub(crate) const CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R_DEPLOY: &str =
-    "console.dialog_enter_details_esc_close_r_deploy";
+pub(crate) const CONSOLE_DIALOG_ENTER_DEPLOY_ESC_CLOSE_R: &str =
+    "console.dialog_enter_deploy_esc_close_r";
 pub(crate) const CONSOLE_INSTALL_BLOCKED: &str = "console.install_blocked";
 pub(crate) const CONSOLE_LANDSCAPE_NETWORK_TAKEOVER: &str = "console.landscape_network_takeover";
 pub(crate) const CONSOLE_SELECT_WAN_INTERFACE: &str = "console.select_wan_interface";

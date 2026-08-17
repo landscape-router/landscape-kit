@@ -79,6 +79,15 @@ impl ConsoleApp {
         }
         if self.preflight_dialog {
             match key.code {
+                // daemon 未运行被阻断时 Enter 执行部署(按钮常显选中态,
+                // Enter 即主动作):后台执行 `lkit self install`,
+                // 完成后预检自动重跑并放行。
+                KeyCode::Enter if self.preflight_daemon_blocked() => {
+                    if let Err(error) = self.start_daemon_deploy() {
+                        self.notice = error;
+                    }
+                    self.preflight_dialog = false;
+                }
                 KeyCode::Enter => {
                     if matches!(&self.preflight.state, PreflightState::Complete(_)) {
                         self.preflight.expanded = true;
@@ -91,8 +100,7 @@ impl ConsoleApp {
                     self.preflight_dialog = false;
                     self.preflight.restart();
                 }
-                // daemon 未运行被阻断时直接部署:后台执行 `lkit self install`,
-                // 完成后预检自动重跑并放行。
+                // daemon 未运行被阻断时直接部署:D 与 Enter 同义。
                 KeyCode::Char('d' | 'D') if self.preflight_daemon_blocked() => {
                     if let Err(error) = self.start_daemon_deploy() {
                         self.notice = error;

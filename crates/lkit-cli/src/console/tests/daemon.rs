@@ -212,7 +212,7 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Install blocked"));
     assert!(content.contains("[ Deploy the lkit daemon ]"));
-    assert!(content.contains("D deploy daemon"));
+    assert!(content.contains("Enter deploy daemon"));
     let row = content
         .lines()
         .position(|line| line.contains("[ Deploy the lkit daemon ]"))
@@ -221,6 +221,47 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
         app.hits.hit_at(50, row),
         Some(Hit::DeployDaemon),
         "the dialog deploy button must be clickable"
+    );
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&territory);
+}
+
+#[test]
+fn preflight_dialog_enter_starts_deploy_and_closes_the_dialog() {
+    let _language = LanguageGuard::set(Language::En);
+    let (_guard, territory) = territory_with_pidfile("dialog-enter", "99999999\n");
+    let mut app = ConsoleApp::new();
+    app.menu_index = 1;
+    app.focus = Focus::Panel;
+    app.preflight.state = PreflightState::Complete(daemon_blocked_report());
+    app.preflight_dialog = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        !app.preflight_dialog,
+        "Enter must close the blocking dialog"
+    );
+    assert!(
+        !app.preflight.expanded,
+        "Enter must deploy the daemon instead of opening the check list"
+    );
+    assert!(
+        app.deploy_daemon.is_some(),
+        "Enter must start the daemon deploy in the background"
+    );
+
+    for _ in 0..100 {
+        app.update();
+        if app.deploy_daemon.is_none() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
+    assert!(
+        app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
+        "unexpected notice: {}",
+        app.notice
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
