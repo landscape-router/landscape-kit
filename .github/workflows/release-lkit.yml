@@ -1,4 +1,4 @@
-name: Release lkit
+name: Release lkit and lflare
 
 on:
   push:
@@ -95,6 +95,9 @@ jobs:
       - name: Build distribution binary
         run: cargo build --locked --profile dist -p lkit-cli --bin lkit
 
+      - name: Build flare distribution binary
+        run: cargo build --locked --profile dist -p landscape-flare --bin lflare
+
       - name: Stage and verify binary
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
@@ -116,6 +119,22 @@ jobs:
           printf '### %s\n\n- Size: %s bytes\n' \
             "$ARCHITECTURE" "$size" >>"$GITHUB_STEP_SUMMARY"
 
+      - name: Stage and verify flare binary
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          ELF_MACHINE: ${{ matrix.elf_machine }}
+        run: |
+          mkdir -p dist
+          install -m 0755 target/dist/lflare "dist/lflare-linux-$ARCHITECTURE"
+          binary="dist/lflare-linux-$ARCHITECTURE"
+          file "$binary" | grep -F "stripped"
+          readelf -h "$binary" | grep -F "Machine:" | grep -F "$ELF_MACHINE"
+          ldd "$binary" >/dev/null
+          "$binary" --help >/dev/null
+          size=$(stat -c '%s' "$binary")
+          printf '### lflare %s\n\n- Size: %s bytes\n' \
+            "$ARCHITECTURE" "$size" >>"$GITHUB_STEP_SUMMARY"
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
@@ -124,9 +143,59 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload flare binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lflare-linux-${{ matrix.architecture }}
+          path: dist/lflare-linux-${{ matrix.architecture }}
+          if-no-files-found: error
+          retention-days: 1
+
+  build-flare-windows:
+    name: Build lflare (windows-x86_64)
+    needs: verify
+    runs-on: windows-latest
+    env:
+      LIBPCAP_LIBDIR: ${{ github.workspace }}\landscape-flare\vendor\npcap-sdk\Lib\x64
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out landscape-kit
+        uses: actions/checkout@v4
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: release-flare-windows
+
+      - name: Build distribution binary
+        run: cargo build --locked --profile dist -p landscape-flare --bin lflare
+
+      - name: Stage and verify binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/dist/lflare.exe dist/lflare-windows-x86_64.exe
+          & .\dist\lflare-windows-x86_64.exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "lflare --help exited with $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+          $file = Get-Item dist/lflare-windows-x86_64.exe
+          "### lflare windows-x86_64`n`n- Size: $($file.Length) bytes" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lflare-windows-x86_64.exe
+          path: dist/lflare-windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Publish GitHub Release
-    needs: [verify, build]
+    needs: [verify, build, build-flare-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -143,6 +212,13 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Download flare binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lflare-*
+          path: dist
+          merge-multiple: true
+
       - name: Prepare release assets
         env:
           TAG: ${{ github.ref_name }}
@@ -150,7 +226,7 @@ jobs:
           install -m 0755 scripts/install-lkit.sh dist/install.sh
           sed -i "s|releases/latest/download$|releases/download/${TAG}|" dist/install.sh
           cd dist
-          sha256sum lkit-aarch64 lkit-x86_64 install.sh >SHA256SUMS
+          sha256sum lkit-aarch64 lkit-x86_64 lflare-linux-aarch64 lflare-linux-x86_64 lflare-windows-x86_64.exe install.sh >SHA256SUMS
 
       - name: Create GitHub Release
         env:
@@ -168,6 +244,9 @@ jobs:
           gh release create "$TAG" \
             dist/lkit-x86_64 \
             dist/lkit-aarch64 \
+            dist/lflare-linux-x86_64 \
+            dist/lflare-linux-aarch64 \
+            dist/lflare-windows-x86_64.exe \
             dist/SHA256SUMS \
             dist/install.sh \
             --repo "$GITHUB_REPOSITORY" \
