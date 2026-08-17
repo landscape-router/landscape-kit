@@ -279,6 +279,19 @@ machine_shell_bg() {
   return "$bg_status"
 }
 
+machine_dump() {
+  local label="$1"
+  echo "===== MACHINE DUMP: $label ====="
+  machine_shell 'echo "--- s3.exit:"; cat /tmp/s3.exit 2>/dev/null; echo "--- s3.out:"; cat /tmp/s3.out 2>/dev/null; echo "--- s3.err:"; cat /tmp/s3.err 2>/dev/null' || true
+  machine_shell 'echo "--- transactions:"; for f in /root/.lkit/transactions/*.json; do [ -e "$f" ] || continue; echo "== $f"; cat "$f"; echo; done' || true
+  machine_shell 'echo "--- state:"; cat /root/.lkit/state/install-state.json 2>/dev/null || echo "absent"' || true
+  machine_shell 'echo "--- operations:"; ls -la /run/lkit/operations/ 2>/dev/null || echo "none"' || true
+  machine_shell 'echo "--- lkit.service:"; systemctl is-active lkit.service; journalctl -u lkit.service -n 40 --no-pager 2>/dev/null | tail -40' || true
+  machine_shell 'echo "--- landscape-router:"; systemctl is-active landscape-router.service' || true
+  machine_shell 'echo "--- run dir:"; ls -la /root/.lkit/run/ 2>/dev/null || echo "none"' || true
+  echo "===== END MACHINE DUMP ====="
+}
+
 system_bus_ready=false
 for _ in $(seq 1 100); do
   if machine_shell "true" >/dev/null 2>&1; then
@@ -480,8 +493,8 @@ machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &
 for i in $(seq 1 600); do REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); [ -n "$REQUEST" ] && break; sleep 0.02; done; echo "== S-3 request=[$REQUEST]"; test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
-machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1'
-machine_shell 'echo "== S-3 debug: s3.exit=[$(cat /tmp/s3.exit 2>/dev/null)]"; echo "== S-3 debug: s3.out=[$(cat /tmp/s3.out 2>/dev/null)]"; echo "== S-3 debug: s3.err=[$(cat /tmp/s3.err 2>/dev/null)]"; echo "== S-3 debug: txn files:"; for f in /root/.lkit/transactions/*.json; do [ -e "$f" ] && echo "   $f: phase=$(grep -o ""phase" *: *"[a-z_]*"" "$f" | head -1)"; done; echo "== S-3 debug: state=$([ -f /root/.lkit/state/install-state.json ] && echo present || echo absent)"'
+machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1' || { machine_dump "S-3 recovery-timeout"; exit 1; }
+machine_dump "S-3 after-recovery"
 machine_shell "systemctl is-active --quiet lkit.service"
 
 # S-4 daemon 未运行:委托请求必须拒绝(退出码 2)而不是卡住。
