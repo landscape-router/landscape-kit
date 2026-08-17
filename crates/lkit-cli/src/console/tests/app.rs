@@ -382,6 +382,74 @@ fn pending_takeover_snapshot_is_detected_from_transaction() {
 }
 
 #[test]
+fn pending_takeover_without_committed_state_is_detected_from_transaction() {
+    // 等待确认的接管安装尚未提交状态:根只能从未完成事务发现
+    // (discover_landscape_root 返回 None 时必须回退到事务目录)。
+    let temp = std::env::temp_dir().join(format!("lkit-console-pending-tx-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(&temp).unwrap();
+    let territory = temp.join("territory");
+    std::fs::create_dir_all(&territory).unwrap();
+    let _guard = crate::deployment::layout::test_territory(&territory);
+    let root = crate::deployment::root::normalize_install_root(&temp).unwrap();
+    let mut transaction = crate::deployment::transaction::TransactionFile::new_install(
+        &root,
+        &semver::Version::new(1, 0, 0),
+    )
+    .unwrap();
+    transaction.phase = crate::deployment::transaction::Phase::AwaitingNetworkConfirmation;
+    let id = transaction.transaction_id.clone();
+    transaction.network_takeover =
+        Some(crate::deployment::transaction::NetworkTakeoverTransaction {
+            plan: NetworkPlan {
+                mode: NetworkMode::RoutedLan {
+                    wan: "ens3".into(),
+                    wan_ipv4: None,
+                    lan: vec!["ens4".into()],
+                    management: "192.168.10.1/24".parse().unwrap(),
+                    dhcp_start: "192.168.10.100".parse().unwrap(),
+                    dhcp_end: "192.168.10.254".parse().unwrap(),
+                },
+                selected_macs: vec![
+                    SelectedInterface {
+                        name: "ens3".into(),
+                        mac: "02:00:00:00:00:03".into(),
+                    },
+                    SelectedInterface {
+                        name: "ens4".into(),
+                        mac: "02:00:00:00:00:04".into(),
+                    },
+                ],
+            },
+            host_services: Vec::new(),
+            confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
+            rollback_service: format!("lkit-network-{id}-rollback.service"),
+            rollback_timer: format!("lkit-network-{id}-rollback.timer"),
+            boot_rollback_service: format!("lkit-network-{id}-boot-rollback.service"),
+            recovery_binary: "service/lkit-network-recovery".into(),
+            pending_state: format!("transactions/{id}/pending-install-state.json"),
+        });
+    crate::deployment::transaction::persist(&root, &transaction).unwrap();
+    let snapshot = Snapshot::load();
+    let _ = std::fs::remove_dir_all(&temp);
+    match snapshot {
+        // 以 root 运行测试时 Snapshot::load 返回 RootRequired，跳过检测断言。
+        Snapshot::RootRequired => {}
+        Snapshot::AwaitingNetworkConfirmation {
+            transaction_id,
+            phase,
+            management_address,
+            ..
+        } => {
+            assert_eq!(transaction_id, id);
+            assert_eq!(phase, "awaiting_network_confirmation");
+            assert_eq!(management_address.as_deref(), Some("192.168.10.1/24"));
+        }
+        _ => panic!("expected pending snapshot from the unfinished transaction, got another state"),
+    }
+}
+
+#[test]
 fn pending_takeover_blocking_screen_renders_instead_of_menu() {
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();

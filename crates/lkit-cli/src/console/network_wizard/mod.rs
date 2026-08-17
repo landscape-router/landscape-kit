@@ -382,8 +382,17 @@ impl Snapshot {
             return Self::RootRequired;
         }
         let result = (|| -> Result<Self, crate::deployment::plan::InstallError> {
-            let Some(root) = crate::deployment::state::discover_landscape_root()? else {
-                return Ok(Self::NotInstalled);
+            // 待确认的接管安装尚未提交状态:与 `lkit network`/daemon 恢复相同,
+            // 先从已提交状态发现根,失败再从未完成事务发现(见 takeover.rs)。
+            let root = match crate::deployment::state::discover_landscape_root() {
+                Ok(Some(root)) => root,
+                _ => {
+                    match crate::deployment::state::discover_landscape_root_from_unfinished_transaction()
+                    {
+                        Ok(Some(root)) => root,
+                        _ => return Ok(Self::NotInstalled),
+                    }
+                }
             };
             if let Some(transaction) = crate::deployment::transaction::find_unfinished(&root)?
                 && let Some(network) = transaction.network_takeover.as_ref()
