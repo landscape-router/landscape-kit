@@ -63,8 +63,8 @@ scripts under `scripts/`, never in unit tests.
   AF_PACKET, Windows libpcap; `vendor/npcap-sdk/` is tracked).
 - `crates/` — internal Cargo workspace library members: `lkit-hostnet`, `lkit-publish`, `lkit-repository`, `lkit-test-fixture`.
 - `docs/` — specifications and design documents at the repository root (moved from `lkit-cli/docs`).
-- `scripts/` — integration test scripts (flare e2e: `scripts/test-flare.sh` +
-  `scripts/docker/flare/`).
+- `scripts/` — integration test scripts (flare e2e: `scripts/flare/e2e-*.sh` +
+  `scripts/flare/Dockerfile`, see `docs/flare/`).
 
 ## Documentation
 

@@ -11,7 +11,7 @@ systemd 只承担协议与进程托管的薄集成验证。
 | Docker 功能 E2E | `scripts/test-docker-lifecycle.sh` | 普通 Docker 容器、fake systemctl | `dev`、`main`、手动 | S1-S4、S6-S10 安装、切换、备份、恢复、回滚、迁移、reconcile 和卸载 |
 | Docker 换源 E2E | `scripts/test-docker-mirrors.sh` | Debian/Ubuntu/Fedora/Arch 官方镜像容器 | 相关 PR、`dev`、`main`、手动 | `set-mirror` 切换、备份、恢复与 CD 源兜底 |
 | Docker 常用软件 E2E | `scripts/test-docker-software.sh` | Debian/Ubuntu/Fedora/Arch 官方镜像容器 | 相关 PR、`dev`、`main`、手动 | `software install docker` 仓库配置、真实软件包安装与服务启用契约 |
-| flare 协议 E2E | `scripts/test-flare.sh` | 普通 Docker 容器、L2 bridge 网络、`NET_RAW`/`NET_ADMIN` | 相关 PR、`dev`、`main`、手动 | Terrain 隧道握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启、多客户端、限速与锁死 |
+| flare 协议 E2E | `scripts/flare/e2e-docker.sh` 等 4 个脚本 | 普通 Docker 容器、L2 bridge 网络、`NET_RAW`/`NET_ADMIN` | 相关 PR、`dev`、`main`、手动 | Terrain 隧道握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启、多客户端、限速与锁死 |
 | systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、systemd worker、前端断连 |
 | QEMU 网络接管 | `scripts/test-qemu-network-takeover.sh` | GitHub-hosted x86_64 KVM、双 virtio 网卡 | 相关 PR、main、每周、手动 | 真实宿主网络服务、br_lan SSH 确认、未确认重启回滚 |
 | 真实 ifupdown 兼容 | `cargo test -p lkit-hostnet --test ifupdown_real` | Debian ifupdown 容器 | 相关 PR、`dev`/`main`、手动 | ifup/ifquery 脚本生成、备份恢复、命令失败回滚 |
@@ -35,7 +35,7 @@ systemd 只承担协议与进程托管的薄集成验证。
 | docker-lifecycle | `test-docker-lifecycle.yml` | `test-docker-lifecycle.sh` | `docker/lifecycle/` | compose 双容器（rustfs + e2e）功能 E2E |
 | docker-software | `test-docker-software.yml` | `test-docker-software.sh` | `docker/software/` | 多发行版常用软件安装 E2E |
 | docker-mirrors | `test-docker-mirrors.yml` | `test-docker-mirrors.sh` | `docker/mirrors/` | 多发行版换源 E2E |
-| flare | `test-flare.yml` | `test-flare.sh` | `docker/flare/` | L2 bridge 双容器 Terrain 隧道 E2E |
+| flare | `test-flare.yml` | `scripts/flare/e2e-*.sh` | `scripts/flare/` | L2 bridge 双容器 Terrain 隧道 E2E |
 | hostnet-ifupdown | `test-hostnet-ifupdown.yml` | （无，直接 cargo） | （无） | 真实 ifupdown 兼容性 |
 | qemu-network-takeover | `test-qemu-network-takeover.yml` | `test-qemu-network-takeover.sh` | （无） | KVM 双网卡网络接管 |
 | nspawn-systemd | `test-nspawn-systemd.yml` | `test-nspawn-systemd.sh` | （无） | 真实 systemd PID 1 smoke |
@@ -100,7 +100,7 @@ QEMU 层覆盖 nspawn 无法验证的真实网卡接管。它要求 `/dev/kvm`�
 - [Fake Landscape fixture](fixture.md)
 - [Docker 功能 E2E](docker-lifecycle.md)
 - [Docker 常用软件安装 E2E](docker-software.md)
-- [flare 协议 E2E](flare.md)
+- [flare 协议 E2E](../flare/testing.md)
 - [systemd-nspawn 兼容性 smoke](nspawn-systemd.md)
 - [QEMU/KVM 网络接管](qemu-network-takeover.md)
 - [发布、安装与成功切换](scenarios/lifecycle.md)

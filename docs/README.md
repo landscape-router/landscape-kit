@@ -41,7 +41,7 @@
 - [网络重配置(reinit)](network/reinit.md)
 - [`.lkb` 备份与回滚](backup/lkb-and-rollback.md)
 - [发布仓库协议](repository.md)
-- [Landscape Terrain 协议（L2 防失联通道）](protocol/terrain.md)
+- [Landscape Terrain（flare）防失联通道](flare/README.md)
 - [生命周期流程](workflows/lifecycle.md)
 - [验收标准](acceptance.md)
 - [测试体系](testing/README.md)

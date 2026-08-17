@@ -5,16 +5,19 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 宿主 `target/debug` 挂载，无需真实网卡；服务端防护场景需要 `NET_RAW`/`NET_ADMIN`
 （tc netem、原始套接字）。
 
-场景目录：[functional/flare.md](scenarios/functional/flare.md)
+场景目录：[scenarios.md](scenarios.md)
 
 ## 入口
 
 | 位置 | 内容 |
 | --- | --- |
-| `scripts/test-flare.sh` | 单入口：构建 → 依次运行 4 个场景（single-segment、same-segment、multiclient、ratelimit） |
-| `scripts/docker/flare/Dockerfile` | Debian slim 镜像：离线安装 `libpcap0.8 iproute2 netcat-openbsd python3`，内置 4 个测试工具（fake_service/replay_inject/rate_flood/auth_req_flood） |
-| `scripts/docker/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `packages/`（gitignored），使 `docker build` 离线可用 |
-| `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发，`cargo build --locked --workspace` 后运行脚本 |
+| `scripts/flare/e2e-docker.sh` | 单网段全功能场景（握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启） |
+| `scripts/flare/e2e-same-segment.sh` | 同段多客户端场景（并发/优雅重启/硬杀恢复/20 MiB） |
+| `scripts/flare/e2e-multiclient.sh` | 双网段多客户端场景（teardown 隔离/空闲保活） |
+| `scripts/flare/e2e-ratelimit.sh` | 限速与锁死场景（洪泛/伪造失败不冻结） |
+| `scripts/flare/Dockerfile` | Debian slim 镜像：离线安装 `libpcap0.8 iproute2 netcat-openbsd python3`，内置 4 个测试工具（fake_service/replay_inject/rate_flood/auth_req_flood） |
+| `scripts/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `scripts/flare/packages/`（gitignored），使 `docker build` 离线可用 |
+| `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发，`cargo build --locked --workspace` 后依次运行 4 个场景脚本 |
 
 ## 场景拓扑
 
@@ -40,4 +43,4 @@ server 容器 (lkit flare serve --dev any, fake service on 127.0.0.1:6443)
 
 | 场景 ID | 场景 | 位置 |
 | --- | --- | --- |
-| `FLR-01` 至 `FLR-18` | 见 [functional/flare.md](scenarios/functional/flare.md) | `scripts/test-flare.sh` + `landscape-terrain-proto` 单元测试 |
+| `FLR-01` 至 `FLR-18` | 见 [scenarios.md](scenarios.md) | `scripts/flare/e2e-*.sh` + `landscape-terrain-proto` 单元测试 |
