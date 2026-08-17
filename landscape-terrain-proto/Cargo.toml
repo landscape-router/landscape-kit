@@ -1,0 +1,19 @@
+[package]
+name = "landscape-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chacha20poly1305 = "0.10.1"
+rand = "0.10.2"
+scrypt = "0.11"
+sha2 = "0.11.0"
+smoltcp = { version = "0.12", features = ["medium-ip", "proto-ipv4", "socket-tcp"] }
+tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.189"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+mac_address = "1.1.8"
+pcap = "2.4.0"
