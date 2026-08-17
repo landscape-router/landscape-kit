@@ -475,9 +475,13 @@ echo "== worker S-3: the daemon cancels the delegated worker and recovers"
 restore_scene
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
-machine_shell 'for i in $(seq 1 200); do REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); [ -n "$REQUEST" ] && break; sleep 0.1; done; echo "== S-3 request=[$REQUEST]"; test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed 's/\.request\.json$/.cancel/'); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
+# 等 worker 创建事务(Preparing)再写 cancel,保证取消落在可恢复的现场上;
+# cancel 在 Preparing 送达时 daemon 标记 failed(state 保留),越过 preparing 时
+# 恢复前向完成卸载(state 删除),两种恢复语义都接受。
+machine_shell 'for i in $(seq 1 400); do T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); [ -n "$T" ] && break; sleep 0.05; done; echo "== S-3 transaction=[$T]"; test -n "$T"'
+machine_shell 'REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
-machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
+machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1'
 machine_shell "systemctl is-active --quiet lkit.service"
 
 # S-4 daemon 未运行:委托请求必须拒绝(退出码 2)而不是卡住。
