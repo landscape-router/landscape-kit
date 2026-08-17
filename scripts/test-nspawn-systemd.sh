@@ -466,8 +466,7 @@ echo "== worker S-3: the daemon cancels the delegated worker and recovers"
 restore_scene
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
-machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
-machine_shell 'REQUEST=$(ls /run/lkit/operations/*.request.json | head -1); CANCEL="${REQUEST%.request.json}.cancel"; echo "== S-3 cancel file: $CANCEL"; touch "$CANCEL"'
+machine_shell 'for i in $(seq 1 200); do REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); [ -n "$REQUEST" ] && break; sleep 0.1; done; test -n "$REQUEST"; CANCEL="${REQUEST%.request.json}.cancel"; echo "== S-3 cancel file: $CANCEL"; touch "$CANCEL"'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
 machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
 machine_shell "systemctl is-active --quiet lkit.service"
