@@ -454,20 +454,21 @@ machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
 machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
 machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -9 || true'
-machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; if [ -f /root/.lkit/state/install-state.json ]; then echo "== S-2 diagnostics: cli stdout/stderr:"; cat /tmp/s2.out /tmp/s2.err; echo "== S-2 diagnostics: daemon journal:"; journalctl -u lkit.service --no-pager -n 80; echo "== S-2 diagnostics: operations dir:"; ls -la /run/lkit/operations; echo "== S-2 diagnostics: worker stderr:"; cat /run/lkit/operations/*.stderr.log; echo "== S-2 diagnostics: worker result:"; cat /run/lkit/operations/*.result.json; exit 1; fi'
+machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
 machine_shell "! systemctl is-active --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 
-# S-3 Ctrl+C 取消:前端 SIGINT → CLI 返回 130 并写 cancel 文件;daemon 终止
-# 子进程组,下个周期前向完成中断的卸载(恢复语义)。
-echo "== worker S-3: Ctrl+C cancels the delegated operation and the daemon recovers"
+# S-3 取消:委托执行中写 cancel 文件(等价于可取消阶段 Ctrl+C 的委托侧信号),
+# daemon 以 SIGTERM 终止子进程组并写回结果;前端拿到非 0 退出码,daemon 下个
+# 周期前向完成中断的卸载(恢复语义)。注意委托的 uninstall 没有下载阶段,前端
+# Ctrl+C 会被忽略(仅 Downloading 阶段可取消),因此取消由 cancel 文件驱动。
+echo "== worker S-3: the daemon cancels the delegated worker and recovers"
 restore_scene
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
 machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
-machine_shell 'echo "== S-3 all procs:"; ps -ef || true'
-machine_shell 'PID=$(pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1); echo "== S-3 kill INT to $PID"; kill -INT "$PID" || echo "kill failed"; sleep 1; if kill -0 "$PID" 2>/dev/null; then echo "== S-3 still alive 1s after INT"; else echo "== S-3 dead after INT"; fi'
-machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; if ! grep -qx 130 /tmp/s3.exit 2>/dev/null; then echo "== S-3 diagnostics: s3.exit=$(cat /tmp/s3.exit 2>/dev/null)"; echo "== S-3 diagnostics: s3.out:"; cat /tmp/s3.out; echo "== S-3 diagnostics: s3.err:"; cat /tmp/s3.err; echo "== S-3 diagnostics: daemon journal:"; journalctl -u lkit.service --no-pager -n 30; echo "== S-3 diagnostics: operations dir:"; ls -la /run/lkit/operations; exit 1; fi'
+machine_shell 'REQUEST=$(ls /run/lkit/operations/*.request.json | head -1); CANCEL="${REQUEST%.request.json}.cancel"; echo "== S-3 cancel file: $CANCEL"; touch "$CANCEL"'
+machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
 machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
 machine_shell "systemctl is-active --quiet lkit.service"
 

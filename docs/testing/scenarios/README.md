@@ -20,7 +20,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | --- | --- | --- |
 | lkit 自发布与引导安装 | `LKR-01` 至 `LKR-04` | [lkit-release.md](functional/lkit-release.md) |
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
-| Ratatui 管理控制台 | `UI-01` 至 `UI-13` | [console.md](functional/console.md) |
+| Ratatui 管理控制台 | `UI-01` 至 `UI-15` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-07` | [i18n.md](functional/i18n.md) |
 | 首次安装 | `INS-01` 至 `INS-17` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-05` | [migrate.md](functional/migrate.md) |
@@ -70,8 +70,9 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 **委托端到端链路**（daemon worker：CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
 由 systemd-nspawn 兼容性 smoke 在真实 systemd 下覆盖：委托提交与结果回收、
-前端断开后 daemon 独立完成、Ctrl+C 取消 + daemon 恢复、daemon 未运行拒绝、
-`LKIT_LANG` 转发（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
+前端断开后 daemon 独立完成、cancel 文件驱动的取消 + daemon 恢复（uninstall
+无下载阶段，前端 Ctrl+C 按"仅 Downloading 可取消"契约被忽略）、daemon 未运行
+拒绝、`LKIT_LANG` 转发（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
 `delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底仍无直接测试。
 
 发布流程性 smoke（`PUB-08` 生产 RustFS 真实发布后安装、

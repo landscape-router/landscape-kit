@@ -268,6 +268,18 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 （退出码 `2`）并提示运行 `lkit self install`。daemon 由 init 系统
 托管（systemd / OpenRC / sysvinit 受管服务），因此不再依赖临时 systemd unit。
 
+委托前提在更早的位置也有检查，避免用户填写完参数后才失败：
+
+- `lkit check` 与控制台 Install 面板的部署前检查包含 `service.lkit_daemon` 检查项：
+  root 下 daemon 未运行时报告 `error` 并建议 `lkit self install`（控制台未部署
+  daemon 前无法进入安装表单），非 root 会话报告 `warning`；
+- 控制台进入时底栏与 Overview 面板常驻显示 daemon 运行状态；Overview 面板在
+  daemon 未运行时提供“部署 daemon”动作行，确认后在 TUI 内后台执行
+  `lkit self install`（与 CLI 相同的 root 检查、安装锁与 systemd 语义），
+  不退出控制台、不另起 lkit 进程；
+- 控制台激活“开始安装”与网络向导确认摘要时重新检查委托前置条件，未运行时留在
+  面板内提示，不退出控制台。
+
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。

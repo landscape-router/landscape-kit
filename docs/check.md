@@ -177,6 +177,18 @@ DNS `53` 端口是硬性冲突，Landscape DNS 服务无法在端口被占用时
 
 必须明确提示：Landscape 启动 DNS 服务时可能把 `/etc/resolv.conf` 指向 `127.0.0.1`；停止 Landscape 后如果主机无法解析域名，应优先检查该文件。本项只读，不自动备份或修改文件。
 
+### 8. lkit 常驻服务
+
+| 标识符 | 检查内容 | 结果规则 |
+| --- | --- | --- |
+| `service.lkit_daemon` | 全局常驻 daemon（`lkit daemon`）是否运行中（读取地盘 pidfile，进程存活即运行中） | root 且未运行为 `error`；非 root 未运行为 `warning`；运行为 `pass` |
+
+root 会话的安装与生命周期命令（install/switch/update/repair/restore/reinit/uninstall 等）都委托
+给常驻 daemon 执行，daemon 未运行时这些命令必然失败；该检查在部署前就暴露问题，
+建议动作是 `lkit self install`（注册并启动 daemon）。非 root 会话内联执行命令，不要求
+daemon，只报告 `warning`。控制台 Install 面板的部署前检查复用本检查：root 下 daemon
+未运行时，检查汇总为阻断状态，未部署 daemon 前无法进入安装表单。
+
 ## 输出顺序
 
 CLI 按以下顺序输出，保证人工阅读和未来日志解析稳定：
@@ -188,7 +200,8 @@ CLI 按以下顺序输出，保证人工阅读和未来日志解析稳定：
 5. 端口冲突；
 6. 系统服务与安全策略；
 7. DNS 配置风险；
-8. 汇总结果和继续部署建议。
+8. lkit 常驻服务；
+9. 汇总结果和继续部署建议。
 
 每个项目只输出一条主结果；详细的命令输出、配置来源和占用者信息放入该项目的 `details` 字段或 verbose 输出，避免默认报告过长。
 

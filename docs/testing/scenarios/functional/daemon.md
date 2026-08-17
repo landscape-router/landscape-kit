@@ -49,8 +49,9 @@ E2E 全部以 `--test-runtime` 内联执行，从不走真实委托。真实形�
 [systemd-nspawn 兼容性 smoke](../systemd-smoke.md#sys-03)（`scripts/test-nspawn-systemd.sh`，
 仅 CI/手动运行）：编译好的 lkit 进入真实 systemd 容器，`self install` 由 systemd
 托管 daemon，CLI 以真实委托执行卸载——覆盖提交与结果回收（S-1）、前端断开后
-daemon 独立完成（S-2）、Ctrl+C 取消 + daemon 恢复（S-3）、daemon 未运行拒绝
-（S-4）、`LKIT_LANG` 转发（S-5）。
+daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-3，uninstall
+无下载阶段，前端 Ctrl+C 按"仅 Downloading 可取消"契约被忽略）、daemon 未运行
+拒绝（S-4）、`LKIT_LANG` 转发（S-5）。
 
 `delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底（`CANCEL_GRACE_POLLS`
 超时后强杀）仍无直接测试。

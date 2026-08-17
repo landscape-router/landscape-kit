@@ -156,3 +156,36 @@
   （不限制 SSH 会话来源）。`rolling_back` 阶段“确认执行”不可用，只留“稍后”。
 - 缺口：PTY E2E 在非 root 环境跳过（快照显示 RootRequired），阻塞屏的完整端到端路径
   只在 root 环境验证；确认执行的委托 worker 全屏路径与 QEMU 现场未自动化。
+
+## UI-14
+
+**daemon 运行状态在 check、进入控制台与 Overview 面板提前展示并可部署**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`部分覆盖`
+- 证据：[`lkit check` 规格](../../../check.md)、[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)、[daemon_worker 测试](../../../../crates/lkit-cli/src/daemon_worker/mod.rs)
+- 说明：`lkit check` 与 Install 面板部署前检查包含 `service.lkit_daemon` 项：daemon
+  运行中为 `pass`；root 下未运行为 `error` 并建议 `lkit self install`（控制台未部署
+  daemon 前无法进入安装表单）；非 root 未运行只报 `warning`。进入控制台时 root 下
+  daemon 未运行，底栏提示行直接显示警告；Overview 面板常驻显示 daemon 运行状态行，
+  未运行时显示“部署 lkit 常驻服务”动作行：Enter 打开确认层，确认后在 TUI 内后台
+  线程执行 `lkit self install`（进度弹层，结果写底栏，不退出控制台），成功后状态行
+  变绿、动作行消失。
+- 缺口：`delegation_blocked` 的 root 分支依赖真实 euid，标准单测环境（非 root）只
+  覆盖 `daemon_is_running` 的 pidfile 语义、检查函数分支与部署后台线程的失败路径
+  （非 root 得到 root 权限错误）；root 环境的真实 systemd 部署与 TUI 现场待补充。
+
+## UI-15
+
+**激活“开始安装”与网络向导确认摘要前复查 daemon，未运行不退出控制台**
+
+- 测试层：Rust 单元
+- 状态：`部分覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
+- 说明：root 下 daemon 未运行（含检查结果过时的情况）时，“开始安装”与网络向导
+  确认摘要不再退出 TUI 委托，而是留在面板内提示“lkit 常驻服务未运行;请用
+  `lkit self install` 部署”，避免用户填写完所有安装参数、退出控制台后才得到
+  `the lkit daemon is not running` 错误（CLI 命令模式仍由 `delegate()` 以退出码 `2`
+  拒绝，见 [`SYS-03`](../systemd-smoke.md#sys-03)）。
+- 缺口：root 分支依赖真实 euid 与地盘 pidfile，标准单测只覆盖非 root（不阻断）
+  路径；root 环境的 TUI 现场行为待补充。

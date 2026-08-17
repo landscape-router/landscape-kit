@@ -29,8 +29,10 @@
 - **S-1 委托提交与结果回收**：CLI 全程等待委托的 uninstall 提交，断言状态删除、
   注册链接移除、`current` 移除、服务停止、保护 `.lkb` 保留、daemon 存活；
 - **S-2 前端断开**：请求写入后 SIGKILL 前端进程，daemon 脱离会话独立完成卸载；
-- **S-3 Ctrl+C 取消**：前端 SIGINT → CLI 返回 `130` 并写 cancel 文件；daemon 以
-  SIGTERM 终止子进程组，下个周期前向完成中断的卸载（恢复语义）；
+- **S-3 cancel 文件取消**：委托执行中写 cancel 文件（等价于可取消阶段 Ctrl+C 的
+  委托侧信号）→ daemon 以 SIGTERM 终止子进程组并写回非 0 结果，前端拿到退出码；
+  下个周期前向完成中断的卸载（恢复语义）。委托的 uninstall 没有下载阶段，前端
+  Ctrl+C 被忽略（仅 `Downloading` 阶段可取消）；
 - **S-4 daemon 未运行**：`systemctl stop lkit.service` 后委托请求必须拒绝
   （退出码 `2` + "daemon is not running"），不卡住；
 - **S-5 语言转发**：CLI 的 `LKIT_LANG=zh` 进入委托请求，worker 子进程用同一语言
