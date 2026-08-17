@@ -47,22 +47,23 @@ pub(crate) fn probe(host: &Host, mirror: MirrorName) -> MirrorStatus {
         return MirrorStatus::Unknown;
     };
     let mut any_available = false;
-    let mut any_unavailable = false;
+    let mut any_unknown = false;
     for url in &urls {
         match check(&client, url) {
             MirrorStatus::Available => any_available = true,
-            MirrorStatus::Unavailable => any_unavailable = true,
-            MirrorStatus::Unknown => {}
+            MirrorStatus::Unavailable => {}
+            MirrorStatus::Unknown => any_unknown = true,
         }
     }
-    // 多个候选 URL 时（如 Fedora 的两种镜像布局）任一可用即可；全部明确 404
-    // 才判不可用，避免布局变体 404 误伤整体判定。
+    // 多个候选 URL 时（如 Fedora 的两种镜像布局）任一可用即可；只有全部候选
+    // 都明确 404 才判不可用，混有网络失败/403 时按未知处理（警告后继续），
+    // 避免单个布局变体或瞬时抖动误伤整体判定。
     if any_available {
         MirrorStatus::Available
-    } else if any_unavailable {
-        MirrorStatus::Unavailable
-    } else {
+    } else if any_unknown {
         MirrorStatus::Unknown
+    } else {
+        MirrorStatus::Unavailable
     }
 }
 
