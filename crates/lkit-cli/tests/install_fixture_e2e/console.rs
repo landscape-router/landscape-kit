@@ -265,7 +265,10 @@ fn language_toggle_persists_across_console_sessions() {
     let mut child = command.spawn().unwrap();
     pty.read_until("L  Language: English (en)", Duration::from_secs(10));
     pty.master.write_all(b"l").unwrap();
-    pty.read_until("L  语言：中文 (zh)", Duration::from_secs(5));
+    // ratatui 的增量 diff 对全角字符的列定位会让中文状态行的长串在 pty 字节流
+    // 中不连续(如 "(zh)" 的前缀被跳过);"zh" 是切换后唯一出现的稳定锚点,
+    // 渲染内容本身由 console 单元测试的 buffer 断言覆盖,这里只验证切换生效。
+    pty.read_until("zh", Duration::from_secs(5));
     let config = std::fs::read_to_string(&config_path).unwrap();
     assert!(config.contains("[ui]"), "config: {config}");
     assert!(config.contains("language = \"zh\""), "config: {config}");
@@ -282,7 +285,7 @@ fn language_toggle_persists_across_console_sessions() {
     let mut pty = Pty::open();
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
-    pty.read_until("L  语言：中文 (zh)", Duration::from_secs(10));
+    pty.read_until("zh", Duration::from_secs(10));
     pty.master.write_all(b"l").unwrap();
     pty.read_until("L  Language: English (en)", Duration::from_secs(5));
     let config = std::fs::read_to_string(&config_path).unwrap();
