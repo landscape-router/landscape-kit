@@ -6,6 +6,7 @@ use super::mirror::MirrorRow;
 use super::network_wizard::{NetworkWizard, WizardStep};
 use super::preflight::{GateState, PreflightState};
 use super::reinit::{ReinitField, ReinitStep};
+use super::software::SoftwareRow;
 use super::widgets::{Focus, Hit, Menu};
 use super::{ConsoleAction, ConsoleApp, ExitState};
 
@@ -72,6 +73,38 @@ impl ConsoleApp {
             if key.code == KeyCode::Esc {
                 self.software.cancel_confirming = true;
             }
+            return None;
+        }
+        if self.software.base_cancel_confirming {
+            // 基础包安装取消确认层:Enter 确认取消(置位标志终止 worker),
+            // Esc 关闭继续安装。
+            match key.code {
+                KeyCode::Enter => {
+                    if let Some(run) = &self.software.base_install {
+                        run.cancel.store(true, Ordering::Relaxed);
+                    }
+                    self.software.base_cancel_confirming = false;
+                }
+                KeyCode::Esc => self.software.base_cancel_confirming = false,
+                _ => {}
+            }
+            return None;
+        }
+        if self.software.base_install.is_some() {
+            // 基础包安装进行中:Esc 打开取消确认层,其余按键忽略。
+            if key.code == KeyCode::Esc {
+                self.software.base_cancel_confirming = true;
+            }
+            return None;
+        }
+        if self.menu() == Menu::Software
+            && matches!(
+                &self.software.base_packages,
+                super::software::BasePackagesState::Choosing { .. }
+            )
+        {
+            // 基础包弹框消费全部按键(与 focus 无关)。
+            let _ = self.handle_software_key(key);
             return None;
         }
         if self.deploy_daemon.is_some() {
@@ -465,9 +498,26 @@ impl ConsoleApp {
                 }
                 self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
             }
-            Hit::SoftwareField(software) => {
+            Hit::SoftwareField(_) => {
                 self.focus = Focus::Panel;
-                self.software.selected = Some(software);
+                self.software.selected = SoftwareRow::Docker;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::SoftwareBasePackages => {
+                self.focus = Focus::Panel;
+                self.software.selected = SoftwareRow::BasePackages;
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            }
+            Hit::BasePackageRow(index) => {
+                if let Some(dialog) = self.software.base_dialog_mut() {
+                    dialog.cursor = index;
+                }
+                self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            }
+            Hit::BasePackageConfirm => {
+                if let Some(dialog) = self.software.base_dialog_mut() {
+                    dialog.cursor = dialog.row_count() - 1;
+                }
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             Hit::SoftwareSourceToggle => {

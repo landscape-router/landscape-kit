@@ -1,25 +1,41 @@
 # `lkit software`
 
-安装当前主机的常用软件（常用软件助手）。第一个（也是当前唯一的）软件是 Docker 容器
-引擎；菜单与命令结构按软件列表设计，后续软件可直接扩展。
+安装当前主机的常用软件（常用软件助手）。受管条目分两类：常用软件与 Landscape 依赖的
+基础系统包。
 
 ```text
 lkit software list
 lkit software install docker [--source official|aliyun|tencent|huawei|tuna|ustc] [--yes]
+lkit software install base-packages [--packages ppp,iproute2,iw,hostapd,procps] [--yes]
 ```
 
-无参数且连接终端时进入交互选择：先列出软件（含安装状态）供选择，再选择安装来源并
-确认后执行。`--non-interactive` 且无参数时报参数使用错误（退出码 `2`）。
+无参数且连接终端时进入交互选择：先列出受管条目（含安装状态）供选择，再选择安装来源
+（docker）或直接确认（base-packages）。`--non-interactive` 且无参数时报参数使用错误
+（退出码 `2`）。
 
 ## 软件列表与状态
 
-`software list` 只读列出受管软件及安装状态（检测常见安装路径下是否存在可执行文件，
-不做版本比较）：
+`software list` 只读列出受管条目及安装状态（按 PATH 探测可执行文件，不做版本比较）：
 
 ```text
 software: common software for Debian:
   - Docker (docker) [not installed]
+  - pppd (ppp) [not installed]
+  - ip (iproute2) [installed]
+  - iw (iw) [not installed]
+  - hostapd (hostapd) [not installed]
+  - sysctl (procps) [installed]
 ```
+
+## 基础系统包
+
+`base-packages` 安装 Landscape 运行依赖的基础系统包：`ppp`（pppd）、`iproute2`（ip）、
+`iw`、`hostapd`、`procps`（sysctl）。`--packages` 限定子集（逗号分隔），缺省安装全部
+缺失的包；已安装的包自动跳过。包管理器按 PATH 探测的 `apt-get`、`dnf`/`yum`、
+`pacman` 或 `zypper` 选择（包名按发行版映射，如 dnf 系的 `iproute`、`procps-ng`），
+未识别到支持的包管理器时报错。apt 家族会先执行 `apt-get update` 刷新包列表
+（精简镜像可能没有包索引），再执行安装。`--source` 仅适用于 docker，与
+`base-packages` 同时使用属于参数使用错误。
 
 ## 安装来源
 

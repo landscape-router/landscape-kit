@@ -3,6 +3,7 @@ use super::super::*;
 use super::support::*;
 use crate::i18n::Language;
 use crate::mirror::{Family, Host};
+use crate::software::base::{BasePackage, BasePackageDialog};
 use crate::software::{DockerSource, InstallPhase, Software};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -75,17 +76,25 @@ fn software_panel_detection_failure_is_shown() {
 }
 
 #[test]
-fn software_panel_up_down_clamps_at_single_row() {
+fn software_panel_up_down_navigates_between_rows() {
     let mut app = software_ready_app();
-    assert_eq!(app.software.selected, Some(Software::Docker));
+    assert_eq!(app.software.selected, SoftwareRow::Docker);
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.software.selected, SoftwareRow::BasePackages);
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(
         app.software.selected,
-        Some(Software::Docker),
-        "only one software row"
+        SoftwareRow::BasePackages,
+        "cursor must clamp at the last row"
     );
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.software.selected, Some(Software::Docker));
+    assert_eq!(app.software.selected, SoftwareRow::Docker);
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(
+        app.software.selected,
+        SoftwareRow::Docker,
+        "cursor must clamp at the first row"
+    );
 }
 
 #[test]
@@ -336,7 +345,7 @@ fn software_rows_are_mouse_clickable() {
         panic!("no clickable software row found");
     };
     app.handle_mouse(mouse_click(40, row));
-    assert_eq!(app.software.selected, Some(Software::Docker));
+    assert_eq!(app.software.selected, SoftwareRow::Docker);
     assert!(app.software.confirming.is_some());
 }
 
@@ -385,4 +394,205 @@ fn unique_suffix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64
+}
+
+fn controlled_base_dialog() -> BasePackageDialog {
+    use crate::software::base::BasePackageEntry;
+    BasePackageDialog {
+        entries: vec![
+            BasePackageEntry {
+                package: BasePackage::Ppp,
+                installed: false,
+                selected: true,
+            },
+            BasePackageEntry {
+                package: BasePackage::Iproute2,
+                installed: true,
+                selected: true,
+            },
+            BasePackageEntry {
+                package: BasePackage::Iw,
+                installed: false,
+                selected: false,
+            },
+        ],
+        cursor: 0,
+    }
+}
+
+fn choosing_base_dialog(previous: BasePackagesState) -> BasePackagesState {
+    BasePackagesState::Choosing {
+        dialog: controlled_base_dialog(),
+        previous: Box::new(previous),
+    }
+}
+
+#[test]
+fn software_panel_renders_base_packages_row_with_missing_count() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = software_ready_app();
+    app.software.base_installed = vec![false, true, false, false, true];
+    app.software.selected = SoftwareRow::BasePackages;
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Base packages"));
+    assert!(content.contains("3 missing"));
+}
+
+#[test]
+fn base_packages_dialog_renders_installed_and_selected_rows() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = software_ready_app();
+    app.software.base_packages = choosing_base_dialog(BasePackagesState::NotChosen);
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Base packages"));
+    assert!(content.contains("pppd (ppp)"));
+    assert!(content.contains("[x]"));
+    assert!(content.contains("ip (iproute2)"));
+    assert!(content.contains("✓"));
+    assert!(content.contains("installed"));
+    assert!(content.contains("[ ]"));
+    assert!(content.contains("Install selected packages"));
+    assert!(content.contains("Space toggles a package"));
+}
+
+#[test]
+fn base_packages_dialog_toggles_and_confirms_selection() {
+    let mut app = software_ready_app();
+    app.software.base_packages = choosing_base_dialog(BasePackagesState::NotChosen);
+
+    // 第一行(ppp 缺失已勾选):Space 取消勾选。
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    let dialog = app.software.base_dialog_mut().unwrap();
+    assert!(!dialog.entries[0].selected);
+
+    // 已安装的行不可切换。
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    let dialog = app.software.base_dialog_mut().unwrap();
+    assert!(
+        dialog.entries[1].selected,
+        "installed rows cannot be toggled"
+    );
+
+    // 移到 iw 行勾选,再移到确认行提交。
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let dialog = app.software.base_dialog_mut().unwrap();
+    assert!(dialog.entries[2].selected);
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    let BasePackagesState::Choosing { dialog, .. } = &app.software.base_packages else {
+        panic!("dialog must stay open");
+    };
+    assert!(dialog.on_confirm_row());
+}
+
+#[test]
+fn base_packages_dialog_confirm_starts_install_with_selection() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = software_ready_app();
+    app.software.base_packages = choosing_base_dialog(BasePackagesState::NotChosen);
+    // 移到 iw 行勾选,再移到确认行后 Enter:弹框关闭,启动后台安装
+    // (非 root 权限策略下会拒绝并提示)。
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let BasePackagesState::Chosen(packages) = &app.software.base_packages else {
+        panic!("confirm must close the dialog with the selection");
+    };
+    assert_eq!(packages, &[BasePackage::Ppp, BasePackage::Iw]);
+    if app.software.base_install.is_none() {
+        assert!(
+            app.notice.contains("root privileges are required"),
+            "unexpected notice: {}",
+            app.notice
+        );
+    }
+}
+
+#[test]
+fn base_packages_dialog_esc_restores_previous_choice() {
+    let mut app = software_ready_app();
+    app.software.base_packages =
+        choosing_base_dialog(BasePackagesState::Chosen(vec![BasePackage::Ppp]));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let BasePackagesState::Chosen(packages) = &app.software.base_packages else {
+        panic!("Esc must restore the previous choice");
+    };
+    assert_eq!(packages, &[BasePackage::Ppp]);
+
+    app.software.base_packages = choosing_base_dialog(BasePackagesState::NotChosen);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(matches!(
+        app.software.base_packages,
+        BasePackagesState::NotChosen
+    ));
+}
+
+#[test]
+fn base_packages_enter_on_row_opens_dialog_and_navigates_back_to_docker() {
+    let mut app = software_ready_app();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.software.selected, SoftwareRow::BasePackages);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(
+        app.software.base_packages,
+        BasePackagesState::Choosing { .. }
+    ));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(matches!(
+        app.software.base_packages,
+        BasePackagesState::NotChosen
+    ));
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.software.selected, SoftwareRow::Docker);
+}
+
+#[test]
+fn base_packages_progress_dialog_renders_and_esc_opens_cancel_layer() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let _language = LanguageGuard::set(Language::En);
+    let (_, receiver) = std::sync::mpsc::channel();
+    let mut app = software_ready_app();
+    app.software.base_install = Some(BasePackagesInstallRun {
+        receiver,
+        cancel: Arc::new(AtomicBool::new(false)),
+    });
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Installing base packages"));
+    assert!(content.contains("Esc Cancel installation"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.software.base_cancel_confirming);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.software.base_cancel_confirming);
+}
+
+#[test]
+fn base_packages_cancel_confirm_sets_the_cancel_flag() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let mut app = software_ready_app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (_, receiver) = std::sync::mpsc::channel();
+    app.software.base_install = Some(BasePackagesInstallRun {
+        receiver,
+        cancel: Arc::clone(&cancel),
+    });
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.software.base_cancel_confirming);
+    assert!(
+        cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "confirming the cancel must set the worker cancel flag"
+    );
 }

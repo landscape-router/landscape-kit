@@ -1,10 +1,11 @@
 use std::process::ExitCode;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::interaction::interactive::Tty;
 use crate::interaction::plan;
 use crate::mirror::{self, Host};
+use crate::software::base::BasePackage;
 use crate::software::{self, DockerSource, SoftwareError};
 
 #[derive(Debug, Args)]
@@ -21,13 +22,28 @@ pub enum SoftwareAction {
     Install(SoftwareInstall),
 }
 
+/// 可安装的软件目标:常用软件(Docker)与 Landscape 依赖的基础系统包。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum InstallTarget {
+    /// Docker 容器引擎
+    #[value(name = "docker")]
+    Docker,
+    /// Landscape 依赖的基础系统包(ppp、iproute2、iw、hostapd、procps)
+    #[value(name = "base-packages")]
+    BasePackages,
+}
+
 #[derive(Debug, Args)]
 pub struct SoftwareInstall {
-    /// Software to install: docker
-    pub software: software::Software,
-    /// Source to install from: official, aliyun, tencent, huawei, tuna or ustc
+    /// Software to install: docker or base-packages
+    pub software: InstallTarget,
+    /// Source to install from (docker only): official, aliyun, tencent, huawei, tuna or ustc
     #[arg(long, value_enum, value_name = "SOURCE")]
     pub source: Option<DockerSource>,
+    /// Base packages to install (base-packages only), comma separated;
+    /// omitted means all missing ones
+    #[arg(long, value_name = "PACKAGES", value_delimiter = ',')]
+    pub packages: Option<Vec<BasePackage>>,
     /// Skip the interactive confirmation
     #[arg(long)]
     pub yes: bool,
@@ -61,10 +77,25 @@ fn run_list(host: &Host) -> ExitCode {
         };
         println!("  - {} ({}) [{}]", software.label(), software.id(), status);
     }
+    for package in BasePackage::all() {
+        let status = if package.installed() {
+            crate::tr!(crate::keys::SOFTWARE_INSTALLED)
+        } else {
+            crate::tr!(crate::keys::SOFTWARE_NOT_INSTALLED)
+        };
+        println!("  - {} ({}) [{}]", package.label(), package.id(), status);
+    }
     ExitCode::SUCCESS
 }
 
 fn run_install(host: &Host, install: &SoftwareInstall) -> ExitCode {
+    match install.software {
+        InstallTarget::Docker => run_docker_install(host, install),
+        InstallTarget::BasePackages => run_base_install(install),
+    }
+}
+
+fn run_docker_install(host: &Host, install: &SoftwareInstall) -> ExitCode {
     let source = match resolve_source(host, install) {
         Ok(source) => source,
         Err(code) => return code,
@@ -79,7 +110,7 @@ fn run_install(host: &Host, install: &SoftwareInstall) -> ExitCode {
         };
         let confirmed = match tty.confirm(&crate::tr!(
             crate::keys::SOFTWARE_CONFIRM_INSTALL,
-            software = install.software.label(),
+            software = software::Software::Docker.label(),
             source = source.label()
         )) {
             Ok(confirmed) => confirmed,
@@ -90,7 +121,55 @@ fn run_install(host: &Host, install: &SoftwareInstall) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    execute_install(host, install.software, source, true)
+    execute_install(host, software::Software::Docker, source, true)
+}
+
+/// 安装缺失的基础系统包:缺省安装全部缺失包,`--packages` 限定子集。
+/// 已安装的包自动跳过;包管理器输出流到终端。
+fn run_base_install(install: &SoftwareInstall) -> ExitCode {
+    if install.source.is_some() {
+        return fail_usage(crate::tr!(crate::keys::SOFTWARE_BASE_PACKAGES_NO_SOURCE));
+    }
+    if let Err(error) = require_root() {
+        return fail(error);
+    }
+    let packages = match &install.packages {
+        Some(packages) => packages.clone(),
+        None => BasePackage::all().to_vec(),
+    };
+    if !install.yes && !crate::interaction::interactive::is_non_interactive() {
+        let mut tty = match Tty::open() {
+            Ok(tty) => tty,
+            Err(error) => return fail_install(&error),
+        };
+        let labels = packages
+            .iter()
+            .map(|package| package.label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let confirmed = match tty.confirm(&crate::tr!(
+            crate::keys::SOFTWARE_BASE_PACKAGES_CONFIRM_INSTALL,
+            packages = labels
+        )) {
+            Ok(confirmed) => confirmed,
+            Err(error) => return fail_install(&error),
+        };
+        if !confirmed {
+            println!("software: {}", crate::tr!(crate::keys::SOFTWARE_CANCELLED));
+            return ExitCode::FAILURE;
+        }
+    }
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match software::base::install(&packages, true, &cancel) {
+        Ok(()) => {
+            println!(
+                "software: {}",
+                crate::tr!(crate::keys::SOFTWARE_BASE_PACKAGES_INSTALLED_OK)
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error),
+    }
 }
 
 /// 无参数且非交互：需要至少一个参数。
@@ -105,17 +184,34 @@ fn run_interactive(host: &Host) -> ExitCode {
         Ok(tty) => tty,
         Err(error) => return fail_install(&error),
     };
-    let options: Vec<String> = software::Software::all()
-        .into_iter()
-        .map(|software| {
-            let status = if software.installed() {
+    let docker = software::Software::all()[0];
+    let base_missing = BasePackage::all()
+        .iter()
+        .filter(|package| !package.installed())
+        .count();
+    let options: Vec<String> = vec![
+        format!(
+            "{} [{}]",
+            docker.label(),
+            if docker.installed() {
                 crate::tr!(crate::keys::SOFTWARE_INSTALLED)
             } else {
                 crate::tr!(crate::keys::SOFTWARE_NOT_INSTALLED)
-            };
-            format!("{} [{}]", software.label(), status)
-        })
-        .collect();
+            }
+        ),
+        format!(
+            "{} [{}]",
+            crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_ROW),
+            if base_missing == 0 {
+                crate::tr!(crate::keys::SOFTWARE_INSTALLED)
+            } else {
+                crate::tr!(
+                    crate::keys::CONSOLE_BASE_PACKAGES_MISSING,
+                    count = base_missing
+                )
+            }
+        ),
+    ];
     let selected = match tty.select_one(
         &crate::tr!(crate::keys::SOFTWARE_SELECT_SOFTWARE),
         &options,
@@ -124,22 +220,56 @@ fn run_interactive(host: &Host) -> ExitCode {
         Ok(selected) => selected,
         Err(error) => return fail_install(&error),
     };
-    let software = software::Software::all()[selected];
-    if software.installed() {
-        println!(
-            "software: {}",
-            crate::tr!(
-                crate::keys::SOFTWARE_ALREADY_INSTALLED,
-                software = software.label()
-            )
-        );
-        return ExitCode::FAILURE;
+    match selected {
+        0 => {
+            if docker.installed() {
+                println!(
+                    "software: {}",
+                    crate::tr!(
+                        crate::keys::SOFTWARE_ALREADY_INSTALLED,
+                        software = docker.label()
+                    )
+                );
+                return ExitCode::FAILURE;
+            }
+            let source = match prompt_source(host, &mut tty) {
+                Ok(source) => source,
+                Err(code) => return code,
+            };
+            execute_install(host, docker, source, false)
+        }
+        1 => {
+            let packages = BasePackage::all().to_vec();
+            let labels = packages
+                .iter()
+                .map(|package| package.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let confirmed = match tty.confirm(&crate::tr!(
+                crate::keys::SOFTWARE_BASE_PACKAGES_CONFIRM_INSTALL,
+                packages = labels
+            )) {
+                Ok(confirmed) => confirmed,
+                Err(error) => return fail_install(&error),
+            };
+            if !confirmed {
+                println!("software: {}", crate::tr!(crate::keys::SOFTWARE_CANCELLED));
+                return ExitCode::FAILURE;
+            }
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            match software::base::install(&packages, false, &cancel) {
+                Ok(()) => {
+                    println!(
+                        "software: {}",
+                        crate::tr!(crate::keys::SOFTWARE_BASE_PACKAGES_INSTALLED_OK)
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => fail(error),
+            }
+        }
+        _ => unreachable!(),
     }
-    let source = match prompt_source(host, &mut tty) {
-        Ok(source) => source,
-        Err(code) => return code,
-    };
-    execute_install(host, software, source, false)
 }
 
 /// 解析安装来源：显式 `--source` 直接使用；否则交互选择，非交互时
@@ -248,7 +378,7 @@ mod tests {
         let SoftwareAction::Install(install) = software.action.unwrap() else {
             panic!("expected install action");
         };
-        assert_eq!(install.software, software::Software::Docker);
+        assert_eq!(install.software, InstallTarget::Docker);
         assert_eq!(install.source, Some(DockerSource::Aliyun));
         assert!(!install.yes);
     }
@@ -259,8 +389,40 @@ mod tests {
         let SoftwareAction::Install(install) = software.action.unwrap() else {
             panic!("expected install action");
         };
-        assert_eq!(install.software, software::Software::Docker);
+        assert_eq!(install.software, InstallTarget::Docker);
         assert_eq!(install.source, None);
+    }
+
+    #[test]
+    fn parses_base_packages_install() {
+        let software = parse(&[
+            "software",
+            "install",
+            "base-packages",
+            "--packages",
+            "ppp,iproute2",
+        ])
+        .unwrap();
+        let SoftwareAction::Install(install) = software.action.unwrap() else {
+            panic!("expected install action");
+        };
+        assert_eq!(install.software, InstallTarget::BasePackages);
+        assert_eq!(
+            install.packages.as_deref(),
+            Some([BasePackage::Ppp, BasePackage::Iproute2].as_slice())
+        );
+        assert!(install.source.is_none());
+    }
+
+    #[test]
+    fn parses_base_packages_install_without_packages() {
+        let software = parse(&["software", "install", "base-packages", "--yes"]).unwrap();
+        let SoftwareAction::Install(install) = software.action.unwrap() else {
+            panic!("expected install action");
+        };
+        assert_eq!(install.software, InstallTarget::BasePackages);
+        assert!(install.packages.is_none());
+        assert!(install.yes);
     }
 
     #[test]
@@ -283,5 +445,10 @@ mod tests {
     #[test]
     fn rejects_invalid_source() {
         assert!(parse(&["software", "install", "docker", "--source", "evil"]).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_packages() {
+        assert!(parse(&["software", "install", "base-packages", "--packages", "evil"]).is_err());
     }
 }

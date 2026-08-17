@@ -295,6 +295,26 @@ pub(crate) const CONSOLE_SOFTWARE_CANCEL_PRESS_ENTER: &str = "console.software_c
 pub(crate) const CONSOLE_SOFTWARE_HINT_PANEL: &str = "console.software_hint_panel";
 pub(crate) const CONSOLE_SOFTWARE_HINT_CONFIRM: &str = "console.software_hint_confirm";
 pub(crate) const CONSOLE_SOFTWARE_HINT_RUNNING: &str = "console.software_hint_running";
+pub(crate) const CONSOLE_BASE_PACKAGES_ROW: &str = "console.base_packages_row";
+pub(crate) const CONSOLE_BASE_PACKAGES_MISSING: &str = "console.base_packages_missing";
+pub(crate) const CONSOLE_BASE_PACKAGES_DIALOG_TITLE: &str = "console.base_packages_dialog_title";
+pub(crate) const CONSOLE_BASE_PACKAGES_CONFIRM: &str = "console.base_packages_confirm";
+pub(crate) const CONSOLE_BASE_PACKAGES_HINTS: &str = "console.base_packages_hints";
+pub(crate) const CONSOLE_BASE_PACKAGES_HINT_DIALOG: &str = "console.base_packages_hint_dialog";
+pub(crate) const CONSOLE_BASE_PACKAGES_ALREADY_INSTALLED: &str =
+    "console.base_packages_already_installed";
+pub(crate) const CONSOLE_BASE_PACKAGES_INSTALLING: &str = "console.base_packages_installing";
+pub(crate) const CONSOLE_BASE_PACKAGES_INSTALLED_OK: &str = "console.base_packages_installed_ok";
+pub(crate) const CONSOLE_BASE_PACKAGES_NONE: &str = "console.base_packages_none";
+pub(crate) const CONSOLE_BASE_PACKAGES_WORKER_STOPPED: &str =
+    "console.base_packages_worker_stopped";
+pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_HINT: &str = "console.base_packages_cancel_hint";
+pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_QUESTION: &str =
+    "console.base_packages_cancel_question";
+pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_NOTE: &str = "console.base_packages_cancel_note";
+pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_PRESS_ENTER: &str =
+    "console.base_packages_cancel_press_enter";
+pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_TITLE: &str = "console.base_packages_cancel_title";
 pub(crate) const CONSOLE_REINIT_VERSION_LABEL: &str = "console.reinit_version_label";
 pub(crate) const CONSOLE_REINIT_UNAVAILABLE: &str = "console.reinit_unavailable";
 pub(crate) const CONSOLE_REINIT_UNAVAILABLE_HINT: &str = "console.reinit_unavailable_hint";

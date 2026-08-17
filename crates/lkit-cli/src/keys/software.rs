@@ -20,3 +20,13 @@ pub(crate) const SOFTWARE_CONFIRM_INSTALL: &str = "software.confirm_install";
 pub(crate) const SOFTWARE_CANCELLED: &str = "software.cancelled";
 pub(crate) const SOFTWARE_ALREADY_INSTALLED: &str = "software.already_installed";
 pub(crate) const SOFTWARE_INSTALLED_OK: &str = "software.installed_ok";
+pub(crate) const SOFTWARE_BASE_PACKAGE_PPP: &str = "software.base_package_ppp";
+pub(crate) const SOFTWARE_BASE_PACKAGE_IPROUTE2: &str = "software.base_package_iproute2";
+pub(crate) const SOFTWARE_BASE_PACKAGE_IW: &str = "software.base_package_iw";
+pub(crate) const SOFTWARE_BASE_PACKAGE_HOSTAPD: &str = "software.base_package_hostapd";
+pub(crate) const SOFTWARE_BASE_PACKAGE_PROCPS: &str = "software.base_package_procps";
+pub(crate) const SOFTWARE_BASE_PACKAGES_NO_MANAGER: &str = "software.base_packages_no_manager";
+pub(crate) const SOFTWARE_BASE_PACKAGES_NO_SOURCE: &str = "software.base_packages_no_source";
+pub(crate) const SOFTWARE_BASE_PACKAGES_CONFIRM_INSTALL: &str =
+    "software.base_packages_confirm_install";
+pub(crate) const SOFTWARE_BASE_PACKAGES_INSTALLED_OK: &str = "software.base_packages_installed_ok";

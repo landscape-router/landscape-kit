@@ -89,6 +89,12 @@ pub(crate) enum Hit {
     MirrorCdromToggle,
     /// 软件面板软件行。
     SoftwareField(Software),
+    /// 软件面板基础包行。
+    SoftwareBasePackages,
+    /// 基础包弹框:包行(切换勾选)。
+    BasePackageRow(usize),
+    /// 基础包弹框:确认动作行(视为 Enter)。
+    BasePackageConfirm,
     /// 软件确认层：来源切换行。
     SoftwareSourceToggle,
     /// 卸载面板“执行卸载”动作行。

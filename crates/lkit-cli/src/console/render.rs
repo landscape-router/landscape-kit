@@ -16,7 +16,10 @@ use super::mirror::{render_mirror, render_mirror_confirmation};
 use super::network_wizard::{Snapshot, render_network_wizard, render_pending_takeover};
 use super::preflight::render_preflight_dialog;
 use super::reinit::{render_reinit, render_reinit_confirmation};
-use super::software::{render_software, render_software_confirmation, render_software_progress};
+use super::software::{
+    render_base_packages_dialog, render_base_packages_progress, render_software,
+    render_software_confirmation, render_software_progress,
+};
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
@@ -95,6 +98,17 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     if app.menu() == Menu::Software && app.software.install.is_some() {
         render_software_progress(frame, app);
+    }
+    if app.menu() == Menu::Software
+        && matches!(
+            &app.software.base_packages,
+            super::software::BasePackagesState::Choosing { .. }
+        )
+    {
+        render_base_packages_dialog(frame, app);
+    }
+    if app.menu() == Menu::Software && app.software.base_install.is_some() {
+        render_base_packages_progress(frame, app);
     }
     if app.menu() == Menu::Uninstall && app.uninstall.confirming {
         render_uninstall_confirmation(frame, app);

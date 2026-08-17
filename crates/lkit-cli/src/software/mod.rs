@@ -1,3 +1,4 @@
+pub(crate) mod base;
 pub(crate) mod detect;
 pub(crate) mod docker;
 

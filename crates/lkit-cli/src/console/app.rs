@@ -174,7 +174,8 @@ impl ConsoleApp {
         self.update.poll(&mut self.notice);
         if self.menu() == Menu::Mirror {
             self.mirror.ensure_detected();
-            self.mirror.poll();
+            self.mirror.poll(&mut self.notice);
+            self.mirror.poll_refresh(&mut self.notice);
         }
         if self.menu() == Menu::Software {
             self.software.ensure_detected();
@@ -279,10 +280,15 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_PANEL)
             }
         } else if self.menu() == Menu::Software && self.focus == Focus::Panel {
-            if self.software.install.is_some() {
+            if self.software.install.is_some() || self.software.base_install.is_some() {
                 crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_RUNNING)
             } else if self.software.confirming.is_some() {
                 crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_CONFIRM)
+            } else if matches!(
+                &self.software.base_packages,
+                super::software::BasePackagesState::Choosing { .. }
+            ) {
+                crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_HINT_DIALOG)
             } else {
                 crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_PANEL)
             }
