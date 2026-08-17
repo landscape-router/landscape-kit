@@ -6,7 +6,7 @@
 
 - 测试层：CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
-- 证据：[backup 命令](../../../commands/backup.md)、[`.lkb` 规格](../../../backup/lkb-and-rollback.md)、[S10 手工备份与恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[backup 命令](../../../commands/backup.md)、[`.lkb` 规格](../../../backup/lkb-and-rollback.md)、[S10 手工备份与恢复](../../../../scripts/docker/lifecycle/run-scenarios.sh)
 - 说明：通过导出 API 创建 `auto: false` 备份，断言版本、架构、remark、归档内容（含 `static.zip`）和 `0600` 权限。
 
 ## BKP-02
@@ -71,7 +71,7 @@
 
 - 测试层：Docker E2E
 - 状态：`已覆盖`
-- 证据：[restore 命令](../../../commands/restore.md)、[手工 restore](../../../backup/lkb-and-rollback.md#手工-restore)、[S10 手工备份与恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[restore 命令](../../../commands/restore.md)、[手工 restore](../../../backup/lkb-and-rollback.md#手工-restore)、[S10 手工备份与恢复](../../../../scripts/docker/lifecycle/run-scenarios.sh)
 - 说明：恢复前自动创建保护备份；目标 release、空 data、初始化配置、服务身份和健康检查全部成功后提交；state 的 `static_archive` 身份与备份内压缩包一致，`config.toml` 中的来源记录不变。
 
 ## RST-02
@@ -80,7 +80,7 @@
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[restore 命令](../../../commands/restore.md)、`restores_cross_version_without_systemd`（lkit-cli/src/workflows/restore.rs）、[S13 systemd 跨版本 restore](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[restore 命令](../../../commands/restore.md)、`restores_cross_version_without_systemd`（lkit-cli/src/workflows/restore.rs）、[S13 systemd 跨版本 restore](../../../../scripts/docker/lifecycle/run-scenarios.sh)
 - 说明：Rust 工作流测试覆盖跨版本恢复；Docker E2E S13 用早期版本备份降级恢复（5.0.0 → 2.0.0），断言事务 `from_version`/`target_version`、保护备份、`config.toml` 来源记录不变，恢复后 state 资产身份与备份内容一致。
 
 ## RST-03
@@ -89,7 +89,7 @@
 
 - 测试层：Docker E2E
 - 状态：`已覆盖`
-- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、[S11 restore 激活失败自动回滚](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、[S11 restore 激活失败自动回滚](../../../../scripts/docker/lifecycle/run-scenarios.sh)
 - 说明：用 `delayed-ready` 版本（启动延迟 2500ms）创建备份，restore 改用 2000ms 启动超时的运行时，激活超时失败后 systemd 模式内联回滚：原 `current`、state、unit、enabled/active、resolv.conf 和数据全部恢复，事务标记 `rolled_back`，返回退出码 `5`；保护备份仍被创建并记录。
 
 ## RST-04
@@ -107,7 +107,7 @@
 
 - 测试层：Rust 事务测试、Docker E2E
 - 状态：`已覆盖`
-- 证据：[事务中断恢复](../../../deployment/transactions-and-recovery.md#中断恢复)、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)、`rollback_restores_previous_data_from_transaction_dir`、`rollback_treats_consumed_previous_data_as_already_restored`、`rollback_failure_marks_the_transaction_failed`（lkit-cli/src/workflows/restore.rs）
+- 证据：[事务中断恢复](../../../deployment/transactions-and-recovery.md#中断恢复)、[S12 restore 中断后 phase 恢复](../../../../scripts/docker/lifecycle/run-scenarios.sh)、`rollback_restores_previous_data_from_transaction_dir`、`rollback_treats_consumed_previous_data_as_already_restored`、`rollback_failure_marks_the_transaction_failed`（lkit-cli/src/workflows/restore.rs）
 - 说明：Docker E2E 在目标激活 `verifying` 阶段 kill 掉 `lkit`，断言事务停在非终结阶段且 data 已移入 `previous-data`，下次命令经恢复入口完整回滚（`rolled_back`、data/current/state 恢复）；Rust 测试覆盖回滚失败标记 `failed`（对应退出码 `6`）与 previous-data 幂等恢复。
 
 ## RST-06
@@ -143,7 +143,7 @@
 
 - 测试层：Rust 工作流、Docker E2E
 - 状态：`已覆盖`
-- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`rollback_restores_previous_data_from_transaction_dir`（lkit-cli/src/workflows/restore/rollback.rs）、[S12 restore 中断后 phase 恢复](../../../../scripts/docker-e2e/run-scenarios.sh)
+- 证据：[失败与恢复](../../../commands/restore.md#失败与恢复)、`rollback_restores_previous_data_from_transaction_dir`（lkit-cli/src/workflows/restore/rollback.rs）、[S12 restore 中断后 phase 恢复](../../../../scripts/docker/lifecycle/run-scenarios.sh)
 - 说明：激活失败后自动回滚优先用事务目录中的 `previous-data`、`previous_current` 与 state 恢复原安装；恢复成功事务标记 `rolled_back`。
 
 ## RST-10

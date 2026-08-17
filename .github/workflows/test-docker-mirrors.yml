@@ -6,7 +6,7 @@ on:
       - Cargo.lock
       - Cargo.toml
       - lkit-cli/**
-      - scripts/docker-mirrors/**
+      - scripts/docker/mirrors/**
       - scripts/test-docker-mirrors.sh
       - .github/workflows/test-docker-mirrors.yml
   push:
@@ -15,7 +15,7 @@ on:
       - Cargo.lock
       - Cargo.toml
       - lkit-cli/**
-      - scripts/docker-mirrors/**
+      - scripts/docker/mirrors/**
       - scripts/test-docker-mirrors.sh
       - .github/workflows/test-docker-mirrors.yml
   workflow_dispatch:

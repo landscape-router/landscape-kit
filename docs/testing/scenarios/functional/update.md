@@ -94,7 +94,7 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../../docker-e2e.md#场景)
+- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../../docker-lifecycle.md#场景)
 - 说明：`releases/<目标版本>` 残留（如上次升级失败自动回滚后）时，升级不再重复下载：
   已有目录通过可信校验（真实目录非符号链接、后端二进制与 `static/index.html` 齐全、
   `static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致）后直接复用并跳过下载；

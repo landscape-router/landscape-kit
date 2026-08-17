@@ -130,7 +130,7 @@ apt/dnf/pacman 源文件，换源前自动备份原文件，可一键恢复。
 - 测试层：Docker E2E
 - 状态：`已覆盖`
 - 证据：[`scripts/test-docker-mirrors.sh`](../../../../scripts/test-docker-mirrors.sh)、
-  [`run-distro.sh`](../../../../scripts/docker-mirrors/run-distro.sh)、
+  [`run-distro.sh`](../../../../scripts/docker/mirrors/run-distro.sh)、
   [测试说明](../../../testing/docker-mirrors.md)
 - 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
   `debian:bookworm`/`ubuntu:24.04`/`fedora:latest`/`archlinux:latest` 容器（root，无需

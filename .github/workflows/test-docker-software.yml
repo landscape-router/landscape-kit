@@ -6,7 +6,7 @@ on:
       - Cargo.lock
       - Cargo.toml
       - lkit-cli/**
-      - scripts/docker-software/**
+      - scripts/docker/software/**
       - scripts/test-docker-software.sh
       - .github/workflows/test-docker-software.yml
   push:
@@ -15,7 +15,7 @@ on:
       - Cargo.lock
       - Cargo.toml
       - lkit-cli/**
-      - scripts/docker-software/**
+      - scripts/docker/software/**
       - scripts/test-docker-software.sh
       - .github/workflows/test-docker-software.yml
   workflow_dispatch:

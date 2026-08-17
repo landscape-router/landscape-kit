@@ -23,6 +23,6 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /output/bin/ /usr/local/bin/
-COPY scripts/docker-e2e/run-service.sh scripts/docker-e2e/run-scenarios.sh scripts/docker-e2e/rustfs-proxy.py scripts/lib/rustfs-test.sh /usr/local/lib/lkit-e2e/
+COPY scripts/docker/lifecycle/run-service.sh scripts/docker/lifecycle/run-scenarios.sh scripts/docker/lifecycle/rustfs-proxy.py scripts/lib/rustfs-test.sh /usr/local/lib/lkit-e2e/
 RUN chmod 0755 /usr/local/lib/lkit-e2e/run-service.sh /usr/local/lib/lkit-e2e/run-scenarios.sh /usr/local/lib/lkit-e2e/rustfs-test.sh
 CMD ["/usr/local/lib/lkit-e2e/run-service.sh"]

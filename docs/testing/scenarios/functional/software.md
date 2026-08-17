@@ -73,7 +73,7 @@
 - 测试层：Docker E2E
 - 状态：`已覆盖`
 - 证据：[`scripts/test-docker-software.sh`](../../../../scripts/test-docker-software.sh)、
-  [`run-distro.sh`](../../../../scripts/docker-software/run-distro.sh)、
+  [`run-distro.sh`](../../../../scripts/docker/software/run-distro.sh)、
   [测试说明](../../../testing/docker-software.md)
 - 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
   `debian:bookworm`/`ubuntu:24.04`/`fedora:latest`/`archlinux:latest` 容器（root，无需

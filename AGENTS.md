@@ -24,7 +24,7 @@ cargo test -p lkit-cli <module-filter>
 - Run unit tests for the current change only (e.g. `cargo test -p lkit-cli <module-filter>`),
   never the full test suite after every code change.
 - The e2e fixture suite (`lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs in CI
-  on every push and as a PR check via `.github/workflows/test-e2e.yml`, not locally before each
+  on every push and as a PR check via `.github/workflows/test-fixture-e2e.yml`, not locally before each
   commit. To run it manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
 
 ### Testing Hygiene

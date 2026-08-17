@@ -35,7 +35,7 @@ trap cleanup EXIT
 docker volume rm "$volume" >/dev/null 2>&1 || true
 
 echo "== building lkit release binary =="
-docker build --file "$root/scripts/docker-mirrors/Dockerfile" --tag lkit-mirror-builder "$root"
+docker build --file "$root/scripts/docker/mirrors/Dockerfile" --tag lkit-mirror-builder "$root"
 docker run --rm --volume "$volume:/out" lkit-mirror-builder cp /output/lkit /out/lkit
 docker run --rm --volume "$volume:/out" lkit-mirror-builder test -x /out/lkit
 
@@ -50,7 +50,7 @@ while read -r distro image; do
   echo "== $distro ($image) =="
   if docker run --rm \
     --volume "$volume:/usr/local/bin:ro" \
-    --volume "$root/scripts/docker-mirrors/run-distro.sh:/opt/run-distro.sh:ro" \
+    --volume "$root/scripts/docker/mirrors/run-distro.sh:/opt/run-distro.sh:ro" \
     --entrypoint bash \
     "$image" /opt/run-distro.sh "$distro" 2>&1 | sed "s/^/[$distro] /"; then
     echo "[$distro] passed"

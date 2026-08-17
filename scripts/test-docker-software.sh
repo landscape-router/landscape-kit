@@ -37,7 +37,7 @@ trap cleanup EXIT
 docker volume rm "$volume" >/dev/null 2>&1 || true
 
 echo "== building lkit release binary =="
-docker build --file "$root/scripts/docker-software/Dockerfile" --tag lkit-software-builder "$root"
+docker build --file "$root/scripts/docker/software/Dockerfile" --tag lkit-software-builder "$root"
 docker run --rm --volume "$volume:/out" lkit-software-builder cp /output/lkit /out/lkit
 docker run --rm --volume "$volume:/out" lkit-software-builder test -x /out/lkit
 
@@ -52,7 +52,7 @@ while read -r distro image; do
   echo "== $distro ($image) =="
   if docker run --rm \
     --volume "$volume:/usr/local/bin:ro" \
-    --volume "$root/scripts/docker-software/run-distro.sh:/opt/run-distro.sh:ro" \
+    --volume "$root/scripts/docker/software/run-distro.sh:/opt/run-distro.sh:ro" \
     --entrypoint bash \
     "$image" /opt/run-distro.sh "$distro" 2>&1 | sed "s/^/[$distro] /"; then
     echo "[$distro] passed"

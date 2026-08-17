@@ -28,7 +28,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 results_directory=$(mktemp -d)
 export LKIT_E2E_RESULTS_DIR=$results_directory
 export LKIT_E2E_BUCKET="lkit-lifecycle-$(date --utc +%Y%m%d%H%M%S)-$$"
-compose=(docker compose --project-directory "$root" --file "$root/scripts/docker-e2e/compose.yaml")
+compose=(docker compose --project-directory "$root" --file "$root/scripts/docker/lifecycle/compose.yaml")
 
 cleanup() {
   "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true

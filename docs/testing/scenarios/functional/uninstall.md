@@ -109,7 +109,7 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
 - 证据：[`lkit uninstall`](../../../commands/uninstall.md#执行与提交)、
-  Docker E2E S7/S2（scripts/docker-e2e/run-scenarios.sh：卸载后安装 latest 根与 export 根）
+  Docker E2E S7/S2（scripts/docker/lifecycle/run-scenarios.sh：卸载后安装 latest 根与 export 根）
 - 说明：`install-state.json` 不存在后 `lkit install` 按 FirstInstall 处理并成功；卸载
   完成路径同时清理本安装的事务与日志。
 

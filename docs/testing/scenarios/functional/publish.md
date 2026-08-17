@@ -56,7 +56,7 @@
 
 - 测试层：RustFS 发布集成、Docker E2E
 - 状态：`已覆盖`
-- 证据：[发布集成脚本](../../../../scripts/test-publish-http-repository.sh)、[Docker 功能 E2E](../../docker-e2e.md)
+- 证据：[发布集成脚本](../../../../scripts/test-publish-http-repository.sh)、[Docker 功能 E2E](../../docker-lifecycle.md)
 
 ## PUB-08
 

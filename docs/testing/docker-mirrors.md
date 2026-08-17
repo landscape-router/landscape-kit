@@ -24,7 +24,7 @@
    生产二进制，写入 docker 命名卷 `lkit-mirror-bin`（命名卷避免 docker 对缺失
    宿主路径的自动创建）；
 2. 对每个发行版运行 `docker run`：把二进制卷挂到 `/usr/local/bin`（只读），执行
-   `scripts/docker-mirrors/run-distro.sh <distro>`；
+   `scripts/docker/mirrors/run-distro.sh <distro>`；
 3. 汇总各发行版结果，任一失败整体返回非零。
 
 容器内验证序列（各家族相同）：

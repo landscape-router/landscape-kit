@@ -60,4 +60,4 @@
 - 证据：[事务恢复](../../../deployment/transactions-and-recovery.md)、
   Docker E2E S8（确定性 preparing 现场后 `lkit switch` 恢复并标记 failed）与
   S12（restore verifying 阶段 kill 后 `lkit reconcile` 幂等恢复并还原 `data`），
-  scripts/docker-e2e/run-scenarios.sh
+  scripts/docker/lifecycle/run-scenarios.sh

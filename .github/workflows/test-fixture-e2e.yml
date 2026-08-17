@@ -7,7 +7,7 @@ on:
       - Cargo.toml
       - crates/**
       - lkit-cli/**
-      - .github/workflows/test-e2e.yml
+      - .github/workflows/test-fixture-e2e.yml
       - .github/workflows/test-rust.yml
   pull_request:
     paths:
@@ -15,7 +15,7 @@ on:
       - Cargo.toml
       - crates/**
       - lkit-cli/**
-      - .github/workflows/test-e2e.yml
+      - .github/workflows/test-fixture-e2e.yml
       - .github/workflows/test-rust.yml
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: fixture-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

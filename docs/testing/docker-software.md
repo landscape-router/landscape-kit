@@ -26,7 +26,7 @@
 1. 用 `rust:1.97.1-bookworm`（固定 digest，与换源 E2E 一致）构建一次 lkit 生产
    二进制，写入 docker 命名卷 `lkit-software-bin`；
 2. 对每个发行版运行 `docker run`：把二进制卷挂到 `/usr/local/bin`（只读），执行
-   `scripts/docker-software/run-distro.sh <distro>`；
+   `scripts/docker/software/run-distro.sh <distro>`；
 3. 汇总各发行版结果，任一失败整体返回非零。
 
 容器内验证序列：

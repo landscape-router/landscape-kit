@@ -10,7 +10,7 @@ on:
       - crates/lkit-publish/**
       - crates/lkit-repository/**
       - crates/lkit-test-fixture/**
-      - scripts/docker-e2e/**
+      - scripts/docker/lifecycle/**
       - scripts/test-docker-lifecycle.sh
       - .github/workflows/test-docker-lifecycle.yml
   push:
@@ -23,7 +23,7 @@ on:
       - crates/lkit-publish/**
       - crates/lkit-repository/**
       - crates/lkit-test-fixture/**
-      - scripts/docker-e2e/**
+      - scripts/docker/lifecycle/**
       - scripts/test-docker-lifecycle.sh
       - .github/workflows/test-docker-lifecycle.yml
   workflow_dispatch:

@@ -10,7 +10,7 @@ services:
   e2e:
     build:
       context: .
-      dockerfile: scripts/docker-e2e/Dockerfile
+      dockerfile: scripts/docker/lifecycle/Dockerfile
     depends_on:
       - rustfs
     environment:
