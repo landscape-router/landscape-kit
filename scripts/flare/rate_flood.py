@@ -5,7 +5,7 @@ Used by the docker e2e test: the server's per-MAC token bucket must rate
 limit the flood and log "rate-limited", and the fake MAC must never be
 able to authenticate.
 
-Frames are valid v5 DISCOVER frames (magic, version, type, len, seq),
+Frames are valid v2 DISCOVER frames (magic, version, type, len, seq),
 sent from a separate container on the same segment.
 
 Usage: rate_flood.py [RATE_PER_SECOND] [DURATION_SECONDS]

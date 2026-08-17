@@ -9,8 +9,7 @@ on:
       - landscape-flare/**
       - landscape-terrain-proto/**
       - lkit-cli/**
-      - scripts/docker/flare/**
-      - scripts/test-flare.sh
+      - scripts/flare/**
       - .github/workflows/test-flare.yml
       - .github/workflows/test-rust.yml
   pull_request:
@@ -21,8 +20,7 @@ on:
       - landscape-flare/**
       - landscape-terrain-proto/**
       - lkit-cli/**
-      - scripts/docker/flare/**
-      - scripts/test-flare.sh
+      - scripts/flare/**
       - .github/workflows/test-flare.yml
       - .github/workflows/test-rust.yml
   workflow_dispatch:
@@ -43,5 +41,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build workspace
         run: cargo build --locked --workspace
+      - name: Fetch debian packages in a trixie container
+        # The runner distro (Ubuntu 24.04) ships a different .deb set than
+        # the trixie e2e image; download inside the matching container.
+        run: |
+          docker run --rm -v "$PWD/scripts/flare:/workspace" \
+            debian:13-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 \
+            bash -c 'apt-get update -qq && cd /workspace && ./fetch-packages.sh'
       - name: Run flare e2e
-        run: scripts/test-flare.sh
+        run: |
+          scripts/flare/e2e-docker.sh
+          scripts/flare/e2e-same-segment.sh
+          scripts/flare/e2e-multiclient.sh
+          scripts/flare/e2e-ratelimit.sh
