@@ -2300,7 +2300,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-flare"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "clap",
  "landscape-terrain-proto",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-terrain-proto"
-version = "0.2.0-rc.1"
+version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
  "libc",
@@ -2379,7 +2379,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "lkit-cli"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "lkit-hostnet"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "glob",
  "libc",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "lkit-publish"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "lkit-repository"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "semver",
  "serde",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "lkit-test-fixture"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "anyhow",
  "axum",

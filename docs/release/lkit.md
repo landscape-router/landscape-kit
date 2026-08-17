@@ -2,10 +2,12 @@
 
 ## 版本来源与触发
 
-根 `Cargo.toml` 的 `[workspace.package] version` 是所有 workspace crate（包括 `lkit`）的
-唯一版本来源。成员 crate 通过 `version.workspace = true` 继承该版本。
+根 `Cargo.toml` 的 `[workspace.package] version` 是 `lkit`（`lkit-cli`）及相关
+workspace crate 的版本来源。成员 crate 通过 `version.workspace = true` 继承该版本；
+`landscape-terrain-proto` 例外，它作为可独立发布的 Terrain L2 协议库使用自己的
+版本线（当前 `0.1.0`），与 workspace 版本无关，也不参与 release tag 校验。
 版本必须是 SemVer；候选版可以带 prerelease 后缀，发布 tag 固定为
-`v<workspace.package.version>`。当前候选版本为 `0.2.0-rc.1`。
+`v<workspace.package.version>`。当前候选版本为 `0.2.0-rc.2`。
 
 发布前执行：
 
@@ -19,8 +21,8 @@ scripts/test-install-lkit.sh
 提交候选版本变更后创建并推送 prerelease tag：
 
 ```sh
-git tag v0.2.0-rc.1
-git push origin v0.2.0-rc.1
+git tag v0.2.0-rc.2
+git push origin v0.2.0-rc.2
 ```
 
 候选版本验证通过后，将 workspace 版本改为 `0.2.0`，再创建并推送正式 tag
@@ -38,11 +40,18 @@ git push origin v0.2.0-rc.1
 | --- | --- |
 | `lkit-x86_64` | glibc Linux x86_64 裸二进制 |
 | `lkit-aarch64` | glibc Linux aarch64 裸二进制 |
-| `SHA256SUMS` | 两个二进制及安装脚本的 SHA-256 |
+| `lflare-linux-x86_64` | glibc Linux x86_64 裸二进制 |
+| `lflare-linux-aarch64` | glibc Linux aarch64 裸二进制 |
+| `lflare-windows-x86_64.exe` | Windows x86_64 裸二进制（Npcap 驱动） |
+| `SHA256SUMS` | 上述二进制及安装脚本的 SHA-256 |
 | `install.sh` | latest Release 安装入口 |
 
-两种架构都在原生 GitHub runner 上、固定的 Rust Bookworm 容器中构建，不使用交叉编译。
-`rust-toolchain.toml` 固定编译器版本；Cargo.lock 固定 Rust 依赖。
+`lkit` 两种架构和 Linux `lflare` 都在原生 GitHub runner 上、固定的 Rust Bookworm
+容器中构建，不使用交叉编译。Windows `lflare` 在原生 Windows runner 上构建（MSVC
+目标），通过 `LIBPCAP_LIBDIR` 指向仓库内 vendor 的
+[`landscape-flare/vendor/npcap-sdk`](../../landscape-flare/vendor/npcap-sdk) 链接
+Npcap SDK，产物运行时要求目标机安装 Npcap。`rust-toolchain.toml` 固定编译器版本；
+Cargo.lock 固定 Rust 依赖。
 
 验证任务和每个架构的分发构建任务分别缓存 Cargo 下载及编译产物。分发缓存按架构隔离，
 并随 Rust 工具链、依赖锁文件和相关构建输入失效；失败的任务也保存可复用缓存，避免重跑
@@ -60,7 +69,7 @@ panic = "abort"
 strip = "symbols"
 ```
 
-该 profile 只用于分发的 `lkit`，不改变日常 `release` profile。CI 要求产物是已 strip 的
+该 profile 只用于分发的 `lkit` 与 `lflare`，不改变日常 `release` profile。CI 要求产物是已 strip 的
 动态链接 ELF、架构与 runner 一致、`lkit --version` 与 tag 一致，并在构建摘要中报告
 实际体积；体积不设硬性上限。`panic=abort` 下意外 panic 等价于进程中断，后续命令仍
 通过既有事务记录恢复。
@@ -84,7 +93,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landsc
 `releases/latest` 不会指向它，安装候选版必须使用带 tag 的地址：
 
 ```sh
-wget -qO- https://github.com/landscape-router/landscape-kit/releases/download/v0.2.0-rc.1/install.sh | sudo sh
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/download/v0.2.0-rc.2/install.sh | sudo sh
 ```
 
 交互式安装推荐分两步执行，确保 `lkit` 直接连接当前终端的 `/dev/tty`：
