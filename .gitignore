@@ -4,7 +4,8 @@ debug
 target
 
 # Offline .deb packages for the flare e2e image (fetched by fetch-packages.sh)
-scripts/flare/packages/
+scripts/flare/packages/*
+!scripts/flare/packages/.gitkeep
 
 # Python bytecode
 __pycache__

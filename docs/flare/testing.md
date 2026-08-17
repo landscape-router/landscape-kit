@@ -15,8 +15,8 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 | `scripts/flare/e2e-same-segment.sh` | 同段多客户端场景（并发/优雅重启/硬杀恢复/20 MiB） |
 | `scripts/flare/e2e-multiclient.sh` | 双网段多客户端场景（teardown 隔离/空闲保活） |
 | `scripts/flare/e2e-ratelimit.sh` | 限速与锁死场景（洪泛/伪造失败不冻结） |
-| `scripts/flare/Dockerfile` | Debian slim 镜像：离线安装 `libpcap0.8 iproute2 netcat-openbsd python3`，内置 4 个测试工具（fake_service/replay_inject/rate_flood/auth_req_flood） |
-| `scripts/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `scripts/flare/packages/`（gitignored），使 `docker build` 离线可用 |
+| `scripts/flare/Dockerfile` | Debian 13 slim 镜像，双模式运行时依赖：有 `packages/*.deb` 时离线 dpkg 安装（本地，`docker build` 无需网络），无 `.deb` 时（CI）apt 在线安装 `iproute2 netcat-openbsd python3`；内置 4 个测试工具（fake_service/replay_inject/rate_flood/auth_req_flood） |
+| `scripts/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `scripts/flare/packages/`（gitignored，仅保留 `.gitkeep`），供本地离线镜像构建使用 |
 | `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发，`cargo build --locked --workspace` 后依次运行 4 个场景脚本 |
 
 ## 场景拓扑
