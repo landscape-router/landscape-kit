@@ -481,6 +481,7 @@ machine_shell_bg \
 for i in $(seq 1 600); do REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); [ -n "$REQUEST" ] && break; sleep 0.02; done; echo "== S-3 request=[$REQUEST]"; test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
 machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1'
+machine_shell 'echo "== S-3 debug: s3.exit=[$(cat /tmp/s3.exit 2>/dev/null)]"; echo "== S-3 debug: s3.out=[$(cat /tmp/s3.out 2>/dev/null)]"; echo "== S-3 debug: s3.err=[$(cat /tmp/s3.err 2>/dev/null)]"; echo "== S-3 debug: txn files:"; for f in /root/.lkit/transactions/*.json; do [ -e "$f" ] && echo "   $f: phase=$(grep -o ""phase" *: *"[a-z_]*"" "$f" | head -1)"; done; echo "== S-3 debug: state=$([ -f /root/.lkit/state/install-state.json ] && echo present || echo absent)"'
 machine_shell "systemctl is-active --quiet lkit.service"
 
 # S-4 daemon 未运行:委托请求必须拒绝(退出码 2)而不是卡住。
