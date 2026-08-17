@@ -250,9 +250,25 @@ fn run_apply(
                     )
                 );
             }
+            refresh_after_change(host);
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),
+    }
+}
+
+/// 换源成功后刷新软件包索引,让新源立即生效。刷新失败只警告,
+/// 不把已写入的源文件回滚(换源本身已成功)。
+fn refresh_after_change(host: &Host) {
+    println!(
+        "set-mirror: {}",
+        crate::tr!(crate::keys::SET_MIRROR_REFRESHING)
+    );
+    if let Err(error) = crate::mirror::refresh::refresh_index(host.family, true) {
+        eprintln!(
+            "set-mirror: {}",
+            crate::tr!(crate::keys::SET_MIRROR_REFRESH_FAILED, error = error)
+        );
     }
 }
 
@@ -286,6 +302,7 @@ fn run_restore(host: &Host, yes: bool) -> ExitCode {
                 "set-mirror: {}",
                 crate::tr!(crate::keys::SET_MIRROR_RESTORED)
             );
+            refresh_after_change(host);
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

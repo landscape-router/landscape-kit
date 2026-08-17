@@ -184,6 +184,7 @@ mod apply_tests {
             pacman_mirrorlist: temp.join("etc/pacman.d/mirrorlist"),
             restore_root: temp.to_path_buf(),
             allow_non_root: true,
+            skip_refresh: true,
         })
     }
 

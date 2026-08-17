@@ -442,6 +442,7 @@ fn mirror_confirmation_dialog_executes_apply() {
         pacman_mirrorlist: temp.join("etc/pacman.d/mirrorlist"),
         restore_root: temp.clone(),
         allow_non_root: true,
+        skip_refresh: true,
     });
 
     let mut app = mirror_ready_app();
@@ -499,6 +500,62 @@ fn unique_suffix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mirror_apply_skips_refresh_worker_under_test_injection() {
+    let temp = std::env::temp_dir().join(format!(
+        "lkit-console-mirror-refresh-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let _paths = crate::mirror::test_support::TestPathsGuard::set(crate::mirror::MirrorPaths {
+        os_release: temp.join("etc/os-release"),
+        backup_root: temp.join("var/lib/lkit/mirror-backup"),
+        apt_sources_list: temp.join("etc/apt/sources.list"),
+        apt_sources_list_d: temp.join("etc/apt/sources.list.d"),
+        dnf_repos_dir: temp.join("etc/yum.repos.d"),
+        pacman_mirrorlist: temp.join("etc/pacman.d/mirrorlist"),
+        restore_root: temp.clone(),
+        allow_non_root: true,
+        skip_refresh: true,
+    });
+    let mut notice = "applied\n".to_string();
+    let mut panel = MirrorPanel::default();
+    panel.start_refresh(Family::Ubuntu, &mut notice);
+    assert!(panel.refreshing.is_none());
+    assert!(
+        notice.contains("package index refreshed"),
+        "test injection must complete the refresh synchronously: {notice}"
+    );
+    let _ = std::fs::remove_dir_all(&temp);
+}
+
+#[test]
+fn mirror_refresh_worker_blocks_until_done() {
+    use std::sync::mpsc;
+    let (_, receiver) = mpsc::channel();
+    let mut app = mirror_ready_app();
+    app.mirror.refreshing = Some(MirrorRefreshRun { receiver });
+    app.execute_mirror(MirrorConfirm::Restore);
+    assert!(
+        app.notice.contains("refreshing the package index"),
+        "while refreshing, further mirror operations must be blocked with a hint: {}",
+        app.notice
+    );
+}
+
+#[test]
+fn mirror_refresh_completion_writes_notice_and_unblocks() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let _ = sender.send(Ok::<(), String>(()));
+    let mut app = mirror_ready_app();
+    app.mirror.refreshing = Some(MirrorRefreshRun { receiver });
+    let mut notice = String::new();
+    app.mirror.poll_refresh(&mut notice);
+    assert!(app.mirror.refreshing.is_none());
+    assert!(notice.contains("package index refreshed"));
 }
 
 #[test]

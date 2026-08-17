@@ -5,6 +5,7 @@ pub(crate) mod common;
 pub(crate) mod detect;
 pub(crate) mod dnf;
 pub(crate) mod pacman;
+pub(crate) mod refresh;
 
 pub(crate) use availability::{MirrorStatus, probe, probe_all};
 
@@ -37,6 +38,9 @@ pub(crate) struct MirrorPaths {
     /// 测试注入：允许非 root 执行换源/恢复（生产恒为 false）。
     #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
     pub(crate) allow_non_root: bool,
+    /// 测试注入：跳过换源后的包索引刷新（不派生真实包管理器进程）。
+    #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
+    pub(crate) skip_refresh: bool,
 }
 
 impl MirrorPaths {
@@ -50,6 +54,7 @@ impl MirrorPaths {
             pacman_mirrorlist: PathBuf::from(PACMAN_MIRRORLIST),
             restore_root: PathBuf::from("/"),
             allow_non_root: false,
+            skip_refresh: false,
         }
     }
 }

@@ -92,6 +92,11 @@ pub(crate) fn status_of(
         .unwrap_or(MirrorStatus::Available)
 }
 
+/// 换源后的后台索引刷新 worker:只回传最终结果。
+pub(crate) struct MirrorRefreshRun {
+    pub(crate) receiver: Receiver<Result<(), String>>,
+}
+
 /// 换源面板：显示发行版检测结果，选择镜像或恢复备份。
 pub(crate) struct MirrorPanel {
     pub(crate) host: Option<Result<Host, String>>,
@@ -100,6 +105,8 @@ pub(crate) struct MirrorPanel {
     pub(crate) availability: Option<HashMap<MirrorName, MirrorStatus>>,
     pub(crate) probing: bool,
     probing_rx: Option<Receiver<HashMap<MirrorName, MirrorStatus>>>,
+    /// 换源/恢复成功后的索引刷新 worker；刷新期间禁止再次换源。
+    pub(crate) refreshing: Option<MirrorRefreshRun>,
     pub(crate) selected: MirrorRow,
     pub(crate) confirming: Option<MirrorConfirm>,
 }
@@ -112,6 +119,7 @@ impl Default for MirrorPanel {
             availability: None,
             probing: false,
             probing_rx: None,
+            refreshing: None,
             selected: MirrorRow::Mirror(MirrorName::all()[0]),
             confirming: None,
         }
@@ -151,7 +159,7 @@ impl MirrorPanel {
     }
 
     /// 主循环轮询：探测完成后回填结果（由 `ConsoleApp::update` 调用）。
-    pub(crate) fn poll(&mut self) {
+    pub(crate) fn poll(&mut self, _notice: &mut String) {
         let Some(receiver) = &self.probing_rx else {
             return;
         };
@@ -166,6 +174,61 @@ impl MirrorPanel {
                 // worker 意外退出：保持 None，全部镜像按可用处理。
                 self.probing = false;
                 self.probing_rx = None;
+            }
+        }
+    }
+
+    /// 换源/恢复成功后刷新软件包索引。生产环境后台 worker 执行（不阻塞
+    /// TUI 主循环），刷新期间禁止再次换源；测试注入跳过时同步完成。
+    pub(crate) fn start_refresh(&mut self, family: crate::mirror::Family, notice: &mut String) {
+        if self.refreshing.is_some() {
+            return;
+        }
+        if crate::mirror::paths().skip_refresh {
+            *notice = format!(
+                "{notice}\n{}",
+                crate::tr!(crate::keys::SET_MIRROR_REFRESHED)
+            );
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                crate::mirror::refresh::refresh_index(family, false)
+                    .map_err(|error| error.to_string())
+            });
+            let _ = sender.send(result);
+        });
+        self.refreshing = Some(MirrorRefreshRun { receiver });
+        *notice = format!(
+            "{notice}\n{}",
+            crate::tr!(crate::keys::SET_MIRROR_REFRESHING)
+        );
+    }
+
+    /// 轮询索引刷新结果；刷新完成后写到底栏并放行后续换源。
+    pub(crate) fn poll_refresh(&mut self, notice: &mut String) {
+        let Some(run) = &self.refreshing else {
+            return;
+        };
+        match run.receiver.try_recv() {
+            Ok(result) => {
+                self.refreshing = None;
+                match result {
+                    Ok(()) => *notice = crate::tr!(crate::keys::SET_MIRROR_REFRESHED),
+                    Err(error) => {
+                        *notice = crate::tr!(crate::keys::SET_MIRROR_REFRESH_FAILED, error = error)
+                    }
+                }
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.refreshing = None;
+                *notice = crate::tr!(
+                    crate::keys::SET_MIRROR_REFRESH_FAILED,
+                    error = "worker stopped"
+                );
             }
         }
     }
@@ -186,6 +249,10 @@ impl ConsoleApp {
             self.notice = crate::tr!(crate::keys::CONSOLE_MIRROR_DETECT_FAILED);
             return;
         };
+        if self.mirror.refreshing.is_some() {
+            self.notice = crate::tr!(crate::keys::SET_MIRROR_REFRESHING);
+            return;
+        }
         if !crate::mirror::root_allowed() {
             self.notice = crate::tr!(crate::keys::SET_MIRROR_ROOT_REQUIRED);
             return;
@@ -277,12 +344,15 @@ impl ConsoleApp {
                             )
                         );
                     }
+                    // 换源成功后后台刷新索引,让新源立即生效。
+                    self.mirror.start_refresh(host.family, &mut self.notice);
                 }
                 Err(error) => self.notice = error.to_string(),
             },
             MirrorConfirm::Restore => match crate::mirror::restore(host) {
                 Ok(()) => {
                     self.notice = crate::tr!(crate::keys::SET_MIRROR_RESTORED);
+                    self.mirror.start_refresh(host.family, &mut self.notice);
                 }
                 Err(error) => self.notice = error.to_string(),
             },
