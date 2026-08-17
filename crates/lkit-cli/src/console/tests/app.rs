@@ -110,6 +110,20 @@ fn long_notice_wraps_instead_of_truncating() {
 }
 
 #[test]
+fn language_key_switches_on_install_panel_when_not_editing() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.menu_index = 1;
+    app.focus = Focus::Panel;
+    app.install.editing = false;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::Zh);
+    assert!(!app.install.editing);
+}
+
+#[test]
 fn language_key_remains_text_while_editing() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = ConsoleApp::new();

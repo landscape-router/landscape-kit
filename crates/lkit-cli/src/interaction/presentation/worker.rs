@@ -167,10 +167,19 @@ impl WorkerPresentation {
         Ok(None)
     }
 
-    /// 全屏页键处理：结果页处理确认层/关闭，进行中处理取消确认层/停止。
+    /// 全屏页键处理：`l` 切换语言；结果页处理确认层/关闭，
+    /// 进行中处理取消确认层/停止。
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<PresentationAction> {
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        if matches!(key.code, KeyCode::Char('l' | 'L'))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            self.toggle_language();
+            return None;
+        }
         if self.result.is_some() {
             if self.confirming_takeover {
                 match key.code {
@@ -221,6 +230,17 @@ impl WorkerPresentation {
             }
         }
         None
+    }
+
+    /// 切换语言并写回 `config.toml` 的 `[ui] language`,下次会话沿用。
+    /// 测试环境不写盘,保证单元测试零系统副作用。
+    fn toggle_language(&mut self) {
+        let language = crate::i18n::current().toggled();
+        crate::i18n::configure(language);
+        #[cfg(not(test))]
+        if let Err(error) = crate::deployment::config::write_language(language) {
+            self.notice = crate::tr!(crate::keys::CONSOLE_LANGUAGE_SAVE_FAILED, error = error);
+        }
     }
 
     pub(crate) fn show_result(&mut self, success: bool, takeover_pending: bool) {
@@ -442,5 +462,44 @@ mod tests {
             total: None,
         });
         assert!(!presentation.is_cancellable());
+    }
+
+    #[test]
+    fn language_key_switches_inside_full_screen() {
+        let previous = crate::i18n::current();
+        crate::i18n::configure(crate::i18n::Language::En);
+        let mut presentation = WorkerPresentation::new(false, Box::new(InstallScreen));
+
+        presentation.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+        assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
+        crate::i18n::configure(previous);
+    }
+
+    #[test]
+    fn language_key_does_not_interfere_with_stop_or_close() {
+        let previous = crate::i18n::current();
+        crate::i18n::configure(crate::i18n::Language::En);
+        let mut presentation = WorkerPresentation::new(false, Box::new(InstallScreen));
+        presentation.apply(PresentationEvent::Phase {
+            phase: OperationPhase::Downloading,
+            step: None,
+            total: None,
+        });
+
+        assert_eq!(
+            presentation.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            presentation.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            None
+        );
+        assert!(presentation.confirming_stop);
+        assert_eq!(
+            presentation.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(PresentationAction::Stop)
+        );
+        crate::i18n::configure(previous);
     }
 }
