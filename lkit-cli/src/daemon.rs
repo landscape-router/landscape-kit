@@ -1,13 +1,17 @@
 //! lkit 常驻服务。
 //!
-//! 常驻服务承担两件事:
+//! 常驻服务承担三件事:
 //! 1. **委托命令执行**:生产命令由 CLI 写入
 //!    [`OPERATIONS_DIR`](OPERATIONS_DIR) 的
 //!    root-only 请求文件,daemon 周期扫描并执行,CLI 轮询结果。daemon 由 init
 //!    系统启动,天然脱离用户会话,SSH 断开不会中止进行中的事务;
 //! 2. **周期中断恢复**:CLI 进程因 SSH 断开、崩溃等原因消失后,遗留的未完成
 //!    事务由 daemon 自动接管并执行与 CLI 相同的恢复语义
-//!    ([`crate::deployment::transaction::recover_interrupted`])。
+//!    ([`crate::deployment::transaction::recover_interrupted`]);
+//! 3. **恒常托管 flare 服务端**:Linux 上 daemon 启动即托管 Landscape Terrain
+//!    (L2 防失联通道)服务端,`[flare]` 段缺失或无 psk 时生成随机 psk 并持久化;
+//!    每周期对比配置指纹,变更时重启 flare 任务拾取新配置。网络接管失败等
+//!    IP 路径不可用时,操作员仍可经 L2 通道连接(见 [`reload_flare`])。
 //!
 //! daemon 全局唯一,固定读取 lkit 地盘(`/root/.lkit/`):pidfile 写入
 //! [`layout::territory_pidfile`](crate::deployment::layout::territory_pidfile),
@@ -71,9 +75,9 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     .map_err(InstallError::Io)?;
     write_pidfile(&pidfile)?;
 
-    // `[flare]` 配置段存在时,daemon 托管 Landscape Terrain 服务端(L2 防失联
-    // 通道)。daemon 退出时 drop shutdown 发送端,task 收到关闭通知后优雅退出。
-    let flare_shutdown = spawn_flare();
+    // daemon 恒常托管 Landscape Terrain 服务端(L2 防失联通道)。daemon 退出时
+    // drop shutdown 发送端,task 收到关闭通知后优雅退出。
+    let mut flare = initial_flare();
 
     unsafe {
         let handler: extern "C" fn(libc::c_int) = handle_termination;
@@ -83,6 +87,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     loop {
         execute_pending_requests();
         recovery_cycle(&runtime).await;
+        flare = reload_flare(flare);
         // 分片睡眠,保证 SIGTERM 及时生效。
         let slices = DAEMON_CYCLE_INTERVAL.as_millis().div_ceil(200).max(1) as u64;
         let mut shutdown = false;
@@ -97,41 +102,154 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
             break;
         }
     }
-    drop(flare_shutdown);
+    drop(flare);
     let _ = std::fs::remove_file(&pidfile);
     Ok(())
 }
 
-/// 按 `[flare]` 配置段启动 flare 服务端,返回 shutdown 发送端供 daemon 退出时
-/// 触发优雅关闭。配置缺失、无 psk 或非 Linux 平台时返回 `None`(不启动)。
+/// 运行中的 flare 服务端任务:退出时 drop `shutdown` 发送端即可触发优雅关闭。
+struct FlareTask {
+    shutdown: tokio::sync::oneshot::Sender<()>,
+    handle: tokio::task::JoinHandle<()>,
+    /// 启动时生效的 `[flare]` 段(缺省字段已按 serde 默认值补齐),用于检测
+    /// 配置变更:变更时重启任务拾取新配置。
+    section: crate::deployment::config::FlareSection,
+}
+
+/// 恒常启动 flare 服务端:Linux 上 daemon 启动即托管,`[flare]` 段缺失或无 psk
+/// 时生成随机 psk 并持久化,启动时打印一次分发提示(后续安装会覆盖它)。
 #[cfg(target_os = "linux")]
-fn spawn_flare() -> Option<tokio::sync::oneshot::Sender<()>> {
-    let section = crate::deployment::config::load_flare()?;
-    let psk = section.psk.as_deref()?;
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let mut args = crate::commands::flare::ServeArgs {
-        psk: Some(psk.to_string()),
-        device_name: section.device_name,
-        mac: None,
-        dev: section.devices.unwrap_or_else(|| "any".to_string()),
-        ethertype: section.ethertype,
-        forward_ports: section.forward_ports,
-        token: section.token,
-    };
-    if let Some(mac) = section.mac.as_deref() {
-        args.mac = landscape_terrain_proto::cli::parse_mac(mac).ok();
-    }
-    tokio::spawn(async move {
-        if let Err(error) = crate::commands::flare::run_serve(&args, Some(rx)).await {
-            eprintln!("lkit daemon: flare server failed: {error}");
+fn initial_flare() -> Option<FlareTask> {
+    match effective_flare_config() {
+        Ok(section) => spawn_flare_from(&section).map(|(shutdown, handle)| FlareTask {
+            shutdown,
+            handle,
+            section,
+        }),
+        Err(error) => {
+            eprintln!("lkit daemon: cannot start flare server: {error}");
+            None
         }
-    });
-    Some(tx)
+    }
 }
 
 /// 非 Linux 平台不提供 flare 服务。
 #[cfg(not(target_os = "linux"))]
-fn spawn_flare() -> Option<tokio::sync::oneshot::Sender<()>> {
+fn initial_flare() -> Option<FlareTask> {
+    None
+}
+
+/// 每个周期重估 flare 服务:配置变更时重启任务拾取新配置,任务意外退出(如链路
+/// 暂不可用)时自动重新拉起。配置被删除、损坏或 psk 被清空时保持现役任务,
+/// 绝不因配置问题切断恢复通道。
+#[cfg(target_os = "linux")]
+fn reload_flare(running: Option<FlareTask>) -> Option<FlareTask> {
+    let running = running?;
+    if running.handle.is_finished() {
+        // 服务端已退出(正常关闭或启动失败):用同一配置重新拉起。
+        running.handle.abort();
+        drop(running.shutdown);
+        let (shutdown, handle) = spawn_flare_from(&running.section)?;
+        return Some(FlareTask {
+            shutdown,
+            handle,
+            section: running.section,
+        });
+    }
+    let Some(current) = crate::deployment::config::load_flare() else {
+        // 配置被删除或损坏:保持现役任务运行。
+        return Some(running);
+    };
+    if !flare_needs_restart(&running.section, &current) {
+        return Some(running);
+    }
+    drop(running.shutdown);
+    let (shutdown, handle) = spawn_flare_from(&current)?;
+    Some(FlareTask {
+        shutdown,
+        handle,
+        section: current,
+    })
+}
+
+/// 非 Linux 平台不提供 flare 服务。
+#[cfg(not(target_os = "linux"))]
+fn reload_flare(running: Option<FlareTask>) -> Option<FlareTask> {
+    running
+}
+
+/// 配置变更是否需要重启 flare 任务:psk 被清空或段缺失时不重启(保持现役,
+/// 不切断恢复通道),其余字段变化且 psk 非空时重启拾取新配置。
+#[cfg(target_os = "linux")]
+fn flare_needs_restart(
+    running: &crate::deployment::config::FlareSection,
+    current: &crate::deployment::config::FlareSection,
+) -> bool {
+    current.psk.is_some() && current != running
+}
+
+/// 计算当前生效的 flare 配置:有 psk 直接使用,段缺失或无 psk 时生成随机 psk
+/// 并持久化到 `config.toml` 的 `[flare]` 段(缺省字段由 serde 默认值补齐)。
+/// 生成时打印一次 psk,提示分发给恢复操作员。
+#[cfg(target_os = "linux")]
+fn effective_flare_config() -> Result<crate::deployment::config::FlareSection, InstallError> {
+    use crate::deployment::config::{default_flare_section, generate_psk, load_flare, save_flare};
+
+    let mut section = match load_flare() {
+        Some(section) => section,
+        None => default_flare_section(),
+    };
+    if section.psk.is_none() {
+        let psk = generate_psk();
+        section.psk = Some(psk.clone());
+        save_flare(&section)?;
+        println!(
+            "lkit daemon: generated flare recovery psk (written to {}); distribute it to operators, a later `lkit install` or `lkit flare setup` replaces it: {psk}",
+            layout::territory_config_file().display()
+        );
+    }
+    Ok(section)
+}
+
+/// 按给定的 `[flare]` 段启动 flare 服务端 task,返回 shutdown 发送端与 task
+/// 句柄。非 Linux 平台返回 `None`(不启动)。
+#[cfg(target_os = "linux")]
+fn spawn_flare_from(
+    section: &crate::deployment::config::FlareSection,
+) -> Option<(
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+)> {
+    let psk = section.psk.as_deref()?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut args = crate::commands::flare::ServeArgs {
+        psk: Some(psk.to_string()),
+        device_name: section.device_name.clone(),
+        mac: None,
+        dev: section.devices.clone().unwrap_or_else(|| "any".to_string()),
+        ethertype: section.ethertype,
+        forward_ports: section.forward_ports.clone(),
+        token: section.token.clone(),
+    };
+    if let Some(mac) = section.mac.as_deref() {
+        args.mac = landscape_terrain_proto::cli::parse_mac(mac).ok();
+    }
+    let handle = tokio::spawn(async move {
+        if let Err(error) = crate::commands::flare::run_serve(&args, Some(rx)).await {
+            eprintln!("lkit daemon: flare server failed: {error}");
+        }
+    });
+    Some((tx, handle))
+}
+
+/// 非 Linux 平台不提供 flare 服务。
+#[cfg(not(target_os = "linux"))]
+fn spawn_flare_from(
+    _section: &crate::deployment::config::FlareSection,
+) -> Option<(
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+)> {
     None
 }
 
@@ -361,5 +479,117 @@ mod tests {
         );
         drop(guard);
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generates_and_persists_a_psk_when_the_flare_section_is_missing() {
+        use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
+        use std::os::unix::fs::MetadataExt;
+
+        let (guard, temp) = territory("flare-generate");
+        let section = effective_flare_config().unwrap();
+        assert!(section.psk.is_some());
+        let psk = section.psk.as_deref().unwrap();
+        assert!(psk.len() >= FLARE_PSK_MIN_LENGTH);
+        let reloaded = crate::deployment::config::load_flare().unwrap();
+        assert_eq!(
+            reloaded.psk.as_deref(),
+            Some(psk),
+            "the psk must be persisted"
+        );
+        let config = layout::territory_config_file();
+        let metadata = std::fs::metadata(&config).unwrap();
+        assert_eq!(
+            metadata.mode() & 0o077,
+            0,
+            "config with a psk must be root-only"
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reuses_an_existing_psk_instead_of_regenerating() {
+        use crate::deployment::config::{FlareSection, default_flare_section, save_flare};
+
+        let (guard, temp) = territory("flare-reuse");
+        save_flare(&FlareSection {
+            psk: Some("an-existing-recovery-secret".into()),
+            ..default_flare_section()
+        })
+        .unwrap();
+        let section = effective_flare_config().unwrap();
+        assert_eq!(
+            section.psk.as_deref(),
+            Some("an-existing-recovery-secret"),
+            "a configured psk must be reused"
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn regenerates_a_psk_when_the_configured_one_was_removed() {
+        use crate::deployment::config::{FlareSection, default_flare_section, save_flare};
+
+        let (guard, temp) = territory("flare-regenerate");
+        save_flare(&FlareSection {
+            psk: Some("the-first-secret".into()),
+            ..default_flare_section()
+        })
+        .unwrap();
+        save_flare(&FlareSection {
+            psk: None,
+            ..default_flare_section()
+        })
+        .unwrap();
+        let section = effective_flare_config().unwrap();
+        let psk = section.psk.as_deref().unwrap();
+        assert_ne!(psk, "the-first-secret");
+        assert_eq!(
+            crate::deployment::config::load_flare()
+                .unwrap()
+                .psk
+                .as_deref(),
+            Some(psk),
+            "the regenerated psk must be persisted"
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn flare_section_changes_are_detected_for_reload() {
+        use crate::deployment::config::{FlareSection, default_flare_section};
+
+        let first = FlareSection {
+            psk: Some("first-recovery-secret".into()),
+            ..default_flare_section()
+        };
+        // 配置未变:不重启。
+        assert!(!flare_needs_restart(&first, &first));
+        // psk 变更:重启。
+        let second = FlareSection {
+            psk: Some("second-recovery-secret".into()),
+            ..first.clone()
+        };
+        assert!(flare_needs_restart(&first, &second));
+        // psk 被清空:保持现役,不切断恢复通道。
+        let cleared = FlareSection {
+            psk: None,
+            ..first.clone()
+        };
+        assert!(!flare_needs_restart(&first, &cleared));
+        // 其它字段(如监听设备)变化且 psk 非空:重启。
+        let devices = FlareSection {
+            psk: Some("first-recovery-secret".into()),
+            devices: Some("eth1".into()),
+            ..first.clone()
+        };
+        assert!(flare_needs_restart(&first, &devices));
     }
 }

@@ -11,6 +11,7 @@ use super::backup::{
     render_backup_restore_confirmation,
 };
 use super::daemon_panel::{render_daemon_deploy_confirmation, render_daemon_deploy_progress};
+use super::flare_panel::render_flare_dialog;
 use super::install_form::render_install;
 use super::mirror::{render_mirror, render_mirror_confirmation};
 use super::network_wizard::{Snapshot, render_network_wizard, render_pending_takeover};
@@ -118,6 +119,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     if app.menu() == Menu::Overview && app.deploy_daemon_confirming {
         render_daemon_deploy_confirmation(frame, app);
+    }
+    if app.flare.open {
+        render_flare_dialog(frame, app);
     }
     // 部署可从 Overview 动作行或安装阻断弹框发起,进度弹层不限定菜单。
     if app.deploy_daemon.is_some() {

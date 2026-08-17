@@ -8,7 +8,7 @@
 lkit [--non-interactive] install [--version <VERSION>]
              [--repository [<BASE_URL>]]
              [--install-dir <PATH>] [--admin-user <NAME>]
-             [--password-file <PATH>]
+             [--password-file <PATH>] [--flare-psk-file <PATH>]
              [--force] [--takeover-network]
 ```
 
@@ -18,9 +18,13 @@ lkit [--non-interactive] install [--version <VERSION>]
 - `--repository` 使用默认 HTTP 镜像；`--repository github` 使用官方 GitHub 仓库；带值时
   使用指定 protocol v1 HTTP 仓库；缺省时按 显式 CLI > `config.toml` > 官方 GitHub 的
   优先级解析来源（预置配置生效，缺失时官方 GitHub）。
-- 仓库来源不写入 `state/install-state.json`，`lkit` 也**从不创建或更新** `config.toml`；
-  该文件位于 lkit 地盘(`/root/.lkit/config.toml`)，完全由用户维护，只影响后续命令未
-  显式指定 `--repository` 时的缺省来源，见[配置文件](../deployment/config.md)。
+- 仓库来源不写入 `state/install-state.json`；`config.toml` 只由显式的偏好/通道配置动作
+  写回（见[配置文件](../deployment/config.md)），其中**首次安装会写回 `[flare]` 段**：
+  首次安装强制提供 flare 恢复 psk（L2 防失联通道密钥，用于 Landscape 网络配置错误
+  含接管失败时的恢复），控制台安装表单的 `Flare recovery psk` 字段（掩码必填）或
+  非交互 `--flare-psk-file`（root 所有、`0400`/`0600` 私密文件）二选一，二者皆无时
+  报参数错误。psK 在事务开始前（早于网络接管 arm）写入 `config.toml`，daemon 下一
+  周期自动拾取。
 - `--force` 不删除文件，只显示规范化安装根目录并要求用户自行清理。
 - `--takeover-network` 仅用于首次安装，要求 systemd 和交互终端。它让用户选择 WAN/LAN
   接口，并在 Landscape 健康后进入待确认状态；完整行为见[网络接管](../network/takeover.md)。

@@ -2,6 +2,7 @@ mod app;
 mod backup;
 mod daemon_panel;
 mod events;
+mod flare_panel;
 mod install_form;
 mod mirror;
 mod network_wizard;

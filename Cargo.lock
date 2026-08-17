@@ -2391,6 +2391,7 @@ dependencies = [
  "libc",
  "lkit-repository",
  "lkit-test-fixture",
+ "rand",
  "ratatui",
  "reqwest",
  "rust-i18n",

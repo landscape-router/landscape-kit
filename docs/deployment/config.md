@@ -6,11 +6,16 @@
 `state/install-state.json`。它保存安装机器的持续分发通道偏好，不属于安装记录：
 `state/install-state.json` 不包含任何仓库信息。
 
-`lkit` 永不创建、更新或删除 `config.toml`；该文件完全由用户编辑或删除。因此：
+`lkit` 不会凭空创建 `config.toml`；只有显式的偏好/通道配置动作才会写回该文件：
 
-- 来源选择不会被任何命令持久化，成功、失败、回滚或中断恢复都不会改变该文件；
-- 用户随时可以编辑或删除 `config.toml` 改变后续命令的缺省来源；
-- 文件不存在与"官方 GitHub 默认"等价，首次安装不传 `--repository` 时行为一致。
+- 交互控制台按 `L` 切换语言会写回 `[ui] language`（见[语言预设](#语言预设)）；
+- 首次安装强制供给 flare psk 时写回 `[flare]` 段（见[flare 恢复通道](#flare-恢复通道)），
+  daemon 首启无 `[flare]` 时也会生成随机 psk 并写回（恒常托管）；
+- `lkit flare setup` 显式写回 `[flare]` 段。
+
+仓库来源选择不会被任何命令持久化，成功、失败、回滚或中断恢复都不会改变该文件；
+用户随时可以编辑或删除 `config.toml` 改变后续命令的缺省来源；文件不存在与
+"官方 GitHub 默认"等价，首次安装不传 `--repository` 时行为一致。
 
 `config.toml` 允许存在于 lkit 地盘顶层（`lkit` 对顶层目录执行白名单检查，
 `releases/`、`state/` 等受管目录之外的未知文件都会阻断命令）。没有该文件时首次安装
@@ -18,8 +23,8 @@
 
 ## Schema v1
 
-建议权限 `0600`（由用户自行设置，`lkit` 不写入文件）。解析时未知字段和未知 section
-允许并忽略。
+建议权限 `0600`（`lkit` 写回时强制，见 [flare 恢复通道](#flare-恢复通道)；用户手工
+编辑时自行设置）。解析时未知字段和未知 section 允许并忽略。
 
 ```toml
 schema_version = 1
@@ -102,8 +107,38 @@ tmp + rename 完成，保留注释、未知 section/字段与原有顺序，并�
 仍生效（只影响本次会话）但显示提示，且不改动原文件。CLI 命令只读配置预设，
 `--lang` 与 `LKIT_LANG` 覆盖不写回文件。
 
-## 来源变化与资产身份
+## flare 恢复通道
 
+`[flare]` 段配置 daemon 托管的 Landscape Terrain（L2 防失联通道）服务端。daemon 在
+Linux 上**恒常托管** flare：段缺失或无 `psk` 时自动生成随机 psk 并写回本文件
+（启动时打印一次分发提示），随后每个周期对比配置指纹，`[flare]` 变更（psk 非空）时
+重启 flare 任务拾取新配置；psk 被清空则保持现役运行，不切断恢复通道。
+
+```toml
+[flare]
+psk = "一个 ≥12 字符的共享密钥"
+device_name = "landscape-router"   # 可选,默认 landscape-router
+mac = "aa:bb:cc:dd:ee:ff"          # 可选,缺省自动探测
+devices = "any"                    # 可选,默认 any
+ethertype = 0x88b6                 # 可选,默认 0x88b6
+forward_ports = "22,6443"          # 可选,默认 22,6443
+token = "发现令牌"                  # 可选
+```
+
+写入路径：
+
+- **首次安装**：控制台安装表单 `Flare recovery psk` 字段（掩码必填）或非交互
+  `--flare-psk-file`（root-only 私密文件）强制提供 psk；在事务开始前（早于网络接管
+  arm）写回 `[flare]` 段，保证网络服务被停之前 L2 通道已用该 psk 上线；
+- **`lkit flare setup`**：带 `--psk/--token/--devices/--ethertype/--forward-ports/
+  --mac/--device-name` 时在既有配置上覆盖并写回；空参打印当前有效配置（含 psk，
+  供分发给 `lflare` 恢复客户端）；
+- **daemon 首启**：无 `[flare]`/psk 时生成随机 psk 并写回。
+
+psK 随本文件以 `0600` 权限保存（`lkit` 写入时强制）；文件缺失时上述动作会创建带
+默认 `[repository]` 的最小配置，与"文件缺失"的缺省回退语义一致。
+
+## 来源变化与资产身份
 `lkit reconcile --repository` 与同版本 `install`/`switch` 的显式来源诊断：
 
 - 核对显式来源清单中的 static 摘要/大小与 state 记录一致；

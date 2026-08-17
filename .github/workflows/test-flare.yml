@@ -50,3 +50,4 @@ jobs:
           scripts/flare/e2e-same-segment.sh
           scripts/flare/e2e-multiclient.sh
           scripts/flare/e2e-ratelimit.sh
+          scripts/flare/e2e-daemon.sh

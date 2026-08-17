@@ -22,7 +22,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
 | Ratatui 管理控制台 | `UI-01` 至 `UI-15` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-07` | [i18n.md](functional/i18n.md) |
-| 首次安装 | `INS-01` 至 `INS-17` | [install.md](functional/install.md) |
+| 首次安装 | `INS-01` 至 `INS-18` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-05` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-09` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-11` | [switch.md](functional/switch.md) |
@@ -39,7 +39,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 常用软件安装 | `SFT-01` 至 `SFT-06` | [software.md](functional/software.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-09` | [self.md](functional/self.md) |
 | daemon 自动恢复 | `DAE-01` 至 `DAE-04` | [daemon.md](functional/daemon.md) |
-| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-18` | [flare 文档](../../flare/scenarios.md) |
+| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-21` | [flare 文档](../../flare/scenarios.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

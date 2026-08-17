@@ -10,8 +10,8 @@ use crate::interaction::presentation::PRESENTATION_EVENTS_ENV;
 
 use super::DAEMON_WORKER_FLAG;
 use super::protocol::{
-    RemoveFile, WorkerRequest, WorkerResult, validate_credential_path, validate_network_plan_path,
-    validate_request_path, write_private_json,
+    RemoveFile, WorkerRequest, WorkerResult, validate_credential_path, validate_flare_psk_path,
+    validate_network_plan_path, validate_request_path, write_private_json,
 };
 
 const CANCEL_GRACE_POLLS: u32 = 25;
@@ -61,6 +61,13 @@ fn execute_request_inner(request_path: &Path) -> Result<i32, String> {
     let _network_plan = match request.network_plan_path.as_deref() {
         Some(path) => {
             validate_network_plan_path(path)?;
+            Some(RemoveFile::new(path))
+        }
+        None => None,
+    };
+    let _flare_psk = match request.flare_psk_path.as_deref() {
+        Some(path) => {
+            validate_flare_psk_path(path)?;
             Some(RemoveFile::new(path))
         }
         None => None,

@@ -1,6 +1,7 @@
 use super::ConsoleAction;
 use super::backup::{BackupListState, BackupPanel};
 use super::daemon_panel::DeployResult;
+use super::flare_panel::FlareDialog;
 use super::install_form::InstallForm;
 use super::mirror::MirrorPanel;
 use super::network_wizard::{NetworkWizard, Snapshot};
@@ -37,6 +38,7 @@ pub(super) struct ConsoleApp {
     pub(super) software: SoftwarePanel,
     pub(super) reinit: ReinitPanel,
     pub(super) uninstall: UninstallPanel,
+    pub(super) flare: FlareDialog,
     pub(super) takeover_choice: usize,
     pub(super) hits: Clicks,
     /// Overview「部署 daemon」动作的确认层与后台执行状态。
@@ -66,6 +68,7 @@ impl ConsoleApp {
             software: SoftwarePanel::default(),
             reinit: ReinitPanel::default(),
             uninstall: UninstallPanel::default(),
+            flare: FlareDialog::default(),
             takeover_choice: 0,
             hits: Clicks::default(),
             deploy_daemon_confirming: false,
@@ -318,7 +321,7 @@ impl ConsoleApp {
             } else if self.daemon_deploy_available() {
                 crate::tr!(crate::keys::CONSOLE_OVERVIEW_HINT_DEPLOY)
             } else {
-                crate::tr!(crate::keys::CONSOLE_HINT_PANEL)
+                crate::tr!(crate::keys::CONSOLE_OVERVIEW_HINT_FLARE)
             }
         } else {
             match (self.focus, self.menu()) {

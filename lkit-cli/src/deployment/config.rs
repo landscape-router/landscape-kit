@@ -52,8 +52,19 @@ fn default_forward_ports() -> String {
     "22,6443".to_string()
 }
 
+/// 与 serde 缺省值对齐的 `[flare]` 段:字段缺失时的语义基准,供生成新配置
+/// (daemon 首启、`lkit flare setup`)使用,保证写出与读回一致。
+pub(crate) fn default_flare_section() -> FlareSection {
+    FlareSection {
+        device_name: default_device_name(),
+        ethertype: default_ethertype(),
+        forward_ports: default_forward_ports(),
+        ..FlareSection::default()
+    }
+}
+
 /// `[flare]` 配置段:daemon 托管的 Landscape Terrain 服务端(L2 防失联通道)。
-/// 宽容读取:段缺失或损坏时 daemon 不启动 flare 服务,不影响其它功能。
+/// 宽容读取:段缺失或损坏时由 daemon 生成随机 psk 并写回,不影响其它功能。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FlareSection {
     #[serde(default)]
@@ -170,6 +181,98 @@ pub(crate) fn load_flare() -> Option<FlareSection> {
     config.flare
 }
 
+/// flare psk 的最小长度。服务端对短于 12 字符的 psk 只告警,供给路径(安装、
+/// `lkit flare setup`)直接拒绝,保证恢复通道有足够的离线猜测成本。
+pub(crate) const FLARE_PSK_MIN_LENGTH: usize = 12;
+
+/// 生成一个强随机 flare psk:32 字节随机数,hex 编码为 64 字符。
+pub(crate) fn generate_psk() -> String {
+    let bytes: [u8; 32] = rand::random();
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 把 `[flare]` 段写回 `config.toml`。与 `write_language` 相同的定点写语义:
+/// 用 `toml_edit` 保留注释、未知 section/字段与原有顺序;`None` 字段从段中
+/// 移除,`Some` 字段全部写入;写回经 tmp + rename 原子完成,权限 0600
+/// (文件含 psk 明文)。
+///
+/// 文件缺失时创建带默认仓库来源与 `[flare]` 的最小配置(与"文件缺失"的默认
+/// 回退语义一致,默认仓库来源与内置缺省相同);TOML 损坏时返回错误且不改动
+/// 原文件。
+pub(crate) fn save_flare(section: &FlareSection) -> Result<(), InstallError> {
+    let path = layout::territory_config_file();
+    let mut document = match std::fs::read_to_string(&path) {
+        Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
+            InstallError::CorruptedState(format!(
+                "{} is not a valid config file: {error}; fix or delete it to configure flare",
+                path.display()
+            ))
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut document = toml_edit::DocumentMut::new();
+            document["schema_version"] = toml_edit::value(1i64);
+            let mut repository = toml_edit::Table::new();
+            repository["kind"] = toml_edit::value("github");
+            repository["location"] =
+                toml_edit::value(crate::release::repository::github::DEFAULT_REPOSITORY);
+            document["repository"] = toml_edit::Item::Table(repository);
+            document
+        }
+        Err(error) => {
+            return Err(InstallError::Io(std::io::Error::new(
+                error.kind(),
+                format!("failed to read {}: {error}", path.display()),
+            )));
+        }
+    };
+    match document.get_mut("flare") {
+        Some(item) if !item.is_table() => {
+            *item = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        None => {
+            document["flare"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        _ => {}
+    }
+    let flare = document["flare"]
+        .as_table_mut()
+        .expect("flare is a table after normalization");
+    set_optional_string(&mut *flare, "psk", section.psk.as_deref());
+    // 缺省字段不写入:缺失时由 serde 默认值补齐,与"段内未配置"语义一致。
+    if section.device_name != default_device_name() {
+        set_string(&mut *flare, "device_name", &section.device_name);
+    } else {
+        flare.remove("device_name");
+    }
+    set_optional_string(&mut *flare, "mac", section.mac.as_deref());
+    set_optional_string(&mut *flare, "devices", section.devices.as_deref());
+    if section.ethertype != default_ethertype() {
+        flare["ethertype"] = toml_edit::value(i64::from(section.ethertype));
+    } else {
+        flare.remove("ethertype");
+    }
+    if section.forward_ports != default_forward_ports() {
+        set_string(&mut *flare, "forward_ports", &section.forward_ports);
+    } else {
+        flare.remove("forward_ports");
+    }
+    set_optional_string(&mut *flare, "token", section.token.as_deref());
+    atomic_write(&path, &document.to_string())
+}
+
+fn set_string(table: &mut toml_edit::Table, key: &str, value: &str) {
+    table[key] = toml_edit::value(value);
+}
+
+fn set_optional_string(table: &mut toml_edit::Table, key: &str, value: Option<&str>) {
+    match value {
+        Some(value) => set_string(table, key, value),
+        None => {
+            table.remove(key);
+        }
+    }
+}
+
 /// 把语言预设写回 `config.toml` 的 `[ui] language`。只有交互控制台按 `L` 切换语言时
 /// 调用,CLI 命令只读不写回。用 `toml_edit` 定点修改,保留注释、未知 section/字段与
 /// 原有顺序;写回经 tmp + rename 原子完成,并发读方只会看到旧或新文件,不会撕裂。
@@ -267,6 +370,16 @@ mod tests {
         RepositorySource {
             kind: RepositorySourceKind::Github,
             location: "ThisSeanZhang/landscape".into(),
+        }
+    }
+
+    /// 与 `load_flare` 的 serde 默认值对齐的 `[flare]` 缺省段。
+    fn serde_default_flare() -> FlareSection {
+        FlareSection {
+            device_name: default_device_name(),
+            ethertype: default_ethertype(),
+            forward_ports: default_forward_ports(),
+            ..FlareSection::default()
         }
     }
 
@@ -747,6 +860,145 @@ ui = 42
         std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
         assert!(matches!(
             write_language(Language::Zh),
+            Err(InstallError::CorruptedState(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(territory.join("config.toml")).unwrap(),
+            "not toml [[[",
+            "a corrupt config must be left untouched"
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn generate_psk_is_long_unique_and_hex() {
+        let first = generate_psk();
+        let second = generate_psk();
+        assert_eq!(first.len(), 64, "32 random bytes hex-encoded");
+        assert!(first.len() >= FLARE_PSK_MIN_LENGTH);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second, "two generations must differ");
+    }
+
+    #[test]
+    fn save_flare_creates_a_minimal_config_on_missing_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (_guard, territory) = setup("flare-missing");
+        let section = FlareSection {
+            psk: Some("a-very-long-recovery-secret".into()),
+            ..serde_default_flare()
+        };
+        save_flare(&section).unwrap();
+        assert_eq!(load_flare().unwrap(), section);
+        assert_eq!(
+            load_repository().unwrap().unwrap(),
+            github_source(),
+            "the created config must keep the default repository semantics"
+        );
+        let path = territory.join("config.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[flare]"));
+        assert!(text.contains("psk = \"a-very-long-recovery-secret\""));
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(
+            metadata.mode() & 0o077,
+            0,
+            "config with a psk must be root-only"
+        );
+        assert!(
+            !territory.join("run/config.toml.tmp").exists(),
+            "the atomic write must not leave a temp file behind"
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn save_flare_preserves_unknown_sections_and_replaces_the_old_section() {
+        let (_guard, territory) = setup("flare-preserve");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"# user comment
+schema_version = 1
+
+[repository]
+kind = "http"
+location = "https://repo.example.com/landscape/"
+
+[future]
+key = "value"
+
+[flare]
+psk = "old-psk-value"
+devices = "eth0"
+"#,
+        )
+        .unwrap();
+        let section = FlareSection {
+            psk: Some("new-psk-value".into()),
+            device_name: "landscape-router".into(),
+            mac: None,
+            devices: Some("eth1".into()),
+            ethertype: 0x88B6,
+            forward_ports: "22,6443".into(),
+            token: None,
+        };
+        save_flare(&section).unwrap();
+        let text = std::fs::read_to_string(territory.join("config.toml")).unwrap();
+        assert!(text.contains("# user comment"), "comments must survive");
+        assert!(text.contains("[future]"), "unknown sections must survive");
+        assert!(text.contains("key = \"value\""));
+        assert!(text.contains("psk = \"new-psk-value\""));
+        assert!(text.contains("devices = \"eth1\""));
+        assert!(!text.contains("old-psk-value"));
+        assert_eq!(load_flare().unwrap(), section);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn save_flare_drops_none_fields_and_default_values_from_the_section() {
+        let (_guard, territory) = setup("flare-drop-none");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[flare]
+psk = "a-long-recovery-secret"
+token = "old-token"
+"#,
+        )
+        .unwrap();
+        save_flare(&FlareSection {
+            psk: Some("another-long-secret".into()),
+            ..serde_default_flare()
+        })
+        .unwrap();
+        let text = std::fs::read_to_string(territory.join("config.toml")).unwrap();
+        assert!(!text.contains("token"), "None fields must be removed");
+        assert!(
+            !text.contains("device_name"),
+            "default-valued fields must not be written"
+        );
+        assert_eq!(
+            load_flare().unwrap(),
+            FlareSection {
+                psk: Some("another-long-secret".into()),
+                ..serde_default_flare()
+            }
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn save_flare_refuses_corrupt_config_without_modifying_it() {
+        let (_guard, territory) = setup("flare-corrupt");
+        std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
+        assert!(matches!(
+            save_flare(&FlareSection::default()),
             Err(InstallError::CorruptedState(_))
         ));
         assert_eq!(

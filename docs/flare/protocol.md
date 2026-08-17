@@ -80,5 +80,13 @@ psk 从不直接使用：双方启动时用 scrypt 拉伸为 32 字节主密钥�
 | --- | --- | --- |
 | 客户端 | `lflare`（linux/windows） | `lflare --psk … --dev eth0 --forward 2222:6443` |
 | 服务端 | `lkit flare serve`（Linux） | `lkit flare serve --psk … --dev any [--token …]` |
-| 服务端（daemon 托管） | `lkit daemon` 读取 config.toml `[flare]` 段 | 段内配置 psk/device_name/ethertype/devices/forward_ports/token |
+| 服务端（daemon 托管，恒常启动） | `lkit daemon` 在 Linux 上总是托管 flare 服务端 | 读取 config.toml `[flare]` 段；段缺失/无 psk 时自动生成随机 psk 并持久化（启动时打印一次分发提示），daemon 每周期对比配置指纹，`[flare]` 变更（psk 非空）时重启 flare 任务拾取新配置，psk 被清空则保持现役不切断恢复通道 |
+| 配置供给 | `lkit flare setup`（Linux） | 带 `--psk/--token/--devices/--ethertype/--forward-ports/--mac/--device-name` 时在既有配置上覆盖并写回 `[flare]` 段；空参打印当前有效配置（含 psk，供分发给 `lflare` 恢复客户端）。daemon 下一周期自动拾取 |
+| 配置供给 | `lkit install` | 首次安装强制提供 flare psk：控制台安装表单 `Flare recovery psk` 字段（掩码必填）、非交互 `--flare-psk-file`（root-only 私密文件，经 daemon 委托）。psK 在事务开始前（早于网络接管 arm）写入地盘 config.toml `[flare]` 段，0600 权限，保证网络服务被停之前 L2 通道已用该 psk 上线 |
 | 抓包诊断 | `lkit flare sniff` | 在线设备或 pcap 文件解码 Terrain 帧 |
+
+`[flare]` 段字段：`psk`（必填，≥12 字符）、`device_name`（默认 `landscape-router`）、
+`mac`、`devices`（默认 `any`）、`ethertype`（默认 `0x88B6`）、`forward_ports`（默认
+`22,6443`）、`token`（发现令牌，可选）。psK 保存在 root-only 的
+`<territory>/config.toml`（0600）；TUI Overview 面板按 `f` 可弹窗查看/修改 flare
+配置与 psk。

@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use sha2::Digest;
@@ -36,9 +37,20 @@ fn installs_and_verifies_fixture_through_full_cli() {
         state.get("repository").is_none(),
         "install-state.json must not record the repository source"
     );
+    let config = std::fs::read_to_string(harness.config_path()).unwrap();
     assert!(
-        !harness.config_path().exists(),
-        "lkit must not create config.toml on first install"
+        config.contains("[flare]"),
+        "install must write the [flare] section into config.toml: {config}"
+    );
+    assert!(
+        config.contains("fixture-flare-recovery-secret"),
+        "install must persist the provided flare psk: {config}"
+    );
+    let metadata = std::fs::metadata(harness.config_path()).unwrap();
+    assert_eq!(
+        metadata.mode() & 0o077,
+        0,
+        "config.toml holding the flare psk must be root-only"
     );
     assert!(
         harness
@@ -139,8 +151,14 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     assert_success(&harness.run());
     let config_path = harness.config_path();
     assert!(
-        !config_path.exists(),
-        "first install must not create config.toml"
+        config_path.is_file(),
+        "first install must create config.toml with the [flare] section"
+    );
+    assert!(
+        std::fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("[flare]"),
+        "the created config must contain the [flare] section"
     );
 
     std::fs::write(&config_path, b"not valid toml [[[").unwrap();

@@ -16,5 +16,6 @@ manage.takeover_awaiting_confirmation_dhcp = "network takeover is awaiting confi
 manage.management_interface = "management interface https://127.0.0.1:6443"
 manage.confirm_before_rollback = "confirm the network takeover within %{minutes} minutes or the installation will be rolled back automatically"
 manage.enter_admin_password = "Enter admin password"
+manage.enter_flare_psk = "Enter the flare recovery psk (L2 recovery channel used when Landscape network configuration breaks; at least 12 characters)"
 manage.old_manual_deployment_warning = "warning: found an old manual deployment at /root/.landscape-router; install does not migrate it and rejects deployments that could overwrite it or conflict on the fixed ports; use `lkit migrate --from /root/.landscape-router` to migrate"
 manage.must_run_as_root = "must run as root (uid 0)"

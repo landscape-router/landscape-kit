@@ -152,4 +152,41 @@
 - 证据： [crypto 测试](../../landscape-terrain-proto/src/protocol/crypto.rs)、
    [session 测试](../../landscape-terrain-proto/src/protocol/session.rs)
 - 说明：scrypt 派生稳定性、方向密钥独立、握手 proof 不泄露会话密钥、错方向/篡改/
-  重放/回绕窗口、伪造 RESP 拒绝、错误 psk DISCOVER 静默。
+   重放/回绕窗口、伪造 RESP 拒绝、错误 psk DISCOVER 静默。
+
+## FLR-19
+
+**daemon 托管形态下客户端可连接（不执行隧道转发）**
+
+- 测试层：flare e2e（Docker L2 bridge 双容器）
+- 状态：`已覆盖`
+- 证据：[e2e-daemon.sh](../../scripts/flare/e2e-daemon.sh)
+- 说明：服务端容器运行 `lkit daemon`（`LKIT_TERRITORY` + config.toml `[flare]` 段），
+  由 daemon 托管 flare 服务端；`lflare` 客户端完成 DISCOVER→RESP→AUTH_REQ→AUTH_ACK
+  并建立会话、保持 keepalive 即通过。本场景只验证"daemon 托管方式下能连上"，
+   不做端口转发与隧道数据传输。
+
+## FLR-20
+
+**安装供给 flare psk 并写入 `[flare]` 配置段**
+
+- 测试层：fixture e2e（`install_fixture_e2e`，CI）
+- 状态：`已覆盖`
+- 证据：[install.rs](../../lkit-cli/tests/install_fixture_e2e/install.rs)（`[flare]` 段断言）、
+   `docs/flare/protocol.md` 部署形态
+- 说明：`lkit install`（含 `--takeover-network`）强制要求 flare psk（控制台字段 /
+   `--flare-psk-file`），在事务开始前（早于网络接管 arm）写回地盘 config.toml
+   的 `[flare]` 段，0600 权限；daemon 下一周期自动拾取。
+
+## FLR-21
+
+**网络接管失败后经 flare 通道恢复（完整故障场景）**
+
+- 测试层：未覆盖（缺口）
+- 状态：`缺口`
+- 说明：完整场景需要真实 L2 桥 + 容器内 systemd/网络服务破坏：网络接管失败使 IP
+   路径不可用后，操作员经 `lflare` 隧道进入路由器执行 `lkit network rollback`。
+   目前由 FLR-19（daemon 托管可连接）、FLR-20（安装供给 psk 早于接管 arm）与
+   接管 fixture e2e（[network.rs](../../lkit-cli/tests/install_fixture_e2e/network.rs)）
+   分层覆盖，端到端联动留待后续专用容器脚本。
+- 缺口：完整"接管失败 → lflare 连接 → rollback"的集成验证。

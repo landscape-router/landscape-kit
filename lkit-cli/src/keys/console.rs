@@ -26,9 +26,12 @@ pub(crate) const CONSOLE_INSTALL_ROOT_HELP: &str = "console.install_root_help";
 pub(crate) const CONSOLE_ADMIN_USER_HELP: &str = "console.admin_user_help";
 pub(crate) const CONSOLE_PASSWORD_HELP: &str = "console.password_help";
 pub(crate) const CONSOLE_CONFIRM_PASSWORD_HELP: &str = "console.confirm_password_help";
+pub(crate) const CONSOLE_FLARE_PSK_HELP: &str = "console.flare_psk_help";
 // TODO(network-takeover): 恢复网络接管开关时放开以下两个 key 及对应的 locale 条目。
 // pub(crate) const CONSOLE_NETWORK_TAKEOVER_HELP: &str = "console.network_takeover_help";
 pub(crate) const CONSOLE_START_INSTALLATION_HELP: &str = "console.start_installation_help";
+pub(crate) const CONSOLE_FLARE_PSK_REQUIRED: &str = "console.flare_psk_required";
+pub(crate) const CONSOLE_FLARE_PSK_TOO_SHORT: &str = "console.flare_psk_too_short";
 pub(crate) const CONSOLE_PASSWORD_CONFIRMATION_MISMATCH: &str =
     "console.password_confirmation_mismatch";
 pub(crate) const CONSOLE_INVALID_WAN_GATEWAY: &str = "console.invalid_wan_gateway";
@@ -156,6 +159,18 @@ pub(crate) const CONSOLE_INSTALL_ROOT_LABEL: &str = "console.install_root_label"
 pub(crate) const CONSOLE_ADMIN_USER_LABEL: &str = "console.admin_user_label";
 pub(crate) const CONSOLE_PASSWORD_LABEL: &str = "console.password_label";
 pub(crate) const CONSOLE_CONFIRM_PASSWORD_LABEL: &str = "console.confirm_password_label";
+pub(crate) const CONSOLE_FLARE_PSK_LABEL: &str = "console.flare_psk_label";
+pub(crate) const CONSOLE_FLARE_DIALOG_TITLE: &str = "console.flare_dialog_title";
+pub(crate) const CONSOLE_FLARE_DIALOG_PURPOSE: &str = "console.flare_dialog_purpose";
+pub(crate) const CONSOLE_FLARE_DIALOG_HINT: &str = "console.flare_dialog_hint";
+pub(crate) const CONSOLE_FLARE_DEVICES_LABEL: &str = "console.flare_devices_label";
+pub(crate) const CONSOLE_FLARE_ETHERTYPE_LABEL: &str = "console.flare_ethertype_label";
+pub(crate) const CONSOLE_FLARE_FORWARD_PORTS_LABEL: &str = "console.flare_forward_ports_label";
+pub(crate) const CONSOLE_FLARE_TOKEN_LABEL: &str = "console.flare_token_label";
+pub(crate) const CONSOLE_FLARE_TOKEN_UNSET: &str = "console.flare_token_unset";
+pub(crate) const CONSOLE_FLARE_SAVED: &str = "console.flare_saved";
+pub(crate) const CONSOLE_FLARE_SAVE_FAILED: &str = "console.flare_save_failed";
+pub(crate) const CONSOLE_OVERVIEW_HINT_FLARE: &str = "console.overview_hint_flare";
 // TODO(network-takeover): 恢复网络接管开关时放开。
 // pub(crate) const CONSOLE_NETWORK_TAKEOVER_LABEL: &str = "console.network_takeover_label";
 pub(crate) const CONSOLE_START_INSTALLATION_LABEL: &str = "console.start_installation_label";

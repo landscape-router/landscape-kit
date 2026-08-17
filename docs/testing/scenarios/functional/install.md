@@ -130,14 +130,17 @@
 
 ## INS-16
 
-**`config.toml` 是只读用户配置：安装与后续命令都不写入，来源按优先级解析**
+**`config.toml` 是用户维护配置：仓库来源永不写回，偏好/通道配置显式写回**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[配置文件](../../../deployment/config.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
-- 说明：首次安装完成后断言 `install-state.json` 不包含 `repository` 字段且 lkit 地盘顶层
-  不存在 `config.toml`；预置有效配置（HTTP 来源）后不带 `--repository` 执行首次安装，
-  安装使用该来源且配置字节保持不变；网络接管 confirm 前后均不创建配置文件。
+- 说明：首次安装完成后断言 `install-state.json` 不包含 `repository` 字段；仓库来源不被
+  任何命令持久化。写回只发生显式的偏好/通道配置动作：首次安装供给 flare psk 时创建
+  `config.toml` 并写入 `[flare]` 段（0600，含 `repository` 默认段，缺省语义不变），
+  控制台切语言写 `[ui] language`，`lkit flare setup` 写 `[flare]`。预置有效配置（HTTP
+  来源）后不带 `--repository` 执行首次安装，安装使用该来源且配置字节保持不变；
+  网络接管 confirm 前后配置字节保持不变。
 - 缺口：缺省官方 GitHub 的首次安装只在配置缺失路径被隐含覆盖，未单独断言请求打到官方
   仓库（E2E 避免真实网络）。
 
@@ -153,3 +156,17 @@
    预设的配置来源服务器收不到请求）。损坏配置只阻断需要仓库的命令（switch/repair/update
    无显式来源时报错并提示修复或删除），   普通 reconcile、check、restore、backup 和 network 子命令不受影响；删除文件后命令恢复。同版本显式来源诊断
    成功或失败都不修改配置。
+
+## INS-18
+
+**首次安装强制供给 flare psk 并早于网络接管写入 `[flare]`**
+
+- 测试层：控制台表单单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[flare 部署形态](../../../flare/protocol.md#部署形态)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
+- 说明：控制台安装表单 `Flare recovery psk` 字段掩码必填（空值与不足 12 字符被拒），
+  非交互安装必须提供 `--flare-psk-file`（root-only 私密文件），二者皆无时报参数错误。
+  首次安装（含 `--takeover-network`）在事务开始前（早于网络接管 arm）把 psk 写入
+  地盘 `config.toml` 的 `[flare]` 段，0600 权限；daemon 下一周期自动拾取，保证网络
+  服务被停之前 L2 恢复通道已用该 psk 上线。完整故障场景（接管失败→经 lflare 恢复）
+  见 [FLR-21](../../../flare/scenarios.md)。

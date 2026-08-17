@@ -37,6 +37,13 @@ pub(crate) struct InstallRequest {
     /// First-install password captured by the interactive console.
     pub(crate) interactive_password: Option<String>,
 
+    /// Flare recovery psk read from a restricted file: the L2 recovery channel
+    /// secret used when Landscape network configuration breaks.
+    pub(crate) flare_psk_file: Option<PathBuf>,
+
+    /// Flare recovery psk captured by the interactive console.
+    pub(crate) interactive_flare_psk: Option<String>,
+
     /// Restore official static pages from the target release
     pub(crate) repair_static: bool,
 
@@ -221,6 +228,13 @@ async fn run_first_install(
             return exit_code(&error);
         }
     };
+    let flare_psk = match resolve_flare_psk(args, runtime.managed_uid) {
+        Ok(psk) => psk,
+        Err(error) => {
+            eprintln!("install: {error}");
+            return exit_code(&error);
+        }
+    };
     let spec = match plan.provider.as_ref() {
         Some(spec) => spec,
         None => {
@@ -292,17 +306,21 @@ async fn run_first_install(
             health_options: &health_options,
             network: Some(network),
             runtime: Some(runtime),
+            flare_psk: Some(flare_psk),
         })
         .await
     } else {
-        pipeline::first_install(
-            &plan.root,
-            &provider,
-            &plan.target,
-            &credentials,
-            runtime.service_manager.as_ref(),
-            &health_options,
-        )
+        pipeline::first_install_with_network(pipeline::FirstInstallArgs {
+            root: &plan.root,
+            provider: &provider,
+            target: &plan.target,
+            credentials: &credentials,
+            manager: runtime.service_manager.as_ref(),
+            health_options: &health_options,
+            network: None,
+            runtime: None,
+            flare_psk: Some(flare_psk),
+        })
         .await
     };
     match result {
@@ -607,6 +625,45 @@ fn resolve_credentials(
     })
 }
 
+/// 解析 flare 恢复 psk:交互控制台捕获、`--flare-psk-file` 或交互式 tty 输入,
+/// 三者皆无时拒绝(强制显式提供)。psk 是 Landscape 网络配置错误(含接管失败)
+/// 时的 L2 恢复通道密钥,必须由人显式设置并分发给恢复操作员。
+fn resolve_flare_psk(
+    args: &InstallRequest,
+    managed_uid: u32,
+) -> Result<String, plan::InstallError> {
+    use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
+
+    let psk = match (&args.interactive_flare_psk, &args.flare_psk_file) {
+        (Some(psk), None) => psk.clone(),
+        (None, Some(path)) => credentials::read_password_file(path, managed_uid)?,
+        (None, None) => {
+            match crate::interaction::interactive::read_password(&crate::tr!(
+                crate::keys::MANAGE_ENTER_FLARE_PSK
+            )) {
+                Ok(psk) => psk,
+                Err(plan::InstallError::NonInteractive(reason)) => {
+                    return Err(plan::InstallError::ParameterUsage(format!(
+                        "--flare-psk-file is required in non-interactive mode: {reason}; the flare psk protects the L2 recovery channel used when Landscape network configuration breaks"
+                    )));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        (Some(_), Some(_)) => {
+            return Err(plan::InstallError::ParameterUsage(
+                "interactive flare psk and --flare-psk-file cannot be combined".into(),
+            ));
+        }
+    };
+    if psk.len() < FLARE_PSK_MIN_LENGTH {
+        return Err(plan::InstallError::ParameterUsage(format!(
+            "the flare psk must be at least {FLARE_PSK_MIN_LENGTH} characters"
+        )));
+    }
+    Ok(psk)
+}
+
 async fn execute(
     args: &InstallRequest,
     runtime: &InstallRuntime,
@@ -788,6 +845,8 @@ mod tests {
             admin_user: Some("admin".into()),
             password_file: None,
             interactive_password: password.map(str::to_string),
+            flare_psk_file: None,
+            interactive_flare_psk: None,
             repair_static: false,
             repair_binary: false,
             allow_no_backup: false,

@@ -21,6 +21,7 @@ pub(crate) const MANAGE_TAKEOVER_AWAITING_CONFIRMATION_DHCP: &str =
 pub(crate) const MANAGE_MANAGEMENT_INTERFACE: &str = "manage.management_interface";
 pub(crate) const MANAGE_CONFIRM_BEFORE_ROLLBACK: &str = "manage.confirm_before_rollback";
 pub(crate) const MANAGE_ENTER_ADMIN_PASSWORD: &str = "manage.enter_admin_password";
+pub(crate) const MANAGE_ENTER_FLARE_PSK: &str = "manage.enter_flare_psk";
 pub(crate) const MANAGE_OLD_MANUAL_DEPLOYMENT_WARNING: &str =
     "manage.old_manual_deployment_warning";
 pub(crate) const MANAGE_MUST_RUN_AS_ROOT: &str = "manage.must_run_as_root";

@@ -329,3 +329,85 @@ fn preflight_dialog_mouse_click_on_deploy_button_starts_the_deploy() {
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
+
+#[test]
+fn f_opens_the_flare_dialog_on_the_overview_panel() {
+    let _language = LanguageGuard::set(Language::En);
+    let (_guard, territory) = territory_with_pidfile("flare-open", "99999999\n");
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+    assert!(!app.flare.open);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+    assert!(app.flare.open, "f must open the flare dialog");
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.flare.open, "Esc must close the flare dialog");
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&territory);
+}
+
+#[test]
+fn flare_dialog_renders_the_current_configuration() {
+    let _language = LanguageGuard::set(Language::En);
+    let (_guard, territory) = territory_with_pidfile("flare-render", "99999999\n");
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Flare recovery channel"));
+    assert!(content.contains("Flare recovery psk"));
+    assert!(content.contains("<not configured>"));
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&territory);
+}
+
+#[test]
+fn flare_dialog_edits_and_saves_the_psk_into_the_config() {
+    let _language = LanguageGuard::set(Language::En);
+    let (_guard, territory) = territory_with_pidfile("flare-save", "99999999\n");
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    for character in "an-operator-chosen-secret".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    assert!(!app.flare.open, "saving must close the dialog");
+    let section = crate::deployment::config::load_flare().unwrap();
+    assert_eq!(
+        section.psk.as_deref(),
+        Some("an-operator-chosen-secret"),
+        "the edited psk must be persisted to config.toml"
+    );
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&territory);
+}
+
+#[test]
+fn flare_dialog_rejects_a_short_psk_and_stays_open() {
+    let _language = LanguageGuard::set(Language::En);
+    let (_guard, territory) = territory_with_pidfile("flare-short", "99999999\n");
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    for character in "short".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    assert!(app.flare.open, "a rejected save must keep the dialog open");
+    assert!(
+        app.flare.notice.contains("at least 12 characters"),
+        "unexpected notice: {}",
+        app.flare.notice
+    );
+    assert!(crate::deployment::config::load_flare().is_none());
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&territory);
+}

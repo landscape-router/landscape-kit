@@ -16,5 +16,6 @@ manage.takeover_awaiting_confirmation_dhcp = "网络接管正在等待确认；�
 manage.management_interface = "管理界面 https://127.0.0.1:6443"
 manage.confirm_before_rollback = "请在 %{minutes} 分钟内确认网络接管，否则安装将自动回滚"
 manage.enter_admin_password = "输入管理员密码"
+manage.enter_flare_psk = "输入 flare 恢复 psk（Landscape 网络配置错误时的 L2 恢复通道密钥；至少 12 个字符）"
 manage.old_manual_deployment_warning = "警告：发现旧的手动部署 /root/.landscape-router；install 不会迁移它，并拒绝可能覆盖它或与固定端口冲突的部署；请使用 `lkit migrate --from /root/.landscape-router` 迁移"
 manage.must_run_as_root = "必须以 root 身份运行（uid 0）"

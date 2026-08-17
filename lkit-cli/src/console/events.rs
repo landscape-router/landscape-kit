@@ -110,6 +110,9 @@ impl ConsoleApp {
         if self.deploy_daemon.is_some() {
             return None;
         }
+        if self.flare.open {
+            return self.handle_flare_dialog_key(key);
+        }
         if self.preflight_dialog {
             match key.code {
                 // daemon 未运行被阻断时 Enter 执行部署(按钮常显选中态,
@@ -356,8 +359,8 @@ impl ConsoleApp {
 
     /// Overview 面板键处理:daemon 未运行时 Enter 打开「部署 daemon」确认层,
     /// 确认层 Enter 在后台线程执行 `lkit self install`(留在 TUI 内,不退出),
-    /// Esc 关闭确认层。确认层开启时消费全部按键;其余按键返回 `None` 交给
-    /// 通用处理(保持 Esc 返回菜单选择等标准语义)。
+    /// Esc 关闭确认层。确认层开启时消费全部按键;`f` 打开 flare 恢复通道弹窗。
+    /// 其余按键返回 `None` 交给通用处理(保持 Esc 返回菜单选择等标准语义)。
     pub(super) fn handle_overview_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
         if self.deploy_daemon_confirming {
             match key.code {
@@ -377,8 +380,45 @@ impl ConsoleApp {
                 self.deploy_daemon_confirming = true;
                 Some(None)
             }
+            KeyCode::Char('f' | 'F') => {
+                self.open_flare_dialog();
+                Some(None)
+            }
             _ => None,
         }
+    }
+
+    /// flare 弹窗键处理:弹窗开启时消费全部按键。Enter 保存(校验失败留在
+    /// 弹窗内提示),Esc 关闭;`e`/Enter 进入 psk 编辑,编辑中直接输入字符。
+    pub(super) fn handle_flare_dialog_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
+        if self.flare.editing {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => {
+                    self.flare.editing = false;
+                }
+                KeyCode::Backspace => {
+                    self.flare.psk.pop();
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.flare.psk.chars().count() < 1024 =>
+                {
+                    self.flare.psk.push(character);
+                }
+                _ => {}
+            }
+            return None;
+        }
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('e' | 'E') => {
+                self.flare.notice.clear();
+                self.flare.editing = true;
+            }
+            KeyCode::Char('s' | 'S') => self.save_flare_dialog(),
+            KeyCode::Esc => self.flare.open = false,
+            _ => {}
+        }
+        None
     }
 
     pub(super) fn handle_editing_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {

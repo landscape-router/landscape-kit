@@ -27,6 +27,8 @@ pub async fn run(args: &Reconcile) -> ExitCode {
         admin_user: None,
         password_file: None,
         interactive_password: None,
+        flare_psk_file: None,
+        interactive_flare_psk: None,
         repair_static: false,
         repair_binary: false,
         allow_no_backup: false,

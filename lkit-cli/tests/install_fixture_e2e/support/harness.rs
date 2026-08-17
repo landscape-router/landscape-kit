@@ -18,6 +18,7 @@ pub(crate) struct InstallHarness {
     pub(crate) host: PathBuf,
     pub(crate) runtime_config: PathBuf,
     pub(crate) password: PathBuf,
+    pub(crate) flare_psk: PathBuf,
     pub(crate) ip_state: PathBuf,
     pub(crate) repository: RepositoryServer,
 }
@@ -157,6 +158,9 @@ esac
         let password = world.path("password");
         std::fs::write(&password, b"Secret123\n").unwrap();
         std::fs::set_permissions(&password, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let flare_psk = world.path("flare-psk");
+        std::fs::write(&flare_psk, b"fixture-flare-recovery-secret\n").unwrap();
+        std::fs::set_permissions(&flare_psk, std::fs::Permissions::from_mode(0o600)).unwrap();
         let repository = RepositoryServer::start(repository_files());
         Self {
             world,
@@ -165,6 +169,7 @@ esac
             host,
             runtime_config,
             password,
+            flare_psk,
             ip_state,
             repository,
         }
@@ -235,6 +240,8 @@ esac
             .arg(&self.install_root)
             .args(["--admin-user", "admin", "--password-file"])
             .arg(&self.password)
+            .args(["--flare-psk-file"])
+            .arg(&self.flare_psk)
             .args(["--test-runtime"])
             .arg(&self.runtime_config)
             .output()
@@ -307,6 +314,8 @@ esac
             .arg(&self.install_root)
             .args(["--admin-user", "admin", "--password-file"])
             .arg(&self.password)
+            .args(["--flare-psk-file"])
+            .arg(&self.flare_psk)
             .args(["--test-runtime"])
             .arg(&self.runtime_config)
             .output()
