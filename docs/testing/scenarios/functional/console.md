@@ -69,9 +69,9 @@
 
 - 测试层：Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台输入规格](../../../interaction/console.md)、[控制台渲染测试](../../../../crates/lkit-cli/src/console/)
+- 证据：[控制台输入规格](../../../interaction/console.md)、[样式验收标准](../../../interaction/ui/README.md)、[控制台渲染测试](../../../../crates/lkit-cli/src/console/)
 - 说明：Overview 和 Install 面板标题显示 `> ` 焦点标记；Install 当前字段使用 `> ` 和基础
-  Cyan 背景，不依赖 truecolor 支持。
+  Cyan 背景，不依赖 truecolor 支持。样式令牌（`FOCUS_SELECTED` 等）定义见样式验收标准。
 
 ## UI-08
 
@@ -119,9 +119,11 @@
 - 状态：`已覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[备份命令](../../../commands/backup.md)、[控制台测试](../../../../crates/lkit-cli/src/console/)
 - 说明：未安装或非 root 时面板只显示原因提示。已安装时列出备份（与 `backup list`
-  同源的后台完整校验），Enter 打开 metadata 详情（V 后台完整 verify，R 恢复），顶部
+  同源的后台完整校验），Enter 打开 metadata 详情（**备注排第一**，进入详情自动后台
+  `verify` 并写底栏，V 可手动重校验，R 打开恢复确认层但校验失败时弹损坏框），顶部
   创建动作支持备注编辑并在 Enter 后生成与 CLI 等价的结构化 `Backup`/`Restore` 请求；
-  恢复确认层 Enter 提交、Esc 取消，`--yes` 由控制台确认层覆盖。
+  列表行单行展示、备注排第一且按剩余长度截断，完整备注进详情页。恢复确认层 Enter 前必须通过校验
+  （未校验先启动并提示校验中，失败弹损坏框），通过才提交；`--yes` 由控制台确认层覆盖。
 - 缺口：真实备份文件的列表加载与损坏条目标记依赖安装现场，测试通过注入 metadata 覆盖
   渲染与按键路径；后台 verify 与恢复委托 worker 的端到端执行未自动化。
 
@@ -167,11 +169,12 @@
 - 说明：`lkit check` 与 Install 面板部署前检查包含 `service.lkit_daemon` 项：daemon
   运行中为 `pass`；root 下未运行为 `error` 并建议 `lkit self install`（控制台未部署
   daemon 前无法进入安装表单）；非 root 未运行只报 `warning`。进入控制台时 root 下
-  daemon 未运行，底栏提示行直接显示警告；Overview 面板常驻显示 daemon 运行状态行，
-  未运行时显示“部署 lkit 常驻服务”动作行：Enter 打开确认层，确认后在 TUI 内后台
-  线程执行 `lkit self install`（进度弹层，结果写底栏，不退出控制台），成功后状态行
-  变绿、动作行消失、预检自动重跑。安装阻断弹框内因 daemon 检查被拦时直接提供部署
-  按钮（`D` 键或点击），部署完成后表单门禁自动放行。
+  daemon 未运行，底栏提示行直接显示警告；Overview 面板右栏常驻显示 daemon 运行状态行
+  （header 同时显示 daemon 状态徽标），未运行时显示“部署 lkit 常驻服务”动作行：
+  Enter 打开确认层，确认后在 TUI 内后台线程执行 `lkit self install`（进度弹层，
+  结果写底栏，不退出控制台），成功后状态行变绿、动作行消失、预检自动重跑。安装阻断
+  弹框内因 daemon 检查被拦时直接提供部署按钮（`D` 键或点击，按钮常显选中态），
+  部署完成后表单门禁自动放行。
 - 缺口：`delegation_blocked` 的 root 分支依赖真实 euid，标准单测环境（非 root）只
   覆盖 `daemon_is_running` 的 pidfile 语义、检查函数分支与部署后台线程的失败路径
   （非 root 得到 root 权限错误）；root 环境的真实 systemd 部署与 TUI 现场（含部署

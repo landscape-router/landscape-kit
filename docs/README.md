@@ -7,6 +7,7 @@
 ## 交互控制台
 
 - [Ratatui 管理控制台](interaction/console.md)：侧栏、安装表单、命令模式边界和终端恢复。
+- [控制台样式验收标准](interaction/ui/README.md)：布局骨架、样式令牌、各页面样式标准。
 - [命令行本地化](interaction/i18n.md)：`en`/`zh` 选择、优先级和稳定机器契约。
 
 ## 命令

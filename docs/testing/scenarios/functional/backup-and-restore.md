@@ -190,7 +190,11 @@
 - 测试层：Rust 单元（console）
 - 状态：`已覆盖`
 - 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（crates/lkit-cli/src/console/tests/backup.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
-- 说明：Enter 打开创建对话框（标题、minimal scope 说明、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、Enter 提交走与 CLI 相同的备注校验，空备注直接创建。提交后在 TUI 内后台执行与 CLI 相同的完整流程（共用 `create_manual_backup`），居中弹窗显示导出/归档/落盘阶段，不退出控制台。
+- 说明：Enter 打开创建对话框（标题、minimal scope 说明——"将创建 minimal 配置级快照，
+  包含恢复所需的最小文件集"、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、
+  Enter 提交走与 CLI 相同的备注校验，空备注直接创建。提交后在 TUI 内后台执行与 CLI
+  相同的完整流程（共用 `create_manual_backup`），居中弹窗显示导出/归档/落盘阶段，
+  不退出控制台。
 - 缺口：真实安装现场下 TUI 内创建并刷新列表的完整链路未做 E2E 断言（控制台单测在无安装现场下验证状态机与渲染）。
 
 ## BKP-09
