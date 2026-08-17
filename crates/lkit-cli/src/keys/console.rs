@@ -130,6 +130,10 @@ pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING: &str =
     "console.overview_lkit_daemon_running";
 pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_NOT_RUNNING: &str =
     "console.overview_lkit_daemon_not_running";
+pub(crate) const CONSOLE_HEADER_DAEMON_RUNNING: &str = "console.header_daemon_running";
+pub(crate) const CONSOLE_HEADER_DAEMON_NOT_RUNNING: &str = "console.header_daemon_not_running";
+pub(crate) const CONSOLE_OVERVIEW_LKIT_SECTION: &str = "console.overview_lkit_section";
+pub(crate) const CONSOLE_OVERVIEW_LKIT_VERSION: &str = "console.overview_lkit_version";
 pub(crate) const CONSOLE_OVERVIEW_DEPLOY_DAEMON: &str = "console.overview_deploy_daemon";
 pub(crate) const CONSOLE_OVERVIEW_HINT_DEPLOY: &str = "console.overview_hint_deploy";
 pub(crate) const CONSOLE_DEPLOY_DAEMON_TITLE: &str = "console.deploy_daemon_title";
@@ -178,6 +182,9 @@ pub(crate) const CONSOLE_BACKUP_VERIFY_WORKER_STOPPED: &str =
     "console.backup_verify_worker_stopped";
 pub(crate) const CONSOLE_BACKUP_RESTORE_TITLE: &str = "console.backup_restore_title";
 pub(crate) const CONSOLE_BACKUP_RESTORE_QUESTION: &str = "console.backup_restore_question";
+pub(crate) const CONSOLE_BACKUP_CORRUPT_DIALOG: &str = "console.backup_corrupt_dialog";
+pub(crate) const CONSOLE_BACKUP_CORRUPT_TITLE: &str = "console.backup_corrupt_title";
+pub(crate) const CONSOLE_BACKUP_CORRUPT_QUESTION: &str = "console.backup_corrupt_question";
 pub(crate) const CONSOLE_BACKUP_RESTORE_PLAN: &str = "console.backup_restore_plan";
 pub(crate) const CONSOLE_BACKUP_RESTORE_PRESS_ENTER: &str = "console.backup_restore_press_enter";
 pub(crate) const CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE: &str =
@@ -278,6 +285,11 @@ pub(crate) const CONSOLE_SOFTWARE_PHASE_PACKAGES: &str = "console.software_phase
 pub(crate) const CONSOLE_SOFTWARE_PHASE_SERVICE: &str = "console.software_phase_service";
 pub(crate) const CONSOLE_SOFTWARE_INSTALLED: &str = "console.software_installed";
 pub(crate) const CONSOLE_SOFTWARE_WORKER_STOPPED: &str = "console.software_worker_stopped";
+pub(crate) const CONSOLE_SOFTWARE_CANCEL_HINT: &str = "console.software_cancel_hint";
+pub(crate) const CONSOLE_SOFTWARE_CANCEL_TITLE: &str = "console.software_cancel_title";
+pub(crate) const CONSOLE_SOFTWARE_CANCEL_QUESTION: &str = "console.software_cancel_question";
+pub(crate) const CONSOLE_SOFTWARE_CANCEL_NOTE: &str = "console.software_cancel_note";
+pub(crate) const CONSOLE_SOFTWARE_CANCEL_PRESS_ENTER: &str = "console.software_cancel_press_enter";
 pub(crate) const CONSOLE_SOFTWARE_HINT_PANEL: &str = "console.software_hint_panel";
 pub(crate) const CONSOLE_SOFTWARE_HINT_CONFIRM: &str = "console.software_hint_confirm";
 pub(crate) const CONSOLE_SOFTWARE_HINT_RUNNING: &str = "console.software_hint_running";

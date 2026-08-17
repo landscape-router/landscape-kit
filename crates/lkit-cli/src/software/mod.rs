@@ -183,16 +183,18 @@ pub(crate) fn root_allowed() -> bool {
 
 /// 安装一个常用软件。`stream` 为 true 时软件包管理器输出直接流到终端
 /// （CLI 模式）；false 时捕获输出，仅错误时透出（TUI worker 模式）。
+/// `cancel` 置位后正在运行的软件包管理器命令会被终止，安装返回取消错误。
 /// `phase` 回调按流程阶段上报进度。
 pub(crate) fn install(
     host: &Host,
     software: Software,
     source: DockerSource,
     stream: bool,
+    cancel: &std::sync::atomic::AtomicBool,
     phase: &mut dyn FnMut(InstallPhase),
 ) -> Result<(), SoftwareError> {
     match software {
-        Software::Docker => docker::install(host, source, stream, phase),
+        Software::Docker => docker::install(host, source, stream, cancel, phase),
     }
 }
 

@@ -43,6 +43,7 @@ fn software_menu_is_navigable_when_installed() {
 
 #[test]
 fn software_panel_renders_host_and_software() {
+    use ratatui::style::Color;
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     let mut app = software_ready_app();
@@ -51,6 +52,14 @@ fn software_panel_renders_host_and_software() {
     assert!(content.contains("Host: Ubuntu (noble)"));
     assert!(content.contains("Common software"));
     assert!(content.contains("Docker"));
+    // 进入面板时默认选中唯一软件(Docker),行使用 FOCUS_SELECTED 反色高亮。
+    let buffer = terminal.backend().buffer();
+    let selected = buffer
+        .content
+        .iter()
+        .filter(|cell| cell.symbol() == "D" && cell.bg == Color::Cyan)
+        .count();
+    assert_eq!(selected, 1, "the selected software row must be highlighted");
 }
 
 #[test]
@@ -188,7 +197,9 @@ fn software_confirmation_enter_after_detection_failure_shows_notice() {
 }
 
 #[test]
-fn software_progress_dialog_renders_phase_and_gauge() {
+fn software_progress_dialog_renders_phase_gauge_and_esc_cancel_hint() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     let _language = LanguageGuard::set(Language::En);
     let (_, receiver) = std::sync::mpsc::channel();
     let mut app = software_ready_app();
@@ -196,12 +207,117 @@ fn software_progress_dialog_renders_phase_and_gauge() {
         receiver,
         phase: InstallPhase::InstallingPackages,
         software: Software::Docker,
+        cancel: Arc::new(AtomicBool::new(false)),
     });
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(content.contains("Installing Docker"));
     assert!(content.contains("Installing packages"));
+    assert!(
+        content.contains("Esc Cancel installation"),
+        "the progress dialog must show the Esc cancel hint"
+    );
+}
+
+#[test]
+fn software_esc_opens_cancel_layer_and_enter_sets_the_cancel_flag() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let mut app = software_ready_app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (_, receiver) = std::sync::mpsc::channel();
+    app.software.install = Some(SoftwareInstallRun {
+        receiver,
+        phase: InstallPhase::InstallingPackages,
+        software: Software::Docker,
+        cancel: Arc::clone(&cancel),
+    });
+
+    // 安装中 Esc 打开取消确认层。
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.software.cancel_confirming);
+    assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
+
+    // 确认层 Esc 关闭,标志不置位,安装继续。
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.software.cancel_confirming);
+    assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
+
+    // 再次 Esc 打开后 Enter 确认取消。
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.software.cancel_confirming);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.software.cancel_confirming);
+    assert!(
+        cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "confirming the cancel must set the worker cancel flag"
+    );
+}
+
+#[test]
+fn software_cancel_layer_renders() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = software_ready_app();
+    let (_, receiver) = std::sync::mpsc::channel();
+    app.software.install = Some(SoftwareInstallRun {
+        receiver,
+        phase: InstallPhase::Preparing,
+        software: Software::Docker,
+        cancel: Arc::new(AtomicBool::new(false)),
+    });
+    app.software.cancel_confirming = true;
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Cancel the installation?"));
+    assert!(content.contains("Press Enter to cancel."));
+}
+
+#[test]
+fn software_cancel_after_confirm_allows_reselecting_source() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let mut app = software_ready_app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (_, receiver) = std::sync::mpsc::channel();
+    app.software.install = Some(SoftwareInstallRun {
+        receiver,
+        phase: InstallPhase::InstallingPackages,
+        software: Software::Docker,
+        cancel: Arc::clone(&cancel),
+    });
+    // 取消后 worker 结束:模拟 Done(Err(cancelled))。
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let (sender, new_receiver) = std::sync::mpsc::channel();
+    let _ = sender.send(SoftwareInstallMessage::Done(Err(crate::tr!(
+        crate::keys::SOFTWARE_CANCELLED
+    )
+    .to_string())));
+    app.software.install = Some(SoftwareInstallRun {
+        receiver: new_receiver,
+        phase: InstallPhase::InstallingPackages,
+        software: Software::Docker,
+        cancel: Arc::clone(&cancel),
+    });
+    app.update();
+    assert!(app.software.install.is_none());
+    assert_eq!(
+        app.notice,
+        crate::tr!(crate::keys::SOFTWARE_CANCELLED),
+        "the cancellation notice must be shown"
+    );
+    // 面板恢复:未安装状态下可重新按 Enter 打开来源选择。
+    // (refresh_status 会做真实检测,测试环境可能已装 docker,这里强制未装。)
+    app.software.installed = vec![false];
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        app.software.confirming.is_some(),
+        "after cancellation the panel must allow reselecting the source"
+    );
 }
 
 #[test]

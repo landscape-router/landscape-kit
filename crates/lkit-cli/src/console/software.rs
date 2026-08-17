@@ -1,7 +1,9 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
@@ -32,6 +34,8 @@ pub(crate) struct SoftwareInstallRun {
     pub(crate) receiver: Receiver<SoftwareInstallMessage>,
     pub(crate) phase: InstallPhase,
     pub(crate) software: Software,
+    /// 取消标志：置位后 worker 终止正在运行的软件包管理器命令。
+    pub(crate) cancel: Arc<AtomicBool>,
 }
 
 /// 软件面板：显示发行版检测结果与软件列表（含安装状态），
@@ -44,6 +48,8 @@ pub(crate) struct SoftwarePanel {
     pub(crate) selected: Option<Software>,
     pub(crate) confirming: Option<SoftwareConfirm>,
     pub(crate) install: Option<SoftwareInstallRun>,
+    /// 安装进行中显示取消确认层。
+    pub(crate) cancel_confirming: bool,
 }
 
 impl Default for SoftwarePanel {
@@ -55,6 +61,7 @@ impl Default for SoftwarePanel {
             selected: Software::all().first().copied(),
             confirming: None,
             install: None,
+            cancel_confirming: false,
         }
     }
 }
@@ -90,6 +97,8 @@ impl SoftwarePanel {
             return Err(crate::tr!(crate::keys::SOFTWARE_ROOT_REQUIRED));
         }
         let host = host.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
         std::thread::spawn(move || {
@@ -100,6 +109,7 @@ impl SoftwarePanel {
                     confirm.software,
                     confirm.source,
                     false,
+                    &worker_cancel,
                     &mut |phase| {
                         let _ = phase_sender.send(SoftwareInstallMessage::Phase(phase));
                     },
@@ -112,6 +122,7 @@ impl SoftwarePanel {
             receiver,
             phase: InstallPhase::Preparing,
             software: confirm.software,
+            cancel,
         });
         Ok(())
     }
@@ -127,17 +138,24 @@ impl SoftwarePanel {
                 }
                 Ok(SoftwareInstallMessage::Done(result)) => {
                     self.install = None;
+                    self.cancel_confirming = false;
                     match result {
                         Ok(()) => {
                             self.refresh_status();
                             *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_INSTALLED);
                         }
-                        Err(error) => *notice = error,
+                        Err(error) => {
+                            // 取消或失败后都刷新状态,面板恢复可用可重新选择源。
+                            self.refresh_status();
+                            *notice = error;
+                        }
                     }
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.install = None;
+                    self.cancel_confirming = false;
+                    self.refresh_status();
                     *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED);
                 }
             }
@@ -263,6 +281,14 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
             lines.push(Line::raw(""));
             for (index, software) in Software::all().into_iter().enumerate() {
                 let selected = app.software.selected == Some(software);
+                let selected_style = if selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
                 let marker = if selected { "> " } else { "  " };
                 let installed = app.software.installed.get(index).copied().unwrap_or(false);
                 let status = if installed {
@@ -271,25 +297,20 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
                     crate::tr!(crate::keys::SOFTWARE_NOT_INSTALLED)
                 };
                 let line = Line::from(vec![
-                    Span::styled(marker, Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        software.label(),
-                        Style::default().add_modifier(if selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                    ),
-                    Span::raw("  ["),
+                    Span::styled(marker, selected_style),
+                    Span::styled(software.label(), selected_style),
+                    Span::styled("  [", selected_style),
                     Span::styled(
                         status,
-                        Style::default().fg(if installed {
-                            Color::Green
+                        if selected {
+                            selected_style
+                        } else if installed {
+                            Style::default().fg(Color::Green)
                         } else {
-                            Color::DarkGray
-                        }),
+                            Style::default().fg(Color::DarkGray)
+                        },
                     ),
-                    Span::raw("]"),
+                    Span::styled("]", selected_style),
                 ]);
                 lines.push(line);
             }
@@ -402,7 +423,7 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
     };
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 8.min(screen.height.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -419,20 +440,30 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
         InstallPhase::StartingService => crate::tr!(crate::keys::CONSOLE_SOFTWARE_PHASE_SERVICE),
     };
     let software_label = run.software.label();
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::raw(crate::tr!(
-                crate::keys::CONSOLE_SOFTWARE_INSTALLING,
-                software = software_label
-            )),
-            Line::raw(""),
-            Line::raw(&phase_text),
-        ])
-        .wrap(Wrap { trim: true })
-        .block(Block::bordered().title(crate::tr!(
-            crate::keys::CONSOLE_SOFTWARE_CONFIRM_TITLE,
+    // 安装中按 Esc 可取消(弹窗内醒目提示,点击弹窗内区域不触发动作)。
+    let cancel_hint = crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_HINT);
+    let content_lines = vec![
+        Line::raw(crate::tr!(
+            crate::keys::CONSOLE_SOFTWARE_INSTALLING,
             software = software_label
-        ))),
+        )),
+        Line::raw(""),
+        Line::raw(phase_text.clone()),
+        Line::raw(""),
+        Line::styled(
+            cancel_hint.clone(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    frame.render_widget(
+        Paragraph::new(content_lines.clone())
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(crate::tr!(
+                crate::keys::CONSOLE_SOFTWARE_CONFIRM_TITLE,
+                software = software_label
+            ))),
         Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2)),
     );
     let gauge_area = Rect::new(
@@ -446,5 +477,46 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
             .ratio(f64::from(run.phase.step()) / f64::from(InstallPhase::STEPS))
             .label(phase_text),
         gauge_area,
+    );
+    if app.software.cancel_confirming {
+        render_software_cancel_confirmation(frame, app);
+    }
+}
+
+/// 取消安装确认层:Enter 确认取消(终止 worker),Esc 关闭继续安装。
+fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+    let screen = frame.area();
+    let width = 64.min(screen.width.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    register_dialog_hits(&mut app.hits, screen, area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_QUESTION),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_NOTE),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::raw(""),
+            Line::raw(crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_PRESS_ENTER)),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_TITLE))),
+        area,
     );
 }

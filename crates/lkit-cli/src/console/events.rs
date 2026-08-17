@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::sync::atomic::Ordering;
 
 use super::install_form::InstallField;
 use super::mirror::MirrorRow;
@@ -52,7 +53,25 @@ impl ConsoleApp {
         if self.backup.create.is_some() {
             return None;
         }
+        if self.software.cancel_confirming {
+            // 取消确认层:Enter 确认取消(置位标志终止 worker),Esc 关闭继续安装。
+            match key.code {
+                KeyCode::Enter => {
+                    if let Some(run) = &self.software.install {
+                        run.cancel.store(true, Ordering::Relaxed);
+                    }
+                    self.software.cancel_confirming = false;
+                }
+                KeyCode::Esc => self.software.cancel_confirming = false,
+                _ => {}
+            }
+            return None;
+        }
         if self.software.install.is_some() {
+            // 安装进行中:Esc 打开取消确认层,其余按键忽略。
+            if key.code == KeyCode::Esc {
+                self.software.cancel_confirming = true;
+            }
             return None;
         }
         if self.deploy_daemon.is_some() {

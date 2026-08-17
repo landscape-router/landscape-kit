@@ -181,7 +181,9 @@ fn execute_install(
     stream: bool,
 ) -> ExitCode {
     let mut phase = |_phase: software::InstallPhase| {};
-    match software::install(host, software, source, stream, &mut phase) {
+    // CLI 模式无取消入口:传永假标志,保持既有语义。
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match software::install(host, software, source, stream, &cancel, &mut phase) {
         Ok(()) => {
             println!(
                 "software: {}",

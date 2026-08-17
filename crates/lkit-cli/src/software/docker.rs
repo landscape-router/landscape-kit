@@ -1,5 +1,8 @@
 use std::fs;
+use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::mirror::{Family, Host};
 use crate::software::{DockerSource, InstallPhase, SoftwareError, paths};
@@ -30,12 +33,15 @@ pub(crate) fn install(
     host: &Host,
     source: DockerSource,
     stream: bool,
+    cancel: &AtomicBool,
     phase: &mut dyn FnMut(InstallPhase),
 ) -> Result<(), SoftwareError> {
     match host.family {
-        Family::Debian | Family::Ubuntu => install_apt(host, source, stream, phase),
-        Family::Fedora | Family::Rocky | Family::Alma => install_dnf(host, source, stream, phase),
-        Family::Arch => install_pacman(stream, phase),
+        Family::Debian | Family::Ubuntu => install_apt(host, source, stream, cancel, phase),
+        Family::Fedora | Family::Rocky | Family::Alma => {
+            install_dnf(host, source, stream, cancel, phase)
+        }
+        Family::Arch => install_pacman(stream, cancel, phase),
     }
 }
 
@@ -45,15 +51,17 @@ fn install_apt(
     host: &Host,
     source: DockerSource,
     stream: bool,
+    cancel: &AtomicBool,
     phase: &mut dyn FnMut(InstallPhase),
 ) -> Result<(), SoftwareError> {
     phase(InstallPhase::Preparing);
     // 基础镜像可能没有包列表：先刷新一次，再安装预置依赖。
-    run_command("apt-get", &["update", "-y"], stream)?;
+    run_command("apt-get", &["update", "-y"], stream, cancel)?;
     run_command(
         "apt-get",
         &["install", "-y", "ca-certificates", "curl", "gnupg"],
         stream,
+        cancel,
     )?;
     let keyrings = paths().apt_keyrings_dir.clone();
     fs::create_dir_all(&keyrings)?;
@@ -62,16 +70,21 @@ fn install_apt(
     let armored = keyrings.join(".docker-archive.key");
     let keyring = keyrings.join("docker.gpg");
     let armored_path = armored.to_string_lossy().to_string();
-    run_command("curl", &["-fsSL", &gpg_url, "-o", &armored_path], stream)?;
+    run_command(
+        "curl",
+        &["-fsSL", &gpg_url, "-o", &armored_path],
+        stream,
+        cancel,
+    )?;
     dearmor_gpg(&armored, &keyring)?;
     let _ = fs::remove_file(&armored);
     write_apt_source(host, source)?;
     phase(InstallPhase::InstallingPackages);
-    run_command("apt-get", &["update", "-y"], stream)?;
+    run_command("apt-get", &["update", "-y"], stream, cancel)?;
     let mut args: Vec<&str> = vec!["install", "-y"];
     args.extend(APT_PACKAGES);
-    run_command("apt-get", &args, stream)?;
-    finish(stream, phase)
+    run_command("apt-get", &args, stream, cancel)?;
+    finish(stream, cancel, phase)
 }
 
 /// 写入 apt 的 docker-ce 源文件（纯文件操作，可单测）。
@@ -99,6 +112,7 @@ fn install_dnf(
     host: &Host,
     source: DockerSource,
     stream: bool,
+    cancel: &AtomicBool,
     phase: &mut dyn FnMut(InstallPhase),
 ) -> Result<(), SoftwareError> {
     phase(InstallPhase::Preparing);
@@ -106,8 +120,8 @@ fn install_dnf(
     phase(InstallPhase::InstallingPackages);
     let mut args: Vec<&str> = vec!["install", "-y"];
     args.extend(DNF_PACKAGES);
-    run_command("dnf", &args, stream)?;
-    finish(stream, phase)
+    run_command("dnf", &args, stream, cancel)?;
+    finish(stream, cancel, phase)
 }
 
 /// 写入 dnf/yum 的 docker-ce 仓库文件（纯文件操作，可单测）。
@@ -131,35 +145,62 @@ fn write_dnf_repo(host: &Host, source: DockerSource) -> Result<(), SoftwareError
 }
 
 /// pacman（Arch）：官方仓库直接安装。
-fn install_pacman(stream: bool, phase: &mut dyn FnMut(InstallPhase)) -> Result<(), SoftwareError> {
+fn install_pacman(
+    stream: bool,
+    cancel: &AtomicBool,
+    phase: &mut dyn FnMut(InstallPhase),
+) -> Result<(), SoftwareError> {
     phase(InstallPhase::Preparing);
     phase(InstallPhase::InstallingPackages);
     let mut args: Vec<&str> = vec!["-Sy", "--noconfirm"];
     args.extend(PACMAN_PACKAGES);
-    run_command("pacman", &args, stream)?;
-    finish(stream, phase)
+    run_command("pacman", &args, stream, cancel)?;
+    finish(stream, cancel, phase)
 }
 
 /// 启用并启动 docker 服务，并做最终功能验证。
-fn finish(stream: bool, phase: &mut dyn FnMut(InstallPhase)) -> Result<(), SoftwareError> {
+fn finish(
+    stream: bool,
+    cancel: &AtomicBool,
+    phase: &mut dyn FnMut(InstallPhase),
+) -> Result<(), SoftwareError> {
     phase(InstallPhase::StartingService);
-    match run_command("systemctl", &["enable", "--now", "docker"], stream) {
+    match run_command("systemctl", &["enable", "--now", "docker"], stream, cancel) {
         Ok(()) => {}
         Err(SoftwareError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-            run_command("service", &["docker", "start"], stream)?;
+            run_command("service", &["docker", "start"], stream, cancel)?;
         }
         Err(error) => return Err(error),
     }
     // 最终验证：daemon 未就绪时安装不能视为成功。
-    run_command("docker", &["info"], false)
+    run_command("docker", &["info"], false, cancel)
         .map_err(|_| SoftwareError::Message(crate::tr!(crate::keys::SOFTWARE_SERVICE_NOT_RUNNING)))
 }
 
 /// 运行外部命令。`stream` 为 true 时继承 stdio 并透出原始输出；
 /// 否则捕获输出，仅在失败时把 stderr 并入错误信息。
-fn run_command(program: &str, args: &[&str], stream: bool) -> Result<(), SoftwareError> {
+/// `cancel` 置位时正在运行的命令会被 SIGTERM 终止并返回取消错误；
+/// 子进程设置 PDEATHSIG，父进程（lkit）退出时自动终止，避免 Ctrl+C 后残留。
+fn run_command(
+    program: &str,
+    args: &[&str],
+    stream: bool,
+    cancel: &AtomicBool,
+) -> Result<(), SoftwareError> {
     let mut command = std::process::Command::new(program);
     command.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: pre_exec 在 fork 后 exec 前运行;仅设置 PDEATHSIG,
+        // 不触碰进程状态,不调用异步不安全函数。
+        unsafe {
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+    }
     if stream {
         let status = command.status()?;
         if status.success() {
@@ -170,17 +211,57 @@ fn run_command(program: &str, args: &[&str], stream: bool) -> Result<(), Softwar
             )))
         }
     } else {
-        let output = command.output()?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = stderr.trim();
-            Err(SoftwareError::Message(if stderr.is_empty() {
-                format!("{program} exited with status {}", output.status)
-            } else {
-                format!("{program}: {stderr}")
-            }))
+        run_captured(command, program, cancel)
+    }
+}
+
+/// 捕获输出运行命令,轮询取消标志;取消时终止子进程并返回取消错误。
+fn run_captured(
+    mut command: std::process::Command,
+    program: &str,
+    cancel: &AtomicBool,
+) -> Result<(), SoftwareError> {
+    use std::os::unix::process::ExitStatusExt;
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(SoftwareError::Message(crate::tr!(
+                crate::keys::SOFTWARE_CANCELLED
+            )));
+        }
+        match child.try_wait()? {
+            Some(status) => {
+                let mut out = Vec::new();
+                let mut err = Vec::new();
+                if let Some(pipe) = stdout.as_mut() {
+                    let _ = pipe.read_to_end(&mut out);
+                }
+                if let Some(pipe) = stderr.as_mut() {
+                    let _ = pipe.read_to_end(&mut err);
+                }
+                if status.success() {
+                    return Ok(());
+                }
+                let stderr = String::from_utf8_lossy(&err);
+                let stderr = stderr.trim();
+                let _ = out;
+                return Err(SoftwareError::Message(if stderr.is_empty() {
+                    format!(
+                        "{program} exited with status {}",
+                        status.signal().unwrap_or(0)
+                    )
+                } else {
+                    format!("{program}: {stderr}")
+                }));
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
         }
     }
 }
@@ -401,5 +482,39 @@ mod tests {
         assert!(!Software::Docker.installed());
         drop(guard);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_command_cancels_the_running_child_process() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        let cancel = AtomicBool::new(true);
+        // 取消已置位:即使命令可用也直接返回取消错误,不启动新子进程。
+        let start = std::time::Instant::now();
+        let result = super::run_command("sleep", &["30"], false, &cancel);
+        assert!(
+            result.is_err(),
+            "a pre-cancelled run must fail fast: {result:?}"
+        );
+        assert!(start.elapsed() < Duration::from_secs(5));
+
+        // 运行中置位:轮询检测到取消后终止子进程并返回取消错误。
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let thread_cancel = cancel.clone();
+        let cancel_handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            thread_cancel.store(true, Ordering::Relaxed);
+        });
+        let result = super::run_command("sleep", &["30"], false, &cancel);
+        assert!(
+            result.is_err(),
+            "a cancelled run must return the cancel error: {result:?}"
+        );
+        let error = format!("{}", result.unwrap_err());
+        assert!(
+            error.contains("cancelled"),
+            "the cancel error must be surfaced: {error}"
+        );
+        cancel_handle.join().unwrap();
     }
 }
