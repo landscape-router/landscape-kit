@@ -250,18 +250,29 @@ fn field_navigation_skips_hidden_repository_url() {
 }
 
 #[test]
-fn left_returns_from_install_panel_to_navigation() {
+fn left_changes_install_choice_and_esc_returns_to_navigation() {
     let mut app = ConsoleApp::new();
     app.menu_index = 1;
+    app.focus = Focus::Panel;
     app.install.selected = InstallField::Repository;
-    let repository = app.install.repository;
-
-    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-    assert_eq!(app.focus, Focus::Panel);
+    app.install.checks_selected = false;
 
     app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert_eq!(app.focus, Focus::Panel);
+    assert_eq!(
+        app.install.repository,
+        RepositoryMode::Custom,
+        "Left must change the repository choice backward instead of leaving the panel"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(app.focus, Focus::Navigation);
-    assert_eq!(app.install.repository, repository);
+    assert_eq!(app.exit_state, ExitState::Idle);
+    assert_eq!(
+        app.install.repository,
+        RepositoryMode::Custom,
+        "Esc must not alter the repository choice"
+    );
 }
 
 #[test]

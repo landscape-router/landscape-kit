@@ -188,6 +188,13 @@ impl ConsoleApp {
             return self.handle_editing_key(key);
         }
         if key.code == KeyCode::Esc {
+            // 面板内 Esc 返回主菜单选择;退出热键只在导航层生效。各面板的
+            // 确认层/编辑态已在各自的处理器中先行消费 Esc,不会走到这里。
+            if self.focus == Focus::Panel {
+                self.exit_state = ExitState::Idle;
+                self.focus = Focus::Navigation;
+                return None;
+            }
             match self.exit_state {
                 ExitState::Idle => {
                     self.exit_state = ExitState::Armed;
@@ -245,7 +252,13 @@ impl ConsoleApp {
             {
                 self.focus = Focus::Panel;
             }
-            KeyCode::Left if self.focus == Focus::Panel => self.focus = Focus::Navigation,
+            KeyCode::Left if self.focus == Focus::Panel => {
+                // Left 与 Right 一同作为面板内组件切换选择;检查汇总态无选择
+                // 可切换,保持不动。
+                if self.menu() == Menu::Install && !self.install.checks_selected {
+                    self.install.change_choice(false);
+                }
+            }
             KeyCode::Right
                 if self.focus == Focus::Panel
                     && self.menu() == Menu::Install
@@ -311,7 +324,7 @@ impl ConsoleApp {
     /// Overview 面板键处理:daemon 未运行时 Enter 打开「部署 daemon」确认层,
     /// 确认层 Enter 在后台线程执行 `lkit self install`(留在 TUI 内,不退出),
     /// Esc 关闭确认层。确认层开启时消费全部按键;其余按键返回 `None` 交给
-    /// 通用处理(保持 Esc Esc 退出、Left 返回侧栏等标准语义)。
+    /// 通用处理(保持 Esc 返回菜单选择等标准语义)。
     pub(super) fn handle_overview_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
         if self.deploy_daemon_confirming {
             match key.code {

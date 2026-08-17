@@ -191,7 +191,7 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
 }
 
 #[test]
-fn left_returns_from_reinit_panel_to_navigation() {
+fn esc_returns_from_reinit_panel_to_navigation() {
     let _guard = ELIGIBLE_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -201,12 +201,13 @@ fn left_returns_from_reinit_panel_to_navigation() {
     }
     let mut app = reinit_ready_app();
     assert_eq!(app.focus, Focus::Panel);
-    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(
         app.focus,
         Focus::Navigation,
-        "Left must return from the reinit panel to the navigation bar"
+        "Esc must return from the reinit panel to the navigation bar"
     );
+    assert_eq!(app.exit_state, ExitState::Idle);
     unsafe {
         std::env::remove_var("LKIT_TEST_REINIT_ELIGIBLE");
     }

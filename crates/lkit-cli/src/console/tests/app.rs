@@ -87,7 +87,7 @@ fn long_panel_hint_wraps_on_dynamic_status_lines() {
 
     let content = terminal_content(&terminal);
     assert!(
-        content.contains("Esc Esc Exit prompt"),
+        content.contains("Esc Menu"),
         "the long backup list hint must wrap onto the second hint line instead of truncating"
     );
 }
@@ -582,9 +582,11 @@ fn mouse_click_dialog_inside_confirms_and_outside_cancels() {
 }
 
 #[test]
-fn mouse_right_click_acts_as_escape() {
+fn mouse_right_click_acts_as_escape_and_returns_to_navigation() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
     app.handle_mouse(mouse_right_click(30, 10));
-    assert_eq!(app.exit_state, ExitState::Armed);
+    assert_eq!(app.focus, Focus::Navigation);
+    assert_eq!(app.exit_state, ExitState::Idle);
 }

@@ -35,13 +35,14 @@
 
 ## UI-04
 
-**Install 面板可使用左方向键返回侧栏**
+**Esc 从 Install 面板返回侧栏,Left 与 Right 共同切换安装选项**
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[控制台输入规格](../../../interaction/console.md)、[控制台按键测试](../../../../crates/lkit-cli/src/console/)
-- 说明：覆盖从侧栏进入 Install 面板后使用 Left 返回侧栏，并断言 Left 不会修改当前枚举；
-  Right 仍可切换安装选项。
+- 说明：覆盖从侧栏进入 Install 面板后使用 Esc 返回侧栏菜单选择（退出确认只在导航层
+  生效，面板内 Esc 不进入退出等待态）；Left 与 Right 在表单内切换仓库枚举且不改变焦点
+  （Left 反向、Right 正向，检查汇总态保持不变）。
 
 ## UI-05
 

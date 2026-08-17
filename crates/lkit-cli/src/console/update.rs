@@ -289,7 +289,7 @@ impl UpdatePanel {
 
 impl ConsoleApp {
     /// Update 面板按键：确认层、解析中、编辑与表单导航。返回 `None` 表示按键
-    /// 未消费（如 Left 返回侧栏、Esc 进入退出确认），回落到主处理流程。
+    /// 未消费（如 Esc 返回菜单选择），回落到主处理流程。
     pub(crate) fn handle_update_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
         if self.update.confirming.is_some() {
             match key.code {
@@ -346,6 +346,9 @@ impl ConsoleApp {
             }
             KeyCode::Right if self.update.selected == UpdateField::Repository => {
                 self.update.change(true)
+            }
+            KeyCode::Left if self.update.selected == UpdateField::Repository => {
+                self.update.change(false)
             }
             KeyCode::Enter | KeyCode::Char(' ') => match self.update.selected {
                 UpdateField::Version | UpdateField::RepositoryUrl => self.update.editing = true,

@@ -358,9 +358,10 @@ fn restore_enter_rejects_when_verify_failed_and_dialog_closes() {
         !app.backup.corrupt_dialog,
         "Enter must close the corrupt dialog"
     );
-    // 弹框关闭后 Esc 回到面板级语义:第一次只进入退出等待态。
+    // 弹框关闭后 Esc 回到面板级语义:返回主菜单选择,不再进入退出等待态。
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert_eq!(app.exit_state, ExitState::Armed);
+    assert_eq!(app.focus, Focus::Navigation);
+    assert_eq!(app.exit_state, ExitState::Idle);
 }
 
 #[test]
@@ -388,6 +389,9 @@ fn exit_confirmation_takes_precedence_over_backup_panel_keys() {
     let mut app = backup_ready_app();
     let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
 
+    // 面板内第一次 Esc 返回导航层,导航层连续两次 Esc 才进入退出确认。
+    app.handle_key(escape);
+    assert_eq!(app.focus, Focus::Navigation);
     app.handle_key(escape);
     app.handle_key(escape);
     assert_eq!(app.exit_state, ExitState::Confirming);
@@ -407,6 +411,8 @@ fn exit_confirmation_takes_precedence_over_backup_panel_keys() {
 
     app.handle_key(escape);
     assert_eq!(app.exit_state, ExitState::Idle);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.focus, Focus::Panel);
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.backup.details, Some(0));
