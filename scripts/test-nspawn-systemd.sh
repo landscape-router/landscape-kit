@@ -507,10 +507,12 @@ machine_shell "systemctl start lkit.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 
 # S-5 语言转发:CLI 的 LKIT_LANG 进入委托请求,worker 子进程使用同一语言输出。
-# 先完成一次正常卸载(删除 install-state.json),再以 LKIT_LANG=zh 委托卸载,
-# worker 报 "requires an existing installation"(exit 2)且消息为中文。
+# S-3 的取消落点不确定:Preparing 中断时 state 保留,越过 preparing 时恢复前向
+# 完成卸载(state 已删)。先把现场收敛到"已卸载"(state 存在才卸载),再以
+# LKIT_LANG=zh 委托卸载,worker 报 "requires an existing installation"(exit 2)
+# 且消息为中文。
 echo "== worker S-5: LKIT_LANG=zh reaches the delegated worker"
-machine_shell '/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5a.out 2>/tmp/s5a.err; [ "$?" -eq 0 ]'
+machine_shell 'if [ -f /root/.lkit/state/install-state.json ]; then /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5a.out 2>/tmp/s5a.err || exit 1; fi'
 machine_shell 'test ! -f /root/.lkit/state/install-state.json'
 machine_shell 'LKIT_LANG=zh /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5.out 2>/tmp/s5.err; [ "$?" -eq 2 ] || exit 1'
 machine_shell 'grep -q "install-state.json" /tmp/s5.err'
