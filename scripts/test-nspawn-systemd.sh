@@ -473,13 +473,12 @@ machine_shell "systemctl is-active --quiet lkit.service"
 # Ctrl+C 会被忽略(仅 Downloading 阶段可取消),因此取消由 cancel 文件驱动。
 echo "== worker S-3: the daemon cancels the delegated worker and recovers"
 restore_scene
+# 同一会话内完成「后台启动 CLI + 轮询 request 文件 + 写 cancel」,避开多次
+# systemd-run 启动开销(委托的 uninstall 无下载阶段,本地操作 ~2s 即完成);
+# KillMode=process 保证会话结束后 CLI 前端与 daemon 交互不受影响。
 machine_shell_bg \
-  'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &'
-# 等 worker 创建事务(Preparing)再写 cancel,保证取消落在可恢复的现场上;
-# cancel 在 Preparing 送达时 daemon 标记 failed(state 保留),越过 preparing 时
-# 恢复前向完成卸载(state 删除),两种恢复语义都接受。
-machine_shell 'for i in $(seq 1 400); do T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); [ -n "$T" ] && break; sleep 0.05; done; echo "== S-3 transaction=[$T]"; test -n "$T"'
-machine_shell 'REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
+  'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &
+for i in $(seq 1 600); do REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); [ -n "$REQUEST" ] && break; sleep 0.02; done; echo "== S-3 request=[$REQUEST]"; test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
 machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1'
 machine_shell "systemctl is-active --quiet lkit.service"
