@@ -354,6 +354,7 @@ machine_shell "test -f /root/.lkit/run/lkit.pid"
 # 不受前端会话影响。每个场景后通过 restore_scene 恢复可卸载现场。
 
 restore_scene() {
+  machine_shell 'rm -f /root/.lkit/transactions/*.json 2>/dev/null; rm -f /run/lkit/operations/* 2>/dev/null; true'
   mkdir -p "$install_root/releases/1.0.0/static" "$install_root/data" "$install_root/service"
   install -m 0755 "$prebuilt_dir/landscape-webserver" \
     "$install_root/releases/1.0.0/landscape-webserver"
@@ -491,11 +492,11 @@ restore_scene
 # KillMode=process 保证会话结束后 CLI 前端与 daemon 交互不受影响。
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &
-for i in $(seq 1 600); do REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); [ -n "$REQUEST" ] && break; sleep 0.02; done; echo "== S-3 request=[$REQUEST]"; test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
+for i in $(seq 1 600); do T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); [ -n "$T" ] && break; sleep 0.02; done; echo "== S-3 txn=[$T]"; test -n "$T"; REQUEST=$(ls /run/lkit/operations/*.request.json 2>/dev/null | head -1); test -n "$REQUEST"; CANCEL=$(echo "$REQUEST" | sed "s/\.request\.json$/.cancel/"); echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
 machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0'
 machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1' || { machine_dump "S-3 recovery-timeout"; exit 1; }
-machine_dump "S-3 after-recovery"
 machine_shell "systemctl is-active --quiet lkit.service"
+machine_shell "systemctl is-active --quiet landscape-router.service"
 
 # S-4 daemon 未运行:委托请求必须拒绝(退出码 2)而不是卡住。
 echo "== worker S-4: delegation refuses when the daemon is stopped"
