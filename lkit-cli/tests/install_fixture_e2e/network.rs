@@ -86,7 +86,6 @@ fn network_takeover_confirms_from_any_ssh_session() {
     assert!(timer_start < resolved_stop);
     assert!(resolved_stop < network_manager_stop);
 
-    let config_before = std::fs::read(&harness.config_path()).unwrap();
     let confirm = harness.network_command(&["confirm"]);
     assert_success(&confirm);
     assert_eq!(
@@ -97,10 +96,9 @@ fn network_takeover_confirms_from_any_ssh_session() {
     let state: serde_json::Value =
         serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
-    assert_eq!(
-        std::fs::read(&harness.config_path()).unwrap(),
-        config_before,
-        "network confirm must not modify config.toml"
+    assert!(
+        !harness.config_path().exists(),
+        "network confirm must not create config.toml"
     );
     eprintln!("DEBUG SECOND READ");
     let transaction = read_only_transaction(&harness.territory);

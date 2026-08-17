@@ -142,3 +142,73 @@ fn self_install_rejects_unavailable_systemd() {
 fn process_alive(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
+
+/// `lkit self install --flare-psk-file` 在 daemon 启动前把 flare psk 写入地盘
+/// `config.toml` 的 `[flare]` 段(0600),daemon 首启即用该 psk 托管 flare 服务。
+#[test]
+fn self_install_provisions_the_flare_psk_before_starting_the_daemon() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-flare", "healthy", 30_000);
+    harness.seed_global_lkit_binary();
+    let psk_file = harness.world.path("flare-psk");
+    std::fs::write(&psk_file, b"fixture-recovery-secret\n").unwrap();
+    std::fs::set_permissions(&psk_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let installed = harness
+        .command()
+        .args([
+            "self",
+            "install",
+            "--flare-psk-file",
+            psk_file.to_str().unwrap(),
+            "--test-runtime",
+        ])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_success(&installed);
+
+    let config = std::fs::read_to_string(harness.config_path()).unwrap();
+    assert!(
+        config.contains("[flare]"),
+        "self install must write the [flare] section: {config}"
+    );
+    assert!(
+        config.contains("fixture-recovery-secret"),
+        "self install must persist the provided flare psk: {config}"
+    );
+    let metadata = std::fs::metadata(harness.config_path()).unwrap();
+    assert_eq!(
+        metadata.mode() & 0o077,
+        0,
+        "config.toml holding the flare psk must be root-only"
+    );
+
+    // 既有 psk 不被覆盖:再跑一次无 flag 的 self install,配置保持不变。
+    let before = std::fs::read(harness.config_path()).unwrap();
+    let again = harness
+        .command()
+        .args(["self", "install", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_success(&again);
+    assert_eq!(
+        std::fs::read(harness.config_path()).unwrap(),
+        before,
+        "a repeated self install without a psk must not touch the config"
+    );
+
+    let removed = harness
+        .command()
+        .args(["self", "remove", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert_success(&removed);
+}
