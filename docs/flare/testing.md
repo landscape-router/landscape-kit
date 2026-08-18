@@ -23,7 +23,7 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 ## 场景拓扑
 
 ```
-client 容器 (lflare --dev eth0 --forward 2222:6443)
+client 容器 (lflare cli --dev eth0 --forward 2222:6443)
      |  Terrain 帧 (ethertype 0x88B6, broadcast + unicast)
      v
 server 容器 (lkit flare serve --dev any, fake service on 127.0.0.1:6443)

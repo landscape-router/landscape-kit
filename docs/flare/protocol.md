@@ -75,11 +75,31 @@ psk 从不直接使用：双方启动时用 scrypt 拉伸为 32 字节主密钥�
 - peer 表硬上限 4096，满后丢弃未知 MAC 的 DISCOVER。
 - 活动会话永不被锁死：伪造者不能借受害者的 MAC 冻结其重认证。
 
+## 客户端交互形态（lflare TUI）
+
+`lflare` 无子命令时默认进入全屏 TUI（Windows 双击 `.exe` 也走此路径，适合无参数
+的交互使用）；脚本与自动化用 `lflare cli` 子命令加参数直连，行为与原命令行一致。
+
+TUI 分两个阶段：
+
+1. **连接表单**：输入 psk（`*` 掩码，F2 显示/隐藏）、用户名、客户端名称、设备
+   （聚焦后按 Enter 打开列表，`↑↓` 选择，Enter 确认；默认自动取默认路由网卡）、ethertype（默认
+   `0x88b6`）、token（可选）。`Tab/↑↓` 切换字段；只有最后的「连接」按钮获得焦点
+   后按 Enter 才开始握手，`Ctrl-Q/Esc` 退出。
+2. **会话仪表盘**：实时显示连接状态（搜索中/已连接/认证被拒/链路断开等）、每条
+   端口映射的监听状态（启动中/监听中/失败）和彩色日志面板。握手成功后，聚焦映射
+   列表可用 `a` 添加 `LOCAL:DST`、`d` 删除选中项；目标端口必须在服务端握手公布的
+   允许列表中。删除会立即关闭该映射已有的本地连接；映射只保存在当前进程，链路重连
+   后会自动恢复，退出进程后不写入配置。`q` 断开并退出。
+
+连接结束后若 stdin 是终端（双击场景），打印结果摘要并等待按任意键再关闭窗口，
+避免控制台一闪而过。
+
 ## 部署形态
 
 | 端 | 形态 | 入口 |
 | --- | --- | --- |
-| 客户端 | `lflare`（linux/windows） | `lflare --psk … --dev eth0 --forward 2222:6443` |
+| 客户端 | `lflare`（linux/windows） | 默认进入交互 TUI（连接表单，握手后管理临时映射）；脚本用 `lflare cli --psk … --dev eth0 --forward 2222:6443` |
 | 服务端 | `lkit flare serve`（Linux） | `lkit flare serve --psk … --dev any [--token …]` |
 | 服务端（daemon 托管，恒常启动） | `lkit daemon` 在 Linux 上总是托管 flare 服务端 | 读取 config.toml `[flare]` 段；段缺失/无 psk 时自动生成随机 psk 并持久化（启动时打印一次分发提示），daemon 每周期对比配置指纹，`[flare]` 变更（psk 非空）时重启 flare 任务拾取新配置，psk 被清空则保持现役不切断恢复通道。启动托管 flare 之前先尽力拉起所有带 MAC 的物理以太网卡（网卡 DOWN 时 L2 通道无法收发帧；跳过无 MAC/无线/虚拟设备，`ip link set` 失败只记录日志，不阻断 daemon 启动） |
 | 配置供给 | `lkit flare setup`（Linux） | 带 `--psk/--token/--devices/--ethertype/--forward-ports/--mac/--device-name` 时在既有配置上覆盖并写回 `[flare]` 段；空参打印当前有效配置（含 psk，供分发给 `lflare` 恢复客户端）。daemon 下一周期自动拾取 |

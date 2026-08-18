@@ -1,12 +1,35 @@
 mod client;
+mod tui;
 
-use clap::Parser;
-use client::{ClientConfig, Forward};
+use clap::{Args, Parser, Subcommand};
+use client::{ClientConfig, Forward, LogSink};
 use landscape_terrain_proto::cli::{parse_devs, parse_ethertype, parse_forward, parse_mac};
 
 #[derive(Parser)]
-#[command(name = "lflare", about = "Connect to a Landscape Router over layer-2")]
+#[command(
+    name = "lflare",
+    about = "Connect to a Landscape Router over layer-2",
+    long_about = concat!(
+        "Landscape L2 client.\n\n",
+        "With no subcommand lflare opens the interactive TUI: enter the psk,\n",
+        "connection options, then manage mappings in the live session dashboard.\n",
+        "Scripts and automation should use the `cli` subcommand with flags."
+    )
+)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Command-line mode: connect with flags (script-friendly)
+    #[command(name = "cli")]
+    Cli(CliArgs),
+}
+
+#[derive(Args)]
+struct CliArgs {
     /// Shared secret used for challenge-response authentication; when
     /// omitted, the LANDSCAPE_FLARE_PSK environment variable is used
     #[arg(long, value_name = "SECRET")]
@@ -47,8 +70,15 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    match cli.command {
+        None => tui::run().await,
+        Some(Command::Cli(args)) => run_cli(&args).await,
+    }
+}
+
+async fn run_cli(cli: &CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     let psk = match cli.psk {
-        Some(p) => p,
+        Some(ref p) => p.clone(),
         None => std::env::var("LANDSCAPE_FLARE_PSK").map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -77,6 +107,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client_name: &cli.client_name,
         forwards: &cli.forward,
         token: cli.token.as_deref().unwrap_or(""),
+        log: LogSink::Stdio,
+        shutdown: None,
+        forward_control: None,
+        events: None,
     };
-    client::run(&cfg).await
+    client::run(cfg).await
 }

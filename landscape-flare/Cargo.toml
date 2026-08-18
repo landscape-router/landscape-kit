@@ -9,5 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
+crossterm = { workspace = true }
 landscape-terrain-proto = { path = "../landscape-terrain-proto" }
+ratatui = { workspace = true, features = ["crossterm_0_29"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }

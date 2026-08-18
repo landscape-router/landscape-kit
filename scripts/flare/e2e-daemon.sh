@@ -8,7 +8,7 @@
 # FLR-19 scenario note: the full "failed network takeover, recover through
 # the tunnel" flow is out of scope for this layer).
 #
-#   client container (lflare --dev eth0 --token TOKEN --forward 2222:6443)
+#   client container (/opt/bin/lflare cli --dev eth0 --token TOKEN --forward 2222:6443)
 #        |  Terrain frames (ethertype 0x88B6, broadcast + unicast)
 #        v
 #   server container (lkit daemon, LKIT_TERRITORY=/tmp/territory,
@@ -64,7 +64,7 @@ docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
+  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
 
 echo "== wait for the daemon to host the flare server =="
 for i in $(seq 1 30); do

@@ -2303,7 +2303,9 @@ name = "landscape-flare"
 version = "0.2.0-rc.2"
 dependencies = [
  "clap",
+ "crossterm",
  "landscape-terrain-proto",
+ "ratatui",
  "tokio",
 ]
 

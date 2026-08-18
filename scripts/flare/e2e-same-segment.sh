@@ -52,7 +52,7 @@ start_client() {
     --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
     --cap-add NET_RAW \
     -v "$PWD/target/debug:/opt/bin:ro" \
-    "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --token "$TOKEN" --forward "$port":6443
+    "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward "$port":6443
 }
 
 # Wait until the client has logged at least `want` session-establishments.

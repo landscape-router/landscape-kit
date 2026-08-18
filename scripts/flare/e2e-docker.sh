@@ -4,7 +4,7 @@
 # Topology: two containers on one L2 bridge network, i.e. two hosts on the
 # same ethernet segment:
 #
-#   client container (lndp-client --dev eth0 --forward 2222:6443)
+#   client container (lflare cli --dev eth0 --forward 2222:6443)
 #        |  LNDP frames (ethertype 0x88B6, broadcast + unicast)
 #        v
 #   server container (lndp-server --dev any, fake service on 127.0.0.1:6443)
@@ -59,7 +59,7 @@ docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
+  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
 
 wait_session() {
   local name=$1
@@ -112,7 +112,7 @@ docker run -d --name "$CLI2" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2323:8080
+  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2323:8080
 sleep 4
 # the smoltcp leg always establishes transiently; what matters is that the
 # server closes the connection after reading the forbidden target port
@@ -133,7 +133,7 @@ docker run -d --name "$CLI3" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --forward 2324:6443
+  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --forward 2324:6443
 sleep 8
 if docker logs "$CLI3" 2>&1 | grep -c "session .* established" >/dev/null; then
   echo "FAIL: tokenless client established a session"
@@ -151,7 +151,7 @@ docker run -d --name "$CLI4" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk wrong-secret --dev eth0 --token "$TOKEN" --forward 2325:6443
+  "$IMAGE" /opt/bin/lflare cli --psk wrong-secret --dev eth0 --token "$TOKEN" --forward 2325:6443
 sleep 8
 if docker logs "$CLI4" 2>&1 | grep -c "session .* established" >/dev/null; then
   echo "FAIL: client with wrong psk established a session"
@@ -186,7 +186,7 @@ docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
+  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
 if ! wait_session "$CLI"; then
   echo "FAIL: client did not re-establish after the teardown test"
   exit 1

@@ -81,7 +81,7 @@ docker run -d --name "$CLI_BAD" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk wrong-secret --dev eth0 --forward 2325:6443
+  "$IMAGE" /opt/bin/lflare cli --psk wrong-secret --dev eth0 --forward 2325:6443
 sleep 10
 if docker logs "$CLI_BAD" 2>&1 | grep -c "session .* established" >/dev/null; then
   echo "FAIL: wrong-psk client established a session"
@@ -100,7 +100,7 @@ docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare --psk "$PSK" --dev eth0 --forward 2222:6443
+  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --forward 2222:6443
 established=""
 for i in $(seq 1 30); do
   if docker logs "$CLI" 2>&1 | grep -c "session .* established" >/dev/null; then

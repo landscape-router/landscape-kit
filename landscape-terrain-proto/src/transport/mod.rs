@@ -16,6 +16,19 @@ mod windows;
 #[cfg(not(target_os = "linux"))]
 pub use windows::Link;
 
+/// List the interfaces usable by `Link::open`, excluding loopback. Used by
+/// interactive frontends (e.g. the lflare TUI device picker).
+pub fn list_interfaces() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::list_interfaces()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        windows::list_interfaces()
+    }
+}
+
 #[allow(dead_code)]
 pub const ETHERTYPE: u16 = 0x88B6;
 

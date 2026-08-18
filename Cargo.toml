@@ -8,7 +8,7 @@ members = [
     "crates/lkit-repository",
     "crates/lkit-test-fixture",
 ]
-default-members = ["lkit-cli"]
+default-members = ["lkit-cli", "landscape-flare"]
 resolver = "3"
 
 [workspace.package]
