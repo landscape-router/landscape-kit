@@ -1,9 +1,12 @@
 mod client;
+mod i18n;
 mod tui;
 
 use clap::{Args, Parser, Subcommand};
 use client::{ClientConfig, Forward, LogSink};
 use landscape_terrain_proto::cli::{parse_devs, parse_ethertype, parse_forward, parse_mac};
+
+rust_i18n::i18n!("locales", fallback = "en");
 
 #[derive(Parser)]
 #[command(
@@ -17,6 +20,10 @@ use landscape_terrain_proto::cli::{parse_devs, parse_ethertype, parse_forward, p
     )
 )]
 struct Cli {
+    /// TUI language: en or zh; omitted uses LKIT_LANG and the system locale
+    #[arg(long, value_name = "LANG", value_parser = i18n::parse_arg)]
+    lang: Option<String>,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -69,7 +76,9 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    i18n::preconfigure(std::env::args_os());
     let cli = Cli::parse();
+    i18n::configure(i18n::resolve(cli.lang.as_deref()));
     match cli.command {
         None => tui::run().await,
         Some(Command::Cli(args)) => run_cli(&args).await,

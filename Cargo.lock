@@ -2306,6 +2306,7 @@ dependencies = [
  "crossterm",
  "landscape-terrain-proto",
  "ratatui",
+ "rust-i18n",
  "tokio",
 ]
 
