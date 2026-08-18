@@ -62,22 +62,20 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
             };
             false
         }
-        KeyCode::Up | KeyCode::PageUp => {
-            let step = if matches!(key.code, KeyCode::PageUp) {
-                10
-            } else {
-                1
-            };
-            scroll(dash, step);
+        KeyCode::Up => {
+            move_up(dash);
             false
         }
-        KeyCode::Down | KeyCode::PageDown => {
-            let step = if matches!(key.code, KeyCode::PageDown) {
-                10
-            } else {
-                1
-            };
-            scroll(dash, -(step as i64));
+        KeyCode::Down => {
+            move_down(dash);
+            false
+        }
+        KeyCode::PageUp => {
+            scroll(dash, 10);
+            false
+        }
+        KeyCode::PageDown => {
+            scroll(dash, -10);
             false
         }
         KeyCode::Home => {
@@ -94,14 +92,9 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
             }
             false
         }
-        KeyCode::Char('a') if dash.focus == DashFocus::Forwards => {
-            if dash.session_ready {
-                dash.forward_input.clear();
-                dash.forward_error = None;
-                dash.forward_edit = true;
-            } else {
-                dash.forward_error = Some(crate::tr!("tui.handshake_required"));
-            }
+        KeyCode::Char('a') => {
+            dash.focus = DashFocus::Forwards;
+            begin_add(dash);
             false
         }
         KeyCode::Char('d') if dash.focus == DashFocus::Forwards => {
@@ -117,6 +110,37 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
             false
         }
         _ => false,
+    }
+}
+
+fn begin_add(dash: &mut DashState) {
+    if dash.session_ready {
+        dash.forward_input.clear();
+        dash.forward_error = None;
+        dash.forward_edit = true;
+    } else {
+        dash.forward_error = Some(crate::tr!("tui.handshake_required"));
+    }
+}
+
+fn move_up(dash: &mut DashState) {
+    match dash.focus {
+        DashFocus::Logs => dash.focus = DashFocus::Forwards,
+        DashFocus::Forwards => {
+            dash.forward_index = dash.forward_index.saturating_sub(1);
+        }
+    }
+}
+
+fn move_down(dash: &mut DashState) {
+    match dash.focus {
+        DashFocus::Logs => {}
+        DashFocus::Forwards
+            if dash.forwards.is_empty() || dash.forward_index >= dash.forwards.len() - 1 =>
+        {
+            dash.focus = DashFocus::Logs;
+        }
+        DashFocus::Forwards => dash.forward_index += 1,
     }
 }
 

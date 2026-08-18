@@ -66,7 +66,7 @@ struct DashState {
     client: Option<JoinHandle<Result<(), String>>>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DashFocus {
     Forwards,
     Logs,
@@ -389,6 +389,52 @@ mod tests {
         form::handle_key(&mut form, language_key);
         assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
         crate::i18n::configure(crate::i18n::Language::En);
+    }
+
+    #[test]
+    fn add_key_moves_from_logs_to_mapping_editor() {
+        let (log_tx, log_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (forward_tx, _forward_rx) = mpsc::unbounded_channel();
+        drop(log_tx);
+        drop(event_tx);
+        let mut dash = DashState {
+            log_rx,
+            event_rx,
+            logs: VecDeque::new(),
+            scroll: 0,
+            forwards: Vec::new(),
+            focus: DashFocus::Logs,
+            forward_index: 0,
+            forward_input: String::new(),
+            forward_edit: false,
+            forward_error: None,
+            session_ready: true,
+            connection: ConnectionState::Ready {
+                session_id: 1,
+                server_mac: "00:00:00:00:00:00".into(),
+            },
+            advertised_ports: vec![22],
+            forward_states: HashMap::new(),
+            device: None,
+            notify: Arc::new(Notify::new()),
+            forward_tx,
+            client: None,
+        };
+
+        assert!(!session::handle_key(
+            &mut dash,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)
+        ));
+        assert_eq!(dash.focus, DashFocus::Forwards);
+        assert!(dash.forward_edit);
+
+        dash.forward_edit = false;
+        dash.focus = DashFocus::Logs;
+        session::handle_key(&mut dash, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(dash.focus, DashFocus::Forwards);
+        session::handle_key(&mut dash, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(dash.focus, DashFocus::Logs);
     }
 
     #[test]

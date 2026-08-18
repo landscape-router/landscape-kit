@@ -417,7 +417,13 @@ pub(super) fn render_dash(f: &mut Frame, dash: &DashState) {
     }
     f.render_widget(
         Paragraph::new(shown)
-            .block(Block::bordered().title(crate::tr!("tui.log")))
+            .block(Block::bordered().title(crate::tr!("tui.log")).border_style(
+                if dash.focus == DashFocus::Logs {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            ))
             .wrap(Wrap { trim: false }),
         log,
     );
