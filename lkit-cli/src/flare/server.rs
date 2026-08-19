@@ -25,7 +25,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const STALE_AFTER: Duration = Duration::from_secs(45);
 const CONNECTION_CHANNEL_CAPACITY: usize = 16;
-const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PENDING_TO_STACK_BYTES: usize = 32 * 1024 * 1024;
 /// smoltcp listeners do not have a kernel-style accept backlog: one listener
 /// can hold one SYN/connection. Keep a bounded pool so a burst of local
 /// connections does not reset all but the first SYN.

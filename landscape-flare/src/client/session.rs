@@ -19,7 +19,7 @@ use super::{
 
 const FIRST_LOCAL_PORT: u16 = 40000;
 const CONNECTION_CHANNEL_CAPACITY: usize = 16;
-const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PENDING_TO_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 /// Allocate an internal source port without colliding with a live or
 /// TIME-WAIT socket. The old monotonic allocator eventually wrapped and
