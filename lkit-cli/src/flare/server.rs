@@ -665,6 +665,12 @@ fn pump_peer(
             *listener = new_listener;
             let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
             peer.conns.insert(h, ServerConn { from_tx });
+            if peer.conns.len() == 1 || peer.conns.len().is_multiple_of(24) {
+                println!(
+                    "  [server] accepted internal connection {h:?} ({} live)",
+                    peer.conns.len()
+                );
+            }
             tokio::spawn(server_conn_task(
                 *peer_mac,
                 h,
@@ -762,6 +768,7 @@ async fn server_conn_task(
             return;
         }
     };
+    println!("  [server] internal connection {handle:?} dialed 127.0.0.1:{dst}");
     let extra = &header[2..];
     if !extra.is_empty() && remote.write_all(extra).await.is_err() {
         signal_close(&to_tx, peer_mac, handle).await;
