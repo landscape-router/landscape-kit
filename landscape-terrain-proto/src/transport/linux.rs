@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use super::{Frame, Interface};
 
 const POLL_INTERVAL_MS: i32 = 200;
+const FRAME_CHANNEL_CAPACITY: usize = 8192;
 
 pub struct Link {
     fds: Vec<RawFd>,
@@ -132,7 +133,7 @@ impl Link {
         }
         let macs = Arc::new(Mutex::new(macs));
 
-        let (frame_tx, frame_rx) = mpsc::channel(1024);
+        let (frame_tx, frame_rx) = mpsc::channel(FRAME_CHANNEL_CAPACITY);
         spawn_reader(fds.clone(), macs.clone(), ethertype, frame_tx);
 
         Ok(Self {
@@ -336,16 +337,21 @@ fn spawn_reader(
                 if pfd.revents & libc::POLLIN == 0 {
                     continue;
                 }
-                let own = macs.lock().unwrap();
-                match recv_one(fds[i], &own, ethertype) {
-                    Ok(Some((f, ifindex))) => {
-                        drop(own);
-                        if tx.blocking_send((f, ifindex)).is_err() {
-                            return;
+                // One poll event can represent a large burst. Drain all
+                // currently available frames so the kernel receive buffer
+                // does not overflow during sustained TCP forwarding.
+                loop {
+                    let own = macs.lock().unwrap();
+                    match recv_one(fds[i], &own, ethertype) {
+                        Ok(Some((f, ifindex))) => {
+                            drop(own);
+                            if tx.blocking_send((f, ifindex)).is_err() {
+                                return;
+                            }
                         }
+                        Ok(None) => break,
+                        Err(_) => break,
                     }
-                    Ok(None) => {}
-                    Err(_) => {}
                 }
             }
         }
@@ -368,7 +374,7 @@ fn recv_one(
             fd,
             buf.as_mut_ptr() as *mut libc::c_void,
             buf.len(),
-            0,
+            libc::MSG_DONTWAIT,
             &mut sa as *mut libc::sockaddr_ll as *mut libc::sockaddr,
             &mut slen,
         )

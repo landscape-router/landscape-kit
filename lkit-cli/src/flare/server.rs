@@ -18,7 +18,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-const POLL_INTERVAL: Duration = Duration::from_millis(25);
+// Keep ACK/data windows advancing during sustained forwarding. The stack is
+// in-memory, so a millisecond tick is inexpensive and avoids artificial
+// throughput limits from the relay loop.
+const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const STALE_AFTER: Duration = Duration::from_secs(45);
 const CONNECTION_CHANNEL_CAPACITY: usize = 16;

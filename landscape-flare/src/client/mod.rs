@@ -20,7 +20,9 @@ use session::{SessionEnd, session_loop};
 pub const BROADCAST: [u8; 6] = [0xff; 6];
 const RETRY_BACKOFF: Duration = Duration::from_secs(3);
 const MAX_MISSED_KEEPALIVES: u32 = 3;
-const POLL_INTERVAL: Duration = Duration::from_millis(25);
+// Drive the userspace TCP stack frequently enough to keep bulk transfers
+// moving; a 25 ms tick caps a full-duplex relay near the e2e timeout.
+const POLL_INTERVAL: Duration = Duration::from_millis(1);
 /// Max failed session-frame opens per second (bad tag or replay). Bounds
 /// the decrypt work a spoofed-frame flood can force on the session loop; a
 /// legitimate session never fails opens.
