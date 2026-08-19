@@ -27,6 +27,10 @@ impl OperationScreen for MigrateScreen {
         "migrate"
     }
 
+    fn cancellable_during_switch(&self) -> bool {
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,

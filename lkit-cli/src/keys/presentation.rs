@@ -29,6 +29,7 @@ pub(crate) const PRESENTATION_INSTALLATION_IS_APPLYING: &str =
 pub(crate) const PRESENTATION_OPERATION_IS_APPLYING: &str = "presentation.operation_is_applying";
 pub(crate) const PRESENTATION_OPERATION_IN_PROGRESS_STOP_IGNORED: &str =
     "presentation.operation_in_progress_stop_ignored";
+pub(crate) const PRESENTATION_CANCELLING: &str = "presentation.cancelling";
 pub(crate) const PRESENTATION_PREPARING: &str = "presentation.preparing";
 pub(crate) const PRESENTATION_STOPPING: &str = "presentation.stopping";
 pub(crate) const PRESENTATION_ACTIVATING: &str = "presentation.activating";

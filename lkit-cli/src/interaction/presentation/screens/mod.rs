@@ -43,6 +43,12 @@ pub(crate) trait OperationScreen {
     fn takeover_confirmable(&self) -> bool {
         false
     }
+    /// 切换阶段（applying/verifying，非下载期）是否允许取消。迁移的切换
+    /// 完全由事务保护（取消即回滚恢复旧实例），允许取消且前台会等待
+    /// worker 的回滚收尾；其余操作切换期不可取消。
+    fn cancellable_during_switch(&self) -> bool {
+        false
+    }
     /// 渲染整个操作页（完整独立实现）。
     #[allow(clippy::too_many_arguments)]
     fn render(

@@ -31,18 +31,30 @@ pub(super) fn wait_for_result(
         if interrupt.requested() {
             if presentation.is_cancellable() {
                 let _ = std::fs::write(cancel_path, b"");
-                presentation.finish();
-                return Ok(WaitOutcome::Interrupted);
+                if presentation.cancel_waits_for_worker() {
+                    // 迁移切换的取消由 worker 回滚收尾(旧实例恢复),前台
+                    // 继续等待其结果而不是立即返回。
+                    presentation.cancel_requested();
+                    interrupt.clear_request();
+                } else {
+                    presentation.finish();
+                    return Ok(WaitOutcome::Interrupted);
+                }
+            } else {
+                interrupt.clear_request();
+                presentation.ignore_stop();
             }
-            interrupt.clear_request();
-            presentation.ignore_stop();
         }
         if let Some(action) = presentation.poll_action()? {
             match action {
                 crate::interaction::presentation::PresentationAction::Stop => {
                     let _ = std::fs::write(cancel_path, b"");
-                    presentation.finish();
-                    return Ok(WaitOutcome::Interrupted);
+                    if presentation.cancel_waits_for_worker() {
+                        presentation.cancel_requested();
+                    } else {
+                        presentation.finish();
+                        return Ok(WaitOutcome::Interrupted);
+                    }
                 }
                 crate::interaction::presentation::PresentationAction::Close => unreachable!(),
                 // 确认网络接管只由结果页确认层返回(wait_for_close 内处理)。
@@ -69,7 +81,7 @@ pub(super) fn wait_for_result(
             drain_log(stderr_path, &mut stderr, true, &mut presentation)?;
             let raw_code = result.exit_code.clamp(0, 255) as u8;
             let code = ExitCode::from(raw_code);
-            presentation.show_result(code == ExitCode::SUCCESS, pending_takeover_confirmation());
+            presentation.show_result(raw_code, pending_takeover_confirmation());
             if full_screen
                 && matches!(
                     presentation.wait_for_close(interrupt)?,
@@ -148,6 +160,8 @@ fn announce_completion(operation: &dyn OperationScreen, exit_code: u8) {
 fn completion_message(operation: &dyn OperationScreen, exit_code: u8) -> String {
     if exit_code == 0 {
         crate::tr!(operation.result_key(OperationResult::Success))
+    } else if exit_code == 130 {
+        crate::tr!(operation.result_key(OperationResult::Cancelled))
     } else {
         format!(
             "{} (exit code {exit_code})",
@@ -211,6 +225,7 @@ mod tests {
         let failure = completion_message(&RestoreScreen, 3);
         assert!(failure.contains("Restore failed"));
         assert!(failure.contains("exit code 3"));
+        assert_eq!(completion_message(&RestoreScreen, 130), "Restore cancelled");
     }
 
     /// 构造一个处于指定阶段的网络接管事务,返回临时目录与领地 guard。

@@ -135,7 +135,22 @@ impl WorkerPresentation {
     }
 
     pub(crate) fn is_cancellable(&self) -> bool {
-        self.phase == OperationPhase::Downloading && self.result.is_none()
+        if self.result.is_some() {
+            return false;
+        }
+        self.phase == OperationPhase::Downloading || self.operation.cancellable_during_switch()
+    }
+
+    /// 取消请求后是否继续等待 worker 收尾（迁移切换的回滚），而不是立即
+    /// 以 Interrupted 结束。
+    pub(crate) fn cancel_waits_for_worker(&self) -> bool {
+        self.operation.cancellable_during_switch()
+    }
+
+    pub(crate) fn cancel_requested(&mut self) {
+        self.notice = crate::tr!(crate::keys::PRESENTATION_CANCELLING);
+        self.confirming_stop = false;
+        self.render_screen();
     }
 
     pub(crate) fn ignore_stop(&mut self) {
@@ -243,16 +258,16 @@ impl WorkerPresentation {
         }
     }
 
-    pub(crate) fn show_result(&mut self, success: bool, takeover_pending: bool) {
-        self.result = Some(if success {
-            OperationResult::Success
-        } else {
-            OperationResult::Failed
+    pub(crate) fn show_result(&mut self, code: u8, takeover_pending: bool) {
+        self.result = Some(match code {
+            0 => OperationResult::Success,
+            130 => OperationResult::Cancelled,
+            _ => OperationResult::Failed,
         });
         self.current = None;
         self.confirming_stop = false;
         self.confirming_takeover = false;
-        self.takeover_pending = takeover_pending;
+        self.takeover_pending = takeover_pending && code == 0;
         self.notice.clear();
         self.render_screen();
     }
