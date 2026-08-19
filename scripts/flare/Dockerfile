@@ -31,3 +31,4 @@ COPY scripts/flare/fake_service.py /opt/fake_service.py
 COPY scripts/flare/replay_inject.py /opt/replay_inject.py
 COPY scripts/flare/rate_flood.py /opt/rate_flood.py
 COPY scripts/flare/auth_req_flood.py /opt/auth_req_flood.py
+COPY scripts/flare/connection_probe.py /opt/connection_probe.py

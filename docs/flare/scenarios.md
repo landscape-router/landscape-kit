@@ -191,3 +191,58 @@
    接管 fixture e2e（[network.rs](../../lkit-cli/tests/install_fixture_e2e/network.rs)）
    分层覆盖，端到端联动留待后续专用容器脚本。
 - 缺口：完整"接管失败 → lflare 连接 → rollback"的集成验证。
+
+## FLR-22
+
+**同一端口映射内多条 TCP 连接并发且数据相互隔离**
+
+- 测试层：flare e2e（Docker L2 bridge 双容器）
+- 状态：`已覆盖`
+- 证据：[连接生命周期脚本](../../scripts/flare/e2e-connections.sh)、
+  [连接探针](../../scripts/flare/connection_probe.py)
+- 说明：同一 `127.0.0.1:2222` 映射同时建立 32 条连接，每条发送不同的 128 KiB
+  负载并校验回显，直接验证连接多路复用和四元组隔离。
+
+## FLR-23
+
+**正常关闭与 RST 短连接持续回收后新连接仍可用**
+
+- 测试层：flare e2e（Docker L2 bridge 双容器）
+- 状态：`已覆盖`
+- 证据：[连接生命周期脚本](../../scripts/flare/e2e-connections.sh)、
+  [连接探针](../../scripts/flare/connection_probe.py)
+- 说明：并发波次完成 480 条正常关闭连接和 192 条 `SO_LINGER=0` RST 连接；随后
+  新建 16 条连接验证 EOF/错误路径已清理 smoltcp socket，未留下阻塞后续请求的状态。
+
+## FLR-24
+
+**慢读连接产生背压时其他连接仍可建立并完成传输**
+
+- 测试层：flare e2e（Docker L2 bridge 双容器）
+- 状态：`已覆盖`
+- 证据：[连接生命周期脚本](../../scripts/flare/e2e-connections.sh)、
+  [连接探针](../../scripts/flare/connection_probe.py)
+- 说明：12 条连接各发送 256 KiB 后延迟读取回显，使接收队列和 TCP 窗口形成背压；
+  同时建立一条快速连接并断言其可独立完成，随后校验全部慢连接的数据完整性。
+
+## FLR-25
+
+**已建立 TCP 连接跨 stale 窗口空闲后继续传输**
+
+- 测试层：flare e2e（Docker L2 bridge 双容器）
+- 状态：`已覆盖`
+- 证据：[连接生命周期脚本](../../scripts/flare/e2e-connections.sh)、
+  [连接探针](../../scripts/flare/connection_probe.py)
+- 说明：连接建立并完成首次回显后保持 50 秒空闲，超过服务端 45 秒 stale 清扫窗口，
+  再次在同一 TCP 连接上传输并校验数据，覆盖挂载/长连接空闲保活。
+
+## FLR-26
+
+**HTTP/1.1 持久连接并发请求通过同一映射**
+
+- 测试层：flare e2e（Docker L2 bridge 双容器）
+- 状态：`已覆盖`
+- 证据：[连接生命周期脚本](../../scripts/flare/e2e-connections.sh)、
+  [连接探针](../../scripts/flare/connection_probe.py)
+- 说明：16 条并发 HTTP keep-alive 连接各连续发送 8 个具有独立路径的请求，共 128 次
+  请求；逐次校验状态码和包含请求路径的响应体，覆盖 HTTP 端口映射的多连接复用。

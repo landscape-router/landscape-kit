@@ -17,6 +17,32 @@ use super::{
     MAX_MISSED_KEEPALIVES, POLL_INTERVAL, emit_event, pump,
 };
 
+const FIRST_LOCAL_PORT: u16 = 40000;
+const CONNECTION_CHANNEL_CAPACITY: usize = 16;
+const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
+
+/// Allocate an internal source port without colliding with a live or
+/// TIME-WAIT socket. The old monotonic allocator eventually wrapped and
+/// handed a still-used port to smoltcp, making long-running HTTP clients
+/// fail after enough short-lived requests.
+fn allocate_local_port(next: &mut u16, is_used: impl Fn(u16) -> bool) -> Option<u16> {
+    let start = *next;
+    loop {
+        let candidate = *next;
+        *next = if candidate == u16::MAX {
+            FIRST_LOCAL_PORT
+        } else {
+            candidate + 1
+        };
+        if !is_used(candidate) {
+            return Some(candidate);
+        }
+        if *next == start {
+            return None;
+        }
+    }
+}
+
 /// Why a session loop ended.
 pub(super) enum SessionEnd {
     /// Keepalives went unanswered: the link is gone.
@@ -45,7 +71,7 @@ pub(super) async fn session_loop(
     let (accept_tx, mut accept_rx) = mpsc::channel::<(TcpStream, Forward)>(16);
     let mut conns: HashMap<SocketHandle, Conn> = HashMap::new();
     let mut pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>> = HashMap::new();
-    let mut pending_rx: HashMap<SocketHandle, VecDeque<Vec<u8>>> = HashMap::new();
+    let mut pending_tx_bytes = 0usize;
 
     let mut listeners = HashMap::new();
     for &forward in active_forwards.iter() {
@@ -63,13 +89,16 @@ pub(super) async fn session_loop(
     let mut poll_timer = tokio::time::interval(POLL_INTERVAL);
     let mut last_keepalive = tokio::time::Instant::now();
     let mut missed = 0u32;
-    let mut next_local_port: u16 = 40000;
+    let mut next_local_port = FIRST_LOCAL_PORT;
     let mut fail_budget = FailBudget::default();
 
-    let result = loop {
+    let result: Result<SessionEnd, Box<dyn std::error::Error>> = 'session: loop {
         tokio::select! {
             r = tx.recv(cfg.ethertype) => {
-                let f = r?;
+                let f = match r {
+                    Ok(frame) => frame,
+                    Err(error) => break 'session Err(error),
+                };
                 if let Ok(l) = frame::decode(&f.payload) {
                     if l.session_id != sid {
                         continue;
@@ -78,7 +107,7 @@ pub(super) async fn session_loop(
                         TYPE_TEARDOWN => {
                             if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
                                 cfg.log.emit(LogLevel::Info, "  teardown from server, closing session".into());
-                                break SessionEnd::PeerClosed;
+                                break 'session Ok(SessionEnd::PeerClosed);
                             } else if !fail_budget.allow() {
                                 continue;
                             }
@@ -90,11 +119,16 @@ pub(super) async fn session_loop(
                                 }
                                 continue;
                             };
-                            if l.msg_type == TYPE_KEEPALIVE {
-                                missed = 0;
-                            } else {
+                            // Any authenticated frame proves the peer and link
+                            // are alive. Under heavy forwarding traffic a
+                            // keepalive echo may be delayed or dropped even
+                            // while DATA is still arriving.
+                            missed = 0;
+                            if l.msg_type == TYPE_DATA {
                                 stack.push_packet(&plain);
-                                pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+                                if let Err(error) = pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_tx_bytes) {
+                                    break 'session Err(error);
+                                }
                             }
                         }
                         _ => {}
@@ -102,16 +136,26 @@ pub(super) async fn session_loop(
                 }
             }
             Some((stream, forward)) = accept_rx.recv() => {
-                let local_port = next_local_port;
-                next_local_port = next_local_port.wrapping_add(1).max(40000);
+                let Some(local_port) = allocate_local_port(
+                    &mut next_local_port,
+                    |port| conns.values().any(|conn| conn.local_port == port),
+                ) else {
+                    cfg.log.emit(
+                        LogLevel::Warn,
+                        "  all internal forwarding ports are busy; dropping local connection".into(),
+                    );
+                    drop(stream);
+                    continue;
+                };
                 let h = stack.connect(SERVER_ADDR, INTERNAL_PORT, local_port);
-                let (from_tx, from_rx) = mpsc::channel(512);
+                let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
                 let (close_tx, close_rx) = oneshot::channel();
                 conns.insert(
                     h,
                     Conn {
                         from_tx,
                         forward,
+                        local_port,
                         close_tx: Some(close_tx),
                     },
                 );
@@ -120,13 +164,17 @@ pub(super) async fn session_loop(
                     .entry(h)
                     .or_default()
                     .push_back(forward.1.to_be_bytes().to_vec());
+                pending_tx_bytes += std::mem::size_of::<u16>();
             }
-            Some((h, msg)) = to_rx.recv() => {
+            Some((h, msg)) = to_rx.recv(), if pending_tx_bytes < MAX_PENDING_TO_STACK_BYTES => {
                 if !conns.contains_key(&h) {
                     continue;
                 }
                 match msg {
-                    StackMsg::Data(b) => pending_tx.entry(h).or_default().push_back(b),
+                    StackMsg::Data(b) => {
+                        pending_tx_bytes += b.len();
+                        pending_tx.entry(h).or_default().push_back(b);
+                    }
                     StackMsg::Close => stack.close_socket(h),
                 }
             }
@@ -183,11 +231,15 @@ pub(super) async fn session_loop(
                 }
             }
             _ = poll_timer.tick() => {
-                pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_rx)?;
+                if let Err(error) = pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_tx_bytes) {
+                    break 'session Err(error);
+                }
             }
             _ = tokio::time::sleep_until(last_keepalive + KEEPALIVE_INTERVAL) => {
                 let raw = crypto.seal(TYPE_KEEPALIVE, sid, &[]);
-                tx.send(server_mac, cfg.ethertype, &raw)?;
+                if let Err(error) = tx.send(server_mac, cfg.ethertype, &raw) {
+                    break 'session Err(error);
+                }
                 last_keepalive = tokio::time::Instant::now();
                 missed += 1;
                 if missed >= MAX_MISSED_KEEPALIVES {
@@ -195,12 +247,12 @@ pub(super) async fn session_loop(
                         LogLevel::Info,
                         format!("  no keepalive echo for {missed} rounds, link assumed lost"),
                     );
-                    break SessionEnd::LinkLost;
+                    break 'session Ok(SessionEnd::LinkLost);
                 }
             }
             _ = notify.notified() => {
                 cfg.log.emit(LogLevel::Info, "  shutdown requested, sending teardown".into());
-                break SessionEnd::Shutdown;
+                break 'session Ok(SessionEnd::Shutdown);
             }
         }
     };
@@ -215,7 +267,7 @@ pub(super) async fn session_loop(
     for task in listeners.into_values() {
         task.abort();
     }
-    Ok(result)
+    result
 }
 
 async fn recv_forward_command(
@@ -224,5 +276,38 @@ async fn recv_forward_command(
     match receiver.as_mut() {
         Some(receiver) => receiver.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_port_allocator_skips_ports_in_use() {
+        let mut next = FIRST_LOCAL_PORT;
+        let used = [FIRST_LOCAL_PORT, FIRST_LOCAL_PORT + 1];
+        assert_eq!(
+            allocate_local_port(&mut next, |port| used.contains(&port)),
+            Some(FIRST_LOCAL_PORT + 2)
+        );
+        assert_eq!(next, FIRST_LOCAL_PORT + 3);
+    }
+
+    #[test]
+    fn local_port_allocator_wraps_without_reusing_busy_ports() {
+        let mut next = u16::MAX;
+        assert_eq!(
+            allocate_local_port(&mut next, |port| port == u16::MAX),
+            Some(FIRST_LOCAL_PORT)
+        );
+        assert_eq!(next, FIRST_LOCAL_PORT + 1);
+    }
+
+    #[test]
+    fn local_port_allocator_reports_exhaustion() {
+        let mut next = FIRST_LOCAL_PORT;
+        assert_eq!(allocate_local_port(&mut next, |_| true), None);
+        assert_eq!(next, FIRST_LOCAL_PORT);
     }
 }

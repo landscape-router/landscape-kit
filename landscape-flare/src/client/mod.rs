@@ -484,7 +484,7 @@ fn pump(
     ethertype: u16,
     conns: &mut HashMap<SocketHandle, Conn>,
     pending_tx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
-    pending_rx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
+    pending_tx_bytes: &mut usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for pkt in stack.poll() {
         let raw = crypto.seal(TYPE_DATA, sid, &pkt);
@@ -500,6 +500,7 @@ fn pump(
                 if n == 0 {
                     break;
                 }
+                *pending_tx_bytes = pending_tx_bytes.saturating_sub(n);
                 front.drain(..n);
                 if front.is_empty() {
                     q.pop_front();
@@ -512,28 +513,14 @@ fn pump(
 
         let mut buf = [0u8; 4096];
         loop {
+            let Ok(permit) = conns[&h].from_tx.try_reserve() else {
+                break;
+            };
             let n = stack.recv_bytes(h, &mut buf);
             if n == 0 {
                 break;
             }
-            pending_rx
-                .entry(h)
-                .or_default()
-                .push_back(buf[..n].to_vec());
-        }
-        if let Some(q) = pending_rx.get_mut(&h) {
-            while let Some(b) = q.front() {
-                let b = b.clone();
-                match conns[&h].from_tx.try_send(b) {
-                    Ok(()) => {
-                        q.pop_front();
-                    }
-                    Err(_) => break,
-                }
-            }
-            if q.is_empty() {
-                pending_rx.remove(&h);
-            }
+            permit.send(buf[..n].to_vec());
         }
 
         if stack.socket_closed(h) {
@@ -544,8 +531,10 @@ fn pump(
     }
     for h in reap {
         stack.remove_socket(h);
-        pending_tx.remove(&h);
-        pending_rx.remove(&h);
+        if let Some(q) = pending_tx.remove(&h) {
+            let dropped = q.iter().map(Vec::len).sum::<usize>();
+            *pending_tx_bytes = pending_tx_bytes.saturating_sub(dropped);
+        }
         conns.remove(&h);
     }
     Ok(())

@@ -10,6 +10,10 @@ use super::{ClientEvent, Forward, ForwardStatus, LogLevel, LogSink, emit_event};
 pub(super) struct Conn {
     pub(super) from_tx: mpsc::Sender<Vec<u8>>,
     pub(super) forward: Forward,
+    /// Source port used by the internal TCP connection. It stays reserved
+    /// while the smoltcp socket is in TIME-WAIT so a later mapping cannot
+    /// reuse the same four-tuple prematurely.
+    pub(super) local_port: u16,
     pub(super) close_tx: Option<oneshot::Sender<()>>,
 }
 
@@ -63,7 +67,7 @@ pub(super) async fn bridge_task(
             read = stream.read(&mut buf) => {
                 match read {
                     Ok(0) => {
-                        let _ = to_tx.send((handle, StackMsg::Close)).await;
+                        signal_close(&to_tx, handle).await;
                         return;
                     }
                     Ok(count) => {
@@ -75,26 +79,37 @@ pub(super) async fn bridge_task(
                             return;
                         }
                     }
-                    Err(_) => return,
+                    Err(_) => {
+                        signal_close(&to_tx, handle).await;
+                        return;
+                    }
                 }
             }
             message = from_rx.recv() => {
                 match message {
                     Some(bytes) => {
                         if stream.write_all(&bytes).await.is_err() {
+                            signal_close(&to_tx, handle).await;
                             return;
                         }
                     }
-                    None => return,
+                    None => {
+                        signal_close(&to_tx, handle).await;
+                        return;
+                    }
                 }
             }
             _ = &mut close_rx => {
                 let _ = stream.shutdown().await;
-                let _ = to_tx.send((handle, StackMsg::Close)).await;
+                signal_close(&to_tx, handle).await;
                 return;
             }
         }
     }
+}
+
+async fn signal_close(to_tx: &mpsc::Sender<(SocketHandle, StackMsg)>, handle: SocketHandle) {
+    let _ = to_tx.send((handle, StackMsg::Close)).await;
 }
 
 async fn run_listener(

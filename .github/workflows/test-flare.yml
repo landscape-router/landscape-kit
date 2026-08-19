@@ -47,6 +47,7 @@ jobs:
         # offline .deb set from scripts/flare/fetch-packages.sh.
         run: |
           scripts/flare/e2e-docker.sh
+          scripts/flare/e2e-connections.sh
           scripts/flare/e2e-same-segment.sh
           scripts/flare/e2e-multiclient.sh
           scripts/flare/e2e-ratelimit.sh

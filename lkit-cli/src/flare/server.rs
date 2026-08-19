@@ -21,6 +21,8 @@ use tokio::sync::mpsc;
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const STALE_AFTER: Duration = Duration::from_secs(45);
+const CONNECTION_CHANNEL_CAPACITY: usize = 16;
+const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
 
 /// Max DISCOVER/AUTH_REQ frames per second per source MAC (anti-scanning,
 /// brute force and kick attempts). A full token bucket refills at this rate.
@@ -76,7 +78,6 @@ struct Peer {
     crypto: Option<SessionCrypto>,
     conns: HashMap<SocketHandle, ServerConn>,
     pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
-    pending_rx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
     to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>,
     allowed: Arc<[u16]>,
     last_seen: Instant,
@@ -218,6 +219,7 @@ pub async fn run(
     let mut auth_fail_ts: VecDeque<Instant> = VecDeque::new();
     let allowed: Arc<[u16]> = Arc::from(cfg.forward_ports);
     let (to_tx, mut to_rx) = mpsc::channel::<(([u8; 6], SocketHandle), StackMsg)>(512);
+    let mut pending_tx_bytes = 0usize;
     println!(
         "server '{}' ready on {} (ethertype 0x{:04x}, forward ports: {})",
         cfg.device_name,
@@ -358,7 +360,7 @@ pub async fn run(
                                 user,
                             } => {
                                 guards.entry(mac).or_default().record_success();
-                                teardown_peer(peer);
+                                teardown_peer(peer, &mut pending_tx_bytes);
                                 let mut stack = IpStack::new(SERVER_ADDR);
                                 let listener = stack.add_listener(INTERNAL_PORT);
                                 peer.stack = Some(stack);
@@ -428,7 +430,7 @@ pub async fn run(
                         }
                         if drop_peer
                             && let Some(mut peer) = peers.remove(&mac) {
-                                teardown_peer(&mut peer);
+                                teardown_peer(&mut peer, &mut pending_tx_bytes);
                             }
                     }
                     TYPE_KEEPALIVE => {
@@ -470,7 +472,14 @@ pub async fn run(
                         peer.last_seen = Instant::now();
                         if let Some(stack) = peer.stack.as_mut() {
                             stack.push_packet(&plain);
-                            pump_peer(peer, &mac, &mut tx, cfg.ethertype, l.session_id)?;
+                            pump_peer(
+                                peer,
+                                &mac,
+                                &mut tx,
+                                cfg.ethertype,
+                                l.session_id,
+                                &mut pending_tx_bytes,
+                            )?;
                         }
                     }
                     TYPE_TEARDOWN => {
@@ -487,7 +496,7 @@ pub async fn run(
                         if drop_peer {
                             println!("client {} sent teardown, dropping session", fmt_mac(&mac));
                             if let Some(mut peer) = peers.remove(&mac) {
-                                teardown_peer(&mut peer);
+                                teardown_peer(&mut peer, &mut pending_tx_bytes);
                             }
                         }
                     }
@@ -498,11 +507,14 @@ pub async fn run(
                     ),
                 }
             }
-            Some(((mac, h), msg)) = to_rx.recv() => {
+            Some(((mac, h), msg)) = to_rx.recv(), if pending_tx_bytes < MAX_PENDING_TO_STACK_BYTES => {
                 if let Some(peer) = peers.get_mut(&mac)
                     && peer.conns.contains_key(&h) {
                         match msg {
-                            StackMsg::Data(b) => peer.pending_tx.entry(h).or_default().push_back(b),
+                            StackMsg::Data(b) => {
+                                pending_tx_bytes += b.len();
+                                peer.pending_tx.entry(h).or_default().push_back(b);
+                            }
                             StackMsg::Close => {
                                 if let Some(stack) = peer.stack.as_mut() {
                                     stack.close_socket(h);
@@ -516,7 +528,7 @@ pub async fn run(
                 for mac in macs {
                     if let Some(peer) = peers.get_mut(&mac)
                         && let Some(sid) = peer.sess.session_id() {
-                            pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid)?;
+                            pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes)?;
                         }
                 }
             }
@@ -537,7 +549,7 @@ pub async fn run(
                             let _ = tx.send_on(peer.ifindex, &mac, cfg.ethertype, &raw);
                         }
                     if let Some(mut peer) = peers.remove(&mac) {
-                        teardown_peer(&mut peer);
+                        teardown_peer(&mut peer, &mut pending_tx_bytes);
                         println!("  peer {} timed out, dropped", fmt_mac(&mac));
                     }
                 }
@@ -601,7 +613,6 @@ fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: A
         crypto: None,
         conns: HashMap::new(),
         pending_tx: HashMap::new(),
-        pending_rx: HashMap::new(),
         to_tx,
         allowed,
         last_seen: Instant::now(),
@@ -610,13 +621,19 @@ fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: A
 
 /// Drop the peer's stack, session crypto and connections (kernel sockets
 /// close via the channels; their tasks exit).
-fn teardown_peer(peer: &mut Peer) {
+fn teardown_peer(peer: &mut Peer, pending_tx_bytes: &mut usize) {
+    let dropped = peer
+        .pending_tx
+        .values()
+        .flatten()
+        .map(Vec::len)
+        .sum::<usize>();
+    *pending_tx_bytes = pending_tx_bytes.saturating_sub(dropped);
     peer.stack = None;
     peer.listener = None;
     peer.crypto = None;
     peer.conns.clear();
     peer.pending_tx.clear();
-    peer.pending_rx.clear();
 }
 
 /// Pump one peer's stack: accept new internal connections, send outbound IP
@@ -628,6 +645,7 @@ fn pump_peer(
     tx: &mut Link,
     ethertype: u16,
     sid: u32,
+    pending_tx_bytes: &mut usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(stack) = peer.stack.as_mut() else {
         return Ok(());
@@ -640,7 +658,7 @@ fn pump_peer(
         && let Some((h, new_listener)) = stack.accept(listener, INTERNAL_PORT)
     {
         peer.listener = Some(new_listener);
-        let (from_tx, from_rx) = mpsc::channel(512);
+        let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
         peer.conns.insert(h, ServerConn { from_tx });
         tokio::spawn(server_conn_task(
             *peer_mac,
@@ -665,6 +683,7 @@ fn pump_peer(
                 if n == 0 {
                     break;
                 }
+                *pending_tx_bytes = pending_tx_bytes.saturating_sub(n);
                 front.drain(..n);
                 if front.is_empty() {
                     q.pop_front();
@@ -677,28 +696,14 @@ fn pump_peer(
 
         let mut buf = [0u8; 4096];
         loop {
+            let Ok(permit) = peer.conns[&h].from_tx.try_reserve() else {
+                break;
+            };
             let n = stack.recv_bytes(h, &mut buf);
             if n == 0 {
                 break;
             }
-            peer.pending_rx
-                .entry(h)
-                .or_default()
-                .push_back(buf[..n].to_vec());
-        }
-        if let Some(q) = peer.pending_rx.get_mut(&h) {
-            while let Some(b) = q.front() {
-                let b = b.clone();
-                match peer.conns[&h].from_tx.try_send(b) {
-                    Ok(()) => {
-                        q.pop_front();
-                    }
-                    Err(_) => break,
-                }
-            }
-            if q.is_empty() {
-                peer.pending_rx.remove(&h);
-            }
+            permit.send(buf[..n].to_vec());
         }
 
         if stack.socket_closed(h) {
@@ -709,8 +714,10 @@ fn pump_peer(
     }
     for h in reap {
         stack.remove_socket(h);
-        peer.pending_tx.remove(&h);
-        peer.pending_rx.remove(&h);
+        if let Some(q) = peer.pending_tx.remove(&h) {
+            let dropped = q.iter().map(Vec::len).sum::<usize>();
+            *pending_tx_bytes = pending_tx_bytes.saturating_sub(dropped);
+        }
         peer.conns.remove(&h);
     }
     Ok(())
@@ -729,7 +736,10 @@ async fn server_conn_task(
     while header.len() < 2 {
         match from_rx.recv().await {
             Some(b) => header.extend_from_slice(&b),
-            None => return,
+            None => {
+                signal_close(&to_tx, peer_mac, handle).await;
+                return;
+            }
         }
     }
     let dst = u16::from_be_bytes([header[0], header[1]]);
@@ -742,12 +752,13 @@ async fn server_conn_task(
         Ok(s) => s,
         Err(e) => {
             println!("  [server] dial 127.0.0.1:{dst} failed: {e}");
-            let _ = to_tx.send(((peer_mac, handle), StackMsg::Close)).await;
+            signal_close(&to_tx, peer_mac, handle).await;
             return;
         }
     };
     let extra = &header[2..];
     if !extra.is_empty() && remote.write_all(extra).await.is_err() {
+        signal_close(&to_tx, peer_mac, handle).await;
         return;
     }
 
@@ -757,14 +768,18 @@ async fn server_conn_task(
             msg = from_rx.recv() => match msg {
                 Some(b) => {
                     if remote.write_all(&b).await.is_err() {
+                        signal_close(&to_tx, peer_mac, handle).await;
                         return;
                     }
                 }
-                None => return,
+                None => {
+                    signal_close(&to_tx, peer_mac, handle).await;
+                    return;
+                }
             },
             r = remote.read(&mut buf) => match r {
                 Ok(0) => {
-                    let _ = to_tx.send(((peer_mac, handle), StackMsg::Close)).await;
+                    signal_close(&to_tx, peer_mac, handle).await;
                     return;
                 }
                 Ok(n) => {
@@ -772,10 +787,21 @@ async fn server_conn_task(
                         return;
                     }
                 }
-                Err(_) => return,
+                Err(_) => {
+                    signal_close(&to_tx, peer_mac, handle).await;
+                    return;
+                }
             },
         }
     }
+}
+
+async fn signal_close(
+    to_tx: &mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>,
+    peer_mac: [u8; 6],
+    handle: SocketHandle,
+) {
+    let _ = to_tx.send(((peer_mac, handle), StackMsg::Close)).await;
 }
 
 fn devs_display(names: &[String]) -> String {
