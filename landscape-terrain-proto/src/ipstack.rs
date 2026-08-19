@@ -215,7 +215,12 @@ impl IpStack {
         listener: SocketHandle,
         port: u16,
     ) -> Option<(SocketHandle, SocketHandle)> {
-        if !self.socket(listener).is_open() {
+        // A smoltcp listener becomes the accepted connection itself (SYN
+        // received/established); while it is still in Listen state there is
+        // nothing to accept. Calling accept() otherwise would churn the
+        // listener every poll: unbounded socket/task growth and multiple
+        // listeners on the same port.
+        if self.socket(listener).is_listening() {
             return None;
         }
         let established = match self.remove_socket(listener) {
