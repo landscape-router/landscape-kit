@@ -9,11 +9,12 @@ use landscape_terrain_proto::protocol::session::{
 };
 use landscape_terrain_proto::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_RESP};
 use landscape_terrain_proto::transport::{Frame, Link, fmt_mac};
+use tokio::sync::mpsc;
 
 mod forward;
 mod session;
 
-use forward::Conn;
+use forward::{BridgeMsg, Conn};
 use session::{SessionEnd, session_loop};
 
 pub const BROADCAST: [u8; 6] = [0xff; 6];
@@ -524,15 +525,19 @@ fn pump(
             if n == 0 {
                 break;
             }
-            permit.send(buf[..n].to_vec());
+            permit.send(BridgeMsg::Data(buf[..n].to_vec()));
         }
 
         let from_drained = conns[&h].from_tx.is_closed()
             || conns[&h].from_tx.capacity() == conns[&h].from_tx.max_capacity();
         if stack.socket_closed(h) && from_drained {
             reap.push(h);
-        } else if stack.peer_eof(h) {
-            stack.close_socket(h);
+        } else if stack.peer_eof(h) && !conns[&h].peer_eof_sent {
+            match conns[&h].from_tx.try_send(BridgeMsg::PeerEof) {
+                Ok(()) => conns.get_mut(&h).unwrap().peer_eof_sent = true,
+                Err(mpsc::error::TrySendError::Full(_)) => {}
+                Err(mpsc::error::TrySendError::Closed(_)) => stack.close_socket(h),
+            }
         }
     }
     for h in reap {

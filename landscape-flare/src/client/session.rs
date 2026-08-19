@@ -161,6 +161,7 @@ pub(super) async fn session_loop(
                         local_port,
                         generation,
                         close_after_flush: false,
+                        peer_eof_sent: false,
                         close_tx: Some(close_tx),
                     },
                 );

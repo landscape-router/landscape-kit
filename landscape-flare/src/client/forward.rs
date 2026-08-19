@@ -9,8 +9,13 @@ use super::{ClientEvent, Forward, ForwardStatus, LogLevel, LogSink, emit_event};
 
 pub(super) type ConnKey = (SocketHandle, u64);
 
+pub(super) enum BridgeMsg {
+    Data(Vec<u8>),
+    PeerEof,
+}
+
 pub(super) struct Conn {
-    pub(super) from_tx: mpsc::Sender<Vec<u8>>,
+    pub(super) from_tx: mpsc::Sender<BridgeMsg>,
     pub(super) forward: Forward,
     /// Source port used by the internal TCP connection. It stays reserved
     /// while the smoltcp socket is in TIME-WAIT so a later mapping cannot
@@ -22,6 +27,7 @@ pub(super) struct Conn {
     /// EOF may arrive while bytes are still queued for smoltcp. Delay FIN
     /// until the queue is empty so large transfers are not truncated.
     pub(super) close_after_flush: bool,
+    pub(super) peer_eof_sent: bool,
     pub(super) close_tx: Option<oneshot::Sender<()>>,
 }
 
@@ -66,7 +72,7 @@ pub(super) async fn bridge_task(
     mut stream: TcpStream,
     key: ConnKey,
     to_tx: mpsc::Sender<(ConnKey, StackMsg)>,
-    mut from_rx: mpsc::Receiver<Vec<u8>>,
+    mut from_rx: mpsc::Receiver<BridgeMsg>,
     mut close_rx: oneshot::Receiver<()>,
 ) {
     let mut buf = vec![0u8; 8192];
@@ -96,11 +102,15 @@ pub(super) async fn bridge_task(
             }
             message = from_rx.recv() => {
                 match message {
-                    Some(bytes) => {
+                    Some(BridgeMsg::Data(bytes)) => {
                         if stream.write_all(&bytes).await.is_err() {
                             signal_close(&to_tx, key).await;
                             return;
                         }
+                    }
+                    Some(BridgeMsg::PeerEof) => {
+                        signal_close(&to_tx, key).await;
+                        return;
                     }
                     None => {
                         signal_close(&to_tx, key).await;
