@@ -259,3 +259,44 @@ impl IpStack {
         self.socket(handle).close();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_syns_can_be_distributed_across_listeners() {
+        const CONNECTIONS: usize = 32;
+        const LISTENERS: usize = 64;
+
+        let mut client = IpStack::new(CLIENT_ADDR);
+        let mut server = IpStack::new(SERVER_ADDR);
+        let mut listeners: Vec<_> = (0..LISTENERS)
+            .map(|_| server.add_listener(INTERNAL_PORT))
+            .collect();
+        let mut accepted = Vec::new();
+        for index in 0..CONNECTIONS {
+            client.connect(SERVER_ADDR, INTERNAL_PORT, 40000 + index as u16);
+        }
+
+        for _ in 0..100 {
+            for packet in client.poll() {
+                server.push_packet(&packet);
+            }
+            for listener in &mut listeners {
+                if let Some((handle, replacement)) = server.accept(*listener, INTERNAL_PORT) {
+                    *listener = replacement;
+                    accepted.push(handle);
+                }
+            }
+            for packet in server.poll() {
+                client.push_packet(&packet);
+            }
+            if accepted.len() == CONNECTIONS {
+                break;
+            }
+        }
+
+        assert_eq!(accepted.len(), CONNECTIONS);
+    }
+}

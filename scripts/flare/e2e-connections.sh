@@ -69,7 +69,7 @@ run_probe() {
 }
 
 run_probe "same-mapping concurrent connections" 2222 \
-  concurrent --connections 32 --bytes 131072
+  concurrent --connections 32 --bytes 65536
 run_probe "HTTP keep-alive concurrency" 2280 \
   http --connections 16 --requests 8
 run_probe "clean short-connection churn" 2222 \

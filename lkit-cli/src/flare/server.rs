@@ -26,7 +26,7 @@ const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
 /// smoltcp listeners do not have a kernel-style accept backlog: one listener
 /// can hold one SYN/connection. Keep a bounded pool so a burst of local
 /// connections does not reset all but the first SYN.
-const LISTENER_POOL_SIZE: usize = 32;
+const LISTENER_POOL_SIZE: usize = 64;
 
 /// Max DISCOVER/AUTH_REQ frames per second per source MAC (anti-scanning,
 /// brute force and kick attempts). A full token bucket refills at this rate.
