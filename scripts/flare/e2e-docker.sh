@@ -43,7 +43,9 @@ trap cleanup EXIT
 cleanup
 
 echo "== build =="
-cargo build --workspace >/dev/null
+if [[ "${FLARE_E2E_SKIP_BUILD:-0}" != 1 ]]; then
+  cargo build --workspace >/dev/null
+fi
 docker build -q -t "$IMAGE" -f scripts/flare/Dockerfile . >/dev/null
 docker network create "$NET" >/dev/null
 

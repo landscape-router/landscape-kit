@@ -24,6 +24,20 @@ on:
       - .github/workflows/test-flare.yml
       - .github/workflows/test-rust.yml
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: Run one scenario or the full matrix
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - connections
+          - docker
+          - same-segment
+          - multiclient
+          - ratelimit
+          - daemon
 
 permissions:
   contents: read
@@ -33,22 +47,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e:
-    name: Flare L2 e2e
+  prepare:
+    name: Prepare flare e2e build
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Build workspace
+      - name: Restore or save Cargo build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-flare-e2e-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build workspace once
         run: cargo build --locked --workspace
-      - name: Run flare e2e
+
+  e2e:
+    name: Flare e2e (${{ matrix.scenario }})
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - connections
+          - docker
+          - same-segment
+          - multiclient
+          - ratelimit
+          - daemon
+    if: github.event_name != 'workflow_dispatch' || inputs.scenario == 'all' || inputs.scenario == matrix.scenario
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore prepared Cargo build
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-flare-e2e-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run ${{ matrix.scenario }} e2e
         # The e2e image installs runtime dependencies via apt inside the
-        # Dockerfile (no .deb files are present in CI); locally it uses the
-        # offline .deb set from scripts/flare/fetch-packages.sh.
-        run: |
-          scripts/flare/e2e-connections.sh
-          scripts/flare/e2e-docker.sh
-          scripts/flare/e2e-same-segment.sh
-          scripts/flare/e2e-multiclient.sh
-          scripts/flare/e2e-ratelimit.sh
-          scripts/flare/e2e-daemon.sh
+        # Dockerfile (no .deb files are present in CI); locally the scripts
+        # use the offline .deb set from scripts/flare/fetch-packages.sh.
+        env:
+          FLARE_E2E_SKIP_BUILD: "1"
+        run: scripts/flare/e2e-${{ matrix.scenario }}.sh
