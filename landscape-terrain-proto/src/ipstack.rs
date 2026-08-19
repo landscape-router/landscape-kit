@@ -37,6 +37,14 @@ pub const MTU: usize = 1400;
 /// Per-socket buffer size (both directions, bounded memory per connection).
 pub const SOCKET_BUFFER: usize = 64 * 1024;
 
+fn peer_eof_state(state: TcpState, can_recv: bool) -> bool {
+    !can_recv
+        && matches!(
+            state,
+            TcpState::CloseWait | TcpState::Closing | TcpState::LastAck | TcpState::TimeWait
+        )
+}
+
 /// A message pushed from a connection task into the stack.
 pub enum StackMsg {
     /// Bytes read from the kernel TCP socket, to be sent into the stack.
@@ -250,8 +258,14 @@ impl IpStack {
     }
 
     /// True when the peer sent FIN and its data has been fully drained.
+    ///
+    /// A locally half-closed socket can observe the peer FIN in `TIME-WAIT`
+    /// (or the transient `CLOSING`/`LAST-ACK` states), not only in
+    /// `CLOSE-WAIT`. Checking the receive half rather than one state keeps
+    /// half-close propagation correct for both active and passive closes.
     pub fn peer_eof(&mut self, handle: SocketHandle) -> bool {
-        self.socket(handle).state() == TcpState::CloseWait && !self.socket(handle).can_recv()
+        let socket = self.socket(handle);
+        peer_eof_state(socket.state(), socket.can_recv())
     }
 
     /// Close the socket (sends FIN if the connection is established).
@@ -298,5 +312,26 @@ mod tests {
         }
 
         assert_eq!(accepted.len(), CONNECTIONS);
+    }
+
+    #[test]
+    fn peer_eof_includes_active_close_states() {
+        for state in [
+            TcpState::CloseWait,
+            TcpState::Closing,
+            TcpState::LastAck,
+            TcpState::TimeWait,
+        ] {
+            assert!(peer_eof_state(state, false), "{state:?} must report EOF");
+            assert!(!peer_eof_state(state, true), "buffered data must delay EOF");
+        }
+        for state in [
+            TcpState::Established,
+            TcpState::FinWait1,
+            TcpState::FinWait2,
+            TcpState::Closed,
+        ] {
+            assert!(!peer_eof_state(state, false), "{state:?} is not peer EOF");
+        }
     }
 }
