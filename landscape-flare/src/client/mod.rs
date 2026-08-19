@@ -510,6 +510,10 @@ fn pump(
                 pending_tx.remove(&h);
             }
         }
+        if !pending_tx.contains_key(&h) && conns[&h].close_after_flush {
+            stack.close_socket(h);
+            conns.get_mut(&h).unwrap().close_after_flush = false;
+        }
 
         let mut buf = [0u8; 4096];
         loop {

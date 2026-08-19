@@ -96,6 +96,7 @@ struct ServerConn {
     /// Bytes from the stack to the kernel socket (dialed service).
     from_tx: mpsc::Sender<Vec<u8>>,
     generation: u64,
+    close_after_flush: bool,
 }
 
 /// Token bucket for control frames.
@@ -531,7 +532,11 @@ pub async fn run(
                             }
                             StackMsg::Close => {
                                 if let Some(stack) = peer.stack.as_mut() {
-                                    stack.close_socket(h);
+                                    if peer.pending_tx.contains_key(&h) {
+                                        peer.conns.get_mut(&h).unwrap().close_after_flush = true;
+                                    } else {
+                                        stack.close_socket(h);
+                                    }
                                 }
                             }
                         }
@@ -680,6 +685,7 @@ fn pump_peer(
                 ServerConn {
                     from_tx,
                     generation,
+                    close_after_flush: false,
                 },
             );
             tokio::spawn(server_conn_task(
@@ -716,6 +722,10 @@ fn pump_peer(
             if q.is_empty() {
                 peer.pending_tx.remove(&h);
             }
+        }
+        if !peer.pending_tx.contains_key(&h) && peer.conns[&h].close_after_flush {
+            stack.close_socket(h);
+            peer.conns.get_mut(&h).unwrap().close_after_flush = false;
         }
 
         let mut buf = [0u8; 4096];

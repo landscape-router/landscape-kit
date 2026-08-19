@@ -19,6 +19,9 @@ pub(super) struct Conn {
     /// Generation prevents a delayed task message from targeting a later
     /// connection that reuses the same smoltcp socket handle.
     pub(super) generation: u64,
+    /// EOF may arrive while bytes are still queued for smoltcp. Delay FIN
+    /// until the queue is empty so large transfers are not truncated.
+    pub(super) close_after_flush: bool,
     pub(super) close_tx: Option<oneshot::Sender<()>>,
 }
 

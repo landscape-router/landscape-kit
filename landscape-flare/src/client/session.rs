@@ -160,6 +160,7 @@ pub(super) async fn session_loop(
                         forward,
                         local_port,
                         generation,
+                        close_after_flush: false,
                         close_tx: Some(close_tx),
                     },
                 );
@@ -185,7 +186,13 @@ pub(super) async fn session_loop(
                         pending_tx_bytes += b.len();
                         pending_tx.entry(h).or_default().push_back(b);
                     }
-                    StackMsg::Close => stack.close_socket(h),
+                    StackMsg::Close => {
+                        if pending_tx.contains_key(&h) {
+                            conns.get_mut(&h).unwrap().close_after_flush = true;
+                        } else {
+                            stack.close_socket(h);
+                        }
+                    }
                 }
             }
             command = recv_forward_command(forward_control) => {
