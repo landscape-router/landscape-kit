@@ -11,7 +11,7 @@ use landscape_terrain_proto::transport::Link;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 
-use super::forward::{Conn, bridge_task, close_connections, spawn_listener};
+use super::forward::{Conn, ConnKey, bridge_task, close_connections, spawn_listener};
 use super::{
     ClientConfig, ClientEvent, FailBudget, Forward, ForwardCommand, ForwardRejection, LogLevel,
     MAX_MISSED_KEEPALIVES, POLL_INTERVAL, emit_event, pump,
@@ -67,7 +67,7 @@ pub(super) async fn session_loop(
 ) -> Result<SessionEnd, Box<dyn std::error::Error>> {
     let mut stack = IpStack::new(CLIENT_ADDR);
     let mut crypto = SessionCrypto::new(keys, Dir::C2S);
-    let (to_tx, mut to_rx) = mpsc::channel::<(SocketHandle, StackMsg)>(512);
+    let (to_tx, mut to_rx) = mpsc::channel::<(ConnKey, StackMsg)>(512);
     let (accept_tx, mut accept_rx) = mpsc::channel::<(TcpStream, Forward)>(16);
     let mut conns: HashMap<SocketHandle, Conn> = HashMap::new();
     let mut pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>> = HashMap::new();
@@ -90,6 +90,7 @@ pub(super) async fn session_loop(
     let mut last_keepalive = tokio::time::Instant::now();
     let mut missed = 0u32;
     let mut next_local_port = FIRST_LOCAL_PORT;
+    let mut next_generation = 1u64;
     let mut fail_budget = FailBudget::default();
 
     let result: Result<SessionEnd, Box<dyn std::error::Error>> = 'session: loop {
@@ -148,6 +149,8 @@ pub(super) async fn session_loop(
                     continue;
                 };
                 let h = stack.connect(SERVER_ADDR, INTERNAL_PORT, local_port);
+                let generation = next_generation;
+                next_generation = next_generation.wrapping_add(1).max(1);
                 let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
                 let (close_tx, close_rx) = oneshot::channel();
                 conns.insert(
@@ -156,18 +159,25 @@ pub(super) async fn session_loop(
                         from_tx,
                         forward,
                         local_port,
+                        generation,
                         close_tx: Some(close_tx),
                     },
                 );
-                tokio::spawn(bridge_task(stream, h, to_tx.clone(), from_rx, close_rx));
+                tokio::spawn(bridge_task(
+                    stream,
+                    (h, generation),
+                    to_tx.clone(),
+                    from_rx,
+                    close_rx,
+                ));
                 pending_tx
                     .entry(h)
                     .or_default()
                     .push_back(forward.1.to_be_bytes().to_vec());
                 pending_tx_bytes += std::mem::size_of::<u16>();
             }
-            Some((h, msg)) = to_rx.recv(), if pending_tx_bytes < MAX_PENDING_TO_STACK_BYTES => {
-                if !conns.contains_key(&h) {
+            Some(((h, generation), msg)) = to_rx.recv(), if pending_tx_bytes < MAX_PENDING_TO_STACK_BYTES => {
+                if conns.get(&h).is_none_or(|conn| conn.generation != generation) {
                     continue;
                 }
                 match msg {

@@ -28,6 +28,9 @@ const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
 /// connections does not reset all but the first SYN.
 const LISTENER_POOL_SIZE: usize = 64;
 
+type ServerConnKey = ([u8; 6], SocketHandle, u64);
+type ServerStackMsg = (ServerConnKey, StackMsg);
+
 /// Max DISCOVER/AUTH_REQ frames per second per source MAC (anti-scanning,
 /// brute force and kick attempts). A full token bucket refills at this rate.
 const RATE_PER_SEC: f64 = 10.0;
@@ -82,7 +85,8 @@ struct Peer {
     crypto: Option<SessionCrypto>,
     conns: HashMap<SocketHandle, ServerConn>,
     pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
-    to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>,
+    next_generation: u64,
+    to_tx: mpsc::Sender<ServerStackMsg>,
     allowed: Arc<[u16]>,
     last_seen: Instant,
 }
@@ -91,6 +95,7 @@ struct Peer {
 struct ServerConn {
     /// Bytes from the stack to the kernel socket (dialed service).
     from_tx: mpsc::Sender<Vec<u8>>,
+    generation: u64,
 }
 
 /// Token bucket for control frames.
@@ -222,7 +227,7 @@ pub async fn run(
     let mut global_rate = RateBucket::new(GLOBAL_RATE_PER_SEC);
     let mut auth_fail_ts: VecDeque<Instant> = VecDeque::new();
     let allowed: Arc<[u16]> = Arc::from(cfg.forward_ports);
-    let (to_tx, mut to_rx) = mpsc::channel::<(([u8; 6], SocketHandle), StackMsg)>(512);
+    let (to_tx, mut to_rx) = mpsc::channel::<ServerStackMsg>(512);
     let mut pending_tx_bytes = 0usize;
     println!(
         "server '{}' ready on {} (ethertype 0x{:04x}, forward ports: {})",
@@ -513,9 +518,12 @@ pub async fn run(
                     ),
                 }
             }
-            Some(((mac, h), msg)) = to_rx.recv(), if pending_tx_bytes < MAX_PENDING_TO_STACK_BYTES => {
+            Some(((mac, h, generation), msg)) = to_rx.recv(), if pending_tx_bytes < MAX_PENDING_TO_STACK_BYTES => {
                 if let Some(peer) = peers.get_mut(&mac)
-                    && peer.conns.contains_key(&h) {
+                    && peer
+                        .conns
+                        .get(&h)
+                        .is_some_and(|conn| conn.generation == generation) {
                         match msg {
                             StackMsg::Data(b) => {
                                 pending_tx_bytes += b.len();
@@ -610,7 +618,7 @@ fn fail_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
         .allow()
 }
 
-fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: Arc<[u16]>) -> Peer {
+fn new_peer(to_tx: mpsc::Sender<ServerStackMsg>, allowed: Arc<[u16]>) -> Peer {
     Peer {
         sess: ServerSession::new(),
         ifindex: 0,
@@ -619,6 +627,7 @@ fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: A
         crypto: None,
         conns: HashMap::new(),
         pending_tx: HashMap::new(),
+        next_generation: 1,
         to_tx,
         allowed,
         last_seen: Instant::now(),
@@ -664,16 +673,19 @@ fn pump_peer(
         if let Some((h, new_listener)) = stack.accept(*listener, INTERNAL_PORT) {
             *listener = new_listener;
             let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
-            peer.conns.insert(h, ServerConn { from_tx });
-            if peer.conns.len() == 1 || peer.conns.len().is_multiple_of(24) {
-                println!(
-                    "  [server] accepted internal connection {h:?} ({} live)",
-                    peer.conns.len()
-                );
-            }
+            let generation = peer.next_generation;
+            peer.next_generation = peer.next_generation.wrapping_add(1).max(1);
+            peer.conns.insert(
+                h,
+                ServerConn {
+                    from_tx,
+                    generation,
+                },
+            );
             tokio::spawn(server_conn_task(
                 *peer_mac,
                 h,
+                generation,
                 peer.to_tx.clone(),
                 from_rx,
                 peer.allowed.clone(),
@@ -740,7 +752,8 @@ fn pump_peer(
 async fn server_conn_task(
     peer_mac: [u8; 6],
     handle: SocketHandle,
-    to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>,
+    generation: u64,
+    to_tx: mpsc::Sender<ServerStackMsg>,
     mut from_rx: mpsc::Receiver<Vec<u8>>,
     allowed: Arc<[u16]>,
 ) {
@@ -749,7 +762,7 @@ async fn server_conn_task(
         match from_rx.recv().await {
             Some(b) => header.extend_from_slice(&b),
             None => {
-                signal_close(&to_tx, peer_mac, handle).await;
+                signal_close(&to_tx, peer_mac, handle, generation).await;
                 return;
             }
         }
@@ -757,21 +770,22 @@ async fn server_conn_task(
     let dst = u16::from_be_bytes([header[0], header[1]]);
     if !allowed.contains(&dst) {
         println!("  [server] forward to 127.0.0.1:{dst} not allowed, closing");
-        let _ = to_tx.send(((peer_mac, handle), StackMsg::Close)).await;
+        let _ = to_tx
+            .send(((peer_mac, handle, generation), StackMsg::Close))
+            .await;
         return;
     }
     let mut remote = match TcpStream::connect(("127.0.0.1", dst)).await {
         Ok(s) => s,
         Err(e) => {
             println!("  [server] dial 127.0.0.1:{dst} failed: {e}");
-            signal_close(&to_tx, peer_mac, handle).await;
+            signal_close(&to_tx, peer_mac, handle, generation).await;
             return;
         }
     };
-    println!("  [server] internal connection {handle:?} dialed 127.0.0.1:{dst}");
     let extra = &header[2..];
     if !extra.is_empty() && remote.write_all(extra).await.is_err() {
-        signal_close(&to_tx, peer_mac, handle).await;
+        signal_close(&to_tx, peer_mac, handle, generation).await;
         return;
     }
 
@@ -781,27 +795,31 @@ async fn server_conn_task(
             msg = from_rx.recv() => match msg {
                 Some(b) => {
                     if remote.write_all(&b).await.is_err() {
-                        signal_close(&to_tx, peer_mac, handle).await;
+                        signal_close(&to_tx, peer_mac, handle, generation).await;
                         return;
                     }
                 }
                 None => {
-                    signal_close(&to_tx, peer_mac, handle).await;
+                    signal_close(&to_tx, peer_mac, handle, generation).await;
                     return;
                 }
             },
             r = remote.read(&mut buf) => match r {
                 Ok(0) => {
-                    signal_close(&to_tx, peer_mac, handle).await;
+                    signal_close(&to_tx, peer_mac, handle, generation).await;
                     return;
                 }
                 Ok(n) => {
-                    if to_tx.send(((peer_mac, handle), StackMsg::Data(buf[..n].to_vec()))).await.is_err() {
+                    if to_tx
+                        .send(((peer_mac, handle, generation), StackMsg::Data(buf[..n].to_vec())))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
                 Err(_) => {
-                    signal_close(&to_tx, peer_mac, handle).await;
+                    signal_close(&to_tx, peer_mac, handle, generation).await;
                     return;
                 }
             },
@@ -810,11 +828,14 @@ async fn server_conn_task(
 }
 
 async fn signal_close(
-    to_tx: &mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>,
+    to_tx: &mpsc::Sender<ServerStackMsg>,
     peer_mac: [u8; 6],
     handle: SocketHandle,
+    generation: u64,
 ) {
-    let _ = to_tx.send(((peer_mac, handle), StackMsg::Close)).await;
+    let _ = to_tx
+        .send(((peer_mac, handle, generation), StackMsg::Close))
+        .await;
 }
 
 fn devs_display(names: &[String]) -> String {

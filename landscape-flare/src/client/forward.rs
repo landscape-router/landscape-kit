@@ -7,6 +7,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{ClientEvent, Forward, ForwardStatus, LogLevel, LogSink, emit_event};
 
+pub(super) type ConnKey = (SocketHandle, u64);
+
 pub(super) struct Conn {
     pub(super) from_tx: mpsc::Sender<Vec<u8>>,
     pub(super) forward: Forward,
@@ -14,6 +16,9 @@ pub(super) struct Conn {
     /// while the smoltcp socket is in TIME-WAIT so a later mapping cannot
     /// reuse the same four-tuple prematurely.
     pub(super) local_port: u16,
+    /// Generation prevents a delayed task message from targeting a later
+    /// connection that reuses the same smoltcp socket handle.
+    pub(super) generation: u64,
     pub(super) close_tx: Option<oneshot::Sender<()>>,
 }
 
@@ -56,8 +61,8 @@ pub(super) fn close_connections(
 
 pub(super) async fn bridge_task(
     mut stream: TcpStream,
-    handle: SocketHandle,
-    to_tx: mpsc::Sender<(SocketHandle, StackMsg)>,
+    key: ConnKey,
+    to_tx: mpsc::Sender<(ConnKey, StackMsg)>,
     mut from_rx: mpsc::Receiver<Vec<u8>>,
     mut close_rx: oneshot::Receiver<()>,
 ) {
@@ -67,12 +72,12 @@ pub(super) async fn bridge_task(
             read = stream.read(&mut buf) => {
                 match read {
                     Ok(0) => {
-                        signal_close(&to_tx, handle).await;
+                        signal_close(&to_tx, key).await;
                         return;
                     }
                     Ok(count) => {
                         if to_tx
-                            .send((handle, StackMsg::Data(buf[..count].to_vec())))
+                            .send((key, StackMsg::Data(buf[..count].to_vec())))
                             .await
                             .is_err()
                         {
@@ -80,7 +85,7 @@ pub(super) async fn bridge_task(
                         }
                     }
                     Err(_) => {
-                        signal_close(&to_tx, handle).await;
+                        signal_close(&to_tx, key).await;
                         return;
                     }
                 }
@@ -89,27 +94,27 @@ pub(super) async fn bridge_task(
                 match message {
                     Some(bytes) => {
                         if stream.write_all(&bytes).await.is_err() {
-                            signal_close(&to_tx, handle).await;
+                            signal_close(&to_tx, key).await;
                             return;
                         }
                     }
                     None => {
-                        signal_close(&to_tx, handle).await;
+                        signal_close(&to_tx, key).await;
                         return;
                     }
                 }
             }
             _ = &mut close_rx => {
                 let _ = stream.shutdown().await;
-                signal_close(&to_tx, handle).await;
+                signal_close(&to_tx, key).await;
                 return;
             }
         }
     }
 }
 
-async fn signal_close(to_tx: &mpsc::Sender<(SocketHandle, StackMsg)>, handle: SocketHandle) {
-    let _ = to_tx.send((handle, StackMsg::Close)).await;
+async fn signal_close(to_tx: &mpsc::Sender<(ConnKey, StackMsg)>, key: ConnKey) {
+    let _ = to_tx.send((key, StackMsg::Close)).await;
 }
 
 async fn run_listener(
