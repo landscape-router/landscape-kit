@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
-use super::Frame;
+use super::{Frame, Interface};
 
 const POLL_INTERVAL_MS: i32 = 200;
 
@@ -395,12 +395,15 @@ fn recv_one(
 }
 
 /// Non-loopback interfaces available on this host (used by the TUI picker).
-pub fn list_interfaces() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn list_interface_details() -> Result<Vec<Interface>, Box<dyn std::error::Error>> {
     let mut names = Vec::new();
     for entry in std::fs::read_dir("/sys/class/net")? {
         let name = entry?.file_name().to_string_lossy().into_owned();
         if name != "lo" {
-            names.push(name);
+            names.push(Interface {
+                name,
+                description: None,
+            });
         }
     }
     Ok(names)

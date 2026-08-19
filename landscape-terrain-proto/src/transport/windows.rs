@@ -12,17 +12,20 @@ use std::time::Duration;
 use pcap::{Capture, Device};
 use tokio::sync::mpsc;
 
-use super::Frame;
+use super::{Frame, Interface};
 
 const CAPTURE_TIMEOUT_MS: i32 = 500;
 const MULTI_TIMEOUT_MS: i32 = 100;
 
 /// Non-loopback interfaces available on this host (used by the TUI picker).
-pub fn list_interfaces() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn list_interface_details() -> Result<Vec<Interface>, Box<dyn std::error::Error>> {
     Ok(Device::list()?
         .into_iter()
         .filter(|d| !d.flags.is_loopback())
-        .map(|d| d.name)
+        .map(|d| Interface {
+            name: d.name,
+            description: d.desc,
+        })
         .collect())
 }
 

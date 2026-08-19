@@ -16,16 +16,63 @@ mod windows;
 #[cfg(not(target_os = "linux"))]
 pub use windows::Link;
 
+/// A capture interface and its optional human-readable description.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Interface {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+impl Interface {
+    pub fn display_name(&self) -> String {
+        match self.description.as_deref().map(str::trim) {
+            Some(description) if !description.is_empty() => description.to_string(),
+            _ => self.name.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::Interface;
+
+    #[test]
+    fn display_name_prefers_description() {
+        let interface = Interface {
+            name: r#"\\Device\\NPF_{ABC}"#.into(),
+            description: Some("Ethernet".into()),
+        };
+        assert_eq!(interface.display_name(), "Ethernet");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_name_without_description() {
+        let interface = Interface {
+            name: "eth0".into(),
+            description: None,
+        };
+        assert_eq!(interface.display_name(), "eth0");
+    }
+}
+
 /// List the interfaces usable by `Link::open`, excluding loopback. Used by
 /// interactive frontends (e.g. the lflare TUI device picker).
 pub fn list_interfaces() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    Ok(list_interface_details()?
+        .into_iter()
+        .map(|interface| interface.name)
+        .collect())
+}
+
+/// List interfaces together with platform-provided human-readable descriptions.
+pub fn list_interface_details() -> Result<Vec<Interface>, Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     {
-        linux::list_interfaces()
+        linux::list_interface_details()
     }
     #[cfg(not(target_os = "linux"))]
     {
-        windows::list_interfaces()
+        windows::list_interface_details()
     }
 }
 

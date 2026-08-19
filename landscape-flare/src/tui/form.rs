@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use landscape_terrain_proto::cli::parse_ethertype;
-use landscape_terrain_proto::transport;
+use landscape_terrain_proto::transport::{self, Interface};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Field {
@@ -48,7 +49,7 @@ pub(super) struct FormState {
     pub(super) device: String,
     pub(super) device_index: usize,
     pub(super) device_selecting: bool,
-    pub(super) devices: Vec<String>,
+    pub(super) devices: Vec<Interface>,
     pub(super) devices_err: Option<String>,
     pub(super) ethertype: String,
     pub(super) token: String,
@@ -57,9 +58,9 @@ pub(super) struct FormState {
 
 impl FormState {
     pub(super) fn new() -> Self {
-        let (devices, devices_err) = match transport::list_interfaces() {
+        let (devices, devices_err) = match transport::list_interface_details() {
             Ok(mut devices) => {
-                devices.sort();
+                devices.sort_by_key(Interface::display_name);
                 (devices, None)
             }
             Err(error) => (
@@ -67,10 +68,25 @@ impl FormState {
                 Some(crate::tr!("tui.list_interfaces_failed", error = error)),
             ),
         };
-        Self::from_devices(devices, devices_err)
+        Self::from_interface_devices(devices, devices_err)
     }
 
+    #[cfg(test)]
     pub(super) fn from_devices(devices: Vec<String>, devices_err: Option<String>) -> Self {
+        let devices = devices
+            .into_iter()
+            .map(|name| Interface {
+                name,
+                description: None,
+            })
+            .collect();
+        Self::from_interface_devices(devices, devices_err)
+    }
+
+    pub(super) fn from_interface_devices(
+        devices: Vec<Interface>,
+        devices_err: Option<String>,
+    ) -> Self {
         Self {
             focus: Field::Psk,
             psk: String::new(),
@@ -90,15 +106,46 @@ impl FormState {
 
     pub(super) fn device_options(&self) -> Vec<String> {
         let mut options = vec![crate::tr!("tui.auto_device")];
-        options.extend(self.devices.iter().cloned());
+        options.extend(self.device_labels());
         options
+    }
+
+    fn device_labels(&self) -> Vec<String> {
+        let mut counts = HashMap::new();
+        for device in &self.devices {
+            *counts.entry(device.display_name()).or_insert(0usize) += 1;
+        }
+        let mut seen = HashMap::new();
+        self.devices
+            .iter()
+            .map(|device| {
+                let name = device.display_name();
+                if counts[&name] == 1 {
+                    return name;
+                }
+                let index = seen.entry(name.clone()).or_insert(0usize);
+                *index += 1;
+                format!("{name} ({index})")
+            })
+            .collect()
+    }
+
+    fn device_name_at(&self, index: usize) -> Option<String> {
+        index
+            .checked_sub(1)
+            .and_then(|index| self.devices.get(index))
+            .map(|device| device.name.clone())
     }
 
     pub(super) fn device_label(&self) -> String {
         if self.device.is_empty() {
             crate::tr!("tui.auto_device")
         } else {
-            self.device.clone()
+            self.devices
+                .iter()
+                .position(|device| device.name == self.device)
+                .and_then(|index| self.device_labels().get(index).cloned())
+                .unwrap_or_else(|| self.device.clone())
         }
     }
 
@@ -182,7 +229,7 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
                 form.device = if form.device_index == 0 {
                     String::new()
                 } else {
-                    options[form.device_index].clone()
+                    form.device_name_at(form.device_index).unwrap_or_default()
                 };
             } else {
                 form.device_selecting = false;
@@ -193,11 +240,10 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
         KeyCode::Up => {
             if form.focus == Field::Device && form.device_selecting {
                 form.device_index = form.device_index.saturating_sub(1);
-                let options = form.device_options();
                 form.device = if form.device_index == 0 {
                     String::new()
                 } else {
-                    options[form.device_index].clone()
+                    form.device_name_at(form.device_index).unwrap_or_default()
                 };
             } else {
                 form.device_selecting = false;

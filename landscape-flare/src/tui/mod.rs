@@ -351,6 +351,47 @@ mod tests {
     }
 
     #[test]
+    fn device_picker_displays_description_but_submits_capture_name() {
+        let mut form = FormState::from_interface_devices(
+            vec![landscape_terrain_proto::transport::Interface {
+                name: r#"\Device\NPF_{ABC}"#.into(),
+                description: Some("Ethernet".into()),
+            }],
+            None,
+        );
+        let options = form.device_options();
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[1], "Ethernet");
+
+        form.focus = Field::Device;
+        form.device_selecting = true;
+        form::handle_key(&mut form, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(form.device, r#"\Device\NPF_{ABC}"#);
+        assert_eq!(form.device_label(), "Ethernet");
+    }
+
+    #[test]
+    fn device_picker_numbers_duplicate_descriptions() {
+        let form = FormState::from_interface_devices(
+            vec![
+                landscape_terrain_proto::transport::Interface {
+                    name: r#"\Device\NPF_{ONE}"#.into(),
+                    description: Some("Ethernet".into()),
+                },
+                landscape_terrain_proto::transport::Interface {
+                    name: r#"\Device\NPF_{TWO}"#.into(),
+                    description: Some("Ethernet".into()),
+                },
+            ],
+            None,
+        );
+        assert_eq!(
+            form.device_options(),
+            vec!["Auto (default route)", "Ethernet (1)", "Ethernet (2)"]
+        );
+    }
+
+    #[test]
     fn form_enter_only_connects_from_button() {
         let mut form = FormState::from_devices(Vec::new(), None);
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
