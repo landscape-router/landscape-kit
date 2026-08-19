@@ -266,7 +266,6 @@ pub async fn run(
     };
     loop {
         tokio::select! {
-            biased;
             _ = &mut shutdown_rx => break,
             r = tx.recv_with_meta(cfg.ethertype) => {
                 let (f, ifindex) = r?;
