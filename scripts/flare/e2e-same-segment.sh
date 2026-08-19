@@ -80,10 +80,14 @@ transfer() {
     md5sum /tmp/in.bin | cut -d" " -f1 > /tmp/in.md5
     nc -w 60 127.0.0.1 '"$port"' < /tmp/in.bin > /tmp/out.bin
     md5sum /tmp/out.bin | cut -d" " -f1 > /tmp/out.md5
-    if cmp -s /tmp/in.md5 /tmp/out.md5; then echo OK; else echo "MISMATCH: $(cat /tmp/in.md5) vs $(cat /tmp/out.md5)"; fi
+    if cmp -s /tmp/in.md5 /tmp/out.md5; then
+      echo "OK ($(wc -c < /tmp/out.bin) bytes)"
+    else
+      echo "MISMATCH: $(cat /tmp/in.md5) vs $(cat /tmp/out.md5); bytes=$(wc -c < /tmp/out.bin)/$(wc -c < /tmp/in.bin)"
+    fi
   ')
   echo "$out"
-  [[ "$out" == OK ]]
+  [[ "$out" == OK* ]]
 }
 
 echo "== start clients A and B on the same segment =="

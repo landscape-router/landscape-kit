@@ -334,4 +334,84 @@ mod tests {
             assert!(!peer_eof_state(state, false), "{state:?} is not peer EOF");
         }
     }
+
+    #[test]
+    fn sustained_transfer_preserves_large_payload() {
+        const SIZE: usize = 20 * 1024 * 1024;
+        const CHUNK: usize = 8192;
+        let payload = vec![0x5a; SIZE];
+        let mut client = IpStack::new(CLIENT_ADDR);
+        let mut server = IpStack::new(SERVER_ADDR);
+        let mut listener = server.add_listener(INTERNAL_PORT);
+        let client_handle = client.connect(SERVER_ADDR, INTERNAL_PORT, 40000);
+        let mut server_handle = None;
+        let mut sent = 0;
+        let mut echoed = VecDeque::new();
+        let mut received = Vec::with_capacity(SIZE);
+        let mut server_closed = false;
+
+        for _ in 0..200_000 {
+            if sent < SIZE {
+                let end = (sent + CHUNK).min(SIZE);
+                let n = client.send_bytes(client_handle, &payload[sent..end]);
+                sent += n;
+                if sent == SIZE {
+                    client.close_socket(client_handle);
+                }
+            }
+
+            for packet in client.poll() {
+                server.push_packet(&packet);
+            }
+            if server_handle.is_none()
+                && let Some((accepted, replacement)) = server.accept(listener, INTERNAL_PORT)
+            {
+                listener = replacement;
+                server_handle = Some(accepted);
+            }
+            if let Some(handle) = server_handle {
+                let mut buf = [0u8; CHUNK];
+                loop {
+                    let n = server.recv_bytes(handle, &mut buf);
+                    if n == 0 {
+                        break;
+                    }
+                    echoed.push_back(buf[..n].to_vec());
+                }
+                while let Some(front) = echoed.front_mut() {
+                    let n = server.send_bytes(handle, front);
+                    if n == 0 {
+                        break;
+                    }
+                    front.drain(..n);
+                    if front.is_empty() {
+                        echoed.pop_front();
+                    }
+                }
+                if !server_closed && echoed.is_empty() && server.peer_eof(handle) {
+                    server.close_socket(handle);
+                    server_closed = true;
+                }
+            }
+            for packet in server.poll() {
+                client.push_packet(&packet);
+            }
+            let mut buf = [0u8; CHUNK];
+            loop {
+                let n = client.recv_bytes(client_handle, &mut buf);
+                if n == 0 {
+                    break;
+                }
+                received.extend_from_slice(&buf[..n]);
+            }
+            if received.len() == SIZE && client.peer_eof(client_handle) {
+                break;
+            }
+        }
+
+        assert_eq!(sent, SIZE);
+        assert!(server_closed);
+        assert_eq!(received.len(), SIZE);
+        assert_eq!(received, payload);
+    }
 }
