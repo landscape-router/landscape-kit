@@ -800,7 +800,7 @@ async fn server_conn_task(
             .await;
         return;
     }
-    let mut remote = match TcpStream::connect(("127.0.0.1", dst)).await {
+    let remote = match TcpStream::connect(("127.0.0.1", dst)).await {
         Ok(s) => s,
         Err(e) => {
             println!("  [server] dial 127.0.0.1:{dst} failed: {e}");
@@ -808,29 +808,27 @@ async fn server_conn_task(
             return;
         }
     };
+    let (mut remote_read, mut remote_write) = remote.into_split();
     let extra = &header[2..];
-    if !extra.is_empty() && remote.write_all(extra).await.is_err() {
+    if !extra.is_empty() && remote_write.write_all(extra).await.is_err() {
         signal_close(&to_tx, peer_mac, handle, generation).await;
         return;
     }
 
     let mut buf = vec![0u8; 8192];
-    let mut peer_eof = false;
+    let mut writer_done = false;
+    let writer = relay_remote_writer(from_rx, remote_write);
+    tokio::pin!(writer);
     loop {
         tokio::select! {
-            msg = from_rx.recv(), if !peer_eof => match msg {
-                Some(RelayMsg::Data(b)) => {
-                    if remote.write_all(&b).await.is_err() {
-                        signal_close(&to_tx, peer_mac, handle, generation).await;
-                        return;
-                    }
-                }
-                Some(RelayMsg::PeerEof) | None => {
-                    let _ = remote.shutdown().await;
-                    peer_eof = true;
+            result = &mut writer, if !writer_done => {
+                writer_done = true;
+                if result.is_err() {
+                    signal_close(&to_tx, peer_mac, handle, generation).await;
+                    return;
                 }
             },
-            r = remote.read(&mut buf) => match r {
+            r = remote_read.read(&mut buf) => match r {
                 Ok(0) => {
                     signal_close(&to_tx, peer_mac, handle, generation).await;
                     return;
@@ -851,6 +849,22 @@ async fn server_conn_task(
             },
         }
     }
+}
+
+async fn relay_remote_writer(
+    mut from_rx: mpsc::Receiver<RelayMsg>,
+    mut remote_write: tokio::net::tcp::OwnedWriteHalf,
+) -> Result<(), ()> {
+    while let Some(message) = from_rx.recv().await {
+        match message {
+            RelayMsg::Data(bytes) => remote_write.write_all(&bytes).await.map_err(|_| ())?,
+            RelayMsg::PeerEof => {
+                remote_write.shutdown().await.map_err(|_| ())?;
+                return Ok(());
+            }
+        }
+    }
+    remote_write.shutdown().await.map_err(|_| ())
 }
 
 async fn signal_close(
