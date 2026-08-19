@@ -169,20 +169,22 @@ fn read_cmdline(pid: u32) -> Vec<String> {
         .collect()
 }
 
-/// 从参数中提取 `--config-dir` 和 `--web` 的值。
+/// 从参数中提取 `--config-dir`/`-c` 和 `--web`/`-w` 的值。
+/// landscape-webserver 的 clap CLI 同时接受短形式与长形式
+/// (`#[arg(short, long)]`),真实手工部署的 unit 常用短形式 `-c`。
 pub(crate) fn path_args(args: &[String]) -> (Option<PathBuf>, Option<PathBuf>) {
     let mut config_dir = None;
     let mut web = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--config-dir" => {
+            "--config-dir" | "-c" => {
                 if let Some(value) = args.get(index + 1) {
                     config_dir = Some(PathBuf::from(value));
                     index += 1;
                 }
             }
-            "--web" => {
+            "--web" | "-w" => {
                 if let Some(value) = args.get(index + 1) {
                     web = Some(PathBuf::from(value));
                     index += 1;
@@ -228,11 +230,22 @@ fn is_under(path: &str, root: &Path) -> bool {
 }
 
 /// 判定进程是否为指向指定 config 目录的外部 Landscape(非 lkit 受管部署)。
-/// 外部实例没有可信摘要,由 cmdline 的 `--config-dir` 与源目录特征文件共同确认;
-/// 特征文件校验发生在命令层(源目录必须含 Landscape 特征文件)。
+/// 外部实例没有可信摘要,由以下信号确认:
+/// - cmdline 的 `--config-dir`/`-c` 等于源目录(权威匹配,指向别处即拒绝);
+/// - 无 config 目录参数的真实部署(如 `ExecStart=/root/landscape-webserver`):
+///   回退到可执行文件身份——位于源目录内,或文件名含 `landscape-webserver`。
+///
+/// 回退后的导出 API 校验(`--from/landscape_api_token`)是最终防线:
+/// 实例不接受该 token 时迁移在写任何文件之前失败。
 pub(crate) fn is_external_landscape(process: &Process, config_dir: &Path) -> bool {
     let (dir, _web) = path_args(&process.args);
-    dir.as_deref() == Some(config_dir)
+    if let Some(dir) = dir {
+        return dir == config_dir;
+    }
+    is_under(&process.exe_link, config_dir)
+        || Path::new(&process.exe_link)
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().contains("landscape-webserver"))
 }
 
 /// 冲突进程检查:给定固定端口,若存在无法确认身份的占用者则返回错误;
@@ -435,6 +448,117 @@ mod tests {
             path_args(&["x".into(), "--config-dir".into()]),
             (None, None)
         );
+    }
+
+    /// 真实手工部署的 landscape-webserver 常用 clap 短形式 `-c`/`-w`,
+    /// 必须与长形式同样被识别,否则迁移的实例身份确认失败。
+    #[test]
+    fn extracts_path_args_short_forms() {
+        let args = vec![
+            "landscape-webserver-x86_64".into(),
+            "-c".into(),
+            "/root/.landscape-router".into(),
+        ];
+        assert_eq!(
+            path_args(&args),
+            (Some(PathBuf::from("/root/.landscape-router")), None)
+        );
+        let args = vec![
+            "landscape-webserver".into(),
+            "-c".into(),
+            "/srv/landscape/data".into(),
+            "-w".into(),
+            "/srv/landscape/current/static".into(),
+        ];
+        assert_eq!(
+            path_args(&args),
+            (
+                Some(PathBuf::from("/srv/landscape/data")),
+                Some(PathBuf::from("/srv/landscape/current/static"))
+            )
+        );
+        // 缺值时不 panic:与长形式一致,`-c` 无条件消费下一个 token。
+        assert_eq!(
+            path_args(&["x".into(), "-c".into(), "--web".into(), "/s".into()]),
+            (Some(PathBuf::from("--web")), None)
+        );
+    }
+
+    #[test]
+    fn judges_external_landscape_by_config_dir() {
+        let process = Process {
+            pid: 1,
+            exe_link: "/root/.landscape-router/landscape-webserver-x86_64".into(),
+            exe_sha256: None,
+            args: vec![
+                "landscape-webserver-x86_64".into(),
+                "-c".into(),
+                "/root/.landscape-router".into(),
+            ],
+        };
+        assert!(is_external_landscape(
+            &process,
+            Path::new("/root/.landscape-router")
+        ));
+        assert!(!is_external_landscape(
+            &process,
+            Path::new("/root/.other-router")
+        ));
+    }
+
+    /// 真实部署可能完全不带 config 参数(`ExecStart=/root/landscape-webserver`)。
+    /// 此时回退到可执行文件身份:位于源目录内或文件名含 landscape-webserver;
+    /// cmdline 指向别处的进程即使名字匹配也拒绝(避免错杀其他实例)。
+    #[test]
+    fn judges_external_landscape_without_config_args() {
+        let under_source = Process {
+            pid: 1,
+            exe_link: "/root/.landscape-router/landscape-webserver".into(),
+            exe_sha256: None,
+            args: vec!["/root/.landscape-router/landscape-webserver".into()],
+        };
+        assert!(is_external_landscape(
+            &under_source,
+            Path::new("/root/.landscape-router")
+        ));
+
+        let bare_binary = Process {
+            pid: 2,
+            exe_link: "/root/landscape-webserver".into(),
+            exe_sha256: None,
+            args: vec!["/root/landscape-webserver".into()],
+        };
+        assert!(is_external_landscape(
+            &bare_binary,
+            Path::new("/root/.landscape-router")
+        ));
+
+        let unrelated = Process {
+            pid: 3,
+            exe_link: "/usr/sbin/ntpd".into(),
+            exe_sha256: None,
+            args: vec!["/usr/sbin/ntpd".into()],
+        };
+        assert!(!is_external_landscape(
+            &unrelated,
+            Path::new("/root/.landscape-router")
+        ));
+
+        // cmdline 有 config 参数且指向别处:即使可执行文件名匹配也拒绝。
+        let other_config = Process {
+            pid: 4,
+            exe_link: "/root/landscape-webserver".into(),
+            exe_sha256: None,
+            args: vec![
+                "/root/landscape-webserver".into(),
+                "-c".into(),
+                "/srv/other".into(),
+            ],
+        };
+        assert!(!is_external_landscape(
+            &other_config,
+            Path::new("/root/.landscape-router")
+        ));
     }
 
     #[test]

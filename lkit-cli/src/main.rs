@@ -97,16 +97,32 @@ async fn run_command(
 ) -> ExitCode {
     let from_console = delegated_args.is_some();
     let delegated = !internal_worker && daemon_worker::should_delegate(&command);
-    let interrupt = match interaction::presentation::InterruptGuard::install(delegated) {
-        Ok(interrupt) => interrupt,
-        Err(error) => {
-            eprintln!(
-                "lkit: {}",
-                crate::tr!(keys::MAIN_UNABLE_INSTALL_CTRL_C_HANDLER, error = error)
-            );
-            return ExitCode::FAILURE;
-        }
-    };
+    // migrate 特殊:前置检查在发起进程内执行,只有切换阶段内部委托
+    // (见 commands/migrate.rs 与 daemon_worker::migrate_delegates)。
+    // 委托式 Ctrl+C 处理按迁移委托条件安装,使前台在等待 worker 时能取消。
+    let internal_migrate = !internal_worker
+        && matches!(&command, Commands::Migrate(_))
+        && daemon_worker::migrate_delegates(&command);
+    let interrupt =
+        match interaction::presentation::InterruptGuard::install(delegated || internal_migrate) {
+            Ok(interrupt) => interrupt,
+            Err(error) => {
+                eprintln!(
+                    "lkit: {}",
+                    crate::tr!(keys::MAIN_UNABLE_INSTALL_CTRL_C_HANDLER, error = error)
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+
+    if internal_migrate {
+        return match command {
+            Commands::Migrate(args) => {
+                commands::migrate::run(&args, &interrupt, from_console).await
+            }
+            _ => unreachable!("internal migrate branch only handles Migrate"),
+        };
+    }
 
     if delegated {
         let args = match delegated_args {
@@ -146,7 +162,7 @@ async fn run_command(
     match command {
         Commands::Check(args) => commands::check::run(&args),
         Commands::Install(args) => commands::install::run(&args).await,
-        Commands::Migrate(args) => commands::migrate::run(&args).await,
+        Commands::Migrate(args) => commands::migrate::run(&args, &interrupt, from_console).await,
         Commands::Network(args) => commands::network::run(&args).await,
         Commands::Switch(args) => commands::switch::run(&args).await,
         Commands::Update(args) => commands::update::run(&args).await,

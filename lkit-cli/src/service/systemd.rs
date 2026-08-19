@@ -400,7 +400,11 @@ fn register_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), 
 
 /// 移除系统注册链接(仅当它指向受管原件),并执行 daemon-reload。
 fn unregister_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), InstallError> {
-    let unit_origin = unit_origin.canonicalize().map_err(InstallError::Io)?;
+    // 受管原件尚未写入(如切换期取消的回滚)时无法 canonicalize,回退原值:
+    // 不存在原件也不可能存在指向它的注册链接,比较自然不匹配。
+    let unit_origin = unit_origin
+        .canonicalize()
+        .unwrap_or_else(|_| unit_origin.to_path_buf());
     let path = systemd.system_unit_dir.join(unit);
     match query_registration_at(systemd, unit)? {
         SystemRegistration::Symlink { target } if target == unit_origin => {
@@ -600,13 +604,14 @@ fn validate_unit_name(unit: &str) -> Result<(), InstallError> {
     Ok(())
 }
 
-/// 从 ExecStart 值中提取 `--config-dir` 指向的目录,支持 `--config-dir <path>`
-/// 与 `--config-dir=<path>` 两种形式,`<path>` 按 systemd 双引号/反斜杠规则解析。
+/// 从 ExecStart 值中提取 config 目录,支持长形式 `--config-dir <path>`、
+/// `--config-dir=<path>` 与短形式 `-c <path>`(真实手工部署的 unit 常用
+/// clap 短形式),`<path>` 按 systemd 双引号/反斜杠规则解析。
 fn exec_config_dir(exec_start: &str) -> Option<PathBuf> {
     let tokens = exec_tokens(exec_start);
     let mut index = 0;
     while index < tokens.len() {
-        if tokens[index] == "--config-dir" {
+        if tokens[index] == "--config-dir" || tokens[index] == "-c" {
             if let Some(path) = tokens.get(index + 1) {
                 return Some(PathBuf::from(path));
             }
@@ -734,6 +739,22 @@ pub(crate) fn fragment_path(systemd: &Systemd, unit: &str) -> Result<String, Ins
     Ok(value)
 }
 
+/// 从 `/proc/<pid>/cgroup` 内容提取进程所属的 systemd unit 名。
+/// cgroup v2 形如 `0::/system.slice/landscape-router.service`;
+/// cgroup v1 形如 `1:name=systemd:/system.slice/landscape-router.service`。
+/// 进程不属于任何 `.service`(如容器、前台进程)时返回 None。
+pub(crate) fn cgroup_unit_name(content: &str) -> Option<String> {
+    let path = content.trim().rsplit_once(':')?.1;
+    let name = Path::new(path).file_name()?.to_str()?.to_string();
+    name.ends_with(".service").then_some(name)
+}
+
+/// 读取进程 cgroup 并提取所属 unit 名。
+pub(crate) fn unit_from_cgroup(pid: u32) -> Option<String> {
+    let content = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    cgroup_unit_name(&content)
+}
+
 /// 恢复注册链接与 enabled/active 状态,并执行 daemon-reload。
 /// 期望状态为「不存在」的恢复(未注册/未启用/未运行)采用宽容路径,
 /// 已经处于期望状态时不视为失败;期望状态为「存在」的恢复失败则报错。
@@ -746,10 +767,14 @@ fn restore_registration_at(
     match &before.registration.kind {
         RegistrationKind::Missing => unregister_at(systemd, unit, unit_origin)?,
         RegistrationKind::Symlink => {
+            // 受管原件尚未写入时(切换期取消的回滚)无法 canonicalize,回退原值。
+            let unit_origin = unit_origin
+                .canonicalize()
+                .unwrap_or_else(|_| unit_origin.to_path_buf());
             if matches!(
                 query_registration_at(systemd, unit)?,
                 SystemRegistration::Symlink { target }
-                    if target == unit_origin.canonicalize().map_err(InstallError::Io)?
+                    if target == unit_origin
             ) {
                 std::fs::remove_file(systemd.system_unit_dir.join(unit))
                     .map_err(InstallError::Io)?;
@@ -1059,5 +1084,77 @@ esac
             Err(InstallError::Systemd(_))
         ));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真实手工部署的 unit 常用 clap 短形式 `-c`,exec_config_dir 必须
+    /// 与 `--config-dir` 同样识别,否则旧 unit 发现失败。
+    #[test]
+    fn exec_config_dir_accepts_short_and_long_forms() {
+        assert_eq!(
+            exec_config_dir(
+                "/root/.landscape-router/landscape-webserver-x86_64 -c /root/.landscape-router"
+            ),
+            Some(PathBuf::from("/root/.landscape-router"))
+        );
+        assert_eq!(
+            exec_config_dir(
+                "/srv/landscape/current/landscape-webserver --config-dir /srv/landscape/data --web /srv/landscape/current/static"
+            ),
+            Some(PathBuf::from("/srv/landscape/data"))
+        );
+        assert_eq!(
+            exec_config_dir(
+                "/srv/landscape/current/landscape-webserver --config-dir=\"/srv/landscape/data\" --web /srv/landscape/current/static"
+            ),
+            Some(PathBuf::from("/srv/landscape/data"))
+        );
+        assert_eq!(
+            exec_config_dir("/srv/landscape/current/landscape-webserver"),
+            None
+        );
+    }
+
+    /// 短形式 `-c` 的旧 unit 能被按 config 目录发现。
+    #[test]
+    fn finds_units_serving_config_dir_with_short_flag() {
+        let dir = temp_dir("find-units");
+        let systemd = fake_systemd(&dir);
+        std::fs::create_dir_all(&systemd.system_unit_dir).unwrap();
+        let legacy = dir.join("legacy");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let binary = legacy.join("landscape-webserver-x86_64");
+        std::fs::write(
+            systemd.system_unit_dir.join("legacy-landscape.service"),
+            format!(
+                "[Unit]\nDescription=Legacy\n\n[Service]\nExecStart={0} -c {1}\nRestart=always\nUser=root\nLimitMEMLOCK=infinity\n\n[Install]\nWantedBy=multi-user.target\n",
+                binary.display(),
+                legacy.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            systemd.system_unit_dir.join("other.service"),
+            "[Unit]\n[Service]\nExecStart=/usr/bin/other\n",
+        )
+        .unwrap();
+        let found = find_units_serving_config_dir(&systemd, &legacy).unwrap();
+        assert_eq!(found, vec!["legacy-landscape.service"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 从 cgroup 内容提取进程所属 unit 名,覆盖 cgroup v1/v2 与无关 cgroup。
+    #[test]
+    fn extracts_unit_name_from_cgroup() {
+        assert_eq!(
+            cgroup_unit_name("0::/system.slice/landscape-router.service\n"),
+            Some("landscape-router.service".into())
+        );
+        assert_eq!(
+            cgroup_unit_name("1:name=systemd:/system.slice/landscape-router.service\n"),
+            Some("landscape-router.service".into())
+        );
+        assert_eq!(cgroup_unit_name("0::/\n"), None);
+        assert_eq!(cgroup_unit_name("0::/system.slice/foo.scope\n"), None);
+        assert_eq!(cgroup_unit_name("not a cgroup line"), None);
     }
 }

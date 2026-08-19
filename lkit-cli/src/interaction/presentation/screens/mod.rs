@@ -1,4 +1,5 @@
 pub(crate) mod install;
+pub(crate) mod migrate;
 pub(crate) mod reinit;
 pub(crate) mod repair;
 pub(crate) mod restore;
@@ -7,6 +8,7 @@ pub(crate) mod uninstall;
 pub(crate) mod update;
 
 pub(crate) use install::InstallScreen;
+pub(crate) use migrate::MigrateScreen;
 pub(crate) use reinit::ReinitScreen;
 pub(crate) use repair::RepairScreen;
 pub(crate) use restore::RestoreScreen;
@@ -61,6 +63,7 @@ pub(crate) trait OperationScreen {
 pub(crate) fn operation_screen(args: &[String]) -> Box<dyn OperationScreen> {
     match args.first().map(String::as_str) {
         Some("install") => Box::new(install::InstallScreen),
+        Some("migrate") => Box::new(migrate::MigrateScreen),
         Some("switch") => Box::new(switch::SwitchScreen),
         Some("update") => Box::new(update::UpdateScreen),
         Some("repair") => Box::new(repair::RepairScreen),

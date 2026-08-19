@@ -17,8 +17,17 @@ pub(crate) fn rollback_migrate(
 ) -> Result<(), InstallError> {
     super::super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
     let result = rollback_migrate_inner(root, transaction, manager);
-    if result.is_err() {
-        let _ = super::super::transaction::mark_phase(root, transaction, Phase::Failed);
+    if result.is_err()
+        && let Err(mark_error) =
+            super::super::transaction::mark_phase(root, transaction, Phase::Failed)
+    {
+        eprintln!(
+            "migrate: {}",
+            crate::tr!(
+                crate::keys::MIGRATE_TX_FAILED_MARK_WARNING,
+                error = mark_error
+            )
+        );
     }
     result
 }

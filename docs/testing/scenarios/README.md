@@ -23,7 +23,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Ratatui 管理控制台 | `UI-01` 至 `UI-15` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-07` | [i18n.md](functional/i18n.md) |
 | 首次安装 | `INS-01` 至 `INS-18` | [install.md](functional/install.md) |
-| 手工部署迁移 | `MIG-01` 至 `MIG-05` | [migrate.md](functional/migrate.md) |
+| 手工部署迁移 | `MIG-01` 至 `MIG-10` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-09` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-11` | [switch.md](functional/switch.md) |
 | 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-14` | [backup-and-restore.md](functional/backup-and-restore.md) |
@@ -74,6 +74,11 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 前端断开后 daemon 独立完成、cancel 文件驱动的取消 + daemon 恢复（uninstall
 无下载阶段，前端 Ctrl+C 按"仅 Downloading 可取消"契约被忽略）、daemon 未运行
 拒绝、`LKIT_LANG` 转发（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
+`migrate` 的委托链路（前台前置检查 → `--resume` 切换 → 结果回收）另由 fixture
+E2E 直接覆盖（[`MIG-07`](functional/migrate.md#mig-07)，
+`migrates_manual_deployment_through_daemon_delegation`，测试 spawn 常驻 daemon；
+[`MIG-10`](functional/migrate.md#mig-10) 覆盖委托切换期间 Ctrl+C 的取消回滚：
+前台 SIGINT → cancel 文件 → worker SIGTERM 回滚 → 退出码 130 与旧实例恢复）。
 `delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底仍无直接测试。
 
 发布流程性 smoke（`PUB-08` 生产 RustFS 真实发布后安装、

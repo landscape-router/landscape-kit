@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::support::*;
 
@@ -125,7 +127,7 @@ fn wait_for_docs(https_port: u16) {
     });
 }
 
-fn migrate_command(harness: &InstallHarness, source: &Path) -> Command {
+fn migrate_command(harness: &InstallHarness, source: &Path, runtime: &Path) -> Command {
     let mut command = Command::new(LKIT);
     command
         .env(
@@ -140,7 +142,7 @@ fn migrate_command(harness: &InstallHarness, source: &Path) -> Command {
         .args(["--install-dir"])
         .arg(&harness.install_root)
         .args(["--test-runtime"])
-        .arg(&harness.runtime_config);
+        .arg(runtime);
     command
 }
 
@@ -152,7 +154,9 @@ fn migrates_manual_deployment_through_full_cli() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("migrate", "healthy", 10_000);
     let (source, _old_instance) = start_manual_install(&harness);
-    let output = migrate_command(&harness, &source).output().unwrap();
+    let output = migrate_command(&harness, &source, &harness.runtime_config)
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "lkit migrate failed with {:?}\nstdout:\n{}\nstderr:\n{}\nservice log:\n{}",
@@ -266,7 +270,9 @@ fn migrate_rolls_back_and_restores_legacy_unit_on_activation_failure() {
     )
     .unwrap();
 
-    let output = migrate_command(&harness, &source).output().unwrap();
+    let output = migrate_command(&harness, &source, &harness.runtime_config)
+        .output()
+        .unwrap();
     assert_eq!(
         output.status.code(),
         Some(5),
@@ -286,4 +292,184 @@ fn migrate_rolls_back_and_restores_legacy_unit_on_activation_failure() {
     assert!(!harness.install_root.join("data").exists());
     assert!(!harness.install_root.join("current").exists());
     assert!(!harness.state_path().exists());
+}
+
+/// 真实委托链路 E2E:前台进程完成前置检查后,daemon 认领请求并以子进程
+/// 执行切换阶段(`--resume <事务 id>`)。runtime 用 `execution=daemon` 变体
+/// 使 `test_uses_daemon` 返回 true,命令不再强制内联;daemon 由测试直接
+/// spawn(测试 runtime 注入 fake systemd)。
+#[test]
+fn migrates_manual_deployment_through_daemon_delegation() {
+    if !e2e_enabled() {
+        return;
+    }
+    // 委托写 /run/lkit/operations 且 daemon 托管 flare 需要 root;非 root
+    // 环境(如宿主机误跑)跳过,CI 容器以 root 运行。
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("migrate-daemon", "healthy", 20_000);
+    let daemon_runtime = harness.daemon_runtime();
+    let _daemon = harness.spawn_daemon(&daemon_runtime);
+    let (source, _old_instance) = start_manual_install(&harness);
+    let output = migrate_command(&harness, &source, &daemon_runtime)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "lkit migrate (delegated) failed with {:?}\nstdout:\n{}\nstderr:\n{}\nservice log:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        harness.service_log()
+    );
+    assert!(
+        !output.stdout.contains(&0x1b) && !output.stderr.contains(&0x1b),
+        "non-interactive output contains terminal control sequences"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("migrated to version") || stdout.contains("迁移完成"),
+        "the worker output must announce the committed migration\nstdout:\n{stdout}"
+    );
+
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
+    assert_eq!(
+        state["active_version"], VERSION,
+        "migration must not upgrade"
+    );
+    assert_eq!(state["initialization"]["status"], "complete");
+    assert_eq!(state["service"]["manager"], "systemd");
+    assert_eq!(state["service"]["verified"], true);
+    assert!(
+        !harness.host.join("units/legacy-landscape.service").exists(),
+        "the legacy unit file must be moved out of the unit dir"
+    );
+    let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
+    assert_success(&active);
+    assert_eq!(String::from_utf8_lossy(&active.stdout).trim(), "active");
+    let lkb_count = std::fs::read_dir(harness.backups_dir())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("lkb"))
+        .count();
+    assert_eq!(lkb_count, 1, "the migration backup must be preserved");
+}
+
+/// 委托切换期间 ^C(前台 SIGINT):前台写 cancel 文件,daemon 对 worker 进程组
+/// SIGTERM,worker 在检查点回滚并恢复旧实例,前台等到结果后以 130 退出。
+#[test]
+fn cancelling_the_delegated_switch_restores_the_old_instance() {
+    if !e2e_enabled() {
+        return;
+    }
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("migrate-cancel", "healthy", 20_000);
+    let daemon_runtime = harness.daemon_runtime();
+    let _daemon = harness.spawn_daemon(&daemon_runtime);
+    let (source, _old_instance) = start_manual_install(&harness);
+
+    let mut command = migrate_command(&harness, &source, &daemon_runtime);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let lines = Arc::clone(&stderr_lines);
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                lines.lock().unwrap().push(line);
+            }
+        });
+    }
+
+    // 等 worker 进入切换阶段(停止旧实例),再对前台发 SIGINT。
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let reached = stderr_lines.lock().unwrap().iter().any(|line| {
+            line.contains("stopping the old instance") || line.contains("正在停止旧实例")
+        });
+        if reached {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the delegated switch never started\nstderr:\n{}",
+            stderr_lines.lock().unwrap().join("\n")
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    unsafe {
+        libc::kill(child.id() as i32, libc::SIGINT);
+    }
+    let status = child.wait().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "a cancelled migration must exit 130\nstderr:\n{}",
+        stderr_lines.lock().unwrap().join("\n")
+    );
+
+    // worker 回滚把旧 unit 放回原位并恢复旧实例。
+    let restored = wait_for(15, || {
+        harness
+            .host
+            .join("units/legacy-landscape.service")
+            .is_file()
+    });
+    assert!(restored, "the rollback must restore the legacy unit file");
+    let active = wait_for(15, || {
+        let output = systemctl(&harness.world, &["is-active", "legacy-landscape.service"]);
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "active"
+    });
+    assert!(active, "the rollback must restart the old instance");
+    let cancelled_seen = wait_for(10, || {
+        stderr_lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("cancelled"))
+    });
+    assert!(
+        cancelled_seen,
+        "the worker output must announce the cancellation\nstderr:\n{}",
+        stderr_lines.lock().unwrap().join("\n")
+    );
+
+    // 事务终态为 rolled_back;没有提交状态。
+    let transactions = std::fs::read_dir(harness.territory.join("transactions")).unwrap();
+    let tx = transactions
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .expect("the migration transaction must exist");
+    let tx: serde_json::Value = serde_json::from_slice(&std::fs::read(&tx).unwrap()).unwrap();
+    assert_eq!(
+        tx["phase"], "rolled_back",
+        "the cancelled switch must roll back"
+    );
+    assert!(!harness.state_path().exists());
+    assert!(!harness.install_root.join("releases").join(VERSION).exists());
+}
+
+fn wait_for(seconds: u64, mut predicate: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        if predicate() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }

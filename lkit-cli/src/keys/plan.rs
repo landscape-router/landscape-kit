@@ -18,6 +18,7 @@ pub(crate) const PLAN_INVALID_PASSWORD: &str = "plan.invalid_password";
 pub(crate) const PLAN_INVALID_PASSWORD_FILE: &str = "plan.invalid_password_file";
 pub(crate) const PLAN_INVALID_BACKUP: &str = "plan.invalid_backup";
 pub(crate) const PLAN_EXPORT_FAILED: &str = "plan.export_failed";
+pub(crate) const PLAN_EXPORT_UNSUPPORTED: &str = "plan.export_unsupported";
 pub(crate) const PLAN_SERVICE_NOT_RUNNING: &str = "plan.service_not_running";
 pub(crate) const PLAN_NON_INTERACTIVE_ENVIRONMENT: &str = "plan.non_interactive_environment";
 pub(crate) const PLAN_SYSTEMD_OPERATION_FAILED: &str = "plan.systemd_operation_failed";

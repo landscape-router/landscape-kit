@@ -46,6 +46,8 @@ impl DelegateError {
 /// 委托命令清单(与 docs/deployment/transactions-and-recovery.md 的
 /// 「委托命令清单」保持一致):所有需要改变 init 系统或 Landscape 运行态的
 /// 命令都由常驻 daemon 执行;只读与地盘内命令直接执行。
+/// `migrate` 不在其中:它在前台进程内先完成前置检查与迁移备份,
+/// 只在最后切换阶段内部委托(见 `migrate_delegates` 与 commands/migrate.rs)。
 pub(crate) fn delegates(command: &Commands) -> bool {
     match command {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
@@ -53,6 +55,8 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Flare(_) => false,
+        // migrate 不整体委托:前台先执行前置检查,再内部委托切换阶段。
+        Commands::Migrate(_) => false,
         Commands::Network(args) => {
             matches!(
                 args.action,
@@ -62,7 +66,6 @@ pub(crate) fn delegates(command: &Commands) -> bool {
             )
         }
         Commands::Install(_)
-        | Commands::Migrate(_)
         | Commands::Switch(_)
         | Commands::Update(_)
         | Commands::Repair(_)
@@ -70,6 +73,17 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         | Commands::Reinit(_)
         | Commands::Uninstall(_) => true,
     }
+}
+
+/// migrate 是否按「前台前置检查 + 内部委托切换」运行:root 下 daemon 托管,
+/// 非 root 或测试 runtime 整条流程内联执行(与 `should_delegate` 同一条件)。
+/// 委托式 Ctrl+C 处理(不直接退出、由前台轮询 `interrupt.requested()`)由
+/// 调用方按返回值安装。
+pub(crate) fn migrate_delegates(command: &Commands) -> bool {
+    if unsafe { libc::geteuid() } != 0 || test_runtime_is_inline(command) {
+        return false;
+    }
+    true
 }
 
 pub(crate) fn should_delegate(command: &Commands) -> bool {
@@ -376,6 +390,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Cli;
+    use crate::commands::Migrate;
 
     fn delegates_for(args: &[&str]) -> bool {
         let mut cli_args = vec!["lkit"];
@@ -388,7 +403,6 @@ mod tests {
     fn delegates_state_changing_commands() {
         for args in [
             &["install", "--version", "1.2.3"][..],
-            &["migrate", "--from", "/etc/landscape"][..],
             &["switch", "--version", "2.0.0"][..],
             &["update"][..],
             &["repair", "binary"][..],
@@ -412,10 +426,47 @@ mod tests {
             &["backup", "create"][..],
             &["self", "install"][..],
             &["daemon"][..],
+            &["migrate", "--from", "/etc/landscape"][..],
             &["network", "status"][..],
         ] {
             assert!(!delegates_for(args), "unexpected delegation for {args:?}");
         }
+    }
+
+    /// migrate 自身不进 delegates()(前置检查前台直跑、切换内部委托),
+    /// `migrate_delegates` 只排除非 root 与测试 runtime。
+    #[test]
+    fn migrate_delegates_follows_runtime_and_euid() {
+        let command = Commands::Migrate(Migrate {
+            from: "/etc/landscape".into(),
+            repository: None,
+            yes: true,
+            install_dir: None,
+            console_confirmed: false,
+            resume_transaction: None,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        });
+        assert_eq!(
+            migrate_delegates(&command),
+            unsafe { libc::geteuid() } == 0,
+            "without a test runtime migrate must follow the euid"
+        );
+
+        let with_test_runtime = Commands::Migrate(Migrate {
+            from: "/etc/landscape".into(),
+            repository: None,
+            yes: true,
+            install_dir: None,
+            console_confirmed: false,
+            resume_transaction: None,
+            #[cfg(feature = "test-support")]
+            test_runtime: Some("/tmp/runtime.json".into()),
+        });
+        assert!(
+            !migrate_delegates(&with_test_runtime),
+            "a test runtime must run migrate inline"
+        );
     }
 
     #[test]

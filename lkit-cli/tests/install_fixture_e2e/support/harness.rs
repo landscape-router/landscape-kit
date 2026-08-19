@@ -221,6 +221,40 @@ esac
         }
     }
 
+    /// `execution=daemon` 的 runtime 变体:使 `test_uses_daemon` 返回 true,
+    /// 命令走真实委托路径(CLI 写请求 → daemon 认领 → 子进程执行),用于
+    /// 覆盖委托链路的 E2E。调用方必须先启动 daemon(见 [`Self::spawn_daemon`])。
+    pub(crate) fn daemon_runtime(&self) -> PathBuf {
+        let path = self.world.path("runtime-daemon.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&self.runtime_config).unwrap()).unwrap();
+        value["execution"] = "daemon".into();
+        write_json(&path, &value);
+        path
+    }
+
+    /// 启动常驻 daemon 子进程(测试 runtime 注入 fake systemd),等待地盘
+    /// pidfile 出现后返回;drop 时终止进程并清理 pidfile。
+    pub(crate) fn spawn_daemon(&self, runtime: &Path) -> DaemonGuard {
+        let mut child = self.command();
+        child
+            .arg("daemon")
+            .arg("--test-runtime")
+            .arg(runtime)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let child = child.spawn().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !self.run_dir().join("lkit.pid").is_file() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "lkit daemon did not write its pidfile"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        DaemonGuard { child }
+    }
+
     pub(crate) fn run(&self) -> Output {
         self.command()
             .args([
@@ -322,6 +356,20 @@ esac
             .arg(&self.runtime_config)
             .output()
             .unwrap()
+    }
+}
+
+/// 测试期间运行的 lkit 常驻 daemon:drop 时以 SIGTERM 请求退出并回收进程。
+pub(crate) struct DaemonGuard {
+    child: std::process::Child,
+}
+
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM);
+        }
+        let _ = self.child.wait();
     }
 }
 

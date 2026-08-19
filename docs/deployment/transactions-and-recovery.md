@@ -211,7 +211,8 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   - `preparing`：尚未停止旧实例，标记 `failed`；迁移 `.lkb` 保留在 `backups/`；
   - `prepared` 或 `stopping`：旧 unit 可能已停止，幂等恢复旧 unit（`legacy_unit` 记录的
     unit 文件放回原位或 `unmask`，按 enabled/active 状态恢复），再按 `systemd_before`
-    恢复受管 unit 状态并标记 `failed`；
+    恢复受管 unit 状态并标记 `failed`；`prepared` 阶段前台与 worker 的交接事务
+    通常还没停止任何东西，恢复为无操作；
   - `activating`、`verifying` 或 `rolling_back`：执行与失败相同的回滚——注销并停止新
     受管 unit、恢复 `/etc/resolv.conf`、恢复旧 unit、删除新根内容（`data/`、`service/`、
     `state/`、目标 release 与 `current`），标记 `rolled_back`；回滚失败标记 `failed`；
@@ -288,15 +289,22 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
 | `install` | `check` |
-| `migrate` | `reconcile` |
-| `switch` | `set-mirror` |
-| `update` | `software` |
-| `repair` | `backup` |
-| `restore` | `self` |
-| `reinit` | `daemon` |
-| `uninstall` | `network status` |
-| `network confirm` | `network rollback --automatic` 之外的自动回滚路径 |
-| `network rollback`（手工调用） |  |
+| `switch` | `reconcile` |
+| `update` | `set-mirror` |
+| `repair` | `software` |
+| `restore` | `backup` |
+| `reinit` | `self` |
+| `uninstall` | `daemon` |
+| `network confirm` | `network status` |
+| `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
+|  | `network rollback --automatic` 之外的自动回滚路径 |
+
+`migrate` 是唯一的**部分委托**命令：`delegates` 不包含它，`commands::migrate::run`
+在发起进程内先执行前置检查（源目录校验、运行实例识别、export API 支持检查、
+迁移 `.lkb` 创建、计划确认），把事务标记 `prepared` 后，root 下以内部参数
+`--resume <事务 id>` 委托 daemon worker 只执行切换阶段（停止旧实例、重建、
+接管、提交）。这样用户能看到迁移进度；切换仍在 daemon 保护下完成。委托条件
+（root、非 test-runtime）与整体委托一致，见 `daemon_worker::migrate_delegates`。
 
 委托命令在以下两种情形改为直接执行（内联）：
 

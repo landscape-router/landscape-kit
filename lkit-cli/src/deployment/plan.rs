@@ -211,7 +211,10 @@ pub(crate) fn build_plan(
 
 #[derive(Debug)]
 pub(crate) enum InstallError {
-    InvalidVersion { value: String, reason: String },
+    InvalidVersion {
+        value: String,
+        reason: String,
+    },
     InstallDirNotAbsolute,
     InvalidAdminUser,
     ParameterUsage(String),
@@ -230,6 +233,8 @@ pub(crate) enum InstallError {
     InvalidPasswordFile(String),
     InvalidBackup(String),
     ExportFailed(String),
+    /// 部署的 Landscape 不提供 config export API(如旧版本),迁移/备份无法进行。
+    ExportUnsupported(String),
     ServiceNotRunning(String),
     NonInteractive(String),
     Systemd(String),
@@ -335,6 +340,11 @@ impl std::fmt::Display for InstallError {
                 formatter,
                 "{}",
                 crate::tr!(crate::keys::PLAN_EXPORT_FAILED, reason = reason)
+            ),
+            Self::ExportUnsupported(reason) => write!(
+                formatter,
+                "{}",
+                crate::tr!(crate::keys::PLAN_EXPORT_UNSUPPORTED, reason = reason)
             ),
             Self::ServiceNotRunning(reason) => write!(
                 formatter,

@@ -102,6 +102,13 @@ pub(crate) async fn export_config(
             InstallError::ExportFailed(format!("config export request failed: {error}"))
         })?;
     if response.status() != reqwest::StatusCode::OK {
+        // 404 说明运行中的 Landscape 没有该路由:旧版本不支持 config export,
+        // 迁移/备份要求先升级旧部署。其他状态(500 等)属于服务端故障。
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(InstallError::ExportUnsupported(format!(
+                "GET {EXPORT_PATH} returned 404 Not Found; migrate/backup require a Landscape version that provides the config export API — upgrade the old deployment before migrating"
+            )));
+        }
         return Err(InstallError::ExportFailed(format!(
             "config export returned status {}",
             response.status()
@@ -280,5 +287,23 @@ mod tests {
         let server =
             TestServer::start(|_| TestResponse::status(500, "Internal Server Error", Vec::new()));
         assert!(export_config(&server.base, "token").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn classifies_missing_export_api_as_unsupported() {
+        // 404 = 部署的 Landscape 没有 export 路由(旧版本),必须报 ExportUnsupported
+        // 而不是笼统的 ExportFailed,提示用户先升级旧部署。
+        let server = TestServer::start(|_| TestResponse::status(404, "Not Found", Vec::new()));
+        assert!(matches!(
+            export_config(&server.base, "token").await,
+            Err(InstallError::ExportUnsupported(_))
+        ));
+
+        let server =
+            TestServer::start(|_| TestResponse::status(500, "Internal Server Error", Vec::new()));
+        assert!(matches!(
+            export_config(&server.base, "token").await,
+            Err(InstallError::ExportFailed(_))
+        ));
     }
 }

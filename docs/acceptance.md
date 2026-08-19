@@ -113,12 +113,20 @@
 - `lkit migrate --from` 只接受含 Landscape 特征文件（`landscape.toml` 或
   `landscape_init.lock`）的真实目录，拒绝受管安装的 data 目录；单实例约束下 lkit 地盘
   必须无已提交状态，landscape 根必须全新（无遗留 data/releases/service/current）。
-- 迁移要求旧实例运行中：按固定端口定位并用 `--config-dir` 参数确认实例身份，
-  通过导出 API 读取当前配置与后端版本；端口上有无法确认身份的进程时阻断。
+- 迁移要求旧实例运行中：按固定端口定位；身份按 cmdline 的 config 目录参数
+  （`--config-dir` 或 `-c`）确认，不带参数的裸部署回退到可执行文件身份
+  （位于源目录内或文件名含 `landscape-webserver`），导出 API 校验是最终防线；
+  端口上有无法确认身份的进程时阻断。运行实例不提供导出 API（旧版本，`404`）时
+  迁移明确失败并提示先升级旧部署。
+- root 下迁移分两阶段：前置检查（源目录、实例识别、导出 API 检查、迁移备份、
+  计划确认）在发起进程内直接执行并打印进度，切换阶段（停止旧实例、重建、接管、
+  提交）以 `prepared` 事务委托 daemon worker 执行；非 root 或测试 runtime 整条
+  流程内联。前台阶段中断只标记事务 `failed`，不触碰旧实例。
 - 迁移备份 `.lkb` 记录旧版本（不升级），生成后保留在 `backups/`；`static.zip` 本地
   缺失时从发布仓库下载，仓库不可用时从 `static/` 现场打包并自校验。
 - 确认先于停止：拒绝或非交互缺 `--yes` 时不创建事务、不写任何文件、不停旧实例。
-- 旧 unit 按 `ExecStart --config-dir` 发现：唯一匹配才接管（stop/disable，原件位于
+- 旧 unit 按 `ExecStart` 的 config 目录参数（`--config-dir` 或 `-c`）发现，不带
+  参数的 unit 回退为按实例 cgroup 反查：唯一匹配才接管（stop/disable，原件位于
   `/etc/systemd/system` 时移入事务目录）；多匹配阻断；无匹配或进程仍存活时要求用户
   确认前台实例已停止。
 - 注册、启用、启动新受管服务并通过完整健康检查后提交 `initialization.status: complete`。
