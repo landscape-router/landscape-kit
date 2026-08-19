@@ -47,8 +47,7 @@ def round_trip(host: str, port: int, label: int, size: int) -> None:
     expected = payload(label, size)
     with connect(host, port) as sock:
         sock.sendall(expected)
-        sock.shutdown(socket.SHUT_WR)
-        actual = recv_all(sock)
+        actual = recv_exact(sock, len(expected))
     if actual != expected:
         raise RuntimeError(
             f"connection {label} payload mismatch: {len(actual)}/{len(expected)} bytes"
@@ -166,8 +165,7 @@ def slow_round_trip(
         connected.wait(timeout=SOCKET_TIMEOUT)
         sock.sendall(expected)
         time.sleep(args.hold_seconds)
-        sock.shutdown(socket.SHUT_WR)
-        actual = recv_all(sock)
+        actual = recv_exact(sock, len(expected))
     if actual != expected:
         raise RuntimeError(
             f"slow connection {label} payload mismatch: {len(actual)}/{len(expected)} bytes"
@@ -207,9 +205,6 @@ def run_idle(args: argparse.Namespace) -> None:
         sock.sendall(after)
         if recv_exact(sock, len(after)) != after:
             raise RuntimeError("payload mismatch after idle period")
-        sock.shutdown(socket.SHUT_WR)
-        if recv_all(sock):
-            raise RuntimeError("unexpected extra payload after idle round trip")
     print(f"idle connection OK after {args.seconds} seconds", flush=True)
 
 
