@@ -23,6 +23,10 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const STALE_AFTER: Duration = Duration::from_secs(45);
 const CONNECTION_CHANNEL_CAPACITY: usize = 16;
 const MAX_PENDING_TO_STACK_BYTES: usize = 4 * 1024 * 1024;
+/// smoltcp listeners do not have a kernel-style accept backlog: one listener
+/// can hold one SYN/connection. Keep a bounded pool so a burst of local
+/// connections does not reset all but the first SYN.
+const LISTENER_POOL_SIZE: usize = 32;
 
 /// Max DISCOVER/AUTH_REQ frames per second per source MAC (anti-scanning,
 /// brute force and kick attempts). A full token bucket refills at this rate.
@@ -74,7 +78,7 @@ struct Peer {
     sess: ServerSession,
     ifindex: i32,
     stack: Option<IpStack>,
-    listener: Option<SocketHandle>,
+    listeners: Vec<SocketHandle>,
     crypto: Option<SessionCrypto>,
     conns: HashMap<SocketHandle, ServerConn>,
     pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
@@ -362,9 +366,11 @@ pub async fn run(
                                 guards.entry(mac).or_default().record_success();
                                 teardown_peer(peer, &mut pending_tx_bytes);
                                 let mut stack = IpStack::new(SERVER_ADDR);
-                                let listener = stack.add_listener(INTERNAL_PORT);
+                                let listeners = (0..LISTENER_POOL_SIZE)
+                                    .map(|_| stack.add_listener(INTERNAL_PORT))
+                                    .collect();
                                 peer.stack = Some(stack);
-                                peer.listener = Some(listener);
+                                peer.listeners = listeners;
                                 peer.crypto = Some(SessionCrypto::new(keys, Dir::S2C));
                                 peer.last_seen = Instant::now();
                                 // The AUTH_ACK is sealed with the handshake
@@ -609,7 +615,7 @@ fn new_peer(to_tx: mpsc::Sender<(([u8; 6], SocketHandle), StackMsg)>, allowed: A
         sess: ServerSession::new(),
         ifindex: 0,
         stack: None,
-        listener: None,
+        listeners: Vec::new(),
         crypto: None,
         conns: HashMap::new(),
         pending_tx: HashMap::new(),
@@ -630,7 +636,7 @@ fn teardown_peer(peer: &mut Peer, pending_tx_bytes: &mut usize) {
         .sum::<usize>();
     *pending_tx_bytes = pending_tx_bytes.saturating_sub(dropped);
     peer.stack = None;
-    peer.listener = None;
+    peer.listeners.clear();
     peer.crypto = None;
     peer.conns.clear();
     peer.pending_tx.clear();
@@ -654,19 +660,19 @@ fn pump_peer(
         return Ok(());
     };
 
-    if let Some(listener) = peer.listener
-        && let Some((h, new_listener)) = stack.accept(listener, INTERNAL_PORT)
-    {
-        peer.listener = Some(new_listener);
-        let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
-        peer.conns.insert(h, ServerConn { from_tx });
-        tokio::spawn(server_conn_task(
-            *peer_mac,
-            h,
-            peer.to_tx.clone(),
-            from_rx,
-            peer.allowed.clone(),
-        ));
+    for listener in &mut peer.listeners {
+        if let Some((h, new_listener)) = stack.accept(*listener, INTERNAL_PORT) {
+            *listener = new_listener;
+            let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
+            peer.conns.insert(h, ServerConn { from_tx });
+            tokio::spawn(server_conn_task(
+                *peer_mac,
+                h,
+                peer.to_tx.clone(),
+                from_rx,
+                peer.allowed.clone(),
+            ));
+        }
     }
 
     for pkt in stack.poll() {
