@@ -527,7 +527,9 @@ fn pump(
             permit.send(buf[..n].to_vec());
         }
 
-        if stack.socket_closed(h) {
+        let from_drained = conns[&h].from_tx.is_closed()
+            || conns[&h].from_tx.capacity() == conns[&h].from_tx.max_capacity();
+        if stack.socket_closed(h) && from_drained {
             reap.push(h);
         } else if stack.peer_eof(h) {
             stack.close_socket(h);

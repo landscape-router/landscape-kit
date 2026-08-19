@@ -747,7 +747,9 @@ fn pump_peer(
             permit.send(RelayMsg::Data(buf[..n].to_vec()));
         }
 
-        if stack.socket_closed(h) {
+        let from_drained = peer.conns[&h].from_tx.is_closed()
+            || peer.conns[&h].from_tx.capacity() == peer.conns[&h].from_tx.max_capacity();
+        if stack.socket_closed(h) && from_drained {
             reap.push(h);
         } else if stack.peer_eof(h) && !peer.conns[&h].peer_eof_sent {
             match peer.conns[&h].from_tx.try_send(RelayMsg::PeerEof) {
