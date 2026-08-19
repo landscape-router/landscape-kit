@@ -70,13 +70,14 @@ pub(super) async fn bridge_task(
     mut close_rx: oneshot::Receiver<()>,
 ) {
     let mut buf = vec![0u8; 8192];
+    let mut local_eof = false;
     loop {
         tokio::select! {
-            read = stream.read(&mut buf) => {
+            read = stream.read(&mut buf), if !local_eof => {
                 match read {
                     Ok(0) => {
                         signal_close(&to_tx, key).await;
-                        return;
+                        local_eof = true;
                     }
                     Ok(count) => {
                         if to_tx

@@ -94,9 +94,15 @@ struct Peer {
 /// One relayed connection on the server side.
 struct ServerConn {
     /// Bytes from the stack to the kernel socket (dialed service).
-    from_tx: mpsc::Sender<Vec<u8>>,
+    from_tx: mpsc::Sender<RelayMsg>,
     generation: u64,
     close_after_flush: bool,
+    peer_eof_sent: bool,
+}
+
+enum RelayMsg {
+    Data(Vec<u8>),
+    PeerEof,
 }
 
 /// Token bucket for control frames.
@@ -686,6 +692,7 @@ fn pump_peer(
                     from_tx,
                     generation,
                     close_after_flush: false,
+                    peer_eof_sent: false,
                 },
             );
             tokio::spawn(server_conn_task(
@@ -737,13 +744,17 @@ fn pump_peer(
             if n == 0 {
                 break;
             }
-            permit.send(buf[..n].to_vec());
+            permit.send(RelayMsg::Data(buf[..n].to_vec()));
         }
 
         if stack.socket_closed(h) {
             reap.push(h);
-        } else if stack.peer_eof(h) {
-            stack.close_socket(h);
+        } else if stack.peer_eof(h) && !peer.conns[&h].peer_eof_sent {
+            match peer.conns[&h].from_tx.try_send(RelayMsg::PeerEof) {
+                Ok(()) => peer.conns.get_mut(&h).unwrap().peer_eof_sent = true,
+                Err(mpsc::error::TrySendError::Full(_)) => {}
+                Err(mpsc::error::TrySendError::Closed(_)) => stack.close_socket(h),
+            }
         }
     }
     for h in reap {
@@ -764,14 +775,14 @@ async fn server_conn_task(
     handle: SocketHandle,
     generation: u64,
     to_tx: mpsc::Sender<ServerStackMsg>,
-    mut from_rx: mpsc::Receiver<Vec<u8>>,
+    mut from_rx: mpsc::Receiver<RelayMsg>,
     allowed: Arc<[u16]>,
 ) {
     let mut header = Vec::new();
     while header.len() < 2 {
         match from_rx.recv().await {
-            Some(b) => header.extend_from_slice(&b),
-            None => {
+            Some(RelayMsg::Data(b)) => header.extend_from_slice(&b),
+            Some(RelayMsg::PeerEof) | None => {
                 signal_close(&to_tx, peer_mac, handle, generation).await;
                 return;
             }
@@ -800,18 +811,19 @@ async fn server_conn_task(
     }
 
     let mut buf = vec![0u8; 8192];
+    let mut peer_eof = false;
     loop {
         tokio::select! {
-            msg = from_rx.recv() => match msg {
-                Some(b) => {
+            msg = from_rx.recv(), if !peer_eof => match msg {
+                Some(RelayMsg::Data(b)) => {
                     if remote.write_all(&b).await.is_err() {
                         signal_close(&to_tx, peer_mac, handle, generation).await;
                         return;
                     }
                 }
-                None => {
-                    signal_close(&to_tx, peer_mac, handle, generation).await;
-                    return;
+                Some(RelayMsg::PeerEof) | None => {
+                    let _ = remote.shutdown().await;
+                    peer_eof = true;
                 }
             },
             r = remote.read(&mut buf) => match r {
