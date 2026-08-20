@@ -308,6 +308,7 @@ fn upgrade_asset_name() -> &'static str {
 }
 
 fn upgrade_asset(version: &str, marker: &std::path::Path) -> Vec<u8> {
+    let version = version.strip_prefix('v').unwrap_or(version);
     format!(
         "#!/bin/sh\ncase \"$1\" in\n  --version) printf 'lkit {version}\\n'; exit 0 ;;\n  *) printf '%s\\n' \"$$\" >> {}; exec {} \"$@\" ;;\nesac\n",
         shell_quote(&marker.display().to_string()),

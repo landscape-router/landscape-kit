@@ -27,8 +27,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    name: Build fixture e2e binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fixture-e2e-build
+          cache-on-failure: true
+      - name: Compile fixture e2e test and helper binaries
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          cargo test --locked -p lkit-cli --features test-support \
+            --test install_fixture_e2e --no-run --message-format=json \
+            | tee ci-artifacts/cargo-build.json
+          test_binary=$(jq -r \
+            'select(.reason == "compiler-artifact" and .target.name == "install_fixture_e2e" and (.target.kind | index("test"))) | .executable' \
+            ci-artifacts/cargo-build.json \
+            | tail -n 1)
+          test -n "$test_binary"
+          test_binary_rel="deps/$(basename "$test_binary")"
+          test -f "target/debug/$test_binary_rel"
+          printf '%s\n' "$test_binary_rel" > ci-artifacts/test-binary-path
+      - name: Package compiled fixture e2e binaries
+        run: |
+          set -eu
+          test_binary=$(cat ci-artifacts/test-binary-path)
+          tar -czf ci-artifacts/fixture-e2e-binaries.tar.gz \
+            -C target/debug \
+            "$test_binary" \
+            lkit lkit-landscape-fixture lkit-test-systemctl lkit-test-init
+      - name: Upload compiled fixture e2e binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-e2e-binaries
+          path: ci-artifacts/fixture-e2e-binaries.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   e2e:
     name: Fixture e2e (${{ matrix.domain }})
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -36,37 +79,42 @@ jobs:
       matrix:
         include:
           - domain: console
-            filter: console
+            filter: console::
           - domain: daemon
-            filter: daemon
+            filter: daemon::
           - domain: install
-            filter: install
+            filter: install::
           - domain: manager-backends
-            filter: manager_backends
+            filter: manager_backends::
           - domain: migrate
-            filter: migrate
+            filter: migrate::
           - domain: network
-            filter: network
+            filter: network::
           - domain: reinit
-            filter: reinit
+            filter: reinit::
           - domain: self
-            filter: self_cmd
+            filter: self_cmd::
           - domain: switch
-            filter: switch
+            filter: switch::
           - domain: uninstall
-            filter: uninstall
+            filter: uninstall::
           - domain: update
-            filter: update
+            filter: update::
     steps:
       - uses: actions/checkout@v4
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+      - name: Download compiled fixture e2e binaries
+        uses: actions/download-artifact@v4
         with:
-          shared-key: fixture-e2e-${{ matrix.domain }}
-          cache-on-failure: true
+          name: fixture-e2e-binaries
+          path: ci-artifacts
+      - name: Restore compiled fixture e2e binaries
+        run: |
+          mkdir -p target/debug
+          tar -xzf ci-artifacts/fixture-e2e-binaries.tar.gz -C target/debug
       - name: Run ${{ matrix.domain }} fixture e2e tests
         env:
           LKIT_E2E: "1"
-        run: >-
-          cargo test --locked -p lkit-cli --features test-support
-          --test install_fixture_e2e ${{ matrix.filter }}
+        run: |
+          test_binary=$(find target/debug/deps -maxdepth 1 -type f -name 'install_fixture_e2e-*' -perm -111 | sort | tail -n 1)
+          test -n "$test_binary"
+          "$test_binary" "${{ matrix.filter }}"
