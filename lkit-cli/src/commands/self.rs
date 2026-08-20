@@ -399,6 +399,8 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
             .download_asset(&version, &asset, "lkit", &staged)
             .await
             .map_err(InstallError::Repository)?;
+        // 下载器创建的暂存文件通常不可执行;先补上权限才能运行版本自检。
+        set_staged_binary_executable(&staged)?;
         // 自检:替换前对下载的二进制执行 `lkit --version`。
         let output = Command::new(&staged).arg("--version").output()?;
         verify_version_output(&output)?;
@@ -422,9 +424,13 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
 
 /// 下载、校验、自检或替换失败时保留原二进制;成功时以暂存文件原子替换目标。
 fn install_staged_binary(staged: &Path, target: &Path) -> Result<(), InstallError> {
-    std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
-        .map_err(InstallError::Io)?;
+    set_staged_binary_executable(staged)?;
     std::fs::rename(staged, target).map_err(InstallError::Io)
+}
+
+fn set_staged_binary_executable(staged: &Path) -> Result<(), InstallError> {
+    std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
+        .map_err(InstallError::Io)
 }
 
 fn verify_version_output(output: &std::process::Output) -> Result<(), InstallError> {
@@ -937,6 +943,28 @@ mod tests {
             stderr: Vec::new(),
         };
         assert!(verify_version_output(&wrong_prefix).is_err());
+    }
+
+    #[test]
+    fn makes_the_staged_binary_executable_before_self_check() {
+        let dir = std::env::temp_dir().join(format!(
+            "lkit-self-test-executable-staged-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let staged = dir.join(".lkit.tmp");
+        std::fs::write(&staged, b"#!/bin/sh\nprintf 'lkit 0.2.0\\n'\n").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        set_staged_binary_executable(&staged).unwrap();
+        let output = std::process::Command::new(&staged)
+            .arg("--version")
+            .output()
+            .unwrap();
+
+        assert!(verify_version_output(&output).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -50,7 +50,7 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 3. 下载对应架构二进制(`lkit-x86_64` / `lkit-aarch64`)与 `SHA256SUMS`,校验 SHA-256,
    与 `install.sh` 同源同校验规则(见[自发布](../release/lkit.md));
 4. 版本对比:当前版本与目标版本相同 → 输出提示并返回 `0`,不修改任何文件;
-5. 下载并校验成功后,对替换后的二进制执行 `lkit --version` 自检,再原子替换
+5. 下载并校验成功后,先使暂存二进制可执行并运行 `lkit --version` 自检,再原子替换
    `/usr/local/bin/lkit`;下载、校验、自检或替换失败时保留原二进制;
 6. 刷新 daemon:若 `lkit.service` 已注册且 `is-active` → `restart` 加载新二进制;
    已注册但未运行 → 不启动;未注册 → 仅更新 CLI,并提示可用 `lkit self install`
