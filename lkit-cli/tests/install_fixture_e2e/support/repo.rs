@@ -54,6 +54,50 @@ impl RepositoryServer {
     }
 }
 
+/// 本地 GitHub Release 形状的双服务器 fixture:self upgrade 的 API 根和资产
+/// 下载根分别可注入,避免测试访问真实 GitHub。
+pub(crate) struct SelfUpgradeFixture {
+    pub(crate) api: RepositoryServer,
+    pub(crate) downloads: RepositoryServer,
+}
+
+impl SelfUpgradeFixture {
+    pub(crate) fn start(
+        tag: &str,
+        asset_name: &str,
+        asset: Vec<u8>,
+        checksum_override: Option<&str>,
+    ) -> Self {
+        let (digest, size) = sha256(&asset);
+        let checksum = checksum_override.unwrap_or(&digest);
+        let downloads = RepositoryServer::start(HashMap::from([
+            (
+                format!("/{tag}/SHA256SUMS"),
+                format!("{checksum}  {asset_name}\n").into_bytes(),
+            ),
+            (format!("/{tag}/{asset_name}"), asset),
+        ]));
+        let release = serde_json::json!({
+            "tag_name": tag,
+            "draft": false,
+            "prerelease": false,
+            "assets": [{
+                "name": asset_name,
+                "size": size,
+                "browser_download_url": format!("{}{tag}/{asset_name}", downloads.base_url),
+            }],
+        });
+        let api = RepositoryServer::start(HashMap::from([(
+            format!(
+                "/repos/{}/releases/tags/{tag}",
+                "landscape-router/landscape-kit"
+            ),
+            serde_json::to_vec(&release).unwrap(),
+        )]));
+        Self { api, downloads }
+    }
+}
+
 pub(crate) fn repository_files() -> HashMap<String, Vec<u8>> {
     repository_files_for(VERSION)
 }

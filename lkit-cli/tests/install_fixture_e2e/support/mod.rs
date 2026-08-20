@@ -11,7 +11,9 @@ pub(crate) mod world;
 
 pub(crate) use self::harness::{InstallHarness, write_valid_state_at};
 pub(crate) use self::pty::{Pty, attach_pty};
-pub(crate) use self::repo::{RepositoryServer, repository_files, repository_files_for};
+pub(crate) use self::repo::{
+    RepositoryServer, SelfUpgradeFixture, repository_files, repository_files_for,
+};
 pub(crate) use self::transactions::{
     read_only_transaction, transaction_count, transaction_of_operation,
 };

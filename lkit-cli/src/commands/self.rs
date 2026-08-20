@@ -108,6 +108,14 @@ pub struct UpgradeArgs {
     /// 目标版本 tag,如 v0.2.0-rc.1;缺省为 GitHub 最新 stable
     #[arg(long, value_name = "TAG")]
     pub version: Option<String>,
+    /// 测试用 Release API 根地址(仅 test-support 构建,隐藏参数)
+    #[cfg(feature = "test-support")]
+    #[arg(long, value_name = "URL", hide = true)]
+    pub test_release_api_root: Option<String>,
+    /// 测试用 Release 下载根地址(仅 test-support 构建,隐藏参数)
+    #[cfg(feature = "test-support")]
+    #[arg(long, value_name = "URL", hide = true)]
+    pub test_release_download_root: Option<String>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -325,9 +333,10 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
             std::env::consts::ARCH
         ))
     })?;
+    let source = upgrade_source(args)?;
     // 解析目标版本:默认 GitHub releases/latest 的 stable;--version 指定版本
     // (候选版必须用带 tag 的版本,例如 v0.2.0-rc.1)。
-    let release = fetch_release(args.version.as_deref()).await?;
+    let release = fetch_release(&source, args.version.as_deref()).await?;
     let version = match args.version.as_deref() {
         Some(tag) => parse_upgrade_version(tag)?,
         None => {
@@ -364,11 +373,7 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         )))
     })?;
     let client = DownloadClient::new()?;
-    let checksums_url = Url::parse(&format!(
-        "{RELEASES_DOWNLOAD_ROOT}/{}/SHA256SUMS",
-        release.tag_name
-    ))
-    .map_err(RepositoryError::InvalidUrl)?;
+    let checksums_url = source.download_url(&format!("{}/SHA256SUMS", release.tag_name))?;
     let Some((_, body)) = client
         .get_metadata(checksums_url, github_headers()?, false)
         .await
@@ -469,17 +474,80 @@ fn refresh_daemon(runtime: &InstallRuntime) -> Result<(), InstallError> {
     Ok(())
 }
 
-async fn fetch_release(version: Option<&str>) -> Result<GithubRelease, InstallError> {
+struct UpgradeSource {
+    api_root: Url,
+    download_root: Url,
+}
+
+impl UpgradeSource {
+    fn production() -> Result<Self, InstallError> {
+        Ok(Self {
+            api_root: source_root(GITHUB_API_ROOT)?,
+            download_root: source_root(RELEASES_DOWNLOAD_ROOT)?,
+        })
+    }
+
+    fn api_url(&self, path: &str) -> Result<Url, InstallError> {
+        self.api_root
+            .join(path)
+            .map_err(RepositoryError::InvalidUrl)
+            .map_err(InstallError::Repository)
+    }
+
+    fn download_url(&self, path: &str) -> Result<Url, InstallError> {
+        self.download_root
+            .join(path)
+            .map_err(RepositoryError::InvalidUrl)
+            .map_err(InstallError::Repository)
+    }
+}
+
+fn upgrade_source(args: &UpgradeArgs) -> Result<UpgradeSource, InstallError> {
+    #[cfg(not(feature = "test-support"))]
+    let _ = args;
+    #[cfg(feature = "test-support")]
+    {
+        match (
+            args.test_release_api_root.as_deref(),
+            args.test_release_download_root.as_deref(),
+        ) {
+            (None, None) => {}
+            (Some(api_root), Some(download_root)) => {
+                return Ok(UpgradeSource {
+                    api_root: source_root(api_root)?,
+                    download_root: source_root(download_root)?,
+                });
+            }
+            _ => {
+                return Err(InstallError::ParameterUsage(
+                    "self upgrade test release API and download roots must be provided together"
+                        .into(),
+                ));
+            }
+        }
+    }
+    UpgradeSource::production()
+}
+
+fn source_root(value: &str) -> Result<Url, InstallError> {
+    let mut url = Url::parse(value)
+        .map_err(RepositoryError::InvalidUrl)
+        .map_err(InstallError::Repository)?;
+    validate_network_url(&url)?;
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    Ok(url)
+}
+
+async fn fetch_release(
+    source: &UpgradeSource,
+    version: Option<&str>,
+) -> Result<GithubRelease, InstallError> {
     let client = DownloadClient::new()?;
     let url = match version {
-        None => Url::parse(&format!(
-            "{GITHUB_API_ROOT}/repos/{LKIT_REPOSITORY}/releases/latest"
-        ))
-        .map_err(RepositoryError::InvalidUrl)?,
-        Some(tag) => Url::parse(&format!(
-            "{GITHUB_API_ROOT}/repos/{LKIT_REPOSITORY}/releases/tags/{tag}"
-        ))
-        .map_err(RepositoryError::InvalidUrl)?,
+        None => source.api_url(&format!("repos/{LKIT_REPOSITORY}/releases/latest"))?,
+        Some(tag) => source.api_url(&format!("repos/{LKIT_REPOSITORY}/releases/tags/{tag}"))?,
     };
     let Some((_, body)) = client
         .get_metadata(url, github_headers()?, false)
@@ -910,6 +978,33 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn parses_test_release_roots_for_upgrade() {
+        let parsed = parse(&[
+            "self",
+            "upgrade",
+            "--test-release-api-root",
+            "http://127.0.0.1:3000/api/",
+            "--test-release-download-root",
+            "http://127.0.0.1:3001/downloads/",
+        ])
+        .unwrap();
+        match parsed.action {
+            SelfAction::Upgrade(args) => {
+                assert_eq!(
+                    args.test_release_api_root.as_deref(),
+                    Some("http://127.0.0.1:3000/api/")
+                );
+                assert_eq!(
+                    args.test_release_download_root.as_deref(),
+                    Some("http://127.0.0.1:3001/downloads/")
+                );
+            }
+            _ => panic!("expected upgrade"),
+        }
+    }
+
     #[test]
     fn parses_release_tags() {
         assert_eq!(
@@ -981,6 +1076,31 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"binary");
         let mode = std::fs::metadata(&target).unwrap().permissions().mode();
         assert_ne!(mode & 0o111, 0, "installed binary must be executable");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn preserves_files_when_staged_binary_cannot_replace_target() {
+        let dir = std::env::temp_dir().join(format!(
+            "lkit-self-test-replace-failure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let staged = dir.join(".lkit.tmp");
+        let target = dir.join("lkit");
+        std::fs::write(&staged, b"binary").unwrap();
+        std::fs::create_dir(&target).unwrap();
+
+        assert!(install_staged_binary(&staged, &target).is_err());
+        assert!(
+            staged.exists(),
+            "failed replacement must not discard staging"
+        );
+        assert!(
+            target.is_dir(),
+            "failed replacement must preserve the target"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

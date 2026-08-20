@@ -54,10 +54,9 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 优先补充能够改变发布判断的场景：
 
-1. [`SS-05`](functional/self.md#ss-05) 至 `SS-08`：`lkit self upgrade` 全链路
-   （下载校验→原子替换→daemon restart、同版本返回 `0`、失败保留原二进制、
-   daemon 未注册仅更新 CLI），当前无任何测试（需给 `self upgrade` 增加
-   GitHub URL 测试注入点）；
+1. [`SS-07`](functional/self.md#ss-07)：`lkit self upgrade` 的目标文件 rename 失败
+   分支仍只有单元覆盖，尚未接入完整 fixture 场景；SS-05、SS-06、SS-08 已有本地
+   Release fixture 的 e2e 覆盖；
 2. [`DAE-04`](functional/daemon.md#dae-04)：daemon 侧 switch 失败回滚完整现场
    （activating 阶段 + `.lkb` 配置级回滚）；
 3. [`MIG-05`](functional/migrate.md#mig-05)：static.zip 缺失本地打包回退

@@ -45,35 +45,34 @@
 
 **`self upgrade` 下载校验并原子替换 `/usr/local/bin/lkit`，daemon 注册且运行时 restart**
 
-- 测试层：Fixture E2E（待补充）
-- 状态：`待补充`
-- 证据：[`lkit self`](../../../commands/self.md#upgrade)
-- 说明：全链路（下载→SHA256SUMS 校验→自检→原子替换→daemon restart）无任何测试；仅解析/辅助函数有单测（`installs_staged_binary_atomically`、`extracts_exactly_one_manifest_checksum`）。
-  daemon `is-active` 时执行 restart 并加载新二进制。
+- 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
+- 状态：`已覆盖`
+- 证据：[`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[`lkit self`](../../../commands/self.md#upgrade)
+- 说明：本地 Release fixture 覆盖下载→SHA256SUMS 校验→自检→原子替换；fake systemd 真实 stop/start unit，断言新 daemon 从替换后的文件启动。
 ## SS-06
 
 **`self upgrade` 与目标版本相同返回 `0`，不修改任何文件**
 
-- 测试层：Fixture E2E（待补充）
-- 状态：`待补充`
-- 说明：`upgrade()` 的同版本分支（返回 `0`、不修改文件）无测试。
-- 证据：[`lkit self`](../../../commands/self.md#upgrade)
+- 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
+- 状态：`已覆盖`
+- 说明：同版本只读取 Release API 元数据，不请求 checksum/asset，不修改目标文件。
+- 证据：[`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[`lkit self`](../../../commands/self.md#upgrade)
 ## SS-07
 
 **`self upgrade` 下载/校验/自检/替换失败保留原二进制**
 
-- 测试层：Fixture E2E（待补充）
-- 状态：`待补充`
-- 证据：[`lkit self`](../../../commands/self.md#upgrade)
-- 说明：SHA256 不匹配、自检失败或替换失败时原 `/usr/local/bin/lkit` 保持可用，返回 `1`；各失败分支均无测试（仅有 rename 助手测试）。
+- 测试层：Fixture E2E + Rust 单元
+- 状态：`部分覆盖`
+- 证据：[`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[`lkit self`](../../../commands/self.md#upgrade)
+- 说明：Fixture E2E 覆盖 SHA256 不匹配和版本自检失败时原二进制保持可用；rename 失败仍由 `install_staged_binary` 的单元测试补充，尚未接入完整 fixture 场景。
 ## SS-08
 
 **`self upgrade` daemon 未注册时仅更新 CLI 并提示 `self install`**
 
-- 测试层：Fixture E2E（待补充）
-- 状态：`待补充`
-- 说明：daemon 未注册（`refresh_daemon` 的 Missing 分支）时仅更新 CLI 并提示 `self install`，无测试。
-- 证据：[`lkit self`](../../../commands/self.md#upgrade)
+- 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
+- 状态：`已覆盖`
+- 说明：daemon 未注册（`refresh_daemon` 的 Missing 分支）时仅更新 CLI、输出 `self install` 提示且不执行 restart。
+- 证据：[`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[`lkit self`](../../../commands/self.md#upgrade)
 ## SS-09
 
 **daemon 全局唯一：lkit 地盘 pidfile 存活实例存在时拒绝启动**
