@@ -103,9 +103,9 @@ BPF JIT 使用只读方式检查 `/proc/sys/net/core/bpf_jit_enable`：值为 `1
 
 | 标识符 | 检查内容 | 不满足时 |
 | --- | --- | --- |
-| `resource.memory` | 主机内存是否至少为普通发行版建议的 `2 GiB` | `error` |
+| `resource.memory` | 记录主机总内存和可用内存；低于 `512 MiB` 时警告 | `warning`，但不阻断安装 |
 
-检查结果应同时记录总内存和可用内存。内存不足是部署阻断项，不应仅作为提示继续安装。
+检查结果应同时记录总内存和可用内存。总内存低于 `512 MiB` 或信息读取失败时仅提示警告，不阻断部署。
 
 `RLIMIT_MEMLOCK` 由 install 通过 systemd unit 的 `LimitMEMLOCK=infinity` 保证，check 不再检查当前进程的 memlock 限制；install 必须确保该配置存在，否则 Landscape 的 eBPF 加载可能失败。
 

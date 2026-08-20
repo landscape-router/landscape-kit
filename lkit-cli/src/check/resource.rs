@@ -1,6 +1,6 @@
 use super::model::{CheckResult, Status};
 
-const MIN_TOTAL_MEMORY_KIB: u64 = 2 * 1024 * 1024;
+const MEMORY_WARNING_THRESHOLD_KIB: u64 = 512 * 1024;
 
 pub fn run() -> Vec<CheckResult> {
     vec![memory()]
@@ -13,7 +13,7 @@ fn memory() -> CheckResult {
     );
     let Some(meminfo) = std::fs::read_to_string("/proc/meminfo").ok() else {
         return result.set(
-            Status::Unknown,
+            Status::Warning,
             crate::tr!(crate::keys::RESOURCE_UNAVAILABLE),
             crate::tr!(crate::keys::RESOURCE_UNABLE_READ_MEMINFO),
         );
@@ -35,20 +35,18 @@ fn memory() -> CheckResult {
         _ => crate::tr!(crate::keys::RESOURCE_MEMORY_INFORMATION_UNAVAILABLE),
     };
     match total_kib {
-        Some(total) if total >= MIN_TOTAL_MEMORY_KIB => result.set(
+        Some(total) if total < MEMORY_WARNING_THRESHOLD_KIB => result.set(
+            Status::Warning,
+            value,
+            crate::tr!(crate::keys::RESOURCE_TOTAL_MEMORY_BELOW_512MIB),
+        ),
+        Some(_) => result.set(
             Status::Pass,
             value,
-            crate::tr!(crate::keys::RESOURCE_MEMORY_MEETS_2GIB_MINIMUM),
+            crate::tr!(crate::keys::RESOURCE_MEMORY_NO_MINIMUM),
         ),
-        Some(total) => result
-            .set(
-                Status::Error,
-                value,
-                crate::tr!(crate::keys::RESOURCE_TOTAL_MEMORY_BELOW_2GIB, total = total),
-            )
-            .suggestion(crate::tr!(crate::keys::RESOURCE_INCREASE_MEMORY_TO_2GIB)),
         None => result.set(
-            Status::Unknown,
+            Status::Warning,
             value,
             crate::tr!(crate::keys::RESOURCE_UNABLE_READ_MEMTOTAL),
         ),
