@@ -300,7 +300,7 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
         return;
     }
     let screen = frame.area();
-    let width = 64.min(screen.width.saturating_sub(2));
+    let width = 88.min(screen.width.saturating_sub(2));
     let height = 12.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,

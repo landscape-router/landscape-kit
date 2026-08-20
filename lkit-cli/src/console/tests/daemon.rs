@@ -711,7 +711,7 @@ fn show_psk_dialog_displays_the_configured_psk_in_plain_text() {
     let (_guard, territory) =
         territory_with_pidfile("show-psk-render", &format!("{}\n", std::process::id()));
     crate::deployment::config::save_flare(&crate::deployment::config::FlareSection {
-        psk: Some("a-displayed-recovery-code".into()),
+        psk: Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()),
         ..crate::deployment::config::default_flare_section()
     })
     .unwrap();
@@ -723,7 +723,7 @@ fn show_psk_dialog_displays_the_configured_psk_in_plain_text() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(
-        content.contains("a-displayed-recovery-code"),
+        content.contains("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
         "the dialog must show the psk in plain text"
     );
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
