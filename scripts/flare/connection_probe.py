@@ -6,6 +6,7 @@ import concurrent.futures
 import http.client
 import socket
 import struct
+import sys
 import threading
 import time
 
@@ -208,6 +209,27 @@ def run_idle(args: argparse.Namespace) -> None:
     print(f"idle connection OK after {args.seconds} seconds", flush=True)
 
 
+def run_pace(args: argparse.Namespace) -> None:
+    """Stream a file at a bounded rate, for use as nc's stdin producer."""
+    if args.rate_kib <= 0:
+        raise ValueError("--rate-kib must be positive")
+    rate = args.rate_kib * 1024
+    sent = 0
+    started = time.monotonic()
+    with open(args.file, "rb") as source:
+        while True:
+            chunk = source.read(args.chunk)
+            if not chunk:
+                return
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+            sent += len(chunk)
+            deadline = started + sent / rate
+            delay = deadline - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+
+
 def add_endpoint(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
@@ -255,6 +277,12 @@ def main() -> None:
     idle_parser.add_argument("--seconds", type=float, default=50)
     idle_parser.add_argument("--bytes", type=int, default=4096)
     idle_parser.set_defaults(run=run_idle)
+
+    pace_parser = commands.add_parser("pace")
+    pace_parser.add_argument("--file", required=True)
+    pace_parser.add_argument("--rate-kib", type=float, required=True)
+    pace_parser.add_argument("--chunk", type=int, default=16384)
+    pace_parser.set_defaults(run=run_pace)
 
     args = parser.parse_args()
     args.run(args)

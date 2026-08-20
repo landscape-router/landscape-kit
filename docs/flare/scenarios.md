@@ -100,6 +100,7 @@
 - 测试层：flare e2e
 - 状态：`已覆盖`
 - 证据：[flare e2e 脚本](../../scripts/flare/e2e-same-segment.sh)（same-segment 场景）
+- 说明：测试使用 128 KiB/s 的 paced producer 驱动 `nc`，避免把验证退化为不可重复的瞬时突发；小规模连接仍保留突发写入覆盖。
 
 ## FLR-13
 

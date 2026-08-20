@@ -75,13 +75,20 @@ wait_sessions() {
 
 transfer() {
   local name=$1 port=$2 size=$3 tag=$4
-  local wait_secs=${5:-60}
+  local rate_kib=${5:-0}
+  local wait_secs=${6:-60}
   echo "== $tag =="
   local out
   out=$(docker exec "$name" bash -c '
+    set -o pipefail
     dd if=/dev/urandom of=/tmp/in.bin bs=1M count='"$size"' status=none || exit 1
     md5sum /tmp/in.bin | cut -d" " -f1 > /tmp/in.md5
-    nc -w '"$wait_secs"' 127.0.0.1 '"$port"' < /tmp/in.bin > /tmp/out.bin
+    if [ '"$rate_kib"' -gt 0 ]; then
+      python3 /opt/connection_probe.py pace --file /tmp/in.bin --rate-kib '"$rate_kib"' \
+        | nc -q 5 -w '"$wait_secs"' 127.0.0.1 '"$port"' > /tmp/out.bin
+    else
+      nc -q 5 -w '"$wait_secs"' 127.0.0.1 '"$port"' < /tmp/in.bin > /tmp/out.bin
+    fi
     md5sum /tmp/out.bin | cut -d" " -f1 > /tmp/out.md5
     if cmp -s /tmp/in.md5 /tmp/out.md5; then
       echo "OK ($(wc -c < /tmp/out.bin) bytes)"
@@ -154,6 +161,6 @@ transfer "$CLI_B" 2223 2 "client B transfer after SIGKILL recovery"
 echo "hard-kill session replacement OK"
 
 echo "== larger sustained transfer (20 MiB) =="
-transfer "$CLI_A" 2222 20 "client A 20MiB transfer" 600
+transfer "$CLI_A" 2222 20 "client A 20MiB transfer" 128 600
 
 echo "ALL SAME-SEGMENT E2E TESTS PASSED"
