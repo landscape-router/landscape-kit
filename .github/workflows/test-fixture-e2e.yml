@@ -79,27 +79,27 @@ jobs:
       matrix:
         include:
           - domain: console
-            filter: console::
+            filter: "console::"
           - domain: daemon
-            filter: daemon::
+            filter: "daemon::"
           - domain: install
-            filter: install::
+            filter: "install::"
           - domain: manager-backends
-            filter: manager_backends::
+            filter: "manager_backends::"
           - domain: migrate
-            filter: migrate::
+            filter: "migrate::"
           - domain: network
-            filter: network::
+            filter: "network::"
           - domain: reinit
-            filter: reinit::
+            filter: "reinit::"
           - domain: self
-            filter: self_cmd::
+            filter: "self_cmd::"
           - domain: switch
-            filter: switch::
+            filter: "switch::"
           - domain: uninstall
-            filter: uninstall::
+            filter: "uninstall::"
           - domain: update
-            filter: update::
+            filter: "update::"
     steps:
       - uses: actions/checkout@v4
       - name: Download compiled fixture e2e binaries
