@@ -28,14 +28,45 @@ concurrency:
 
 jobs:
   e2e:
-    name: Install fixture e2e
+    name: Fixture e2e (${{ matrix.domain }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - domain: console
+            filter: console
+          - domain: daemon
+            filter: daemon
+          - domain: install
+            filter: install
+          - domain: manager-backends
+            filter: manager_backends
+          - domain: migrate
+            filter: migrate
+          - domain: network
+            filter: network
+          - domain: reinit
+            filter: reinit
+          - domain: self
+            filter: self_cmd
+          - domain: switch
+            filter: switch
+          - domain: uninstall
+            filter: uninstall
+          - domain: update
+            filter: update
     steps:
       - uses: actions/checkout@v4
-      - name: Build workspace
-        run: cargo build --locked --workspace --features test-support
-      - name: Run fixture e2e tests
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fixture-e2e-${{ matrix.domain }}
+          cache-on-failure: true
+      - name: Run ${{ matrix.domain }} fixture e2e tests
         env:
           LKIT_E2E: "1"
-        run: cargo test --locked -p lkit-cli --features test-support --test install_fixture_e2e
+        run: >-
+          cargo test --locked -p lkit-cli --features test-support
+          --test install_fixture_e2e ${{ matrix.filter }}
