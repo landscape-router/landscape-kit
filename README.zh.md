@@ -1,94 +1,107 @@
 # Landscape Kit
 
-`lkit` 是用于管理 [Landscape](https://github.com/ThisSeanZhang/landscape) 实例的交互终端控制台和命令行工具：支持首次安装、版本切换、修复、状态协调与服务注册。
+Landscape Kit 提供用于安装和运维 [Landscape](https://github.com/ThisSeanZhang/landscape) 实例的 `lkit` 终端控制台和命令行工具，覆盖首次部署、手工部署迁移、更新、版本切换、修复、备份、网络接管和服务生命周期管理。
 
-本仓库是一个 Cargo workspace，包含四个 crate：
+本 workspace 还包含独立的 `lflare` 客户端，用于 Landscape Terrain L2 防失联通道。在路由器的常规 IP 路径不可用时，可以通过它建立应急管理连接。
 
-| Crate | 职责 |
-| --- | --- |
-| `lkit-cli` | `lkit` 二进制：命令层、领域逻辑与 workflow |
-| `crates/lkit-publish` | `lkit-publish` 二进制：打包发布并发布到仓库 |
-| `crates/lkit-repository` | 仓库协议库，CLI 与发布器共享 |
-| `crates/lkit-test-fixture` | 测试 fixture：模拟 `systemctl`、HTTPS webserver 与测试仓库 |
+## 快速开始
 
-## 命令
-
-- `check` — 主机环境检查。
-- `install` — 首次安装。
-- `switch` — 切换到指定 stable 版本。
-- `backup` — 创建、查看和验证 `.lkb` minimal 备份。
-- `restore` — 在现有安装内从 `.lkb` 恢复版本和配置。
-- `repair` — 修复静态页面或后端二进制。
-- `reconcile` — 接受并记录初始化文件、service unit 或仓库来源变化。
-- `set-mirror` — 将主机软件包源切换到镜像（apt/dnf/pacman）。
-
-## 文档
-
-规格与设计文档见 [`docs/`](docs/README.md)。本说明的英文版见 [README.md](README.md)。
-
-## 贡献
-
-本项目采用 issue 驱动的工作流：先用 issue 表单模板创建 issue，再实现。
-详见 [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)（英文版见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
-
-## 安装 Landscape
-
-当前支持使用 glibc 的 Linux `x86_64` 和 `aarch64` 主机。先安装最新版 `lkit`，再从终端
-直接进入 Landscape 交互式安装：
+当前发布二进制支持使用 glibc 的 Linux `x86_64` 和 `aarch64`。不支持 Alpine 等基于 musl 的发行版。安装器需要主机提供 `curl` 或 `wget`，并具备 `sudo` 权限：
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
 ```
 
-也可以使用 `wget`：
+也可以使用：
 
 ```sh
 wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
 ```
 
-安装器自身会自动选择下载工具：优先使用 `curl`，缺失时回退 `wget`，主机上只需二者之一
-即可完成安装。
-
-然后启动交互式安装：
+在终端启动交互式管理控制台：
 
 ```sh
 sudo lkit
 ```
 
-裸命令进入 Ratatui 管理控制台。脚本和 CI 应使用明确子命令，例如
-`lkit --non-interactive install ...`。
+裸 `lkit` 命令进入 Ratatui 控制台。自动化场景应使用明确的子命令和 `--non-interactive`，例如：
 
-界面会跟随系统 locale，支持英文和简体中文。使用 `lkit --lang zh ...` 或设置
-`LKIT_LANG=zh` 可覆盖系统设置；不支持的语言回退到英文。
+```sh
+sudo lkit --non-interactive check
+sudo lkit --non-interactive install --password-file /root/lkit-password
+```
 
-使用 Landscape 镜像仓库安装：
+指定 Landscape 仓库安装：
 
 ```sh
 sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 ```
 
-安装器会根据架构选择二进制，通过 Release 的 `SHA256SUMS` 校验后原子安装到
-`/usr/local/bin/lkit`。发行版名称不再使用白名单；部署前由 `lkit` 检查内核和实际运行
-能力。当前发布二进制不支持 Alpine 等 musl 发行版。发布产物、版本规则和手动发布步骤见
-[`lkit` 自发布规范](docs/release/lkit.md)。
+界面跟随系统 locale，支持英文和简体中文。可使用 `--lang en`、`--lang zh` 或 `LKIT_LANG` 覆盖语言选择。
+
+安装器会根据 Release 的 `SHA256SUMS` 校验下载内容，并将 `lkit` 原子安装到 `/usr/local/bin/lkit`。支持的平台、升级行为和安全细节见 [`lkit` 发布与安装规范](docs/release/lkit.md)。
+
+## 常用命令
+
+完整参数、确认规则和失败恢复方式请查看对应的命令文档。
+
+| 领域 | 命令 |
+| --- | --- |
+| 检查与安装 | [`check`](docs/check.md)、[`install`](docs/commands/install.md)、[`migrate`](docs/commands/migrate.md) |
+| 版本与修复 | [`update`](docs/commands/update.md)、[`switch`](docs/commands/switch.md)、[`repair`](docs/commands/repair.md)、[`reinit`](docs/commands/reinit.md) |
+| 备份与状态 | [`backup`](docs/commands/backup.md)、[`restore`](docs/commands/restore.md)、[`reconcile`](docs/commands/reconcile.md) |
+| 网络与主机设置 | [`network`](docs/commands/network.md)、[`set-mirror`](docs/commands/mirror.md)、[`software`](docs/commands/software.md) |
+| 卸载与 lkit 服务 | [`uninstall`](docs/commands/uninstall.md)、[`self`](docs/commands/self.md) |
+
+`lkit self install` 会将 lkit daemon 注册为 systemd 服务。`lkit self upgrade` 更新 lkit 二进制并重新加载已注册的 daemon；`lkit self remove` 只注销该 daemon，不删除 lkit CLI 或 Landscape 数据。
+
+## Terrain 防失联通道
+
+Terrain 是主机与 Landscape 路由器之间的加密二层应急通道。`lkit` daemon 可以托管服务端，使用 `lkit flare setup` 配置或查看恢复密钥。
+
+`lflare` 默认进入交互式客户端。脚本可以使用 `cli` 子命令：
+
+```sh
+lflare cli --psk '<恢复密钥>' --dev eth0 --forward 2222:22
+```
+
+Linux 客户端需要受支持的 glibc 目标；Windows 客户端需要安装 Npcap。协议细节、配置方式和端到端场景见 [Terrain 文档](docs/flare/README.md)。
+
+## Workspace
+
+| Crate | 职责 |
+| --- | --- |
+| `lkit-cli` | `lkit` 二进制：控制台、命令、workflow 与 daemon |
+| `landscape-flare` | `lflare` Terrain 防失联客户端 |
+| `landscape-terrain-proto` | Terrain L2 协议与传输库 |
+| `crates/lkit-hostnet` | 主机网络适配与回滚库 |
+| `crates/lkit-publish` | `lkit-publish`，发布仓库的发布器 |
+| `crates/lkit-repository` | CLI 与发布器共享的仓库协议类型 |
+| `crates/lkit-test-fixture` | 测试使用的隔离 fixture 二进制，不是运行时依赖 |
 
 ## 构建与测试
 
-```sh
-cargo build --locked
-cargo test --features test-support
-```
-
-依赖 fixture 二进制的测试需要启用 `test-support` feature。RustFS 发布集成测试不混入 `cargo test`，单独运行：
+构建完整 workspace：
 
 ```sh
-RUSTFS_IMAGE=<固定镜像> scripts/test-publish-http-repository.sh
+cargo build --locked --workspace
 ```
-Docker 功能 E2E 可在 Linux x86_64 本地运行；原生 aarch64 覆盖由 CI 执行：
+
+本地聚焦检查时，对改动模块运行格式化、Clippy 和单元测试：
 
 ```sh
-scripts/test-docker-lifecycle.sh
+cargo fmt
+cargo clippy --all-targets -- -D warnings
+cargo test -p lkit-cli --features test-support --bin lkit <module-filter>
 ```
 
-测试分层及低频/手动执行的真实 systemd nspawn 兼容性 smoke test 见
-[`docs/testing/README.md`](docs/testing/README.md)。
+测试体系按层划分。Docker、systemd、QEMU、发布和 Terrain 场景都有专用环境及 CI workflow；在本地运行前请先阅读[测试指南](docs/testing/README.md)。
+
+## 文档与贡献
+
+- [文档索引](docs/README.md)
+- [`lkit` 发布与安装](docs/release/lkit.md)
+- [测试指南](docs/testing/README.md)
+- [贡献指南](CONTRIBUTING.zh.md) · [English contributing guide](CONTRIBUTING.md)
+
+Issue 不是必需的。提交代码变更时，请遵循贡献指南中的工作流和测试要求。
