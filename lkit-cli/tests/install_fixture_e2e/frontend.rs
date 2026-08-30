@@ -263,6 +263,7 @@ fn backup_packs_live_static_and_restore_returns_snapshot() {
         .arg("--backup")
         .arg(&backup_id)
         .arg("--yes")
+        .arg("--non-interactive")
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
         .output()
