@@ -7,10 +7,11 @@ use std::path::PathBuf;
 
 use super::support::*;
 
-/// 预设 config.toml:后端来源在命令上显式传入,config 只声明自定义前端源。
-fn frontend_preset_config(location: &str) -> String {
+/// 预设 config.toml:后端来源显式指向 fixture 仓库(config schema 要求
+/// `repository` 段存在),`[frontend]` 声明自定义前端源。
+fn frontend_preset_config(backend: &str, frontend: &str) -> String {
     format!(
-        "schema_version = 1\n\n[frontend]\nactive = \"custom\"\n\n[[frontend.sources]]\nid = \"custom\"\nname = \"Custom UI\"\nkind = \"http\"\nlocation = \"{location}\"\n"
+        "schema_version = 1\n\n[repository]\nkind = \"http\"\nlocation = \"{backend}\"\n\n[frontend]\nactive = \"custom\"\n\n[[frontend.sources]]\nid = \"custom\"\nname = \"Custom UI\"\nkind = \"http\"\nlocation = \"{frontend}\"\n"
     )
 }
 
@@ -28,7 +29,7 @@ fn install_applies_the_configured_custom_frontend() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("frontend-install", "healthy", 10_000);
     let frontend = RepositoryServer::start(frontend_files_for("1.0.0", "<h1>Custom frontend</h1>"));
-    let preset = frontend_preset_config(&frontend.base_url);
+    let preset = frontend_preset_config(&harness.repository.base_url, &frontend.base_url);
     std::fs::write(harness.config_path(), &preset).unwrap();
 
     assert_success(&harness.run());
@@ -85,7 +86,7 @@ fn install_blocks_on_an_unreachable_frontend_source() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("frontend-unreachable", "healthy", 10_000);
-    let preset = frontend_preset_config("http://127.0.0.1:9/");
+    let preset = frontend_preset_config(&harness.repository.base_url, "http://127.0.0.1:9/");
     std::fs::write(harness.config_path(), &preset).unwrap();
 
     let output = harness.run();
@@ -119,7 +120,7 @@ fn repair_static_restores_custom_frontend_then_official_flag() {
     let frontend = RepositoryServer::start(frontend_files_for("1.0.0", "<h1>Custom frontend</h1>"));
     std::fs::write(
         harness.config_path(),
-        frontend_preset_config(&frontend.base_url),
+        frontend_preset_config(&harness.repository.base_url, &frontend.base_url),
     )
     .unwrap();
     assert_success(&harness.run());
@@ -195,7 +196,7 @@ fn backup_packs_live_static_and_restore_returns_snapshot() {
     let frontend = RepositoryServer::start(frontend_files_for("1.0.0", "<h1>Custom frontend</h1>"));
     std::fs::write(
         harness.config_path(),
-        frontend_preset_config(&frontend.base_url),
+        frontend_preset_config(&harness.repository.base_url, &frontend.base_url),
     )
     .unwrap();
     assert_success(&harness.run());
