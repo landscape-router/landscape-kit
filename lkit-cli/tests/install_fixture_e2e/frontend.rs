@@ -221,8 +221,9 @@ fn backup_packs_live_static_and_restore_returns_snapshot() {
         .collect();
     assert_eq!(backups.len(), 1, "exactly one manual backup must exist");
 
-    let file = std::fs::File::open(&backups[0]).unwrap();
-    let decoder = flate2::read::GzDecoder::new(file);
+    let file = std::fs::read(&backups[0]).unwrap();
+    // `.lkb` 布局:32 字节头 + 元数据 JSON(上限 1 MiB),其后才是 gzip+tar 负载。
+    let decoder = flate2::read::GzDecoder::new(&file[1024 * 1024..]);
     let mut archive = tar::Archive::new(decoder);
     let mut packed_static_zip = None::<Vec<u8>>;
     for entry in archive.entries().unwrap() {
