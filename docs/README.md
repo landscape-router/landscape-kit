@@ -41,6 +41,7 @@
 - [网络重配置(reinit)](network/reinit.md)
 - [`.lkb` 备份与回滚](backup/lkb-and-rollback.md)
 - [发布仓库协议](repository.md)
+- [前端开发规范](frontend/developer.md)：自定义前端的打包、发布与集成协议。
 - [Landscape Terrain（flare）防失联通道](flare/README.md)
 - [生命周期流程](workflows/lifecycle.md)
 - [验收标准](acceptance.md)

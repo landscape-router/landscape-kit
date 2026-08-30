@@ -2,6 +2,7 @@ pub mod backup;
 pub mod check;
 mod existing;
 pub mod flare;
+pub mod frontend;
 pub mod install;
 #[path = "self.rs"]
 pub mod lkit_self;
@@ -23,6 +24,7 @@ use clap::Subcommand;
 pub use backup::Backup;
 pub use check::Check;
 pub use flare::Flare;
+pub use frontend::Frontend;
 pub use install::Install;
 pub use lkit_self::SelfCommand;
 pub use migrate::Migrate;
@@ -56,5 +58,6 @@ pub enum Commands {
     #[command(name = "self")]
     Self_(SelfCommand),
     Flare(Flare),
+    Frontend(Frontend),
     Daemon(crate::daemon::Daemon),
 }

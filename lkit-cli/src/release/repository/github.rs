@@ -89,6 +89,87 @@ impl GithubRepository {
         &self.repository
     }
 
+    /// 解析该前端源 latest release 的 `static.zip` 资产（静态-only：不要求
+    /// webserver 二进制）。latest 必须携带 `static.zip` 与 `SHASUM256sum.txt`，
+    /// 摘要按清单严格解析。
+    pub(crate) async fn latest_static_archive(&self) -> Result<Asset, RepositoryError> {
+        let headers = github_headers(self.token.as_deref())?;
+        let url = Url::parse(&format!(
+            "{API_ROOT}/repos/{}/releases/latest",
+            self.repository
+        ))
+        .map_err(RepositoryError::InvalidUrl)?;
+        let Some((_, body)) = self.client.get_metadata(url, headers.clone(), true).await? else {
+            return Err(RepositoryError::InvalidRelease(format!(
+                "frontend repository {} has no latest release",
+                self.repository
+            )));
+        };
+        let release: GithubRelease =
+            serde_json::from_slice(&body).map_err(RepositoryError::InvalidJson)?;
+        if release.draft || release.prerelease {
+            return Err(RepositoryError::InvalidRelease(format!(
+                "the latest release in frontend repository {} is a draft or prerelease",
+                self.repository
+            )));
+        }
+        self.static_asset_from_release(&headers, release).await
+    }
+
+    /// 从 release 解析静态资产（静态-only）。与后端 `build_release` 不同，
+    /// 只要求 `static.zip` + `SHASUM256sum.txt`。
+    async fn static_asset_from_release(
+        &self,
+        headers: &HeaderMap,
+        release: GithubRelease,
+    ) -> Result<Asset, RepositoryError> {
+        let find = |name: &str| -> Result<&GithubAsset, RepositoryError> {
+            let mut matches = release.assets.iter().filter(|asset| asset.name == name);
+            let asset = matches.next().ok_or_else(|| {
+                RepositoryError::InvalidRelease(format!(
+                    "the latest release in frontend repository {} is missing the {name} asset",
+                    self.repository
+                ))
+            })?;
+            if matches.next().is_some() {
+                return Err(RepositoryError::InvalidRelease(format!(
+                    "the latest release in frontend repository {} contains duplicate asset {name}",
+                    self.repository
+                )));
+            }
+            Ok(asset)
+        };
+        let static_archive = find("static.zip")?;
+        let checksum_asset = find("SHASUM256sum.txt")?;
+
+        let checksum_url = Url::parse(&checksum_asset.browser_download_url)
+            .map_err(RepositoryError::InvalidUrl)?;
+        validate_github_download_url(&checksum_url, &self.repository)?;
+        let Some((_, body)) = self
+            .client
+            .get_metadata(checksum_url, headers.clone(), false)
+            .await?
+        else {
+            unreachable!("required metadata does not return None");
+        };
+        let checksums = parse_checksums(&body)?;
+        let static_sha = checksums.get("static.zip").ok_or_else(|| {
+            RepositoryError::ChecksumParse(
+                "SHASUM256sum.txt is missing a checksum for static.zip".into(),
+            )
+        })?;
+
+        let static_url = Url::parse(&static_archive.browser_download_url)
+            .map_err(RepositoryError::InvalidUrl)?;
+        validate_github_download_url(&static_url, &self.repository)?;
+        Asset::checked(
+            static_url,
+            static_sha.clone(),
+            static_archive.size,
+            AssetEncoding::Identity,
+        )
+    }
+
     async fn release_by_tag(
         &self,
         headers: &HeaderMap,

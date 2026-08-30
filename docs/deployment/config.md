@@ -84,6 +84,44 @@ location = "https://repo.example.com/landscape/"
 或删除 `config.toml` 以回落官方 GitHub 默认；损坏很可能来自用户编辑错误，静默回落
 会让用户误以为配置仍然生效。
 
+## 自定义前端（`[frontend]`）
+
+`[frontend]` 段登记多个前端源并选择激活项。配置了自定义前端时，install/update/
+switch 构建版本目录后会按激活源解析前端包并替换 `static/`（`static.zip` 官方基线
+不变）；`repair static` 按激活源意图恢复。不配置该段或激活 `official` = 官方前端。
+完整包格式与发布协议见[前端开发规范](../frontend/developer.md)。
+
+```toml
+[frontend]
+active = "community"   # 激活源 id；缺省或 "official" = 官方前端
+
+[[frontend.sources]]
+id = "community"
+name = "社区前端"        # 可选展示名
+kind = "http"           # "http" | "github"
+location = "https://frontend.example.com/ui/"
+
+[[frontend.sources]]
+id = "dark"
+name = "暗色主题"
+kind = "github"
+location = "someone/dark-ui"
+```
+
+字段规则（严格校验，与 `[repository]` 同级）：
+
+- `frontend.active` 可选；值只允许 `official` 或已登记 source 的 `id`，指向不存在
+  的 id 时**阻断报错**并列出合法 id；
+- `frontend.sources` 可选的数组；`id` 必填且唯一，`kind` 只允许 `github` 或
+  `http`，`location` 按与 `[repository]` 相同的规则校验并规范化（GitHub 为
+  `owner/repo`，HTTP 为 protocol v1 base URL）；
+- `frontend.sources.name` 可选，仅展示；
+- 段缺失、缺失 source 或 `active` 缺省时等价官方前端；
+- 未知字段和未知 section 允许并忽略。
+
+需要解析前端源的命令（install/update/switch/repair static）在段损坏时阻断并提示
+修复或删除该段以回落官方；不需要前端源的命令不受影响。
+
 ## 语言预设
 
 `[ui] language` 预设界面与命令输出语言（仅 `en` 或 `zh`）。语言在命令行解析完成后

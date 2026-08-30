@@ -55,6 +55,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Flare(_) => false,
+        Commands::Frontend(_) => false,
         // migrate 不整体委托:前台先执行前置检查,再内部委托切换阶段。
         Commands::Migrate(_) => false,
         Commands::Network(args) => {
@@ -102,6 +103,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
         Commands::Self_(_) => None,
         Commands::Daemon(_) => None,
         Commands::Flare(_) => None,
+        Commands::Frontend(_) => None,
         Commands::Install(args) => args.test_runtime.as_deref(),
         Commands::Migrate(args) => args.test_runtime.as_deref(),
         Commands::Switch(args) => args.test_runtime.as_deref(),

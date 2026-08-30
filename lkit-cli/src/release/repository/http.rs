@@ -77,6 +77,51 @@ impl HttpRepository {
         self.base_url.as_str()
     }
 
+    /// 解析该前端源 stable 通道的 `static` 资产（静态-only：不要求 webserver
+    /// 资产）。manifest 的 `webserver` 为空对象，只声明 `assets.static`。
+    pub(crate) async fn latest_static_archive(&self) -> Result<Asset, RepositoryError> {
+        self.validate_repository().await?;
+        let Some(channel) = self
+            .get_json::<StableChannel>(self.stable_url.clone(), true)
+            .await?
+        else {
+            return Err(RepositoryError::InvalidRelease(format!(
+                "frontend repository {} has no stable channel",
+                self.base_url
+            )));
+        };
+        let version = channel
+            .parsed_version()
+            .map_err(|error| protocol_error(error, "stable pointer"))?;
+        let manifest_url = self
+            .base_url
+            .join(&format!("releases/{version}/manifest.json"))
+            .map_err(RepositoryError::InvalidUrl)?;
+        let manifest = self
+            .get_json::<ReleaseManifest>(manifest_url.clone(), true)
+            .await?
+            .ok_or_else(|| RepositoryError::VersionUnavailable {
+                version: version.clone(),
+            })?;
+        let manifest_version = manifest
+            .parsed_version()
+            .map_err(|error| protocol_error(error, "version manifest"))?;
+        if manifest_version != version {
+            return Err(RepositoryError::InvalidRelease(format!(
+                "manifest version {} does not match the stable channel version {version}",
+                manifest.version
+            )));
+        }
+        let manifest_base_url = manifest_url
+            .join("./")
+            .map_err(RepositoryError::InvalidUrl)?;
+        resolve_asset(
+            &manifest_base_url,
+            &manifest.assets.static_archive,
+            AssetEncoding::Identity,
+        )
+    }
+
     async fn validate_repository(&self) -> Result<(), RepositoryError> {
         let descriptor = self
             .get_json::<RepositoryDescriptor>(self.repository_url.clone(), false)
@@ -287,6 +332,81 @@ mod tests {
                 "/releases/1.2.3/manifest.json"
             ]
         );
+    }
+
+    /// 前端源 manifest:`webserver` 为空对象,只声明 `assets.static`。
+    fn frontend_manifest(version: &str) -> Vec<u8> {
+        format!(
+            r#"{{
+                "protocol_version": 1,
+                "version": "{version}",
+                "assets": {{
+                    "webserver": {{}},
+                    "static": {{"url": "static.zip", "sha256": "{SHA256}", "size": 20}}
+                }}
+            }}"#
+        )
+        .into_bytes()
+    }
+
+    #[tokio::test]
+    async fn frontend_latest_static_archive_resolves_the_stable_asset() {
+        let mut files = HashMap::new();
+        files.insert(
+            "/repository.json".into(),
+            br#"{"protocol_version":1}"#.to_vec(),
+        );
+        files.insert(
+            "/channels/stable.json".into(),
+            br#"{"protocol_version":1,"version":"2.3.1"}"#.to_vec(),
+        );
+        files.insert(
+            "/releases/2.3.1/manifest.json".into(),
+            frontend_manifest("2.3.1"),
+        );
+        let server = start_repository_server(&files);
+        let repository = HttpRepository::new(&server.base).unwrap();
+        let asset = repository.latest_static_archive().await.unwrap();
+        assert_eq!(asset.sha256, SHA256);
+        assert_eq!(asset.size, 20);
+        assert_eq!(asset.encoding, AssetEncoding::Identity);
+        assert_eq!(
+            asset.url.as_str(),
+            format!("{}/releases/2.3.1/static.zip", server.base)
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_latest_static_archive_fails_without_a_stable_channel() {
+        let files = HashMap::from([(
+            "/repository.json".into(),
+            br#"{"protocol_version":1}"#.to_vec(),
+        )]);
+        let server = start_repository_server(&files);
+        let repository = HttpRepository::new(&server.base).unwrap();
+        let error = repository.latest_static_archive().await.unwrap_err();
+        assert!(matches!(error, RepositoryError::InvalidRelease(_)));
+    }
+
+    #[tokio::test]
+    async fn frontend_latest_static_archive_rejects_stable_version_mismatch() {
+        let mut files = HashMap::new();
+        files.insert(
+            "/repository.json".into(),
+            br#"{"protocol_version":1}"#.to_vec(),
+        );
+        files.insert(
+            "/channels/stable.json".into(),
+            br#"{"protocol_version":1,"version":"2.3.1"}"#.to_vec(),
+        );
+        files.insert(
+            "/releases/2.3.1/manifest.json".into(),
+            frontend_manifest("9.9.9"),
+        );
+        let server = start_repository_server(&files);
+        let repository = HttpRepository::new(&server.base).unwrap();
+        let error = repository.latest_static_archive().await.unwrap_err();
+        assert!(matches!(error, RepositoryError::InvalidRelease(_)));
     }
 
     #[tokio::test]

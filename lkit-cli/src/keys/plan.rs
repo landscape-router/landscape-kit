@@ -27,4 +27,5 @@ pub(crate) const PLAN_CONFLICTING_PROCESS: &str = "plan.conflicting_process";
 pub(crate) const PLAN_HOST_STATE_BACKUP_FAILED: &str = "plan.host_state_backup_failed";
 pub(crate) const PLAN_FAILED_TO_WRITE_INSTALL_STATE: &str = "plan.failed_to_write_install_state";
 pub(crate) const PLAN_REPOSITORY_SELECTION_FAILED: &str = "plan.repository_selection_failed";
+pub(crate) const PLAN_FRONTEND_SOURCE_FAILED: &str = "plan.frontend_source_failed";
 pub(crate) const PLAN_IO_ERROR: &str = "plan.io_error";

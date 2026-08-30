@@ -320,7 +320,28 @@ ZIP 的所有有效条目必须位于 `static/` 前缀下。去掉该前缀后�
 - 用户可直接修改某版本目录中的 `static/`；
 - 版本切换使用目标版本发布资产创建的静态目录；
 - 切回旧版本时继续使用旧版本目录中保留的页面；
-- `lkit repair static` 重新下载目标版本 `static.zip`，备份当前目录后恢复发布版页面。
+- `lkit repair static` 重新下载目标版本 `static.zip`，备份当前目录后恢复发布版页面；
+- 配置了自定义前端源（见[前端开发规范](frontend/developer.md)）时，版本目录
+  `static/` 被自定义前端包替换，`static.zip` 文件保持官方基线不变；
+- `lkit repair static` 在配置了自定义前端源时恢复自定义前端，`--official` 无条件
+  恢复官方页面；官方路径成功后刷新版本目录 `static.zip` 并更新 state 身份。
+
+## 自定义前端源
+
+`config.toml` 的 `[frontend]` 段登记多个前端源并选择激活项（schema 见
+[配置文件](deployment/config.md)）。前端源与后端发布仓库同协议，但只提供 static
+资产（不要求 webserver 二进制）：
+
+- **GitHub 形式**：源位置 `owner/repo`；解析 `/releases/latest`（作者始终维护
+  latest 为最新发布），release 携带 `static.zip` + `SHASUM256sum.txt`，按清单
+  校验下载物；
+- **HTTP 形式**：源位置为 protocol v1 base URL；解析 `repository.json` →
+  `channels/stable.json` → `releases/<version>/manifest.json`（`webserver` 空
+  对象，只声明 `assets.static`），按 `assets.static` 的 sha256 + size 校验下载。
+
+前端源解析前端自身的 latest/stable，不与后端版本号匹配；源不可达或元数据非法时，
+需要前端源的命令阻断并提示逃生路径。完整协议、包格式与运行时契约见
+[前端开发规范](frontend/developer.md)。
 
 ## 第三方仓库发布流程
 

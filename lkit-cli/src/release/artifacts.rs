@@ -28,6 +28,7 @@ pub(crate) async fn build_release(
     std::fs::create_dir_all(&releases_dir).map_err(InstallError::Io)?;
     let final_path = releases_dir.join(version.to_string());
     if let Some(built) = reuse_existing_release(&final_path, release)? {
+        crate::frontend::apply_frontend(version, &final_path).await?;
         return Ok(built);
     }
     let tmp = releases_dir.join(format!(".install-{version}.tmp"));
@@ -39,6 +40,10 @@ pub(crate) async fn build_release(
             return Err(error);
         }
     };
+    if let Err(error) = crate::frontend::apply_frontend(version, &tmp).await {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(error);
+    }
     std::fs::rename(&tmp, &final_path).map_err(|error| {
         let _ = std::fs::remove_dir_all(&tmp);
         InstallError::Io(error)
@@ -210,15 +215,21 @@ mod tests {
         semver::Version::new(1, 2, 3)
     }
 
-    fn temp_root(name: &str) -> InstallRoot {
+    fn temp_root(name: &str) -> (InstallRoot, crate::deployment::layout::TerritoryOverride) {
         let root =
             std::env::temp_dir().join(format!("lkit-artifacts-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        InstallRoot {
-            install_root: root.clone(),
-            canonical: root,
-        }
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let guard = crate::deployment::layout::test_territory(&territory);
+        (
+            InstallRoot {
+                install_root: root.clone(),
+                canonical: root,
+            },
+            guard,
+        )
     }
 
     fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
@@ -252,7 +263,7 @@ mod tests {
 
     #[tokio::test]
     async fn reuses_trusted_existing_release_without_downloading() {
-        let root = temp_root("reuse-trusted");
+        let (root, _guard) = temp_root("reuse-trusted");
         let final_dir = root.canonical.join("releases/1.2.3");
         std::fs::create_dir_all(&final_dir).unwrap();
         write_trusted_dir(&final_dir, BINARY, STATIC_ZIP);
@@ -281,7 +292,7 @@ mod tests {
 
     #[tokio::test]
     async fn reuses_identity_release_when_binary_matches_manifest() {
-        let root = temp_root("reuse-identity");
+        let (root, _guard) = temp_root("reuse-identity");
         let final_dir = root.canonical.join("releases/1.2.3");
         std::fs::create_dir_all(&final_dir).unwrap();
         write_trusted_dir(&final_dir, BINARY, STATIC_ZIP);
@@ -298,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocks_existing_release_when_static_archive_disagrees() {
-        let root = temp_root("reuse-static-mismatch");
+        let (root, _guard) = temp_root("reuse-static-mismatch");
         let final_dir = root.canonical.join("releases/1.2.3");
         std::fs::create_dir_all(&final_dir).unwrap();
         write_trusted_dir(&final_dir, BINARY, STATIC_ZIP);
@@ -315,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocks_identity_release_when_binary_drifted() {
-        let root = temp_root("reuse-binary-drift");
+        let (root, _guard) = temp_root("reuse-binary-drift");
         let final_dir = root.canonical.join("releases/1.2.3");
         std::fs::create_dir_all(&final_dir).unwrap();
         write_trusted_dir(&final_dir, BINARY, STATIC_ZIP);
@@ -335,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocks_symlink_release_directory() {
-        let root = temp_root("reuse-symlink");
+        let (root, _guard) = temp_root("reuse-symlink");
         let releases = root.canonical.join("releases");
         std::fs::create_dir_all(&releases).unwrap();
         let outside = root.canonical.join("outside");
@@ -354,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocks_incomplete_existing_release_directory() {
-        let root = temp_root("reuse-incomplete");
+        let (root, _guard) = temp_root("reuse-incomplete");
         std::fs::create_dir_all(root.canonical.join("releases/1.2.3")).unwrap();
         let release = release(
             asset("https://example.com/landscape-webserver", BINARY),
@@ -408,7 +419,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let root = temp_root("no-existing");
+        let (root, _guard) = temp_root("no-existing");
         let built = build_release(&root, &release).await.unwrap();
         assert_eq!(built.webserver_sha256, binary_sha);
         assert_eq!(built.webserver_size, binary_size);

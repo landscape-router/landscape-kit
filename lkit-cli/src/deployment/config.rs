@@ -22,6 +22,15 @@ pub(crate) enum RepositorySourceKind {
     Http,
 }
 
+impl RepositorySourceKind {
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Http => "http",
+        }
+    }
+}
+
 impl RepositorySource {
     /// 转换为 CLI/计划层统一的仓库选择。规范化的来源可直接解析为 provider。
     pub(crate) fn to_choice(&self) -> RepositoryChoice {
@@ -30,6 +39,37 @@ impl RepositorySource {
             RepositorySourceKind::Http => RepositoryChoice::Http(self.location.clone()),
         }
     }
+}
+
+/// 自定义前端源。schema 镜像 `[repository]`，只提供 static 资产（不要求
+/// webserver 二进制）。
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct FrontendSource {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub kind: RepositorySourceKind,
+    pub location: String,
+}
+
+impl FrontendSource {
+    pub(crate) fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(self.id.as_str())
+    }
+}
+
+/// 激活的前端源 id 常量:值 `official` 表示官方前端,与段缺失等价。
+pub(crate) const FRONTEND_OFFICIAL: &str = "official";
+
+/// `[frontend]` 配置段:登记多个前端源并选择激活项。自定义前端只影响
+/// `releases/<version>/static/` 目录内容,`static.zip` 官方基线不变。
+/// 段缺失、激活缺省或激活 `official` 时等价官方前端。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub(crate) struct FrontendSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<FrontendSource>,
 }
 
 /// 界面偏好 section,目前只用于语言预设。与仓库来源不同,这里的值是宽容读取:
@@ -92,6 +132,8 @@ pub(crate) struct ConfigFile {
     pub ui: Option<UiSection>,
     #[serde(default)]
     pub flare: Option<FlareSection>,
+    #[serde(default)]
+    pub frontend: Option<FrontendSection>,
 }
 
 /// 读取仓库来源配置。文件不存在时返回 `Ok(None)`,调用方按官方 GitHub 默认处理;
@@ -155,6 +197,126 @@ pub(crate) fn resolve_default_choice() -> Result<RepositoryChoice, InstallError>
             crate::release::repository::github::DEFAULT_REPOSITORY.into(),
         )),
     }
+}
+
+/// 读取 `[frontend]` 配置段并校验规范化。文件缺失时返回 `Ok(None)`（官方前端）；
+/// 段损坏（TOML 解析失败、source 非法、active 指向不存在的 id）时返回
+/// `CorruptedState` 并阻断需要解析前端源的命令。与 `load_repository` 同级严格:
+/// 自定义前端会替换运行页面的来源,不能静默回退。
+pub(crate) fn load_frontend() -> Result<Option<FrontendSection>, InstallError> {
+    let path = layout::territory_config_file();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(InstallError::Io(std::io::Error::new(
+                error.kind(),
+                format!("failed to read {}: {error}", path.display()),
+            )));
+        }
+    };
+    let config: ConfigFile = match toml::from_str(&text) {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(InstallError::CorruptedState(format!(
+                "{} is not a valid config file: {error}; fix or delete it to fall back to the official frontend",
+                path.display()
+            )));
+        }
+    };
+    if config.schema_version != CONFIG_SCHEMA_VERSION {
+        return Err(InstallError::CorruptedState(format!(
+            "unsupported config schema version {} in {}; fix or delete the file to fall back to the official frontend",
+            config.schema_version,
+            path.display()
+        )));
+    }
+    let Some(section) = config.frontend else {
+        return Ok(None);
+    };
+    validate_frontend(&section, &path)
+}
+
+fn validate_frontend(
+    section: &FrontendSection,
+    path: &Path,
+) -> Result<Option<FrontendSection>, InstallError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut sources = Vec::with_capacity(section.sources.len());
+    for source in &section.sources {
+        if source.id.is_empty() || !seen.insert(source.id.clone()) {
+            return Err(InstallError::CorruptedState(format!(
+                "{} contains a frontend source with a missing or duplicate id {id:?}; fix or delete the [frontend] section to fall back to the official frontend",
+                path.display(),
+                id = source.id
+            )));
+        }
+        let provider = crate::release::repository::provider_for(
+            match source.kind {
+                RepositorySourceKind::Github => crate::release::repository::ProviderKind::Github,
+                RepositorySourceKind::Http => crate::release::repository::ProviderKind::Http,
+            },
+            &source.location,
+        )
+        .map_err(|error| {
+            InstallError::CorruptedState(format!(
+                "{} contains an invalid frontend source {id:?}: {error}; fix or delete the [frontend] section to fall back to the official frontend",
+                path.display(),
+                id = source.id
+            ))
+        })?;
+        sources.push(FrontendSource {
+            id: source.id.clone(),
+            name: source.name.clone(),
+            kind: source.kind,
+            location: provider.location().to_string(),
+        });
+    }
+    if let Some(active) = section
+        .active
+        .as_deref()
+        .filter(|active| *active != FRONTEND_OFFICIAL)
+        && !seen.contains(active)
+    {
+        let valid = std::iter::once(FRONTEND_OFFICIAL)
+            .chain(sources.iter().map(|source| source.id.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(InstallError::CorruptedState(format!(
+            "{} selects an unknown frontend source {active:?}; valid values are: {valid}; fix or delete the [frontend] section to fall back to the official frontend",
+            path.display()
+        )));
+    }
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(FrontendSection {
+        active: section.active.clone(),
+        sources,
+    }))
+}
+
+/// 解析激活的自定义前端源。返回 `Ok(None)` 表示官方前端（段缺失、无 source 或
+/// 激活 `official`）；否则返回激活的 source。段损坏时阻断报错。
+pub(crate) fn resolve_active_frontend() -> Result<Option<FrontendSource>, InstallError> {
+    let Some(section) = load_frontend()? else {
+        return Ok(None);
+    };
+    let active = section.active.as_deref().unwrap_or(FRONTEND_OFFICIAL);
+    if active == FRONTEND_OFFICIAL {
+        return Ok(None);
+    }
+    Ok(section
+        .sources
+        .into_iter()
+        .find(|source| source.id == active))
+}
+
+/// 宽容版本:配置缺失、损坏或没有激活的自定义源时一律返回 `None`,绝不阻断。
+/// 用于"只读一次配置调整核对语义"的场景(如 reconcile 的 static 身份核对放宽),
+/// 配置损坏时按"未配置自定义前端"处理(保持严格核对),由用户修复配置。
+pub(crate) fn resolve_active_frontend_lenient() -> Option<FrontendSource> {
+    resolve_active_frontend().ok().flatten()
 }
 
 /// 读取配置预设的语言。这是**宽容读取**:文件缺失、TOML 损坏、`[ui] language`
@@ -258,6 +420,65 @@ pub(crate) fn save_flare(section: &FlareSection) -> Result<(), InstallError> {
     }
     set_optional_string(&mut *flare, "token", section.token.as_deref());
     atomic_write(&path, &document.to_string())
+}
+
+/// 把 `[frontend]` 段写回 `config.toml`。与 `save_flare` 相同的定点写语义:
+/// 用 `toml_edit` 保留注释、未知 section/字段与原有顺序;写回经 tmp + rename
+/// 原子完成。文件缺失时创建带默认仓库来源的最小配置;TOML 损坏时返回错误且
+/// 不改动原文件。
+pub(crate) fn save_frontend(section: &FrontendSection) -> Result<(), InstallError> {
+    let path = layout::territory_config_file();
+    let mut document = match std::fs::read_to_string(&path) {
+        Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
+            InstallError::CorruptedState(format!(
+                "{} is not a valid config file: {error}; fix or delete it to configure the frontend",
+                path.display()
+            ))
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut document = toml_edit::DocumentMut::new();
+            document["schema_version"] = toml_edit::value(1i64);
+            let mut repository = toml_edit::Table::new();
+            repository["kind"] = toml_edit::value("github");
+            repository["location"] =
+                toml_edit::value(crate::release::repository::github::DEFAULT_REPOSITORY);
+            document["repository"] = toml_edit::Item::Table(repository);
+            document
+        }
+        Err(error) => {
+            return Err(InstallError::Io(std::io::Error::new(
+                error.kind(),
+                format!("failed to read {}: {error}", path.display()),
+            )));
+        }
+    };
+    set_frontend_section(&mut document, section);
+    atomic_write(&path, &document.to_string())
+}
+
+fn set_frontend_section(document: &mut toml_edit::DocumentMut, section: &FrontendSection) {
+    let mut table = toml_edit::Table::new();
+    if let Some(active) = section.active.as_deref() {
+        table["active"] = toml_edit::value(active);
+    }
+    if !section.sources.is_empty() {
+        let mut array = toml_edit::ArrayOfTables::new();
+        for source in &section.sources {
+            let mut item = toml_edit::Table::new();
+            item["id"] = toml_edit::value(source.id.clone());
+            if let Some(name) = source.name.as_deref() {
+                item["name"] = toml_edit::value(name);
+            }
+            item["kind"] = toml_edit::value(match source.kind {
+                RepositorySourceKind::Github => "github",
+                RepositorySourceKind::Http => "http",
+            });
+            item["location"] = toml_edit::value(source.location.clone());
+            array.push(item);
+        }
+        table["sources"] = toml_edit::Item::ArrayOfTables(array);
+    }
+    document["frontend"] = toml_edit::Item::Table(table);
 }
 
 fn set_string(table: &mut toml_edit::Table, key: &str, value: &str) {
@@ -611,6 +832,257 @@ location = "https://repo.example.com/landscape"
             .to_choice(),
             RepositoryChoice::Http("https://repo.example.com/landscape/".into())
         );
+    }
+
+    #[test]
+    fn missing_config_has_no_frontend() {
+        let (_guard, territory) = setup("frontend-missing");
+        assert!(load_frontend().unwrap().is_none());
+        assert!(resolve_active_frontend().unwrap().is_none());
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn parses_frontend_sources_and_active() {
+        let (_guard, territory) = setup("frontend-valid");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[frontend]
+active = "community"
+
+[[frontend.sources]]
+id = "community"
+name = "community-ui"
+kind = "http"
+location = "https://frontend.example.com/ui"
+
+[[frontend.sources]]
+id = "dark"
+kind = "github"
+location = "someone/dark-ui"
+"#,
+        )
+        .unwrap();
+        let section = load_frontend().unwrap().unwrap();
+        assert_eq!(section.active.as_deref(), Some("community"));
+        assert_eq!(section.sources.len(), 2);
+        assert_eq!(section.sources[0].kind, RepositorySourceKind::Http);
+        assert_eq!(
+            section.sources[0].location,
+            "https://frontend.example.com/ui/"
+        );
+        assert_eq!(section.sources[1].kind, RepositorySourceKind::Github);
+        let active = resolve_active_frontend().unwrap().unwrap();
+        assert_eq!(active.id, "community");
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn active_official_or_missing_is_the_official_frontend() {
+        let (_guard, territory) = setup("frontend-official");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[frontend]
+active = "official"
+
+[[frontend.sources]]
+id = "community"
+kind = "http"
+location = "https://frontend.example.com/ui/"
+"#,
+        )
+        .unwrap();
+        assert!(resolve_active_frontend().unwrap().is_none());
+
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[[frontend.sources]]
+id = "community"
+kind = "http"
+location = "https://frontend.example.com/ui/"
+"#,
+        )
+        .unwrap();
+        assert!(
+            resolve_active_frontend().unwrap().is_none(),
+            "no active = official"
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn blocks_unknown_active_frontend_id() {
+        let (_guard, territory) = setup("frontend-active-unknown");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[frontend]
+active = "missing"
+
+[[frontend.sources]]
+id = "community"
+kind = "http"
+location = "https://frontend.example.com/ui/"
+"#,
+        )
+        .unwrap();
+        let error = resolve_active_frontend().unwrap_err();
+        assert!(matches!(error, InstallError::CorruptedState(_)));
+        assert!(error.to_string().contains("community"));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn blocks_duplicate_or_invalid_frontend_sources() {
+        let (_guard, territory) = setup("frontend-invalid");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[[frontend.sources]]
+id = "dup"
+kind = "http"
+location = "https://a.example.com/ui/"
+
+[[frontend.sources]]
+id = "dup"
+kind = "http"
+location = "https://b.example.com/ui/"
+"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            resolve_active_frontend(),
+            Err(InstallError::CorruptedState(_))
+        ));
+
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[[frontend.sources]]
+id = "bad"
+kind = "http"
+location = "http://insecure.example.com/ui/"
+"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            resolve_active_frontend(),
+            Err(InstallError::CorruptedState(_))
+        ));
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn save_frontend_round_trips_and_preserves_unknown_sections() {
+        let (_guard, territory) = setup("frontend-save");
+        std::fs::write(
+            territory.join("config.toml"),
+            br#"# user comment
+schema_version = 1
+
+[repository]
+kind = "github"
+location = "ThisSeanZhang/landscape"
+
+[future]
+key = "value"
+"#,
+        )
+        .unwrap();
+        let section = FrontendSection {
+            active: Some("community".into()),
+            sources: vec![FrontendSource {
+                id: "community".into(),
+                name: Some("community-ui".into()),
+                kind: RepositorySourceKind::Http,
+                location: "https://frontend.example.com/ui/".into(),
+            }],
+        };
+        save_frontend(&section).unwrap();
+        let text = std::fs::read_to_string(territory.join("config.toml")).unwrap();
+        assert!(text.contains("# user comment"), "comments must survive");
+        assert!(text.contains("[future]"), "unknown sections must survive");
+        assert!(text.contains("active = \"community\""));
+        assert!(text.contains("[[frontend.sources]]"));
+        assert!(text.contains("id = \"community\""));
+        assert!(text.contains("kind = \"http\""));
+        assert_eq!(load_frontend().unwrap().unwrap(), section);
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn save_frontend_creates_a_minimal_config_on_missing_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (_guard, territory) = setup("frontend-save-missing");
+        let section = FrontendSection {
+            active: None,
+            sources: vec![FrontendSource {
+                id: "community".into(),
+                name: None,
+                kind: RepositorySourceKind::Github,
+                location: "someone/dark-ui".into(),
+            }],
+        };
+        save_frontend(&section).unwrap();
+        assert_eq!(load_frontend().unwrap().unwrap(), section);
+        assert_eq!(
+            load_repository().unwrap().unwrap(),
+            github_source(),
+            "the created config must keep the default repository semantics"
+        );
+        let metadata = std::fs::metadata(territory.join("config.toml")).unwrap();
+        assert_eq!(metadata.mode() & 0o077, 0, "config must be root-only");
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
+    }
+
+    #[test]
+    fn save_frontend_refuses_corrupt_config_without_modifying_it() {
+        let (_guard, territory) = setup("frontend-save-corrupt");
+        std::fs::write(territory.join("config.toml"), b"not toml [[[").unwrap();
+        assert!(matches!(
+            save_frontend(&FrontendSection::default()),
+            Err(InstallError::CorruptedState(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(territory.join("config.toml")).unwrap(),
+            "not toml [[[",
+            "a corrupt config must be left untouched"
+        );
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     #[test]

@@ -294,6 +294,9 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 .mut_arg("repository", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_REPOSITORY_OVERRIDE_HELP))
                 })
+                .mut_arg("official", |arg| {
+                    arg.help(crate::tr_static!(keys::MAIN_REPAIR_OFFICIAL_HELP))
+                })
         })
         .mut_subcommand("reconcile", |command| {
             command
@@ -333,6 +336,46 @@ fn localize_subcommands(command: clap::Command) -> clap::Command {
                 })
                 .mut_arg("keep_data", |arg| {
                     arg.help(crate::tr_static!(keys::MAIN_UNINSTALL_KEEP_DATA_HELP))
+                })
+        })
+        .mut_subcommand("frontend", |command| {
+            command
+                .about(crate::tr_static!(keys::MAIN_FRONTEND_ABOUT))
+                .mut_subcommand("add", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_FRONTEND_ADD_ABOUT))
+                        .mut_arg("id", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_FRONTEND_ADD_ID_HELP))
+                        })
+                        .mut_arg("location", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_FRONTEND_ADD_LOCATION_HELP))
+                        })
+                        .mut_arg("name", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_FRONTEND_ADD_NAME_HELP))
+                        })
+                        .mut_arg("activate", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_FRONTEND_ADD_ACTIVATE_HELP))
+                        })
+                })
+                .mut_subcommand("select", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_FRONTEND_SELECT_ABOUT))
+                        .mut_arg("id", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_FRONTEND_SELECT_ID_HELP))
+                        })
+                })
+                .mut_subcommand("remove", |command| {
+                    command
+                        .about(crate::tr_static!(keys::MAIN_FRONTEND_REMOVE_ABOUT))
+                        .mut_arg("id", |arg| {
+                            arg.help(crate::tr_static!(keys::MAIN_FRONTEND_REMOVE_ID_HELP))
+                        })
+                })
+                .mut_subcommand("list", |command| {
+                    command.about(crate::tr_static!(keys::MAIN_FRONTEND_LIST_ABOUT))
+                })
+                .mut_subcommand("status", |command| {
+                    command.about(crate::tr_static!(keys::MAIN_FRONTEND_STATUS_ABOUT))
                 })
         })
 }

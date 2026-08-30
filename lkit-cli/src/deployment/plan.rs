@@ -243,6 +243,8 @@ pub(crate) enum InstallError {
     ResolvBackup(String),
     StateWrite(serde_json::Error),
     Repository(RepositoryError),
+    /// 自定义前端源解析或应用失败（源不可达、元数据非法或包应用失败）。
+    FrontendSource(String),
     Io(std::io::Error),
 }
 
@@ -391,6 +393,11 @@ impl std::fmt::Display for InstallError {
                 formatter,
                 "{}",
                 crate::tr!(crate::keys::PLAN_REPOSITORY_SELECTION_FAILED, error = error)
+            ),
+            Self::FrontendSource(reason) => write!(
+                formatter,
+                "{}",
+                crate::tr!(crate::keys::PLAN_FRONTEND_SOURCE_FAILED, reason = reason)
             ),
             Self::Io(error) => write!(
                 formatter,

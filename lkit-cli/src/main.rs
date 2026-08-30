@@ -7,6 +7,7 @@ mod daemon;
 mod daemon_worker;
 mod deployment;
 mod flare;
+mod frontend;
 mod i18n;
 mod interaction;
 mod keys;
@@ -176,6 +177,7 @@ async fn run_command(
         Commands::Uninstall(args) => commands::uninstall::run(&args).await,
         Commands::Self_(args) => commands::lkit_self::run(&args).await,
         Commands::Flare(args) => commands::flare::run(&args).await,
+        Commands::Frontend(args) => commands::frontend::run(&args),
         Commands::Daemon(args) => daemon::run(&args).await,
     }
 }

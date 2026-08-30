@@ -142,6 +142,14 @@ impl ReleaseProvider {
         }
     }
 
+    /// 解析前端源 latest/stable 的 `static` 资产（静态-only，不要求 webserver）。
+    pub(crate) async fn latest_static_archive(&self) -> Result<Asset, RepositoryError> {
+        match self {
+            Self::Github(provider) => provider.latest_static_archive().await,
+            Self::Http(provider) => provider.latest_static_archive().await,
+        }
+    }
+
     pub(crate) fn kind(&self) -> ProviderKind {
         match self {
             Self::Github(_) => ProviderKind::Github,
