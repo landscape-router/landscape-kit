@@ -487,12 +487,10 @@ mod tests {
         ));
         let binary = source.join("landscape-webserver");
         let static_dir = source.join("static");
-        let zip = source.join("static.zip");
         let geo = source.join("geo_tmp");
         std::fs::create_dir_all(static_dir.join("assets")).unwrap();
         std::fs::create_dir_all(geo.join("ip")).unwrap();
         std::fs::write(&binary, PAYLOAD_1_2_3).unwrap();
-        std::fs::write(&zip, ZIP_1_2_3).unwrap();
         std::fs::write(static_dir.join("index.html"), "static 1.2.3").unwrap();
         std::fs::write(geo.join("ip/geo.dat"), "geo 1.2.3").unwrap();
         let backup_ref = lkb::create_backup(
@@ -502,7 +500,6 @@ mod tests {
             &binary,
             "version = \"1.2.3\"\n",
             &static_dir,
-            &zip,
             &geo,
             "manual backup",
             false,
@@ -678,7 +675,10 @@ esac
         let (webserver_sha, webserver_size) = sha256_bytes(PAYLOAD_1_2_3);
         assert_eq!(updated.assets.webserver.sha256, webserver_sha);
         assert_eq!(updated.assets.webserver.size, webserver_size);
-        let (static_sha, static_size) = sha256_bytes(ZIP_1_2_3);
+        // static_archive 身份从备份内现场打包的 static.zip 计算,与恢复内容一致。
+        let (static_sha, static_size) = sha256_bytes(
+            &std::fs::read(install_root.canonical.join("releases/1.2.3/static.zip")).unwrap(),
+        );
         assert_eq!(updated.assets.static_archive.sha256, static_sha);
         assert_eq!(updated.assets.static_archive.size, static_size);
         assert_eq!(updated.initialization.status, InitStatus::Complete);
@@ -694,10 +694,13 @@ esac
             std::fs::read_to_string(release.join("static/index.html")).unwrap(),
             "static 1.2.3"
         );
-        assert_eq!(
-            std::fs::read(release.join("static.zip")).unwrap(),
-            ZIP_1_2_3
-        );
+        // 版本目录的 static.zip 来自备份内现场打包的压缩包,内容与 static/ 同源。
+        let packed = std::fs::File::open(release.join("static.zip")).unwrap();
+        let mut archive = zip::ZipArchive::new(packed).unwrap();
+        let mut index = archive.by_name("static/index.html").unwrap();
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut index, &mut content).unwrap();
+        assert_eq!(content, "static 1.2.3");
         assert_eq!(
             std::fs::read_to_string(install_root.canonical.join("data/landscape_init.toml"))
                 .unwrap(),

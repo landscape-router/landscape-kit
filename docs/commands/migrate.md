@@ -20,8 +20,8 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
   升级由后续 `lkit switch` 完成。
 - 单实例约束：lkit 地盘必须无已提交状态（不存在 `install-state.json`），landscape
   安装根必须是全新目录：没有遗留的 `data/`、`releases/`、`service/` 或 `current`。
-- `--repository` 只在本地缺少 `static.zip` 时用于从发布仓库下载该版本的压缩包；
-  下载不可用时回退为把解压后的 `static/` 现场打包。
+- 迁移备份的 `static.zip` 由 `create_backup` 从旧部署的 `static/` 现场打包
+  （与备份内 `static/` 树同源，含自校验）。
 - 非交互模式必须显式 `--yes` 确认迁移计划。
 
 ## 迁移流程（同一事务，失败自动回滚）
@@ -44,9 +44,8 @@ lkit migrate --from <CONFIG_DIR> [--install-dir <PATH>]
    - 通过导出 API 读取当前配置与后端版本；
    - 后端二进制从 `/proc/<pid>/exe` 读取（运行中文件已被删除时仍可靠）；
    - static 目录取进程 `--web` 参数，缺省为 `<CONFIG_DIR>/static`；
-   - `static.zip` 本地存在则直接使用，否则从发布仓库下载，仓库不可用时从
-     `static/` 现场打包并自校验；
-   - 按 `.lkb` minimal scope 生成迁移备份到 `/root/.lkit/backups/<id>.lkb`。
+   - 按 `.lkb` minimal scope 生成迁移备份到 `/root/.lkit/backups/<id>.lkb`，其中
+     `static.zip` 从 static 目录现场打包并自校验；
 5. **确认**：展示源目录、后端版本（不升级）、目标管理方式和安装根目录；拒绝时
    不创建事务、不写任何文件。前台步骤之间检查中断，`prepared` 前 Ctrl+C 中止
    并标记事务 `failed`（迁移 `.lkb` 保留）。

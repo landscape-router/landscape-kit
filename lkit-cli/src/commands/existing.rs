@@ -47,7 +47,13 @@ async fn run_installed_inner(
         let (provider, _override) = resolve_provider(args, &plan.root)?;
         let health = runtime.health_options()?;
         if args.repair_static {
-            crate::workflows::repair::repair_static(&plan.root, &provider, &state).await?;
+            crate::workflows::repair::repair_static(
+                &plan.root,
+                &provider,
+                &state,
+                args.repair_official,
+            )
+            .await?;
             println!(
                 "install: {}",
                 crate::tr!(crate::keys::EXISTING_STATIC_PAGES_RESTORED)
@@ -345,8 +351,13 @@ async fn same_version_install(
             ));
         };
         let release = provider.release(&version, architecture).await?;
-        if release.assets.static_archive.sha256 != state.assets.static_archive.sha256
-            || release.assets.static_archive.size != state.assets.static_archive.size
+        // 配置了自定义前端源时,静态内容本就与官方仓库无关:跳过 static 身份核对,
+        // 只核对后端二进制(自定义前端源在下次 install/update/switch 时重新应用)。
+        let custom_frontend_configured =
+            crate::deployment::config::resolve_active_frontend_lenient().is_some();
+        if !custom_frontend_configured
+            && (release.assets.static_archive.sha256 != state.assets.static_archive.sha256
+                || release.assets.static_archive.size != state.assets.static_archive.size)
         {
             return Err(plan::InstallError::UserRefused(
                 "the new repository provides different assets for the same version; refusing to switch source"

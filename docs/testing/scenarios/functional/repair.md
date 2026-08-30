@@ -20,11 +20,15 @@
 
 ## REP-03
 
-**新仓库为同版本提供不同资产时拒绝 repair**
+**`repair static` 在记录身份与仓库不一致时仍以仓库为准恢复官方页面**
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 说明：[`lkit repair`](../../../commands/repair.md)
+- 证据：[`lkit repair`](../../../commands/repair.md)、`repairs_static_from_a_repository_with_different_assets`（lkit-cli/src/workflows/repair.rs）
+- 说明：state 记录的 static 身份与仓库 manifest 不一致时（如恢复备份后），repair
+  不再拒绝，而是下载校验官方包、替换静态目录、更新 state 身份并刷新版本目录
+  `static.zip`。自定义前端源激活时 repair 恢复自定义前端（`--official` 强制官方），
+  见 [FE-06](frontend.md#fe-06)。
 
 ## REP-04
 

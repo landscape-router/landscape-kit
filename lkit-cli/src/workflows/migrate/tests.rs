@@ -178,7 +178,8 @@ async fn spawn_manual_install(
     std::fs::create_dir_all(static_dir.join("assets")).unwrap();
     std::fs::write(static_dir.join("index.html"), "manual static").unwrap();
     std::fs::write(static_dir.join("assets/app.js"), "manual asset").unwrap();
-    pack_static_zip(&static_dir, &source.join("static.zip")).unwrap();
+    crate::release::repository::archive::pack_static_zip(&static_dir, &source.join("static.zip"))
+        .unwrap();
 
     let config_path = root.join("fixture.json");
     std::fs::write(

@@ -28,6 +28,7 @@ pub async fn run(args: &Reconcile) -> ExitCode {
         password_file: None,
         interactive_password: None,
         repair_static: false,
+        repair_official: false,
         repair_binary: false,
         allow_no_backup: false,
         accept_service_change: args.accept_service_change,

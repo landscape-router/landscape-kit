@@ -270,7 +270,9 @@ rename 更新,不得先删除旧链接。
   地盘);`canonical_install_root` 与当前真实目录不一致时状态损坏;
 - `active_version` 是规范化 SemVer;
 - `assets.webserver` 记录实际落盘后端的架构、大小和可信摘要;
-- `assets.static_archive` 只记录安装来源,不用于验证当前静态目录;
+- `assets.static_archive` 只记录安装来源,不用于验证当前静态目录;安装时记录官方
+  `static.zip` 身份，restore 后记录备份内打包 `static.zip` 的身份（不要求与仓库
+  manifest 一致），`repair static` 官方路径可恢复为仓库身份;
 - `initialization.status` 只允许 `pending` 或 `complete`;首次安装尚未由用户启动时为 `pending`;
 - `initialization.lock_present` 是提交状态时对初始化锁的观察结果;`status: pending` 时必须为 false,`status: complete` 时必须为 true;
 - `initialization.initialized_at` 在 `pending` 时必须为 `null`,在 `complete` 时为 UTC RFC 3339;

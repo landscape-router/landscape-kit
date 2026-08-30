@@ -175,11 +175,6 @@ pub(crate) async fn create_manual_backup(
         .join(&installed.active_version)
         .join(WEBSERVER_BINARY);
     let static_dir = root.canonical.join("current/static");
-    let static_archive = root
-        .canonical
-        .join("releases")
-        .join(&installed.active_version)
-        .join("static.zip");
     let geo_tmp = root.canonical.join("data/geo_tmp");
     let backup_ref = crate::backup::lkb::create_backup(
         &layout::territory_backups_dir(),
@@ -188,7 +183,6 @@ pub(crate) async fn create_manual_backup(
         &webserver,
         &exported.content,
         &static_dir,
-        &static_archive,
         &geo_tmp,
         remark,
         false,

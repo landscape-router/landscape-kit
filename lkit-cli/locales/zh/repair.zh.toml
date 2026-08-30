@@ -1,1 +1,3 @@
 repair.rollback_failed = "自动回滚失败：%{rollback_error}"
+repair.static_fallback_official = "激活的前端源不可用，回退到官方前端页面"
+repair.static_official_reapply_note = "已恢复官方前端页面；检测到已配置自定义前端源，下次 install/update/switch 会重新应用"

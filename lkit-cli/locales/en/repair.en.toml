@@ -1,1 +1,3 @@
 repair.rollback_failed = "automatic rollback failed: %{rollback_error}"
+repair.static_fallback_official = "the active frontend source is unavailable; falling back to the official frontend pages"
+repair.static_official_reapply_note = "the official frontend pages are restored; a custom frontend source is configured and will be re-applied on the next install/update/switch"

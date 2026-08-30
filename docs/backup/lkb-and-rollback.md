@@ -24,10 +24,14 @@
 区分保护快照的用途。`backup create` 不停止或重启服务，但必须在取得安装锁后从当前
 运行实例成功导出配置。
 
-每个 v1 备份固定携带该版本官方静态压缩包 `static.zip`，与归档内 `static/` 解压树同源。
-restore 从备份内压缩包现场计算 `static_archive` 身份，state 因此始终如实描述恢复内容，
-metadata 不需要记录仓库来源：仓库来源是安装机器的持续分发通道，独立记录在
-`config.toml` 中，restore 不读取也不修改它，不属于备份内容。
+每个 v1 备份的 `static.zip` 条目从当前 `current/static/` 现场打包生成（按仓库解包
+规则自校验），与归档内 `static/` 解压树同源同刻；不再读取
+`releases/<version>/static.zip`。目录含符号链接、设备文件等非法条目时备份失败并
+指明条目。restore 从备份内压缩包现场计算 `static_archive` 身份，state 因此始终
+如实描述恢复内容，不要求与任何仓库 manifest 匹配；metadata 不需要记录仓库来源：
+仓库来源是安装机器的持续分发通道，独立记录在 `config.toml` 中，restore 不读取也
+不修改它，不属于备份内容。恢复后的静态身份若与仓库不一致，`repair static` 可从
+仓库恢复官方身份（自定义前端源激活时按激活源意图恢复）。
 
 ### `landscape_init.toml` 与数据库重建
 
@@ -136,9 +140,9 @@ v1 只允许 `scope: "minimal"`，不定义或接受 `full`。
 
 - `landscape-webserver`：当前实际运行且通过状态摘要验证的二进制；
 - `landscape_init.toml`：通过导出 API 获得的完整当前运行态配置；
-- `static.zip`：当前版本安装时从仓库下载的官方静态压缩包，位于
-  `releases/<version>/static.zip`，缺失时备份创建失败；
-- `static/`：当前实际目录，包括用户自定义页面；
+- `static.zip`：备份时从 `current/static/` 现场打包的当前静态页面压缩包
+  （含自校验），与 `static/` 树同源同刻；目录含非法条目时备份失败；
+- `static/`：当前实际目录，包括用户自定义页面与自定义前端；
 - `geo_tmp/`：当前 Landscape home 下的 GeoIP/GeoSite 数据缓存。
 
 `geo_tmp` 不存在时允许备份，归档中创建空目录并报告 warning。目录存在但不能完整读取时备份失败并中止升级。
@@ -220,8 +224,8 @@ Header：
 - `remark` 是字符串，可以为空；
 - `auto` 表示是否为安装器自动创建的升级前备份；
 - `scope` v1 只能为 `minimal`；
-- `contents` 五个已定义布尔字段必须为 true；`static_archive` 表示归档携带当前版本的官方
-  静态压缩包，用于 restore 现场计算静态资产身份；
+- `contents` 五个已定义布尔字段必须为 true；`static_archive` 表示归档携带备份时从
+  `current/static/` 现场打包的静态压缩包，用于 restore 现场计算静态资产身份；
 - 归档中的 `static.zip` 条目必须是普通文件（目录或符号链接条目拒绝），解包校验时与
   `contents.static_archive: true` 一并确认；
 - `checksum` 为 `sha256:` 加 64 位小写十六进制字符，校验偏移 1 MiB 到 EOF 的完整 tar.gz 字节；

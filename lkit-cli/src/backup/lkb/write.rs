@@ -62,7 +62,6 @@ pub(crate) fn create_backup(
     webserver: &Path,
     init_config: &str,
     static_dir: &Path,
-    static_archive_zip: &Path,
     geo_tmp: &Path,
     remark: &str,
     auto: bool,
@@ -71,6 +70,17 @@ pub(crate) fn create_backup(
     validate_remark(remark)?;
     let tmp_dir = backups_dir.join(".tmp");
     std::fs::create_dir_all(&tmp_dir).map_err(InstallError::Io)?;
+    // 从 current/static/ 现场打包 static.zip（含自校验），与归档内 static/ 树
+    // 同源同刻；目录含符号链接等非法条目时打包失败并指明条目。
+    let static_zip = tmp_dir.join(format!("static-{}.zip", Uuid::now_v7()));
+    let _static_cleanup = TmpCleanup(static_zip.clone());
+    crate::release::repository::archive::pack_static_zip(static_dir, &static_zip).map_err(
+        |error| {
+            invalid_backup(format!(
+                "failed to pack the current static directory into static.zip: {error}"
+            ))
+        },
+    )?;
     let archive_tmp = tmp_dir.join(format!("archive-{}.tar.gz", Uuid::now_v7()));
     let _archive_cleanup = TmpCleanup(archive_tmp.clone());
     let (tar_sha256, _) = stream_tar_gz(
@@ -78,7 +88,7 @@ pub(crate) fn create_backup(
         webserver,
         init_config,
         static_dir,
-        static_archive_zip,
+        &static_zip,
         geo_tmp,
         &mut progress,
     )?;
@@ -436,24 +446,17 @@ mod tests {
 
     fn backup_source(
         root: &std::path::Path,
-    ) -> (
-        std::path::PathBuf,
-        std::path::PathBuf,
-        std::path::PathBuf,
-        std::path::PathBuf,
-    ) {
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
         let webserver = root.join("landscape-webserver");
         std::fs::write(&webserver, b"binary payload").unwrap();
         let static_dir = root.join("static");
         std::fs::create_dir_all(static_dir.join("assets")).unwrap();
         std::fs::write(static_dir.join("index.html"), b"<h1>hello</h1>").unwrap();
         std::fs::write(static_dir.join("assets/app.js"), b"console.log(1);").unwrap();
-        let static_zip = root.join("static.zip");
-        std::fs::write(&static_zip, b"zip payload").unwrap();
         let geo_tmp = root.join("geo_tmp");
         std::fs::create_dir_all(geo_tmp.join("ip")).unwrap();
         std::fs::write(geo_tmp.join("ip/geo.dat"), b"geo").unwrap();
-        (webserver, static_dir, static_zip, geo_tmp)
+        (webserver, static_dir, geo_tmp)
     }
 
     #[test]
@@ -461,7 +464,7 @@ mod tests {
         let temp = temp_dir("distinct-ids");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, static_zip, geo_tmp) = backup_source(&source);
+        let (webserver, static_dir, geo_tmp) = backup_source(&source);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
 
@@ -472,7 +475,6 @@ mod tests {
             &webserver,
             "version = \"1.2.3\"",
             &static_dir,
-            &static_zip,
             &geo_tmp,
             "first",
             false,
@@ -486,7 +488,6 @@ mod tests {
             &webserver,
             "version = \"1.2.3\"",
             &static_dir,
-            &static_zip,
             &geo_tmp,
             "second",
             false,
@@ -505,7 +506,7 @@ mod tests {
         let temp = temp_dir("progress");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, static_zip, geo_tmp) = backup_source(&source);
+        let (webserver, static_dir, geo_tmp) = backup_source(&source);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         let mut events = Vec::new();
@@ -518,7 +519,6 @@ mod tests {
                 &webserver,
                 "version = \"1.2.3\"",
                 &static_dir,
-                &static_zip,
                 &geo_tmp,
                 "",
                 true,
@@ -590,14 +590,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_static_archive() {
-        let temp = temp_dir("nozip");
+    fn rejects_missing_static_dir() {
+        let temp = temp_dir("nostatic");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, _, geo_tmp) = backup_source(&source);
+        let (webserver, _, geo_tmp) = backup_source(&source);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
-        let missing_zip = temp.join("missing.zip");
+        let missing_static = temp.join("no-static-dir");
         assert!(
             create_backup(
                 &backups,
@@ -605,8 +605,7 @@ mod tests {
                 "x86_64",
                 &webserver,
                 "version = \"1.2.3\"",
-                &static_dir,
-                &missing_zip,
+                &missing_static,
                 &geo_tmp,
                 "",
                 true,
@@ -622,12 +621,10 @@ mod tests {
         let temp = temp_dir("symlink");
         let source = temp.join("source");
         std::fs::create_dir_all(source.join("static")).unwrap();
-        let webserver = source.join("landscape-webserver");
-        std::fs::write(&webserver, b"x").unwrap();
         let outside = temp.join("outside");
         std::fs::write(&outside, b"secret").unwrap();
         std::os::unix::fs::symlink(&outside, source.join("static/evil")).unwrap();
-        let (webserver, _static_dir, _, geo_tmp) = backup_source(&temp);
+        let (webserver, _static_dir, geo_tmp) = backup_source(&temp);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         assert!(
@@ -638,7 +635,6 @@ mod tests {
                 &webserver,
                 "version = \"1.2.3\"",
                 &source.join("static"),
-                &temp.join("static.zip"),
                 &geo_tmp,
                 "",
                 true,

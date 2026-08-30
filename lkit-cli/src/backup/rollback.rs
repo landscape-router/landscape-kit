@@ -525,12 +525,10 @@ esac
         let backup_source = dir.join("backup-source");
         let backup_binary = backup_source.join("landscape-webserver");
         let backup_static = backup_source.join("static");
-        let backup_zip = backup_source.join("static.zip");
         let backup_geo = backup_source.join("geo_tmp");
         std::fs::create_dir_all(backup_static.join("assets")).unwrap();
         std::fs::create_dir_all(backup_geo.join("ip")).unwrap();
         std::fs::write(&backup_binary, b"binary-from-lkb").unwrap();
-        std::fs::write(&backup_zip, b"zip-from-lkb").unwrap();
         std::fs::write(backup_static.join("index.html"), b"static-from-lkb").unwrap();
         std::fs::write(backup_static.join("assets/app.js"), b"asset-from-lkb").unwrap();
         std::fs::write(backup_geo.join("ip/geo.dat"), b"geo-from-lkb").unwrap();
@@ -541,7 +539,6 @@ esac
             &backup_binary,
             "init_config_from_lkb = true\n",
             &backup_static,
-            &backup_zip,
             &backup_geo,
             "",
             true,
@@ -626,10 +623,13 @@ esac
             std::fs::read(old_release.join("static/assets/app.js")).unwrap(),
             b"asset-from-lkb"
         );
-        assert_eq!(
-            std::fs::read(old_release.join("static.zip")).unwrap(),
-            b"zip-from-lkb"
-        );
+        // 备份内的 static.zip 是备份时现场打包的,可解包出与 static/ 同源内容。
+        let packed = std::fs::File::open(old_release.join("static.zip")).unwrap();
+        let mut archive = zip::ZipArchive::new(packed).unwrap();
+        let mut index = archive.by_name("static/index.html").unwrap();
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut index, &mut content).unwrap();
+        assert_eq!(content, "static-from-lkb");
         assert_eq!(
             std::fs::read(dir.join("data/geo_tmp/ip/geo.dat")).unwrap(),
             b"geo-from-lkb"

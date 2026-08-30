@@ -89,6 +89,7 @@ pub async fn run(args: &Install) -> ExitCode {
         password_file: args.password_file.clone(),
         interactive_password: args.interactive_password.clone(),
         repair_static: false,
+        repair_official: false,
         repair_binary: false,
         allow_no_backup: false,
         accept_service_change: false,

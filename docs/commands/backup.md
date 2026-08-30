@@ -53,8 +53,9 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 备注；非交互模式（`--non-interactive` 或无法打开终端）缺省为空。无论来自参数还是
 交互输入，备注都统一校验（最多 256 字符、单行、无控制字符），非法时返回参数错误 `2`。
 
-备份包含后端二进制、当前静态页面、该版本官方静态压缩包 `static.zip`、导出的
-`landscape_init.toml` 和 `geo_tmp`，不包含：
+备份包含后端二进制、当前静态页面、备份时从 `current/static/` 现场打包的
+`static.zip`（与 `static/` 树同源同刻，含自校验；目录含符号链接等非法条目时备份
+失败并指明条目）、导出的 `landscape_init.toml` 和 `geo_tmp`，不包含：
 
 - `landscape_db.sqlite` 及其他数据库文件；
 - `landscape_api_token`；
@@ -100,4 +101,5 @@ verify 解包到随机命名的 `0700` 临时目录，解包目录与文件分�
 未完成事务引用。
 
 已有 v1 `.lkb` 始终可以 verify。所有 v1 备份都携带 `static.zip`，restore 可以从备份
-内容现场计算静态资产身份，不需要在 metadata 中记录仓库来源。
+内容现场计算静态资产身份（该身份不要求与任何仓库 manifest 一致；恢复后如需回到
+仓库身份，`repair static` 可恢复），不需要在 metadata 中记录仓库来源。

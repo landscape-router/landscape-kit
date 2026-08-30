@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::io::{BufWriter, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lkit_repository::zip_path_parts;
 use semver::Version;
@@ -188,6 +188,78 @@ pub(crate) fn extract_static_archive(
             version: version.clone(),
             reason: "decompressed result is missing static/index.html".into(),
         });
+    }
+    Ok(())
+}
+
+/// 从解压后的 static 目录现场打包 `static.zip`（条目带 `static/` 前缀,只允许
+/// 目录与普通文件；发现符号链接、设备文件等非法条目时失败）。打包后按仓库解包
+/// 规则自校验,保证恢复时可被正常消费。
+pub(crate) fn pack_static_zip(
+    static_dir: &Path,
+    target: &Path,
+) -> Result<PathBuf, RepositoryError> {
+    let file = std::fs::File::create(target).map_err(RepositoryError::Io)?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let prefix = Path::new("static");
+    pack_entry(&mut writer, &options, prefix, static_dir, static_dir)?;
+    writer
+        .finish()
+        .map_err(|error| RepositoryError::Io(std::io::Error::other(error)))?;
+
+    let size = std::fs::metadata(target)
+        .map_err(RepositoryError::Io)?
+        .len();
+
+    let check_dir = target
+        .parent()
+        .expect("packed zip has a parent")
+        .join("static-pack-check");
+    let _ = std::fs::remove_dir_all(&check_dir);
+    extract_static_archive(&semver::Version::new(0, 0, 0), target, size, &check_dir)?;
+    let _ = std::fs::remove_dir_all(&check_dir);
+    Ok(target.to_path_buf())
+}
+
+fn pack_entry<W: std::io::Write + std::io::Seek>(
+    writer: &mut zip::ZipWriter<W>,
+    options: &zip::write::SimpleFileOptions,
+    prefix: &Path,
+    root: &Path,
+    dir: &Path,
+) -> Result<(), RepositoryError> {
+    for entry in std::fs::read_dir(dir).map_err(RepositoryError::Io)? {
+        let entry = entry.map_err(RepositoryError::Io)?;
+        let file_type = entry.file_type().map_err(RepositoryError::Io)?;
+        let entry_path = entry.path();
+        let relative = entry_path
+            .strip_prefix(root)
+            .map_err(|error| RepositoryError::Io(std::io::Error::other(error)))?
+            .to_path_buf();
+        let zip_name = prefix.join(relative);
+        if file_type.is_dir() {
+            writer
+                .add_directory(format!("{}/", zip_name.display()), *options)
+                .map_err(|error| RepositoryError::Io(std::io::Error::other(error)))?;
+            pack_entry(writer, options, prefix, root, &entry_path)?;
+        } else if file_type.is_file() {
+            writer
+                .start_file(zip_name.display().to_string(), *options)
+                .map_err(|error| RepositoryError::Io(std::io::Error::other(error)))?;
+            let bytes = std::fs::read(&entry_path).map_err(RepositoryError::Io)?;
+            use std::io::Write;
+            writer.write_all(&bytes).map_err(RepositoryError::Io)?;
+        } else {
+            return Err(RepositoryError::Extract {
+                version: semver::Version::new(0, 0, 0),
+                reason: format!(
+                    "the static directory contains an unsupported entry {}",
+                    entry_path.display()
+                ),
+            });
+        }
     }
     Ok(())
 }

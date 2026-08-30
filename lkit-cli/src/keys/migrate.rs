@@ -1,7 +1,6 @@
 // `lkit migrate` 迁移流程的消息 key。
 pub(crate) const MIGRATE_CONFIRM_PLAN: &str = "migrate.confirm_plan";
 pub(crate) const MIGRATE_CONFIRM_STOP_FOREGROUND: &str = "migrate.confirm_stop_foreground";
-pub(crate) const MIGRATE_PACKING_STATIC_LOCALLY: &str = "migrate.packing_static_locally";
 pub(crate) const MIGRATE_COMMITTED: &str = "migrate.committed";
 pub(crate) const MIGRATE_LEGACY_DEPLOYMENT_LEFT: &str = "migrate.legacy_deployment_left";
 pub(crate) const MIGRATE_REQUIRES_FRESH_INSTALL_ROOT: &str = "migrate.requires_fresh_install_root";

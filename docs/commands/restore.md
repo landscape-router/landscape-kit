@@ -88,6 +88,9 @@ systemd 模式自动回滚的顺序固定为：停止目标服务 → 恢复 uni
 
 恢复不得伪造成功，也不得在没有必要事实时猜测 service manager 或 `current`。
 恢复提交的 state 中：`active_version` 取备份 metadata；`webserver` 身份从解包二进制
-现场计算；`static_archive` 身份从备份内 `static.zip` 现场计算。restore 不下载仓库资产，
+现场计算；`static_archive` 身份从备份内 `static.zip` 现场计算——该身份不要求与任何
+仓库 manifest 一致（备份内的 `static.zip` 是备份时从 `current/static/` 现场打包的），
+恢复内容即备份快照（含自定义前端页面）。恢复后如需回到仓库身份，运行
+`repair static`（自定义前端源激活时按激活源意图恢复）。restore 不下载仓库资产，
 不读取也不改写 `config.toml`。
 

@@ -40,6 +40,10 @@ pub(crate) struct InstallRequest {
     /// Restore official static pages from the target release
     pub(crate) repair_static: bool,
 
+    /// Restore the official static pages unconditionally, ignoring any configured
+    /// custom frontend source (`lkit repair static --official`)
+    pub(crate) repair_official: bool,
+
     /// Authorize repairing a same-version backend with a mismatched checksum
     pub(crate) repair_binary: bool,
 
@@ -794,6 +798,7 @@ mod tests {
             interactive_password: password.map(str::to_string),
             repair_static: false,
             repair_binary: false,
+            repair_official: false,
             allow_no_backup: false,
             accept_service_change: false,
             force: false,

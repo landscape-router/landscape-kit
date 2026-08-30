@@ -342,11 +342,6 @@ async fn create_protection_backup<P: DocsProbe>(
         .join(&state.active_version)
         .join(WEBSERVER_BINARY);
     let static_dir = root.canonical.join("current/static");
-    let static_archive = root
-        .canonical
-        .join("releases")
-        .join(&state.active_version)
-        .join("static.zip");
     let geo_tmp = root.canonical.join("data/geo_tmp");
     let backup_ref = backup::create_backup(
         &layout::territory_backups_dir(),
@@ -355,7 +350,6 @@ async fn create_protection_backup<P: DocsProbe>(
         &webserver,
         &exported.content,
         &static_dir,
-        &static_archive,
         &geo_tmp,
         &crate::tr!(crate::keys::BACKUP_AUTO_REMARK_REINIT),
         true,

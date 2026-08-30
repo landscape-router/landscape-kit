@@ -1,6 +1,5 @@
 migrate.confirm_plan = "准备开始迁移：源配置目录 %{source}，后端版本 %{version}（备份不升级），目标管理方式 %{manager}。旧实例将被停止，并在安装根目录创建受管安装；迁移备份保留在 backups/ 下。是否继续？（输入 yes 继续）"
 migrate.confirm_stop_foreground = "未找到旧实例对应的 systemd unit；请手动停止它（例如终止前台进程或启动它的 shell），然后确认"
-migrate.packing_static_locally = "警告：本地缺少 static.zip 且发布仓库无法提供该版本，将把解压后的 static 目录打包为 static.zip"
 migrate.committed = "迁移完成：已接管版本 %{version}，迁移备份 %{backup_id} 保留在 backups/ 下"
 migrate.legacy_deployment_left = "旧部署目录 %{source} 未做任何修改（其服务现已停止）；确认不再需要后请自行清理"
 migrate.requires_fresh_install_root = "安装根目录已存在已提交的安装；migrate 需要全新的目录"

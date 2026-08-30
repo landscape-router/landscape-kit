@@ -20,6 +20,9 @@ pub struct Repair {
     pub target: RepairTarget,
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
+    /// Restore the official frontend pages unconditionally, ignoring any configured custom frontend source
+    #[arg(long)]
+    pub official: bool,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -27,6 +30,10 @@ pub struct Repair {
 
 pub async fn run(args: &Repair) -> ExitCode {
     let binary = args.target == RepairTarget::Binary;
+    if binary && args.official {
+        eprintln!("lkit: --official is only valid for `lkit repair static`");
+        return ExitCode::from(2);
+    }
     super::manage::run_request(&InstallRequest {
         mode: if binary {
             RequestMode::RepairBinary
@@ -41,6 +48,7 @@ pub async fn run(args: &Repair) -> ExitCode {
         interactive_password: None,
         repair_static: !binary,
         repair_binary: binary,
+        repair_official: !binary && args.official,
         allow_no_backup: false,
         accept_service_change: false,
         force: false,

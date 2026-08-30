@@ -175,6 +175,7 @@ fn switch_request(args: &Update, version: String, repository: RepositoryChoice) 
         password_file: None,
         interactive_password: None,
         repair_static: false,
+        repair_official: false,
         repair_binary: false,
         allow_no_backup: args.allow_no_backup,
         accept_service_change: args.accept_service_change,

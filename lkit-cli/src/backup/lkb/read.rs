@@ -332,24 +332,17 @@ mod tests {
 
     fn backup_source(
         root: &std::path::Path,
-    ) -> (
-        std::path::PathBuf,
-        std::path::PathBuf,
-        std::path::PathBuf,
-        std::path::PathBuf,
-    ) {
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
         let webserver = root.join("landscape-webserver");
         std::fs::write(&webserver, b"binary payload").unwrap();
         let static_dir = root.join("static");
         std::fs::create_dir_all(static_dir.join("assets")).unwrap();
         std::fs::write(static_dir.join("index.html"), b"<h1>hello</h1>").unwrap();
         std::fs::write(static_dir.join("assets/app.js"), b"console.log(1);").unwrap();
-        let static_zip = root.join("static.zip");
-        std::fs::write(&static_zip, b"zip payload").unwrap();
         let geo_tmp = root.join("geo_tmp");
         std::fs::create_dir_all(geo_tmp.join("ip")).unwrap();
         std::fs::write(geo_tmp.join("ip/geo.dat"), b"geo").unwrap();
-        (webserver, static_dir, static_zip, geo_tmp)
+        (webserver, static_dir, geo_tmp)
     }
 
     #[test]
@@ -357,7 +350,7 @@ mod tests {
         let temp = temp_dir("roundtrip");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, static_zip, geo_tmp) = backup_source(&source);
+        let (webserver, static_dir, geo_tmp) = backup_source(&source);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         let backup = create_backup(
@@ -367,7 +360,6 @@ mod tests {
             &webserver,
             "version = \"1.2.3\"",
             &static_dir,
-            &static_zip,
             &geo_tmp,
             "manual backup",
             false,
@@ -393,10 +385,13 @@ mod tests {
             std::fs::read(target.join("landscape-webserver")).unwrap(),
             b"binary payload"
         );
-        assert_eq!(
-            std::fs::read(target.join("static.zip")).unwrap(),
-            b"zip payload"
-        );
+        // 备份内的 static.zip 是备份时从 static/ 现场打包的,可解包出同源内容。
+        let packed = std::fs::File::open(target.join("static.zip")).unwrap();
+        let mut archive = zip::ZipArchive::new(packed).unwrap();
+        let mut index = archive.by_name("static/index.html").unwrap();
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut index, &mut content).unwrap();
+        assert_eq!(content, "<h1>hello</h1>");
         assert_eq!(
             std::fs::read_to_string(target.join("static/index.html")).unwrap(),
             "<h1>hello</h1>"
@@ -440,7 +435,7 @@ mod tests {
         let temp = temp_dir("streamed");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, static_zip, geo_tmp) = backup_source(&source);
+        let (webserver, static_dir, geo_tmp) = backup_source(&source);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         let backup = create_backup(
@@ -450,7 +445,6 @@ mod tests {
             &webserver,
             "version = \"1.2.3\"",
             &static_dir,
-            &static_zip,
             &geo_tmp,
             "",
             true,
@@ -494,7 +488,7 @@ mod tests {
         let temp = temp_dir("nogeo");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, static_zip, _) = backup_source(&source);
+        let (webserver, static_dir, _) = backup_source(&source);
         let missing_geo = temp.join("missing-geo");
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
@@ -505,7 +499,6 @@ mod tests {
             &webserver,
             "version = \"1.2.3\"",
             &static_dir,
-            &static_zip,
             &missing_geo,
             "",
             true,
@@ -528,7 +521,7 @@ mod tests {
         let temp = temp_dir("tamper");
         let source = temp.join("source");
         std::fs::create_dir_all(&source).unwrap();
-        let (webserver, static_dir, static_zip, geo_tmp) = backup_source(&source);
+        let (webserver, static_dir, geo_tmp) = backup_source(&source);
         let backups = temp.join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         let backup = create_backup(
@@ -538,7 +531,6 @@ mod tests {
             &webserver,
             "version = \"1.2.3\"",
             &static_dir,
-            &static_zip,
             &geo_tmp,
             "",
             true,

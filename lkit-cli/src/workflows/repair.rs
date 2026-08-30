@@ -12,7 +12,9 @@ use super::plan::InstallError;
 use super::repository::{Architecture, Release, ReleaseProvider};
 use super::rollback;
 use super::root::InstallRoot;
-use super::state::{InitStatus, InstallState, StateArchitecture, StateServiceManager};
+use super::state::{
+    ArchiveAsset, InitStatus, InstallState, StateArchitecture, StateServiceManager,
+};
 use super::transaction::{Phase, StaticBackupRef, TransactionFile};
 use crate::deployment::layout;
 
@@ -21,21 +23,6 @@ pub(crate) enum RepairOutcome {
     Committed,
     RolledBack,
     RollbackFailed { reason: String },
-}
-
-/// 校验本次实际使用的发布资产与状态记录一致。静态压缩包按清单直接比对
-/// (清单摘要即下载产物摘要);后端二进制摘要必须在下载解压后与
-/// 状态中的落盘二进制比对,由调用方在 fetch 后执行。
-fn verify_static_identity(release: &Release, state: &InstallState) -> Result<(), InstallError> {
-    if release.assets.static_archive.sha256 != state.assets.static_archive.sha256
-        || release.assets.static_archive.size != state.assets.static_archive.size
-    {
-        return Err(InstallError::UserRefused(
-            "the repository provides different assets for the same version; refusing to repair"
-                .into(),
-        ));
-    }
-    Ok(())
 }
 
 /// 校验新来源的落盘后端与状态记录完全一致(解压后比对)。
@@ -56,16 +43,27 @@ fn verify_backend_identity(
 
 /// 纯静态页面修复:不停止 Landscape、不创建 `.lkb`,也不做任何运行态检查。
 /// 静态文件由运行中的 Landscape 热加载,因此只需备份现有 `static/`、
-/// 原子替换为发布版静态资产并提交状态;失败时从备份恢复。
+/// 原子替换为目标静态内容并提交状态;失败时从备份恢复。
+///
+/// 意图驱动:配置了激活的自定义前端源且未指定 `--official` 时,重新拉取该前端源
+/// 的 latest/stable 并应用;否则恢复官方页面。官方路径成功后刷新版本目录
+/// `static.zip` 并更新 state 中的 static archive 身份(可修复恢复/手工替换造成的
+/// 身份漂移)。下载物仍与其解析来源的元数据严格校验,不再以 state 身份为门槛,
+/// 因此 `repair static` 在任何状态下都可用。
 pub(crate) async fn repair_static(
     root: &InstallRoot,
     provider: &ReleaseProvider,
     state: &InstallState,
+    official: bool,
 ) -> Result<(), InstallError> {
     let architecture = architecture_from_state(state);
     let active = parse_active_version(state)?;
+    let custom_source = if official {
+        None
+    } else {
+        crate::deployment::config::resolve_active_frontend()?
+    };
     let release = provider.release(&active, architecture).await?;
-    verify_static_identity(&release, state)?;
 
     let mut transaction = TransactionFile::new_repair_static(root)?;
     super::transaction::begin(root, &transaction)?;
@@ -77,7 +75,40 @@ pub(crate) async fn repair_static(
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         let new_static = tx_dir.join("static");
         let backup_dir = tx_dir.join("static-backup");
-        pipeline::fetch_static_asset(&release, &tx_dir).await?;
+        // 自定义前端源解析失败时:交互环境询问回退官方,非交互环境报错并提示
+        // `--official`。
+        let mut official_restored = custom_source.is_none();
+        if custom_source.is_some() {
+            match crate::frontend::fetch_active_frontend(&active, &tx_dir).await {
+                Ok(true) => {}
+                Ok(false) => unreachable!("resolve_active_frontend returned Some, fetch must run"),
+                Err(error) => {
+                    let fallback = if crate::interaction::interactive::is_non_interactive() {
+                        false
+                    } else {
+                        crate::interaction::interactive::confirm(&format!(
+                            "{error}\nfall back to the official frontend pages?"
+                        ))?
+                    };
+                    if !fallback {
+                        return Err(InstallError::FrontendSource(format!(
+                            "{error}; use `lkit repair static --official` to restore the official frontend pages"
+                        )));
+                    }
+                    eprintln!(
+                        "repair: {}",
+                        crate::tr!(crate::keys::REPAIR_STATIC_FALLBACK_OFFICIAL)
+                    );
+                    pipeline::fetch_static_asset(&release, &tx_dir).await?;
+                    official_restored = true;
+                }
+            }
+        } else {
+            pipeline::fetch_static_asset(&release, &tx_dir).await?;
+        }
+        if official_restored {
+            refresh_version_static_zip(root, &state.active_version, &tx_dir.join("static.zip"))?;
+        }
         rollback::copy_tree_into(&live_static, &backup_dir)?;
         transaction.static_backup = Some(StaticBackupRef {
             path: format!("transactions/{}/static-backup", transaction.transaction_id),
@@ -94,10 +125,22 @@ pub(crate) async fn repair_static(
             InstallError::Io(error)
         })?;
         let mut updated = state.clone();
+        if official_restored {
+            updated.assets.static_archive = ArchiveAsset {
+                sha256: release.assets.static_archive.sha256.clone(),
+                size: release.assets.static_archive.size,
+            };
+        }
         updated.last_transaction_id = Some(transaction.transaction_id.clone());
         updated.committed_at = Some(Utc::now());
         super::state::write_state(root, &updated)?;
         super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
+        if official_restored && custom_source.is_some() {
+            eprintln!(
+                "repair: {}",
+                crate::tr!(crate::keys::REPAIR_STATIC_OFFICIAL_REAPPLY_NOTE)
+            );
+        }
         Ok(())
     }
     .await;
@@ -119,6 +162,24 @@ pub(crate) async fn repair_static(
             Err(error)
         }
     }
+}
+
+/// 官方路径成功后,把本次下载校验过的官方 `static.zip` 刷新到版本目录,修复
+/// 恢复/手工替换造成的身份漂移。经同目录临时文件 + rename 原子完成。
+fn refresh_version_static_zip(
+    root: &InstallRoot,
+    active_version: &str,
+    downloaded: &Path,
+) -> Result<(), InstallError> {
+    let target = root
+        .canonical
+        .join("releases")
+        .join(active_version)
+        .join("static.zip");
+    let tmp = target.with_extension("zip.tmp");
+    std::fs::copy(downloaded, &tmp).map_err(InstallError::Io)?;
+    std::fs::rename(&tmp, &target).map_err(InstallError::Io)?;
+    Ok(())
 }
 
 fn restore_static(live_static: &Path, tx_dir: &Path) -> Result<(), InstallError> {
@@ -169,11 +230,6 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             )));
         }
         let static_dir = root.canonical.join("current/static");
-        let static_archive = root
-            .canonical
-            .join("releases")
-            .join(&state.active_version)
-            .join("static.zip");
         let geo_tmp = root.canonical.join("data/geo_tmp");
         let backup_ref = backup::create_backup(
             &layout::territory_backups_dir(),
@@ -182,7 +238,6 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             &current_binary,
             &exported.content,
             &static_dir,
-            &static_archive,
             &geo_tmp,
             &crate::tr!(crate::keys::BACKUP_AUTO_REMARK_REPAIR),
             true,
@@ -617,6 +672,7 @@ mod tests {
     fn activate_version(root: &InstallRoot, version: &str) {
         let release = root.canonical.join("releases").join(version);
         std::fs::create_dir_all(release.join("static")).unwrap();
+        std::fs::write(release.join("static/index.html"), "<h1>default</h1>").unwrap();
         let _ = std::fs::remove_file(root.canonical.join("current"));
         std::os::unix::fs::symlink(
             format!("releases/{version}"),
@@ -658,7 +714,9 @@ mod tests {
             static_size,
         );
 
-        repair_static(&root, &provider, &state).await.unwrap();
+        repair_static(&root, &provider, &state, false)
+            .await
+            .unwrap();
 
         assert_eq!(
             std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
@@ -710,7 +768,9 @@ mod tests {
         );
 
         // systemd 管理下的安装同样只做纯文件替换,不探测 /api/docs、不重启服务。
-        repair_static(&root, &provider, &state).await.unwrap();
+        repair_static(&root, &provider, &state, false)
+            .await
+            .unwrap();
         assert_eq!(
             std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
             "<h1>new</h1>"
@@ -726,7 +786,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_static_repair_from_a_repository_with_different_assets() {
+    async fn repairs_static_from_a_repository_with_different_assets() {
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>other</h1>");
         let (_server, root, provider, _guard) = start_repository("static-mismatch", files);
         activate_version(&root, "1.2.3");
@@ -738,14 +798,172 @@ mod tests {
             99,
         );
 
-        assert!(matches!(
-            repair_static(&root, &provider, &state).await,
-            Err(InstallError::UserRefused(_))
-        ));
+        // 记录身份与仓库不一致时,repair 仍以仓库为准恢复官方页面,并更新
+        // state 身份、刷新版本目录 static.zip。
+        repair_static(&root, &provider, &state, false)
+            .await
+            .unwrap();
+        let updated = crate::deployment::state::load_state(&root)
+            .unwrap()
+            .unwrap();
+        let release = provider
+            .release(
+                &semver::Version::new(1, 2, 3),
+                super::super::repository::Architecture::X86_64,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            updated.assets.static_archive.sha256, release.assets.static_archive.sha256,
+            "the state identity must be updated to the repository's official asset"
+        );
+        assert_eq!(
+            std::fs::read(root.canonical.join("current/static/index.html")).unwrap(),
+            b"<h1>other</h1>"
+        );
+        let (refreshed_sha, _) =
+            sha256_bytes(&std::fs::read(root.canonical.join("releases/1.2.3/static.zip")).unwrap());
+        assert_eq!(
+            refreshed_sha, release.assets.static_archive.sha256,
+            "the version dir static.zip must be refreshed with the official asset"
+        );
+        let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
+    }
+
+    /// 前端源 TestServer:stable 通道 + 只声明 static 的 manifest + static.zip。
+    fn frontend_server(html: &str) -> (TestServer, String, (String, u64)) {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "static/index.html",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(html.as_bytes()).unwrap();
+        let zip_bytes = zip.finish().unwrap().into_inner();
+        let (sha, size) = sha256_bytes(&zip_bytes);
+        let files: HashMap<String, Vec<u8>> = HashMap::from([
+            ("/repository.json".into(), br#"{"protocol_version":1}"#.to_vec()),
+            (
+                "/channels/stable.json".into(),
+                br#"{"protocol_version":1,"version":"1.0.0"}"#.to_vec(),
+            ),
+            (
+                "/releases/1.0.0/manifest.json".into(),
+                format!(
+                    r#"{{"protocol_version":1,"version":"1.0.0","assets":{{"webserver":{{}},"static":{{"url":"static.zip","sha256":"{sha}","size":{size}}}}}}}"#
+                )
+                .into_bytes(),
+            ),
+            ("/releases/1.0.0/static.zip".into(), zip_bytes),
+        ]);
+        let server = TestServer::start(move |path| match files.get(path) {
+            Some(body) => TestResponse::ok(body.clone()),
+            None => TestResponse::status(404, "Not Found", Vec::new()),
+        });
+        let location = server.base.clone();
+        (server, location, (sha, size))
+    }
+
+    #[tokio::test]
+    async fn static_repair_restores_the_configured_custom_frontend() {
+        let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>official</h1>");
+        let (_server, root, provider, _guard) = start_repository("custom-repair", files);
+        activate_version(&root, "1.2.3");
+        std::fs::write(
+            root.canonical.join("current/static/index.html"),
+            "<h1>official</h1>",
+        )
+        .unwrap();
+        let state = install_state(
+            &root,
+            StateServiceManager::Systemd,
+            InitStatus::Complete,
+            &"a".repeat(64),
+            1,
+        );
+        let (frontend_server, location, _) = frontend_server("<h1>custom</h1>");
+        let _ = frontend_server;
+        std::fs::write(
+            layout::territory_config_file(),
+            format!(
+                "schema_version = 1\n\n[repository]\nkind = \"github\"\nlocation = \"ThisSeanZhang/landscape\"\n\n[frontend]\nactive = \"custom\"\n\n[[frontend.sources]]\nid = \"custom\"\nkind = \"http\"\nlocation = \"{location}\"\n"
+            ),
+        )
+        .unwrap();
+
+        // 激活自定义前端源时,repair static 恢复自定义前端;state 身份保持原样。
+        super::super::state::write_state(&root, &state).unwrap();
+        let state_before = crate::deployment::state::load_state(&root)
+            .unwrap()
+            .unwrap();
+        repair_static(&root, &provider, &state, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
+            "<h1>custom</h1>"
+        );
+        let updated = crate::deployment::state::load_state(&root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.assets.static_archive, state_before.assets.static_archive,
+            "custom repair must not touch the official zip identity"
+        );
         assert!(
-            super::super::transaction::find_unfinished(&root)
-                .unwrap()
-                .is_none()
+            !root.canonical.join("releases/1.2.3/static.zip").exists(),
+            "custom repair must not touch the version dir static.zip (official baseline only)"
+        );
+        let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn static_repair_official_forces_the_official_pages() {
+        let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>official</h1>");
+        let (_server, root, provider, _guard) = start_repository("official-repair", files);
+        activate_version(&root, "1.2.3");
+        std::fs::write(
+            root.canonical.join("current/static/index.html"),
+            "<h1>customized</h1>",
+        )
+        .unwrap();
+        let state = install_state(
+            &root,
+            StateServiceManager::Systemd,
+            InitStatus::Complete,
+            &"a".repeat(64),
+            1,
+        );
+        let (frontend_server, location, _) = frontend_server("<h1>custom</h1>");
+        let _ = frontend_server;
+        std::fs::write(
+            layout::territory_config_file(),
+            format!(
+                "schema_version = 1\n\n[repository]\nkind = \"github\"\nlocation = \"ThisSeanZhang/landscape\"\n\n[frontend]\nactive = \"custom\"\n\n[[frontend.sources]]\nid = \"custom\"\nkind = \"http\"\nlocation = \"{location}\"\n"
+            ),
+        )
+        .unwrap();
+
+        // --official 无条件恢复官方页面并更新身份。
+        repair_static(&root, &provider, &state, true).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
+            "<h1>official</h1>"
+        );
+        let updated = crate::deployment::state::load_state(&root)
+            .unwrap()
+            .unwrap();
+        let release = provider
+            .release(
+                &semver::Version::new(1, 2, 3),
+                super::super::repository::Architecture::X86_64,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            updated.assets.static_archive.sha256,
+            release.assets.static_archive.sha256
         );
         let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
     }

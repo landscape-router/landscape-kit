@@ -240,14 +240,12 @@ pub(crate) async fn prepare_migration<P: DocsProbe>(
             crate::tr!(crate::keys::MIGRATE_CREATING_BACKUP)
         );
         let backup = create_migration_backup(
-            root,
             &tx_dir,
             &source,
             &instance,
             &exported,
             &version,
             architecture,
-            args,
         )
         .await?;
         transaction.backup = Some(backup.clone());
@@ -714,18 +712,16 @@ fn identify_running_instance(
 }
 
 /// 创建迁移 `.lkb`:从运行实例 `/proc/<pid>/exe` 读后端二进制(文件已删除也可靠),
-/// static 目录取进程 `--web` 参数(缺省 `config-dir/static`),static.zip 本地缺失时
-/// 从发布仓库下载,仓库不可用则从 static 现场打包。
+/// static 目录取进程 `--web` 参数(缺省 `config-dir/static`);备份的 `static.zip`
+/// 由 create_backup 从 static 目录现场打包(含自校验),与备份内 `static/` 树同源。
 #[allow(clippy::too_many_arguments)]
 async fn create_migration_backup(
-    root: &InstallRoot,
     tx_dir: &Path,
     source: &Path,
     instance: &Process,
     exported: &export::ExportResult,
     version: &semver::Version,
     architecture: Architecture,
-    args: &MigrateArgs,
 ) -> Result<BackupRef, InstallError> {
     std::fs::create_dir_all(tx_dir).map_err(InstallError::Io)?;
     let staged_binary = tx_dir.join(WEBSERVER_BINARY);
@@ -740,22 +736,6 @@ async fn create_migration_backup(
         )));
     }
 
-    let local_zip = source.join("static.zip");
-    let static_zip = if local_zip.is_file() {
-        local_zip
-    } else {
-        match fetch_static_zip(root, tx_dir, version, architecture, args).await? {
-            Some(zip) => zip,
-            None => {
-                eprintln!(
-                    "migrate: {}",
-                    crate::tr!(crate::keys::MIGRATE_PACKING_STATIC_LOCALLY)
-                );
-                pack_static_zip(&static_dir, &tx_dir.join("static.zip"))?
-            }
-        }
-    };
-
     let geo_tmp = source.join("geo_tmp");
     let remark = format!("migration from {}", source.display());
     lkb::create_backup(
@@ -765,7 +745,6 @@ async fn create_migration_backup(
         &staged_binary,
         &exported.content,
         &static_dir,
-        &static_zip,
         &geo_tmp,
         &remark,
         false,
@@ -803,105 +782,6 @@ fn copy_from_proc_exe(pid: u32, target: &Path) -> Result<(), InstallError> {
         let _ = std::fs::remove_file(&tmp);
         InstallError::Io(error)
     })
-}
-
-/// 从发布仓库下载指定版本的 `static.zip`;仓库不可用或版本不存在时返回 None。
-async fn fetch_static_zip(
-    _root: &InstallRoot,
-    tx_dir: &Path,
-    version: &semver::Version,
-    architecture: Architecture,
-    args: &MigrateArgs,
-) -> Result<Option<PathBuf>, InstallError> {
-    let spec = match &args.repository {
-        Some(choice) => choice.clone().resolve()?,
-        None => super::config::resolve_default_choice()?.resolve()?,
-    };
-    let provider = provider_for(spec.kind, spec.location.as_str())?;
-    let release = match provider.release(version, architecture).await {
-        Ok(release) => release,
-        Err(_) => return Ok(None),
-    };
-    let download_dir = tx_dir.join("static-download");
-    let _ = std::fs::remove_dir_all(&download_dir);
-    std::fs::create_dir_all(&download_dir).map_err(InstallError::Io)?;
-    match fetch_static_asset(&release, &download_dir).await {
-        Ok(()) => Ok(Some(download_dir.join("static.zip"))),
-        Err(_) => Ok(None),
-    }
-}
-
-/// 从解压后的 static 目录现场打包 `static.zip`(条目带 `static/` 前缀,
-/// 只允许目录与普通文件),打包后按仓库规则自校验。
-fn pack_static_zip(static_dir: &Path, target: &Path) -> Result<PathBuf, InstallError> {
-    let file = std::fs::File::create(target).map_err(InstallError::Io)?;
-    let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let prefix = Path::new(STATIC_DIR);
-    pack_entry(&mut writer, &options, prefix, static_dir, static_dir)?;
-    writer.finish().map_err(zip_error)?;
-
-    // 按仓库解包规则自校验,保证恢复时可被正常消费。
-    let (_, size) = hash_file(target)?;
-    let check_dir = target
-        .parent()
-        .expect("packed zip has a parent")
-        .join("static-pack-check");
-    let _ = std::fs::remove_dir_all(&check_dir);
-    super::repository::archive::extract_static_archive(
-        &semver::Version::new(0, 0, 0),
-        target,
-        size,
-        &check_dir,
-    )
-    .map_err(|error| {
-        InstallError::ExportFailed(format!("packed static.zip failed self-validation: {error}"))
-    })?;
-    let _ = std::fs::remove_dir_all(&check_dir);
-    Ok(target.to_path_buf())
-}
-
-fn zip_error(error: zip::result::ZipError) -> InstallError {
-    InstallError::Io(std::io::Error::other(error))
-}
-
-fn pack_entry<W: std::io::Write + std::io::Seek>(
-    writer: &mut zip::ZipWriter<W>,
-    options: &zip::write::SimpleFileOptions,
-    prefix: &Path,
-    root: &Path,
-    dir: &Path,
-) -> Result<(), InstallError> {
-    for entry in std::fs::read_dir(dir).map_err(InstallError::Io)? {
-        let entry = entry.map_err(InstallError::Io)?;
-        let file_type = entry.file_type().map_err(InstallError::Io)?;
-        let entry_path = entry.path();
-        let relative = entry_path
-            .strip_prefix(root)
-            .map_err(|error| InstallError::Io(std::io::Error::other(error)))?
-            .to_path_buf();
-        let zip_name = prefix.join(relative);
-        if file_type.is_dir() {
-            writer
-                .add_directory(format!("{}/", zip_name.display()), *options)
-                .map_err(zip_error)?;
-            pack_entry(writer, options, prefix, root, &entry_path)?;
-        } else if file_type.is_file() {
-            writer
-                .start_file(zip_name.display().to_string(), *options)
-                .map_err(zip_error)?;
-            let bytes = std::fs::read(&entry_path).map_err(InstallError::Io)?;
-            use std::io::Write;
-            writer.write_all(&bytes).map_err(InstallError::Io)?;
-        } else {
-            return Err(InstallError::ExportFailed(format!(
-                "the static directory contains an unsupported entry {}",
-                entry_path.display()
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// 交互模式确认迁移计划;非交互模式必须显式 `--yes`。
