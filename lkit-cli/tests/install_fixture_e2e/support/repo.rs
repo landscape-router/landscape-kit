@@ -102,6 +102,41 @@ pub(crate) fn repository_files() -> HashMap<String, Vec<u8>> {
     repository_files_for(VERSION)
 }
 
+/// 自定义前端源的静态-only 仓库:stable 通道 + `webserver` 空对象 manifest +
+/// 自定义 `static.zip`。版本可独立于后端版本,解析协议见
+/// `docs/frontend/developer.md`。
+pub(crate) fn frontend_files_for(version: &str, html: &str) -> HashMap<String, Vec<u8>> {
+    let static_zip = static_zip_for(html);
+    let (static_sha, static_size) = sha256(&static_zip);
+    let manifest = serde_json::json!({
+        "protocol_version": 1,
+        "version": version,
+        "assets": {
+            "webserver": {},
+            "static": {
+                "url": "static.zip",
+                "sha256": static_sha,
+                "size": static_size,
+            }
+        }
+    });
+    HashMap::from([
+        (
+            "/repository.json".into(),
+            br#"{"protocol_version":1}"#.to_vec(),
+        ),
+        (
+            "/channels/stable.json".into(),
+            format!(r#"{{"protocol_version":1,"version":"{version}"}}"#).into_bytes(),
+        ),
+        (
+            format!("/releases/{version}/manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        ),
+        (format!("/releases/{version}/static.zip"), static_zip),
+    ])
+}
+
 pub(crate) fn repository_files_for(version: &str) -> HashMap<String, Vec<u8>> {
     let executable = std::fs::read(LANDSCAPE_FIXTURE).unwrap();
     let compressed = zstd::encode_all(executable.as_slice(), 3).unwrap();
@@ -151,15 +186,19 @@ pub(crate) fn repository_files_for(version: &str) -> HashMap<String, Vec<u8>> {
 }
 
 fn static_zip() -> Vec<u8> {
+    static_zip_for("<h1>Landscape fixture</h1>")
+}
+
+pub(crate) fn static_zip_for(html: &str) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     writer.start_file("static/index.html", options).unwrap();
-    writer.write_all(b"<h1>Landscape fixture</h1>").unwrap();
+    writer.write_all(html.as_bytes()).unwrap();
     writer.finish().unwrap().into_inner()
 }
 
-fn sha256(bytes: &[u8]) -> (String, u64) {
+pub(crate) fn sha256(bytes: &[u8]) -> (String, u64) {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();

@@ -2,6 +2,7 @@
 
 mod console;
 mod daemon;
+mod frontend;
 mod install;
 mod manager_backends;
 mod migrate;

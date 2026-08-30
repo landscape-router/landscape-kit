@@ -82,6 +82,8 @@ jobs:
             filter: "console::"
           - domain: daemon
             filter: "daemon::"
+          - domain: frontend
+            filter: "frontend::"
           - domain: install
             filter: "install::"
           - domain: manager-backends
