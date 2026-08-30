@@ -50,6 +50,10 @@ fn verify_backend_identity(
 /// `static.zip` 并更新 state 中的 static archive 身份(可修复恢复/手工替换造成的
 /// 身份漂移)。下载物仍与其解析来源的元数据严格校验,不再以 state 身份为门槛,
 /// 因此 `repair static` 在任何状态下都可用。
+///
+/// 前端源解析是**宽容**的:config.toml 损坏、缺失或 active 指向不存在的 id 时一律
+/// 按官方修复处理,绝不阻断。repair 是恢复工具,显式 `--repository` 在配置损坏时
+/// 必须仍能绕过配置工作(e2e 契约),且修复官方页面永远安全。
 pub(crate) async fn repair_static(
     root: &InstallRoot,
     provider: &ReleaseProvider,
@@ -61,7 +65,7 @@ pub(crate) async fn repair_static(
     let custom_source = if official {
         None
     } else {
-        crate::deployment::config::resolve_active_frontend()?
+        crate::deployment::config::resolve_active_frontend_lenient()
     };
     let release = provider.release(&active, architecture).await?;
 
@@ -76,12 +80,12 @@ pub(crate) async fn repair_static(
         let new_static = tx_dir.join("static");
         let backup_dir = tx_dir.join("static-backup");
         // 自定义前端源解析失败时:交互环境询问回退官方,非交互环境报错并提示
-        // `--official`。
+        // `--official`。前端源本身已宽容解析(配置损坏按官方处理),此处只处理
+        // 源不可达/元数据非法。
         let mut official_restored = custom_source.is_none();
-        if custom_source.is_some() {
-            match crate::frontend::fetch_active_frontend(&active, &tx_dir).await {
-                Ok(true) => {}
-                Ok(false) => unreachable!("resolve_active_frontend returned Some, fetch must run"),
+        if let Some(source) = custom_source.as_ref() {
+            match crate::frontend::fetch_from_source(source, &active, &tx_dir).await {
+                Ok(()) => {}
                 Err(error) => {
                     let fallback = if crate::interaction::interactive::is_non_interactive() {
                         false
@@ -826,6 +830,38 @@ mod tests {
         assert_eq!(
             refreshed_sha, release.assets.static_archive.sha256,
             "the version dir static.zip must be refreshed with the official asset"
+        );
+        let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
+    }
+
+    /// e2e 契约:显式 `--repository` 的 `repair static` 在 config.toml 损坏时仍能
+    /// 恢复官方页面——前端源解析是宽容的,损坏配置按"未配置自定义前端"处理。
+    #[tokio::test]
+    async fn static_repair_falls_back_to_official_pages_when_the_config_is_corrupted() {
+        let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>official</h1>");
+        let (_server, root, provider, _guard) = start_repository("corrupt-config-repair", files);
+        activate_version(&root, "1.2.3");
+        std::fs::write(
+            root.canonical.join("current/static/index.html"),
+            "<h1>customized</h1>",
+        )
+        .unwrap();
+        let state = install_state(
+            &root,
+            StateServiceManager::Systemd,
+            InitStatus::Complete,
+            &"a".repeat(64),
+            1,
+        );
+        std::fs::write(layout::territory_config_file(), b"not valid toml [[[").unwrap();
+
+        repair_static(&root, &provider, &state, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
+            "<h1>official</h1>",
+            "a corrupted config must fall back to the official static repair"
         );
         let _ = std::fs::remove_dir_all(root.install_root.parent().unwrap());
     }

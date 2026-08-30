@@ -50,6 +50,17 @@ pub(crate) async fn fetch_active_frontend(
     let Some(source) = config::resolve_active_frontend()? else {
         return Ok(false);
     };
+    fetch_from_source(&source, backend_version, target_dir).await?;
+    Ok(true)
+}
+
+/// 按已解析的前端源下载校验解压到 `target_dir/static`。repair 等宽容路径在
+/// 外部解析 source（配置损坏时按官方处理）后直接调用,不重复读取配置。
+pub(crate) async fn fetch_from_source(
+    source: &FrontendSource,
+    backend_version: &Version,
+    target_dir: &Path,
+) -> Result<(), InstallError> {
     let provider = provider_for(source.provider_kind(), &source.location)?;
     let asset = provider
         .latest_static_archive()
@@ -61,8 +72,8 @@ pub(crate) async fn fetch_active_frontend(
             ))
         })?;
     fetch_frontend_static(backend_version, &asset, target_dir).await?;
-    warn_api_min_version(&source, &target_dir.join(STATIC_DIR), backend_version);
-    Ok(true)
+    warn_api_min_version(source, &target_dir.join(STATIC_DIR), backend_version);
+    Ok(())
 }
 
 /// 下载并校验前端 `static.zip`,解压到 `target_dir/static`。与官方静态资产

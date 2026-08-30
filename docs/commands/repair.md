@@ -17,6 +17,8 @@ lkit repair binary [--repository [<BASE_URL>]]
   `install-state.json` 发现，命令不接收 `--install-dir`。
 - 未指定 `--repository` 时按 显式 CLI > `config.toml` > 官方 GitHub 的优先级解析来源
   （文件缺失时官方 GitHub，损坏时报错阻断，见[配置文件](../deployment/config.md)）。
+  前端源解析是**宽容**的：`config.toml` 损坏或缺失时 `repair static` 按官方修复
+  处理，保证显式 `--repository` 在配置损坏时仍能绕过配置工作。
 - repair 始终验证本次实际使用的资产：下载物与本次解析来源的元数据（manifest /
   `SHASUM256sum.txt`）严格一致；官方路径成功后更新 state 中的 static archive 身份
   并刷新版本目录 `static.zip`（恢复备份/手工替换造成的身份漂移）。binary repair

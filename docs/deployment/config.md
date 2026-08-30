@@ -119,8 +119,10 @@ location = "someone/dark-ui"
 - 段缺失、缺失 source 或 `active` 缺省时等价官方前端；
 - 未知字段和未知 section 允许并忽略。
 
-需要解析前端源的命令（install/update/switch/repair static）在段损坏时阻断并提示
-修复或删除该段以回落官方；不需要前端源的命令不受影响。
+需要解析前端源的命令（install/update/switch）在段损坏时阻断并提示修复或删除该段
+以回落官方；不需要前端源的命令不受影响。`repair static` 是例外：它**宽容**解析
+前端源，配置损坏或缺失时按官方修复处理，保证显式 `--repository` 在配置损坏时仍
+能绕过配置工作（修复官方页面永远安全）。
 
 ## 语言预设
 
