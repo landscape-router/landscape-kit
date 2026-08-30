@@ -1,3 +1,7 @@
+// 测试经 `interactive_guard` 持有的 std Mutex 串行化执行,跨 await 持有是
+// 刻意为之(与 restore/mod.rs tests 模块同一先例),此处统一豁免该 lint。
+#![allow(clippy::await_holding_lock)]
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -154,11 +158,11 @@ struct ManagedInstanceGuard {
 
 impl Drop for ManagedInstanceGuard {
     fn drop(&mut self) {
-        if let Ok(content) = std::fs::read_to_string(self.state_dir.join("main.pid")) {
-            if let Ok(pid) = content.trim().parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, libc::SIGKILL);
-                }
+        if let Ok(content) = std::fs::read_to_string(self.state_dir.join("main.pid"))
+            && let Ok(pid) = content.trim().parse::<i32>()
+        {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
             }
         }
     }
@@ -661,7 +665,7 @@ fn preempts_a_plain_file_legacy_unit_at_the_managed_path() {
     let source = root.join("deploy");
     std::fs::create_dir_all(&source).unwrap();
     std::fs::write(
-        &units.join("landscape-router.service"),
+        units.join("landscape-router.service"),
         format!(
             "[Unit]\nDescription=Legacy Landscape\n\n[Service]\nExecStart={} -c {}\n",
             landscape_fixture().display(),
@@ -738,7 +742,7 @@ fn preempts_a_plain_file_legacy_unit_at_the_managed_path() {
         ),
     )
     .unwrap();
-    std::os::unix::fs::symlink(&origin, &units.join("landscape-router.service")).unwrap();
+    std::os::unix::fs::symlink(origin, units.join("landscape-router.service")).unwrap();
     let transaction2 = crate::deployment::transaction::TransactionFile::new_migrate(
         &install_root,
         &semver::Version::parse(EXPORT_VERSION).unwrap(),
@@ -753,7 +757,7 @@ fn preempts_a_plain_file_legacy_unit_at_the_managed_path() {
 
     // 其他 unit 名的普通文件不属于受管注册路径,不预清。
     std::fs::write(
-        &units.join("legacy-landscape.service"),
+        units.join("legacy-landscape.service"),
         format!(
             "[Service]\nExecStart={} -c {}\n",
             landscape_fixture().display(),
@@ -799,7 +803,7 @@ async fn migrates_a_plain_file_legacy_unit_at_the_managed_path() {
     };
     // 旧安装器直接写入受管路径的普通文件 unit(短形式参数,见 MIG-08)。
     std::fs::write(
-        &units.join("landscape-router.service"),
+        units.join("landscape-router.service"),
         format!(
             "[Unit]\nDescription=Legacy Landscape\n\n[Service]\nExecStart={0} -c {1} -w {1}/static\nRestart=always\nUser=root\nLimitMEMLOCK=infinity\n\n[Install]\nWantedBy=multi-user.target\n",
             landscape_fixture().display(),
