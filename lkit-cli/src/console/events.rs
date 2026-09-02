@@ -295,10 +295,14 @@ impl ConsoleApp {
                 self.focus = Focus::Panel;
             }
             KeyCode::Left if self.focus == Focus::Panel => {
-                // Left 与 Right 一同作为面板内组件切换选择;检查汇总态无选择
-                // 可切换,保持不动。
+                // Install/Update 的枚举字段保留 Left/Right 切换值(Update 在自己的
+                // 处理器中消费);其余面板没有左右语义,Left 与 Right(进入面板)
+                // 对称,返回侧栏导航,等同 Esc。
                 if self.menu() == Menu::Install && !self.install.checks_selected {
                     self.install.change_choice(false);
+                } else {
+                    self.exit_state = ExitState::Idle;
+                    self.focus = Focus::Navigation;
                 }
             }
             KeyCode::Right
@@ -308,7 +312,11 @@ impl ConsoleApp {
             {
                 self.preflight.expanded = true;
             }
-            KeyCode::Right if self.focus == Focus::Panel => self.install.change_choice(true),
+            // 仅 Install 面板把 Right 用作切换枚举;其他面板 Right 无动作,
+            // 不得触碰 Install 表单状态。
+            KeyCode::Right if self.focus == Focus::Panel && self.menu() == Menu::Install => {
+                self.install.change_choice(true)
+            }
             KeyCode::Enter | KeyCode::Char(' ') if self.focus == Focus::Panel => {
                 if self.menu() == Menu::Install {
                     if self.install.checks_selected {
