@@ -263,7 +263,9 @@ fn language_toggle_persists_across_console_sessions() {
     command.env("LKIT_LANG", "en");
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
-    pty.read_until("L  Language: English (en)", Duration::from_secs(10));
+    // 底栏显示目标语言;只锚定纯 ASCII 前缀,全角字符在 ratatui 增量 diff 的
+    // pty 字节流中可能不连续(见下方 "zh" 锚点说明)。
+    pty.read_until("[L] Switch to", Duration::from_secs(10));
     pty.master.write_all(b"l").unwrap();
     // ratatui 的增量 diff 对全角字符的列定位会让中文状态行的长串在 pty 字节流
     // 中不连续(如 "(zh)" 的前缀被跳过);"zh" 是切换后唯一出现的稳定锚点,
