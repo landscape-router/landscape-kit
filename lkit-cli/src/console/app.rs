@@ -407,10 +407,17 @@ impl ConsoleApp {
         }
     }
 
-    /// 语言切换在所有非文本编辑、非退出确认状态下可用，包括确认层、详情页、
-    /// 部署前检查弹窗与网络向导;编辑字段时 `l` 保持为普通输入字符。
+    /// 语言切换在所有非文本编辑、非退出确认状态下可用，包括纯确认层、详情页、
+    /// 部署前检查弹窗与网络向导;编辑字段时 `l` 保持为普通输入字符。内嵌急救
+    /// 恢复码输入的三个弹窗（部署确认、查看/修改、flare 恢复通道）打开期间
+    /// 整体暂停：它们承诺"直接输入即进入编辑"，首字符恰好是 `l` 时也必须
+    /// 落入字段而不是切换语言。
     pub(super) fn language_switch_available(&self) -> bool {
-        self.exit_state != ExitState::Confirming && !self.editing_any_field()
+        self.exit_state != ExitState::Confirming
+            && !self.deploy_daemon_confirming
+            && !self.show_psk
+            && !self.flare.open
+            && !self.editing_any_field()
     }
 
     /// 是否有任意文本字段处于编辑态(决定语言指示是否显示"输入中暂停"解释)。
@@ -419,6 +426,9 @@ impl ConsoleApp {
             || self.backup.editing
             || self.update.editing
             || self.reinit.editing
+            || self.deploy_psk_editing
+            || self.show_psk_editing
+            || self.flare.editing
             || self
                 .network_wizard
                 .as_ref()
