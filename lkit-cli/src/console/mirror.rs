@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use super::render::{panel_block, register_dialog_hits};
 use super::widgets::{Focus, Hit, block_row_of};
-use super::{ConsoleAction, ConsoleApp};
+use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::mirror::{Host, MirrorName, MirrorStatus};
 
 /// 换源面板的确认层目标。
@@ -159,7 +159,7 @@ impl MirrorPanel {
     }
 
     /// 主循环轮询：探测完成后回填结果（由 `ConsoleApp::update` 调用）。
-    pub(crate) fn poll(&mut self, _notice: &mut String) {
+    pub(crate) fn poll(&mut self, _notice: &mut Notice) {
         let Some(receiver) = &self.probing_rx else {
             return;
         };
@@ -180,15 +180,12 @@ impl MirrorPanel {
 
     /// 换源/恢复成功后刷新软件包索引。生产环境后台 worker 执行（不阻塞
     /// TUI 主循环），刷新期间禁止再次换源；测试注入跳过时同步完成。
-    pub(crate) fn start_refresh(&mut self, family: crate::mirror::Family, notice: &mut String) {
+    pub(crate) fn start_refresh(&mut self, family: crate::mirror::Family, notice: &mut Notice) {
         if self.refreshing.is_some() {
             return;
         }
         if crate::mirror::paths().skip_refresh {
-            *notice = format!(
-                "{notice}\n{}",
-                crate::tr!(crate::keys::SET_MIRROR_REFRESHED)
-            );
+            notice.push_line(crate::tr!(crate::keys::SET_MIRROR_REFRESHED));
             return;
         }
         let (sender, receiver) = mpsc::channel();
@@ -201,14 +198,11 @@ impl MirrorPanel {
             let _ = sender.send(result);
         });
         self.refreshing = Some(MirrorRefreshRun { receiver });
-        *notice = format!(
-            "{notice}\n{}",
-            crate::tr!(crate::keys::SET_MIRROR_REFRESHING)
-        );
+        notice.push_line(crate::tr!(crate::keys::SET_MIRROR_REFRESHING));
     }
 
     /// 轮询索引刷新结果；刷新完成后写到底栏并放行后续换源。
-    pub(crate) fn poll_refresh(&mut self, notice: &mut String) {
+    pub(crate) fn poll_refresh(&mut self, notice: &mut Notice) {
         let Some(run) = &self.refreshing else {
             return;
         };
@@ -216,19 +210,24 @@ impl MirrorPanel {
             Ok(result) => {
                 self.refreshing = None;
                 match result {
-                    Ok(()) => *notice = crate::tr!(crate::keys::SET_MIRROR_REFRESHED),
+                    Ok(()) => {
+                        *notice = Notice::Success(crate::tr!(crate::keys::SET_MIRROR_REFRESHED))
+                    }
                     Err(error) => {
-                        *notice = crate::tr!(crate::keys::SET_MIRROR_REFRESH_FAILED, error = error)
+                        *notice = Notice::Error(crate::tr!(
+                            crate::keys::SET_MIRROR_REFRESH_FAILED,
+                            error = error
+                        ))
                     }
                 }
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.refreshing = None;
-                *notice = crate::tr!(
+                *notice = Notice::Error(crate::tr!(
                     crate::keys::SET_MIRROR_REFRESH_FAILED,
                     error = "worker stopped"
-                );
+                ));
             }
         }
     }
@@ -246,24 +245,24 @@ impl ConsoleApp {
     /// 执行换源或恢复。失败与成功都写入底栏 notice；确认层在调用前已关闭。
     pub(crate) fn execute_mirror(&mut self, confirm: MirrorConfirm) {
         let Some(Ok(host)) = &self.mirror.host else {
-            self.notice = crate::tr!(crate::keys::CONSOLE_MIRROR_DETECT_FAILED);
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_MIRROR_DETECT_FAILED));
             return;
         };
         if self.mirror.refreshing.is_some() {
-            self.notice = crate::tr!(crate::keys::SET_MIRROR_REFRESHING);
+            self.notice = Notice::Info(crate::tr!(crate::keys::SET_MIRROR_REFRESHING));
             return;
         }
         if !crate::mirror::root_allowed() {
-            self.notice = crate::tr!(crate::keys::SET_MIRROR_ROOT_REQUIRED);
+            self.notice = Notice::Error(crate::tr!(crate::keys::SET_MIRROR_ROOT_REQUIRED));
             return;
         }
         if let MirrorConfirm::Apply { mirror, .. } = confirm
             && status_of(&self.mirror.availability, mirror) == MirrorStatus::Unavailable
         {
-            self.notice = crate::tr!(
+            self.notice = Notice::Error(crate::tr!(
                 crate::keys::SET_MIRROR_MIRROR_UNAVAILABLE,
                 mirror = mirror.label()
-            );
+            ));
             return;
         }
         match confirm {
@@ -274,87 +273,65 @@ impl ConsoleApp {
                 ..
             } => match crate::mirror::apply(host, mirror, replace_security, disable_cdrom) {
                 Ok(report) if report.changed_files == 0 => {
-                    self.notice = crate::tr!(
+                    self.notice = Notice::Success(crate::tr!(
                         crate::keys::SET_MIRROR_NO_CHANGE,
                         family = host.family.label(),
                         mirror = mirror.label()
-                    );
+                    ));
                 }
                 Ok(report) => {
-                    self.notice = crate::tr!(
+                    self.notice = Notice::Success(crate::tr!(
                         crate::keys::SET_MIRROR_APPLIED,
                         family = host.family.label(),
                         mirror = mirror.label(),
                         files = report.changed_files
-                    );
+                    ));
                     match report.fallback {
                         Some(crate::mirror::Fallback::CdromConverted) => {
-                            self.notice = format!(
-                                "{}\n{}",
-                                self.notice,
-                                crate::tr!(crate::keys::SET_MIRROR_CDROM_CONVERTED)
-                            );
+                            self.notice
+                                .push_line(crate::tr!(crate::keys::SET_MIRROR_CDROM_CONVERTED));
                         }
                         Some(crate::mirror::Fallback::CdromDisabled) => {
-                            self.notice = format!(
-                                "{}\n{}",
-                                self.notice,
-                                crate::tr!(crate::keys::SET_MIRROR_CDROM_DISABLED)
-                            );
+                            self.notice
+                                .push_line(crate::tr!(crate::keys::SET_MIRROR_CDROM_DISABLED));
                         }
                         Some(crate::mirror::Fallback::SourceAdded) => {
-                            self.notice = format!(
-                                "{}\n{}",
-                                self.notice,
-                                crate::tr!(
-                                    crate::keys::SET_MIRROR_SOURCE_ADDED,
-                                    family = host.family.label()
-                                )
-                            );
+                            self.notice.push_line(crate::tr!(
+                                crate::keys::SET_MIRROR_SOURCE_ADDED,
+                                family = host.family.label()
+                            ));
                         }
                         None => {}
                     }
                     if report.cdrom_commented > 0 {
-                        self.notice = format!(
-                            "{}\n{}",
-                            self.notice,
-                            crate::tr!(
-                                crate::keys::SET_MIRROR_CDROM_COMMENTED,
-                                count = report.cdrom_commented
-                            )
-                        );
+                        self.notice.push_line(crate::tr!(
+                            crate::keys::SET_MIRROR_CDROM_COMMENTED,
+                            count = report.cdrom_commented
+                        ));
                     }
                     if report.skipped_repositories > 0 {
-                        self.notice = format!(
-                            "{}\n{}",
-                            self.notice,
-                            crate::tr!(
-                                crate::keys::SET_MIRROR_SKIPPED,
-                                count = report.skipped_repositories
-                            )
-                        );
+                        self.notice.push_line(crate::tr!(
+                            crate::keys::SET_MIRROR_SKIPPED,
+                            count = report.skipped_repositories
+                        ));
                     }
                     if report.unrecognized_lines > 0 {
-                        self.notice = format!(
-                            "{}\n{}",
-                            self.notice,
-                            crate::tr!(
-                                crate::keys::SET_MIRROR_UNRECOGNIZED_LINES,
-                                count = report.unrecognized_lines
-                            )
-                        );
+                        self.notice.push_line(crate::tr!(
+                            crate::keys::SET_MIRROR_UNRECOGNIZED_LINES,
+                            count = report.unrecognized_lines
+                        ));
                     }
                     // 换源成功后后台刷新索引,让新源立即生效。
                     self.mirror.start_refresh(host.family, &mut self.notice);
                 }
-                Err(error) => self.notice = error.to_string(),
+                Err(error) => self.notice = Notice::Error(error.to_string()),
             },
             MirrorConfirm::Restore => match crate::mirror::restore(host) {
                 Ok(()) => {
-                    self.notice = crate::tr!(crate::keys::SET_MIRROR_RESTORED);
+                    self.notice = Notice::Success(crate::tr!(crate::keys::SET_MIRROR_RESTORED));
                     self.mirror.start_refresh(host.family, &mut self.notice);
                 }
-                Err(error) => self.notice = error.to_string(),
+                Err(error) => self.notice = Notice::Error(error.to_string()),
             },
         }
     }
@@ -449,13 +426,13 @@ impl ConsoleApp {
                 let unavailable = matches!(self.mirror.selected, MirrorRow::Mirror(mirror)
                     if status_of(&self.mirror.availability, mirror) == MirrorStatus::Unavailable);
                 if unavailable {
-                    self.notice = crate::tr!(
+                    self.notice = Notice::Error(crate::tr!(
                         crate::keys::SET_MIRROR_MIRROR_UNAVAILABLE,
                         mirror = match self.mirror.selected {
                             MirrorRow::Mirror(mirror) => mirror.label(),
                             _ => unreachable!(),
                         }
-                    );
+                    ));
                     return Some(None);
                 }
                 self.mirror.confirming = Some(match self.mirror.selected {

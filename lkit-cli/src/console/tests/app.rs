@@ -5,6 +5,7 @@ use super::support::*;
 use crate::i18n::Language;
 use crate::network::config::{NetworkMode, NetworkPlan, SelectedInterface};
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 
 #[test]
 fn renders_panel_focus_marker_on_overview() {
@@ -175,7 +176,7 @@ fn long_notice_wraps_instead_of_truncating() {
     let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
     let mut app = ConsoleApp::new();
     let notice = "this is a long status notice that must wrap onto a second line: backup failed";
-    app.notice = notice.into();
+    app.notice = Notice::Error(notice.into());
 
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
@@ -184,6 +185,30 @@ fn long_notice_wraps_instead_of_truncating() {
         content.contains("backup failed"),
         "a long status notice must wrap onto the second status line instead of truncating"
     );
+}
+
+#[test]
+fn notice_levels_render_with_distinct_colors() {
+    let _language = LanguageGuard::set(Language::En);
+    // "Q" 在界面其它区域不出现,可作为定位底栏消息首字符的标记。
+    for (notice, expected) in [
+        (Notice::Error("Q: boom".into()), Color::Red),
+        (Notice::Success("Q: done".into()), Color::Green),
+        (Notice::Info("Q: working".into()), Color::Yellow),
+    ] {
+        let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.notice = notice;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let cell = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "Q")
+            .expect("the notice marker must be rendered in the status bar");
+        assert_eq!(cell.fg, expected);
+    }
 }
 
 #[test]

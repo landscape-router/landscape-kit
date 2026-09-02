@@ -160,7 +160,7 @@ fn deploy_confirm_runs_in_background_and_writes_the_result_to_the_notice() {
     assert!(
         app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -289,7 +289,7 @@ fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() 
     assert!(
         app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -343,7 +343,7 @@ fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() 
     assert!(
         app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -609,7 +609,7 @@ fn deploy_confirm_rejects_a_mismatched_confirmation_without_starting() {
     assert!(
         app.notice.contains("do not match"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -639,7 +639,7 @@ fn deploy_confirm_rejects_a_short_recovery_code_without_starting() {
     assert!(
         app.notice.contains("at least 12 characters"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -853,7 +853,7 @@ fn show_psk_dialog_rejects_a_mismatched_confirmation_without_saving() {
     assert!(
         app.notice.contains("do not match"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     let section = crate::deployment::config::load_flare().unwrap();
     assert_eq!(

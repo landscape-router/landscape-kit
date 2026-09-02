@@ -456,9 +456,10 @@ fn mirror_confirmation_dialog_executes_apply() {
     assert!(app.mirror.confirming.is_none());
     assert!(
         app.notice
+            .text()
             .contains("switched the Ubuntu package sources to Tsinghua TUNA"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     let rewritten = std::fs::read_to_string(&sources).unwrap();
     assert!(
@@ -519,13 +520,14 @@ fn mirror_apply_skips_refresh_worker_under_test_injection() {
         allow_non_root: true,
         skip_refresh: true,
     });
-    let mut notice = "applied\n".to_string();
+    let mut notice = Notice::Success("applied".into());
     let mut panel = MirrorPanel::default();
     panel.start_refresh(Family::Ubuntu, &mut notice);
     assert!(panel.refreshing.is_none());
     assert!(
         notice.contains("package index refreshed"),
-        "test injection must complete the refresh synchronously: {notice}"
+        "test injection must complete the refresh synchronously: {}",
+        notice.text()
     );
     let _ = std::fs::remove_dir_all(&temp);
 }
@@ -540,7 +542,7 @@ fn mirror_refresh_worker_blocks_until_done() {
     assert!(
         app.notice.contains("refreshing the package index"),
         "while refreshing, further mirror operations must be blocked with a hint: {}",
-        app.notice
+        app.notice.text()
     );
 }
 
@@ -550,7 +552,7 @@ fn mirror_refresh_completion_writes_notice_and_unblocks() {
     let _ = sender.send(Ok::<(), String>(()));
     let mut app = mirror_ready_app();
     app.mirror.refreshing = Some(MirrorRefreshRun { receiver });
-    let mut notice = String::new();
+    let mut notice = Notice::Ready;
     app.mirror.poll_refresh(&mut notice);
     assert!(app.mirror.refreshing.is_none());
     assert!(notice.contains("package index refreshed"));
@@ -625,7 +627,7 @@ fn mirror_navigation_skips_unavailable_mirrors() {
     assert!(
         app.notice.contains("does not provide"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     // 恢复动作仍可达。
     app.mirror.selected = MirrorRow::Mirror(MirrorName::Bfsu);

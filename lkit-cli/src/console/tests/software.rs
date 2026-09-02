@@ -126,7 +126,7 @@ fn software_panel_enter_on_installed_shows_notice() {
     assert!(
         app.notice.contains("Docker is already installed"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
 }
 
@@ -201,7 +201,7 @@ fn software_confirmation_enter_after_detection_failure_shows_notice() {
     assert!(
         app.notice.contains("could not be detected"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
 }
 
@@ -315,7 +315,7 @@ fn software_cancel_after_confirm_allows_reselecting_source() {
     app.update();
     assert!(app.software.install.is_none());
     assert_eq!(
-        app.notice,
+        app.notice.text(),
         crate::tr!(crate::keys::SOFTWARE_CANCELLED),
         "the cancellation notice must be shown"
     );
@@ -382,7 +382,7 @@ fn software_confirmation_enter_with_non_root_policy_shows_notice() {
     assert!(
         app.notice.contains("root privileges are required"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     std::fs::remove_dir_all(&temp).unwrap();
 }
@@ -509,7 +509,7 @@ fn base_packages_dialog_confirm_starts_install_with_selection() {
         assert!(
             app.notice.contains("root privileges are required"),
             "unexpected notice: {}",
-            app.notice
+            app.notice.text()
         );
     }
 }

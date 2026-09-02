@@ -12,7 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use super::render::{panel_block, register_dialog_hits, register_modal_hits};
 use super::widgets::{Focus, Hit, block_row_of};
-use super::{ConsoleAction, ConsoleApp};
+use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::mirror::Host;
 use crate::software::base::{BasePackage, BasePackageDialog};
 use crate::software::{DockerSource, InstallPhase, Software};
@@ -223,21 +223,21 @@ impl SoftwarePanel {
     }
 
     /// 确认弹框选择:提交为 Chosen 并启动后台安装。
-    pub(crate) fn confirm_base_dialog(&mut self, notice: &mut String) {
+    pub(crate) fn confirm_base_dialog(&mut self, notice: &mut Notice) {
         let packages = self
             .base_dialog_mut()
             .map(|dialog| dialog.selected_packages())
             .unwrap_or_default();
         self.base_packages = BasePackagesState::Chosen(packages.clone());
         if packages.is_empty() {
-            *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_NONE);
+            *notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_NONE));
             return;
         }
         match self.start_base_install() {
             Ok(()) => {
-                *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_INSTALLING);
+                *notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_INSTALLING));
             }
-            Err(message) => *notice = message,
+            Err(message) => *notice = Notice::Error(message),
         }
     }
 
@@ -248,7 +248,7 @@ impl SoftwarePanel {
         }
     }
 
-    pub(crate) fn poll(&mut self, notice: &mut String) {
+    pub(crate) fn poll(&mut self, notice: &mut Notice) {
         while let Some(run) = &self.install {
             let message = run.receiver.try_recv();
             match message {
@@ -263,12 +263,14 @@ impl SoftwarePanel {
                     match result {
                         Ok(()) => {
                             self.refresh_status();
-                            *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_INSTALLED);
+                            *notice = Notice::Success(crate::tr!(
+                                crate::keys::CONSOLE_SOFTWARE_INSTALLED
+                            ));
                         }
                         Err(error) => {
                             // 取消或失败后都刷新状态,面板恢复可用可重新选择源。
                             self.refresh_status();
-                            *notice = error;
+                            *notice = Notice::Error(error);
                         }
                     }
                 }
@@ -277,7 +279,8 @@ impl SoftwarePanel {
                     self.install = None;
                     self.cancel_confirming = false;
                     self.refresh_status();
-                    *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED);
+                    *notice =
+                        Notice::Error(crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED));
                 }
             }
         }
@@ -290,9 +293,11 @@ impl SoftwarePanel {
                     self.refresh_status();
                     match result {
                         Ok(()) => {
-                            *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_INSTALLED_OK);
+                            *notice = Notice::Success(crate::tr!(
+                                crate::keys::CONSOLE_BASE_PACKAGES_INSTALLED_OK
+                            ));
                         }
-                        Err(error) => *notice = error,
+                        Err(error) => *notice = Notice::Error(error),
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -300,7 +305,9 @@ impl SoftwarePanel {
                     self.base_install = None;
                     self.base_cancel_confirming = false;
                     self.refresh_status();
-                    *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_WORKER_STOPPED);
+                    *notice = Notice::Error(crate::tr!(
+                        crate::keys::CONSOLE_BASE_PACKAGES_WORKER_STOPPED
+                    ));
                 }
             }
         }
@@ -330,7 +337,7 @@ impl ConsoleApp {
                     if dialog.on_confirm_row() {
                         self.software.confirm_base_dialog(&mut self.notice);
                     } else if let Err(message) = dialog.toggle() {
-                        self.notice = message;
+                        self.notice = Notice::Error(message);
                     }
                 }
                 KeyCode::Esc => self.software.cancel_base_dialog(),
@@ -363,12 +370,12 @@ impl ConsoleApp {
                 KeyCode::Enter => {
                     match self.software.start_install(confirm) {
                         Ok(()) => {
-                            self.notice = crate::tr!(
+                            self.notice = Notice::Info(crate::tr!(
                                 crate::keys::CONSOLE_SOFTWARE_INSTALLING,
                                 software = confirm.software.label()
-                            );
+                            ));
                         }
-                        Err(message) => self.notice = message,
+                        Err(message) => self.notice = Notice::Error(message),
                     }
                     self.software.confirming = None;
                     return Some(None);
@@ -409,10 +416,10 @@ impl ConsoleApp {
                             .position(|entry| *entry == software)
                             .unwrap_or(0);
                         if self.software.installed[index] {
-                            self.notice = crate::tr!(
+                            self.notice = Notice::Info(crate::tr!(
                                 crate::keys::SOFTWARE_ALREADY_INSTALLED,
                                 software = software.label()
-                            );
+                            ));
                             return Some(None);
                         }
                         self.software.confirming = Some(SoftwareConfirm {

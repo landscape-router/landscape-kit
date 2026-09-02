@@ -9,7 +9,7 @@ use super::preflight::{GateState, PreflightState};
 use super::reinit::{ReinitField, ReinitStep};
 use super::software::SoftwareRow;
 use super::widgets::{Focus, Hit, Menu};
-use super::{ConsoleAction, ConsoleApp, ExitState};
+use super::{ConsoleAction, ConsoleApp, ExitState, Notice};
 
 impl ConsoleApp {
     /// 阻塞屏键处理：↑/↓ 或 Tab 选择，Enter 执行，Esc/Ctrl+C 等同"稍后"退出。
@@ -158,7 +158,7 @@ impl ConsoleApp {
                 KeyCode::Enter => return Some(ConsoleAction::Quit),
                 KeyCode::Esc => {
                     self.exit_state = ExitState::Idle;
-                    self.notice = "Ready".into();
+                    self.notice = Notice::Ready;
                 }
                 _ => {}
             }
@@ -240,11 +240,12 @@ impl ConsoleApp {
             match self.exit_state {
                 ExitState::Idle => {
                     self.exit_state = ExitState::Armed;
-                    self.notice = "Exit armed - press Esc again for confirmation".into();
+                    self.notice =
+                        Notice::Info("Exit armed - press Esc again for confirmation".into());
                 }
                 ExitState::Armed => {
                     self.exit_state = ExitState::Confirming;
-                    self.notice = "Ready".into();
+                    self.notice = Notice::Ready;
                 }
                 ExitState::Confirming => unreachable!(),
             }
@@ -252,7 +253,7 @@ impl ConsoleApp {
         }
         if self.exit_state == ExitState::Armed {
             self.exit_state = ExitState::Idle;
-            self.notice = "Ready".into();
+            self.notice = Notice::Ready;
         }
         if self.focus == Focus::Panel
             && self.menu() == Menu::Install
@@ -329,34 +330,34 @@ impl ConsoleApp {
                                         Ok(()) => match NetworkWizard::discover() {
                                             Ok(wizard) => {
                                                 self.network_wizard = Some(wizard);
-                                                self.notice = crate::tr!(
+                                                self.notice = Notice::Info(crate::tr!(
                                                     crate::keys::CONSOLE_CONFIGURE_NETWORK_TAKEOVER
-                                                );
+                                                ));
                                             }
-                                            Err(error) => self.notice = error,
+                                            Err(error) => self.notice = Notice::Error(error),
                                         },
-                                        Err(error) => self.notice = error,
+                                        Err(error) => self.notice = Notice::Error(error),
                                     }
                                 } else {
                                     match self.install.activate() {
                                         Ok(Some(action)) => return Some(action),
-                                        Ok(None) => self.notice = "Ready".into(),
-                                        Err(error) => self.notice = error,
+                                        Ok(None) => self.notice = Notice::Ready,
+                                        Err(error) => self.notice = Notice::Error(error),
                                     }
                                 }
                             }
                             GateState::Waiting => {
-                                self.notice = crate::tr!(
+                                self.notice = Notice::Info(crate::tr!(
                                     crate::keys::CONSOLE_ENVIRONMENT_CHECKS_NOT_COMPLETED
-                                );
+                                ));
                             }
                             GateState::Dialog => self.preflight_dialog = true,
                         }
                     } else {
                         match self.install.activate() {
                             Ok(Some(action)) => return Some(action),
-                            Ok(None) => self.notice = "Ready".into(),
-                            Err(error) => self.notice = error,
+                            Ok(None) => self.notice = Notice::Ready,
+                            Err(error) => self.notice = Notice::Error(error),
                         }
                     }
                 }
@@ -512,15 +513,15 @@ impl ConsoleApp {
     fn deploy_with_validated_psk(&mut self) {
         let psk = self.deploy_psk.trim();
         if !psk.is_empty() && psk.len() < crate::deployment::config::FLARE_PSK_MIN_LENGTH {
-            self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT);
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT));
             return;
         }
         if !psk.is_empty() && self.deploy_psk_confirmation.trim() != psk {
-            self.notice = crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH);
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH));
             return;
         }
         if let Err(error) = self.start_daemon_deploy() {
-            self.notice = error;
+            self.notice = Notice::Error(error);
         }
         self.deploy_daemon_confirming = false;
         self.deploy_psk_editing = false;
@@ -598,7 +599,7 @@ impl ConsoleApp {
         }
         if self.exit_state == ExitState::Armed {
             self.exit_state = ExitState::Idle;
-            self.notice = "Ready".into();
+            self.notice = Notice::Ready;
         }
         let hit = self.hits.hit_at(mouse.column, mouse.row)?;
         match hit {

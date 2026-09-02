@@ -1,4 +1,5 @@
 use super::ConsoleAction;
+use super::Notice;
 use super::backup::{BackupListState, BackupPanel};
 use super::daemon_panel::{DeployResult, PskDialogField};
 use super::flare_panel::FlareDialog;
@@ -25,7 +26,7 @@ pub(super) struct ConsoleApp {
     pub(super) focus: Focus,
     pub(super) install: InstallForm,
     pub(super) snapshot: Snapshot,
-    pub(super) notice: String,
+    pub(super) notice: Notice,
     pub(super) exit_state: ExitState,
     pub(super) preflight: Preflight,
     pub(super) preflight_dialog: bool,
@@ -70,7 +71,7 @@ impl ConsoleApp {
             focus: Focus::Navigation,
             install,
             snapshot,
-            notice: "Ready".into(),
+            notice: Notice::Ready,
             exit_state: ExitState::Idle,
             preflight: Preflight::default(),
             preflight_dialog: false,
@@ -216,10 +217,13 @@ impl ConsoleApp {
         let language = crate::i18n::current().toggled();
         crate::i18n::configure(language);
         self.exit_state = ExitState::Idle;
-        self.notice = "Ready".into();
+        self.notice = Notice::Ready;
         #[cfg(not(test))]
         if let Err(error) = crate::deployment::config::write_language(language) {
-            self.notice = crate::tr!(crate::keys::CONSOLE_LANGUAGE_SAVE_FAILED, error = error);
+            self.notice = Notice::Error(crate::tr!(
+                crate::keys::CONSOLE_LANGUAGE_SAVE_FAILED,
+                error = error
+            ));
         }
         self.snapshot = Snapshot::load();
         if !self.menu_available(self.menu()) {
@@ -293,7 +297,7 @@ impl ConsoleApp {
         }
         if self.exit_state == ExitState::Armed {
             self.exit_state = ExitState::Idle;
-            self.notice = "Ready".into();
+            self.notice = Notice::Ready;
         }
         if !self.install.editing || self.menu() != Menu::Install || self.focus != Focus::Panel {
             return;

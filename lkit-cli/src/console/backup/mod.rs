@@ -4,6 +4,7 @@ mod render;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
+use super::Notice;
 use crate::backup::lkb::{BackupMetadata, BackupProgress};
 use crate::deployment::lock;
 
@@ -144,7 +145,7 @@ impl BackupPanel {
         });
     }
 
-    pub(crate) fn poll(&mut self, notice: &mut String) {
+    pub(crate) fn poll(&mut self, notice: &mut Notice) {
         if let BackupListState::Running(receiver) = &self.state {
             match receiver.try_recv() {
                 Ok(Ok(entries)) => {
@@ -165,17 +166,17 @@ impl BackupPanel {
             match receiver.try_recv() {
                 Ok(Ok(message)) => {
                     self.verify = BackupVerifyState::Complete(Ok(message.clone()));
-                    *notice = message;
+                    *notice = Notice::Success(message);
                 }
                 Ok(Err(error)) => {
                     self.verify = BackupVerifyState::Complete(Err(error.clone()));
-                    *notice = error;
+                    *notice = Notice::Error(error);
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     let error = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_WORKER_STOPPED);
                     self.verify = BackupVerifyState::Complete(Err(error.clone()));
-                    *notice = error;
+                    *notice = Notice::Error(error);
                 }
             }
         }
@@ -192,18 +193,20 @@ impl BackupPanel {
                     match result {
                         Ok(metadata) => {
                             self.state = BackupListState::NotRun;
-                            *notice = crate::tr!(
+                            *notice = Notice::Success(crate::tr!(
                                 crate::keys::CONSOLE_BACKUP_CREATED,
                                 backup_id = metadata.backup_id
-                            );
+                            ));
                         }
-                        Err(error) => *notice = error,
+                        Err(error) => *notice = Notice::Error(error),
                     }
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.create = None;
-                    *notice = crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_WORKER_STOPPED);
+                    *notice = Notice::Error(crate::tr!(
+                        crate::keys::CONSOLE_BACKUP_CREATE_WORKER_STOPPED
+                    ));
                 }
             }
         }
