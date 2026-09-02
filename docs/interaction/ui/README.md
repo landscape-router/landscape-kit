@@ -62,7 +62,7 @@ header/body/footer。
   青色右对齐,可切换时显示**目标语言**与 `[L]` 按键提示(`[L] Switch to 中文 (zh)` /
   `[L] 切换到 English (en)`),按 `L` 或点击切换到所示目标;文本编辑中显示当前语言
   并解释暂停(`Language: English (en) (L paused while typing)` /
-  `语言：中文（zh）（输入时暂停 L）`);其余不可切换状态(如退出确认层)只显示
+  `语言：中文 (zh)（输入时暂停 L）`);其余不可切换状态(如退出确认层)只显示
   当前语言(`Language: English (en)` / `语言：中文 (zh)`);
 - 提示行:按焦点显示可用操作,`Ctrl+C Exit` 置首,超长换行不截断。
 

@@ -42,9 +42,10 @@
 - 证据：[控制台输入规格](../../../interaction/console.md)、[控制台按键测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖从侧栏进入 Install 面板后使用 Esc 返回侧栏菜单选择（退出确认只在导航层
   生效，面板内 Esc 不进入退出等待态）；Left 与 Right 在表单内切换仓库枚举且不改变焦点
-  （Left 反向、Right 正向，检查汇总态保持不变）。没有左右切换语义的面板（含 Install
-  检查汇总态）Left 与 Right 进入面板的方向对称，返回侧栏导航；Install/Update 之外的
-  面板按 Right 不再触碰隐藏的 Install 表单状态。
+  （Left 反向、Right 正向，检查汇总态保持不变）。没有左右切换语义的面板按 Left 返回
+  侧栏导航、按 Right 无动作（Install 检查汇总态的 Enter/Right 是展开检查详情，Update
+  非枚举字段的 Left/Right 为 no-op 不落回侧栏）；Backup 详情页内 Left 由详情视图消费，
+  仅 Esc 返回列表。
 
 ## UI-05
 
