@@ -82,6 +82,36 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
 }
 
 #[test]
+fn overview_deploy_row_hits_where_it_renders_when_status_wraps() {
+    let _language = LanguageGuard::set(Language::En);
+    // 90 列时右栏约 32 列:daemon 状态行按词级换行比按字符模拟多占一行,
+    // 状态行不预折行时部署动作行的命中区会整体上移,点击可见行无反应。
+    let (_guard, territory) = territory_with_pidfile("hit-rows", "99999999\n");
+    let mut terminal = Terminal::new(TestBackend::new(90, 28)).unwrap();
+    let mut app = ConsoleApp::new();
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    let row = content
+        .lines()
+        .position(|line| line.contains("[ Deploy the lkit daemon ]"))
+        .expect("deploy row must render") as u16;
+    let column = content
+        .lines()
+        .nth(row as usize)
+        .and_then(|line| line.find("[ Deploy"))
+        .expect("deploy label must render") as u16;
+
+    app.handle_mouse(mouse_click(column, row));
+    assert!(
+        app.deploy_daemon_confirming,
+        "clicking the rendered deploy row must open the deploy dialog even when the status line above wraps"
+    );
+    drop(_guard);
+    let _ = std::fs::remove_dir_all(&territory);
+}
+
+#[test]
 fn overview_shows_running_without_deploy_row_when_daemon_is_alive() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) =
