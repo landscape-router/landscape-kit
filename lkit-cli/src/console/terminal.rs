@@ -27,13 +27,26 @@ impl ConsoleTerminal {
             MoveTo(0, 0)
         ) {
             let _ = disable_raw_mode();
+            // execute! 按序执行、可能已进行到任意一步(如鼠标捕获已开启),
+            // 恢复按与 Drop 相同的逆序完整兜底,避免捕获泄漏到 shell。
+            let _ = execute!(
+                std::io::stdout(),
+                Show,
+                DisableMouseCapture,
+                LeaveAlternateScreen
+            );
             return Err(format!("enter alternate screen: {error}"));
         }
         let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
             Ok(terminal) => terminal,
             Err(error) => {
                 let _ = disable_raw_mode();
-                let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
+                let _ = execute!(
+                    std::io::stdout(),
+                    Show,
+                    DisableMouseCapture,
+                    LeaveAlternateScreen
+                );
                 return Err(format!("initialize terminal: {error}"));
             }
         };
