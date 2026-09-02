@@ -11,7 +11,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::network_wizard::Snapshot;
 use super::render::{display_pad, panel_block, register_dialog_hits};
 use super::widgets::{Focus, Hit, block_row_of};
-use super::{ConsoleAction, ConsoleApp};
+use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
 use crate::commands::update::{ResolvedUpdate, resolve_update_target};
 use crate::deployment::config::{RepositorySource, RepositorySourceKind};
@@ -245,26 +245,26 @@ impl UpdatePanel {
     }
 
     /// 消费后台解析结果,按与命令模式相同的规则分支。
-    pub(crate) fn apply_resolution(&mut self, notice: &mut String, resolved: ResolvedUpdate) {
+    pub(crate) fn apply_resolution(&mut self, notice: &mut Notice, resolved: ResolvedUpdate) {
         match resolved.current.cmp(&resolved.target) {
             std::cmp::Ordering::Equal => {
-                *notice = crate::tr!(
+                *notice = Notice::Info(crate::tr!(
                     crate::keys::UPDATE_ALREADY_UP_TO_DATE,
                     version = resolved.current
-                );
+                ));
             }
             std::cmp::Ordering::Greater => {
-                *notice = crate::tr!(
+                *notice = Notice::Error(crate::tr!(
                     crate::keys::SWITCH_DOWNGRADE_NOT_SUPPORTED,
                     from_version = resolved.current,
                     version = resolved.target
-                );
+                ));
             }
             std::cmp::Ordering::Less => self.confirming = Some(resolved),
         }
     }
 
-    pub(crate) fn poll(&mut self, notice: &mut String) {
+    pub(crate) fn poll(&mut self, notice: &mut Notice) {
         let result = match &self.resolving {
             Some(receiver) => receiver.try_recv(),
             None => return,
@@ -276,12 +276,14 @@ impl UpdatePanel {
             }
             Ok(Err(error)) => {
                 self.resolving = None;
-                *notice = error;
+                *notice = Notice::Error(error);
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.resolving = None;
-                *notice = crate::tr!(crate::keys::CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED);
+                *notice = Notice::Error(crate::tr!(
+                    crate::keys::CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED
+                ));
             }
         }
     }
@@ -355,7 +357,7 @@ impl ConsoleApp {
                 UpdateField::Repository => self.update.change(true),
                 UpdateField::Start => {
                     if let Err(error) = self.start_update_resolution() {
-                        self.notice = error;
+                        self.notice = Notice::Error(error);
                     }
                 }
             },

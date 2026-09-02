@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::super::{ConsoleAction, ConsoleApp};
+use super::super::{ConsoleAction, ConsoleApp, Notice};
 use super::{BackupListState, BackupVerifyState, delete_backup_via_console};
 use crate::commands::Commands;
 
@@ -47,12 +47,16 @@ impl ConsoleApp {
                             return Some(None);
                         }
                         BackupVerifyState::Running(_) => {
-                            self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING);
+                            self.notice = Notice::Info(crate::tr!(
+                                crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING
+                            ));
                             return Some(None);
                         }
                         BackupVerifyState::Idle => {
                             self.start_backup_verify();
-                            self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING);
+                            self.notice = Notice::Info(crate::tr!(
+                                crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING
+                            ));
                             return Some(None);
                         }
                     }
@@ -89,7 +93,7 @@ impl ConsoleApp {
                             self.backup.remark.clear();
                             self.backup.start_create(&remark);
                         }
-                        Err(error) => self.notice = error.to_string(),
+                        Err(error) => self.notice = Notice::Error(error.to_string()),
                     }
                 }
                 KeyCode::Esc => {
@@ -168,7 +172,7 @@ impl ConsoleApp {
                         self.backup.verify = BackupVerifyState::Idle;
                         self.start_backup_verify();
                     } else {
-                        self.notice = crate::tr!(
+                        self.notice = Notice::Error(crate::tr!(
                             crate::keys::CONSOLE_BACKUP_INVALID,
                             id = entry
                                 .path
@@ -176,7 +180,7 @@ impl ConsoleApp {
                                 .unwrap_or_default()
                                 .to_string_lossy()
                                 .trim_end_matches(".lkb")
-                        );
+                        ));
                     }
                 }
             }
@@ -190,7 +194,8 @@ impl ConsoleApp {
                         self.backup.restore_confirming = true;
                     }
                 } else {
-                    self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE);
+                    self.notice =
+                        Notice::Info(crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_RESTORE));
                 }
             }
             KeyCode::Char('d' | 'D') => {
@@ -200,7 +205,8 @@ impl ConsoleApp {
                     self.backup.delete_target = Some(metadata.backup_id.clone());
                     self.backup.delete_confirming = true;
                 } else {
-                    self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_DELETE);
+                    self.notice =
+                        Notice::Info(crate::tr!(crate::keys::CONSOLE_BACKUP_SELECT_TO_DELETE));
                 }
             }
             _ => return None,
@@ -217,10 +223,12 @@ impl ConsoleApp {
                 self.backup.details = None;
                 self.backup.details_scroll = 0;
                 self.backup.state = BackupListState::NotRun;
-                self.notice =
-                    crate::tr!(crate::keys::CONSOLE_BACKUP_DELETED, backup_id = backup_id);
+                self.notice = Notice::Success(crate::tr!(
+                    crate::keys::CONSOLE_BACKUP_DELETED,
+                    backup_id = backup_id
+                ));
             }
-            Err(error) => self.notice = format!("backup: {error}"),
+            Err(error) => self.notice = Notice::Error(format!("backup: {error}")),
         }
     }
 
@@ -270,7 +278,7 @@ impl ConsoleApp {
             let _ = sender.send(result);
         });
         self.backup.verify = BackupVerifyState::Running(receiver);
-        self.notice = crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING);
+        self.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING));
     }
 
     fn backup_restore_action(&self, backup_id: &str) -> ConsoleAction {

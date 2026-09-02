@@ -6,6 +6,7 @@ mod flare_panel;
 mod install_form;
 mod mirror;
 mod network_wizard;
+mod notice;
 mod preflight;
 mod reinit;
 mod render;
@@ -15,6 +16,7 @@ mod update;
 mod widgets;
 
 use self::app::{ConsoleApp, ExitState};
+use self::notice::Notice;
 use self::render::render;
 use self::terminal::ConsoleTerminal;
 
@@ -62,10 +64,12 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
     // 提前在底栏提示,避免用户填写完安装参数、退出控制台委托时才失败。
     match crate::daemon_worker::delegation_block() {
         Some(crate::daemon_worker::DelegationBlock::DaemonNotRunning) => {
-            app.notice = crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE);
+            app.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
         }
         Some(crate::daemon_worker::DelegationBlock::WorkerSpawnUnavailable) => {
-            app.notice = crate::tr!(crate::keys::CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE);
+            app.notice = Notice::Info(crate::tr!(
+                crate::keys::CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE
+            ));
         }
         None => {}
     }

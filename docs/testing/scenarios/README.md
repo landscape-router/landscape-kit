@@ -20,7 +20,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | --- | --- | --- |
 | lkit 自发布与引导安装 | `LKR-01` 至 `LKR-04` | [lkit-release.md](functional/lkit-release.md) |
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
-| Ratatui 管理控制台 | `UI-01` 至 `UI-15` | [console.md](functional/console.md) |
+| Ratatui 管理控制台 | `UI-01` 至 `UI-16` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-07` | [i18n.md](functional/i18n.md) |
 | 首次安装 | `INS-01` 至 `INS-18` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-10` | [migrate.md](functional/migrate.md) |

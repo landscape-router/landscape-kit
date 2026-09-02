@@ -217,3 +217,18 @@
   可执行性的判定有单元测试覆盖（见 [`S-4b`](../../nspawn-systemd.md)）。
 - 缺口：root 分支依赖真实 euid 与地盘 pidfile，标准单测只覆盖非 root（不阻断）
   路径；root 环境的 TUI 现场行为与 nspawn smoke 的 S-4b 待运行验证。
+
+## UI-16
+
+**底栏状态消息按级别染色（就绪/信息/成功/失败）**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[样式验收标准](../../../interaction/ui/README.md)、
+  `console::notice` 单元测试与
+  `console::tests::app::notice_levels_render_with_distinct_colors`
+- 说明：底栏 notice 为 `console::notice::Notice` 枚举（`Ready`/`Info`/`Success`/
+  `Error`），渲染时分别以灰/黄/绿/红着色，取代旧的 `"Ready"` 哨兵字符串与
+  "非 Ready 一律红字"约定；多行结果（换源/恢复的追加行）经 `push_line` 拼接并
+  保持首行级别染色；`Ready` 文案在渲染时按当前语言惰性翻译，语言切换后底栏
+  就绪文案即时更新。

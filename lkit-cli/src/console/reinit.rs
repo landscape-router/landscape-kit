@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::render::panel_block;
 use super::widgets::{Focus, Hit, block_row_of};
-use super::{ConsoleAction, ConsoleApp};
+use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
 use crate::network::config::NetworkPlan;
 
@@ -172,10 +172,11 @@ impl ConsoleApp {
                         Ok(wizard) => {
                             self.network_wizard = Some(wizard);
                             self.reinit.wizard = true;
-                            self.notice =
-                                crate::tr!(crate::keys::CONSOLE_CONFIGURE_NETWORK_TAKEOVER);
+                            self.notice = Notice::Info(crate::tr!(
+                                crate::keys::CONSOLE_CONFIGURE_NETWORK_TAKEOVER
+                            ));
                         }
-                        Err(error) => self.notice = error,
+                        Err(error) => self.notice = Notice::Error(error),
                     }
                 }
                 _ => return None,
@@ -198,11 +199,12 @@ impl ConsoleApp {
                     | ReinitField::PasswordConfirmation => self.reinit.editing = true,
                     ReinitField::Start => {
                         if self.reinit.plan.is_none() {
-                            self.notice = crate::tr!(crate::keys::CONSOLE_REINIT_PLAN_MISSING);
+                            self.notice =
+                                Notice::Error(crate::tr!(crate::keys::CONSOLE_REINIT_PLAN_MISSING));
                             return Some(None);
                         }
                         if let Err(error) = self.reinit.validate_credentials() {
-                            self.notice = error;
+                            self.notice = Notice::Error(error);
                             return Some(None);
                         }
                         self.reinit.confirming = true;
