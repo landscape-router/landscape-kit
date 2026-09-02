@@ -30,6 +30,30 @@ request. The project uses an **issue-driven workflow**.
 5. **Open a pull request.** Reference the issue in the PR description (for example
    `Closes #123`) and fill in the PR template checklist.
 
+## Test helper binaries
+
+The test suites never talk to a real systemd or the real `landscape-webserver`.
+Instead, fake programs from the `lkit-test-fixture` crate (`crates/lkit-test-fixture/`)
+stand in for them and are driven by JSON config files:
+
+- `lkit-test-systemctl` — a fake `systemctl` (and `systemd-analyze`) whose unit
+  files, service state, and command results come from the JSON file named by the
+  `LKIT_TEST_SYSTEMCTL_CONFIG` environment variable. Unit tests point the code
+  under test at it through the config; the e2e fixture suite calls it directly to
+  arrange pre-existing services.
+- `lkit-test-init` — a fake SysV `init` used the same way (`LKIT_TEST_INIT_CONFIG`).
+- `lkit-landscape-fixture` — stands in for the downloaded
+  `landscape-webserver` asset during the e2e fixture suite; it serves a scripted
+  release payload so `lkit self update`/install flows run against a fake upstream.
+
+You normally never build these by hand. The e2e suite references them with
+`env!("CARGO_BIN_EXE_<name>")`, so `cargo test` builds them automatically, and the
+`lkit` binaries are declared in `lkit-cli/Cargo.toml` behind the `test-support`
+feature (plus `landscape-webserver` inside the fixture crate itself). If you add a
+new fixture program, register it as a `[[bin]]` entry in `lkit-cli/Cargo.toml`
+with `required-features = ["test-support"]`, otherwise `CARGO_BIN_EXE_<name>` will
+not resolve.
+
 ## Questions
 
 For questions that do not belong in an issue, use GitHub Discussions or the issue
