@@ -34,7 +34,7 @@ fn renders_sidebar_and_install_form() {
     assert!(content.contains("> Environment checks"));
     assert!(content.contains("NOT RUN"));
     assert!(content.contains("Enter Details"));
-    assert!(content.contains("L  Language: English (en)"));
+    assert!(content.contains("[L] Language: English (en)"));
 }
 
 #[test]
