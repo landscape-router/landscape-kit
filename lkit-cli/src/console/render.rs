@@ -521,16 +521,18 @@ fn overview_landscape_lines(app: &ConsoleApp) -> Vec<Line<'static>> {
 
 /// Overview 右栏:lkit 常驻服务。返回行与动作行(行号,命中区)列表。
 /// 小节标题与动作行上方各带灰色简介,解释常驻服务与急救恢复码是什么,避免
-/// 只有状态没有语义。简介按 `wrap_width` 预折行(见 `wrap_to_width`),保证
-/// 命中区行号模拟与实际渲染一致。
+/// 只有状态没有语义。所有可能超宽的动态行(简介、版本号、daemon 状态)均按
+/// `wrap_width` 预折行(见 `wrap_to_width`),保证命中区行号模拟与实际渲染
+/// 一致——任何一行漏折都会让 `block_row_of` 的按字符模拟与 ratatui 的词级
+/// 换行漂移,动作行命中区错位一整行。
 fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, Vec<(usize, Hit)>) {
     let version = env!("CARGO_PKG_VERSION");
     let running = crate::daemon_worker::daemon_is_running();
     let muted = Style::default().fg(Color::DarkGray);
-    let section_help_lines = |text: String| -> Vec<Line<'static>> {
+    let wrapped = |text: String, style: Style| -> Vec<Line<'static>> {
         super::widgets::wrap_to_width(wrap_width, &text)
             .into_iter()
-            .map(|line| Line::styled(line, muted))
+            .map(|line| Line::styled(line, style))
             .collect()
     };
     let mut lines = vec![Line::styled(
@@ -539,25 +541,30 @@ fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, V
             .fg(Color::DarkGray)
             .add_modifier(Modifier::BOLD),
     )];
-    lines.extend(section_help_lines(crate::tr!(
-        crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION_HELP
-    )));
-    lines.push(Line::raw(crate::tr!(
-        crate::keys::CONSOLE_OVERVIEW_LKIT_VERSION,
-        version = version
-    )));
+    lines.extend(wrapped(
+        crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION_HELP),
+        muted,
+    ));
+    lines.extend(wrapped(
+        crate::tr!(
+            crate::keys::CONSOLE_OVERVIEW_LKIT_VERSION,
+            version = version
+        ),
+        Style::default(),
+    ));
     lines.push(Line::raw(""));
-    lines.push(if running {
-        Line::styled(
+    let (daemon_status, daemon_style) = if running {
+        (
             crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING),
             Style::default().fg(Color::Green),
         )
     } else {
-        Line::styled(
+        (
             crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_DAEMON_NOT_RUNNING),
             Style::default().fg(Color::Red),
         )
-    });
+    };
+    lines.extend(wrapped(daemon_status, daemon_style));
     let selected_style = if focused {
         Style::default()
             .fg(Color::Black)
@@ -589,9 +596,10 @@ fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, V
     } else {
         // daemon 运行时提供「查看急救恢复码」动作行:弹出展示当前 `[flare]`
         // 段 psk 明文,供分发给恢复操作员;动作行上方一行简介说明其用途。
-        lines.extend(section_help_lines(crate::tr!(
-            crate::keys::CONSOLE_OVERVIEW_LKIT_PSK_HELP
-        )));
+        lines.extend(wrapped(
+            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_PSK_HELP),
+            muted,
+        ));
         let show_row = lines.len();
         lines.push(Line::from(vec![
             Span::styled(if focused { "> " } else { "  " }, selected_style),
