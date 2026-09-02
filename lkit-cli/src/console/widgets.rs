@@ -159,18 +159,34 @@ impl Clicks {
     }
 
     /// 命中测试:从后向前(后绘制者优先),返回命中区域对应的动作。
+    ///
+    /// 例外:弹层注册的整屏 `Outside` 不得遮蔽更早注册的语言指示。弹窗打开时
+    /// 指示仍然可见(弹窗是居中块,状态栏在底部),点击必须保持与键盘 `L`
+    /// 一致的切换语义,而不是落进 `Outside` 被合成为 Esc;弹层自身区域
+    /// (Enter/Nothing)注册在 Outside 之后,覆盖指示时仍然优先。
     pub(crate) fn hit_at(&self, column: u16, row: u16) -> Option<Hit> {
-        self.regions
+        let hit = self
+            .regions
             .iter()
             .rev()
-            .find(|(area, _)| {
-                column >= area.x
-                    && column < area.x.saturating_add(area.width)
-                    && row >= area.y
-                    && row < area.y.saturating_add(area.height)
+            .find(|(area, _)| contains(area, column, row))
+            .map(|(_, hit)| *hit);
+        if matches!(hit, Some(Hit::Outside))
+            && self.regions.iter().any(|(area, hit)| {
+                matches!(hit, Hit::LanguageSwitch) && contains(area, column, row)
             })
-            .map(|(_, hit)| *hit)
+        {
+            return Some(Hit::LanguageSwitch);
+        }
+        hit
     }
+}
+
+fn contains(area: &Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
 }
 
 /// 模拟 Paragraph 在指定宽度下的按字符换行,返回占用的行数。
