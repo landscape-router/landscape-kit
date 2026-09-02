@@ -579,8 +579,6 @@ impl ConsoleApp {
         None
     }
 
-    // 鼠标点击暂时禁用,方法保留供测试直接调用
-    #[allow(dead_code)]
     /// 鼠标事件处理:左键命中渲染时收集的可点击区域,按对应键盘语义执行;
     /// 右键视为 Esc;滚轮滚动当前可滚动视图。
     pub(super) fn handle_mouse(
@@ -809,8 +807,6 @@ impl ConsoleApp {
         }
     }
 
-    // 鼠标点击暂时禁用,方法保留供测试直接调用
-    #[allow(dead_code)]
     pub(super) fn handle_scroll(&mut self, down: bool) -> Option<ConsoleAction> {
         if self.preflight.expanded && self.menu() == Menu::Install {
             if down {

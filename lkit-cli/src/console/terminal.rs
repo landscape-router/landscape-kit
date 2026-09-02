@@ -1,6 +1,7 @@
 use std::io::Stdout;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear as ClearScreen, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
@@ -20,7 +21,7 @@ impl ConsoleTerminal {
         if let Err(error) = execute!(
             stdout,
             EnterAlternateScreen,
-            // EnableMouseCapture, // 鼠标捕获暂时禁用
+            EnableMouseCapture,
             Hide,
             ClearScreen(ClearType::All),
             MoveTo(0, 0)
@@ -46,7 +47,7 @@ impl Drop for ConsoleTerminal {
         let _ = execute!(
             self.terminal.backend_mut(),
             Show,
-            // DisableMouseCapture, // 鼠标捕获暂时禁用
+            DisableMouseCapture,
             ClearScreen(ClearType::All),
             MoveTo(0, 0),
             LeaveAlternateScreen
