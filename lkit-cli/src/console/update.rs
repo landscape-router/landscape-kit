@@ -352,6 +352,9 @@ impl ConsoleApp {
             KeyCode::Left if self.update.selected == UpdateField::Repository => {
                 self.update.change(false)
             }
+            // 其余字段没有左右语义:Left/Right 在此消费为 no-op,不落穿到主
+            // 处理(否则 Left 会意外把焦点跳回侧栏),与 Install 表单一致。
+            KeyCode::Left | KeyCode::Right => {}
             KeyCode::Enter | KeyCode::Char(' ') => match self.update.selected {
                 UpdateField::Version | UpdateField::RepositoryUrl => self.update.editing = true,
                 UpdateField::Repository => self.update.change(true),
