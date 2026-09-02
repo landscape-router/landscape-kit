@@ -284,8 +284,10 @@ WAN/LAN 配置页其余区域点击等价于 Enter 继续，取消确认层仍�
 检查详情和备份详情页滚动。所有鼠标动作都复用键盘语义，行为和快捷键一致。
 
 侧栏和表单使用方向键移动：Right 或 Enter 从侧栏进入面板，Esc 从任意面板（包括
-Install）返回侧栏菜单选择；Left 与 Right 一同作为面板内组件切换（Install 与 Update
-的仓库枚举、软件来源与镜像确认层内的循环切换等）。Install 使用 Up/Down 在检查汇总和
+Install）返回侧栏菜单选择；没有左右切换语义的面板（Overview、Backup、Mirror、
+Software 等，以及 Install 的检查汇总态）Left 与 Right 对称，同样返回侧栏导航。
+有左右切换语义的场合保留 Left/Right 切换值（Install 与 Update 的仓库枚举、
+软件来源与镜像确认层内的循环切换等）。Install 使用 Up/Down 在检查汇总和
 表单字段间移动，Right/Enter/Space 切换枚举和开关。Tab 在侧栏与面板间切换，Enter 编辑
 或激活当前项。退出确认只在导航层生效：非编辑状态在导航层第一次 Esc 只进入等待状态，
 连续第二次 Esc 才打开居中的退出确认层；确认层使用 Enter 退出、Esc 取消。第一次 Esc
