@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::install_form::InstallField;
 use super::network_wizard::WanMode;
@@ -190,6 +190,41 @@ pub(crate) fn wrapped_rows(width: u16, text: &str) -> u16 {
     rows
 }
 
+/// 按显示宽度预折行文本(优先在空格断行,超宽的无空格段按字符硬切),每行实际
+/// 宽度不超过 `width`。折行后的行交给 Paragraph 渲染不会再触发其词级换行,
+/// `block_row_of` 的按字符换行模拟才能与实际渲染行号一致(词级换行会预留行尾
+/// 空白,两级行号会漂移,命中区会错位)。
+pub(crate) fn wrap_to_width(width: u16, text: &str) -> Vec<String> {
+    let width = usize::from(width.max(1));
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    for word in text.split(' ') {
+        let word_width = UnicodeWidthStr::width(word);
+        if current_width > 0 && current_width + 1 + word_width <= width {
+            current.push(' ');
+            current.push_str(word);
+            current_width += 1 + word_width;
+            continue;
+        }
+        if current_width > 0 {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        for character in word.chars() {
+            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+            if current_width > 0 && current_width + character_width > width {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            current.push(character);
+            current_width += character_width;
+        }
+    }
+    lines.push(current);
+    lines
+}
+
 /// 拼接 `Line` 的全部 Span 文本,用于按宽度的换行模拟。
 fn line_text(line: &Line) -> String {
     line.spans
@@ -208,4 +243,40 @@ pub(crate) fn block_row_of(lines: &[Line], target: usize, width: u16) -> u16 {
         row = row.saturating_add(wrapped_rows(width, &line_text(line)));
     }
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_to_width_breaks_english_on_word_boundaries() {
+        let lines = wrap_to_width(12, "deploy the resident service");
+        assert_eq!(lines, vec!["deploy the", "resident", "service"]);
+        assert!(lines.iter().all(|line| line.width() <= 12));
+    }
+
+    #[test]
+    fn wrap_to_width_hard_splits_unspaced_cjk_text() {
+        let lines = wrap_to_width(8, "以 systemd 服务常驻后台");
+        assert_eq!(
+            lines,
+            vec!["以", "systemd", "服务常驻", "后台"],
+            "a word that cannot share a line is hard-split at the width boundary"
+        );
+        assert!(lines.iter().all(|line| line.width() <= 8));
+        assert_eq!(
+            lines.concat().replace(' ', ""),
+            "以systemd服务常驻后台",
+            "hard splitting must not drop characters"
+        );
+    }
+
+    #[test]
+    fn wrapped_rows_counts_each_prewrapped_line_as_one_row() {
+        let text = "the resident service executes privileged operations";
+        for line in wrap_to_width(16, text) {
+            assert_eq!(wrapped_rows(16, &line), 1);
+        }
+    }
 }
