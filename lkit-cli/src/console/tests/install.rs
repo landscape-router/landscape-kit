@@ -17,13 +17,7 @@ fn renders_sidebar_and_install_form() {
     app.menu_index = 1;
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
+    let content = terminal_content(&terminal);
     assert!(content.contains("Landscape Kit"));
     assert!(content.contains("Navigation"));
     assert!(content.contains("Install root"));
@@ -34,7 +28,7 @@ fn renders_sidebar_and_install_form() {
     assert!(content.contains("> Environment checks"));
     assert!(content.contains("NOT RUN"));
     assert!(content.contains("Enter Details"));
-    assert!(content.contains("[L] Language: English (en)"));
+    assert!(content.contains("[L] Switch to 中文 (zh)"));
 }
 
 #[test]

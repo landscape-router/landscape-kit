@@ -146,7 +146,7 @@ pub(crate) fn register_modal_hits(hits: &mut Clicks, screen: Rect, area: Rect) {
     hits.add(screen, Hit::Outside);
     hits.add(area, Hit::Nothing);
 }
-fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
+fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     frame.render_widget(Block::default().borders(Borders::TOP), area);
     let content = Rect::new(
         area.x,
@@ -184,6 +184,10 @@ fn render_status(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
             .style(Style::default().fg(notice_color)),
         notice_area,
     );
+    // 语言指示可点击:点击等价于按 L(编辑中不可切换时点击无效)。
+    if app.language_switch_available() {
+        app.hits.add(language_area, Hit::LanguageSwitch);
+    }
     frame.render_widget(
         Paragraph::new(language)
             .alignment(Alignment::Right)
@@ -213,16 +217,20 @@ fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     1 + wrapped_rows(notice_width, &notice).max(1) + wrapped_rows(width, &app.hints()).max(1)
 }
 
-/// 状态栏右下角的语言指示。`[L]` 是按键提示(keycap 记法),避免裸 `L` 被误读为
-/// 换行/装饰符号。
+/// 状态栏右下角的语言指示。可切换时显示**目标语言**(按 `L` 或点击即切换到
+/// 所示目标,所见即所得);文本编辑等不可切换状态退回显示当前语言。
 fn language_status(language: Language, switch_available: bool) -> String {
-    match (language, switch_available) {
-        (Language::En, true) => "[L] Language: English (en)",
-        (Language::En, false) => "Language: English (en)",
-        (Language::Zh, true) => "[L] 语言：中文 (zh)",
-        (Language::Zh, false) => "语言：中文 (zh)",
+    if switch_available {
+        crate::tr!(
+            crate::keys::CONSOLE_LANGUAGE_SWITCH_HINT,
+            language = language.toggled().native_label()
+        )
+    } else {
+        crate::tr!(
+            crate::keys::CONSOLE_LANGUAGE_CURRENT,
+            language = language.native_label()
+        )
     }
-    .into()
 }
 fn render_exit_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
     let screen = frame.area();
