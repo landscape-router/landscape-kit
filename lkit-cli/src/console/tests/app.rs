@@ -419,6 +419,10 @@ fn renders_stable_small_terminal_state() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(content.contains("Terminal too small"));
+    assert!(
+        content.contains("72x18"),
+        "the fallback screen must tell the user the minimum size it needs"
+    );
 }
 
 #[test]
