@@ -91,13 +91,11 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
                 }
             }
             Event::Paste(value) => app.handle_paste(&value),
-            // 鼠标点击暂时禁用:忽略鼠标事件,终端不再捕获鼠标
-            Event::Mouse(_) => {}
-            // Event::Mouse(mouse) => {
-            //     if let Some(action) = app.handle_mouse(mouse) {
-            //         return Ok(action);
-            //     }
-            // }
+            Event::Mouse(mouse) => {
+                if let Some(action) = app.handle_mouse(mouse) {
+                    return Ok(action);
+                }
+            }
             Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => {}
             Event::Key(_) => {}
         }
