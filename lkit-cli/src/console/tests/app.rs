@@ -364,6 +364,137 @@ fn language_key_stays_disabled_while_exit_confirmation_is_open() {
 }
 
 #[test]
+fn recovery_code_typing_reaches_the_field_instead_of_switching_language() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.deploy_daemon_confirming = true;
+    assert!(
+        !app.language_switch_available(),
+        "the deploy dialog promises direct typing, so L must be paused while it is open"
+    );
+
+    for character in "lk9-dead-beef".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+
+    assert_eq!(
+        crate::i18n::current(),
+        Language::En,
+        "typing a recovery code containing l must not switch the language"
+    );
+    assert_eq!(app.deploy_psk, "lk9-dead-beef");
+    assert!(app.deploy_daemon_confirming, "the dialog must stay open");
+}
+
+#[test]
+fn language_key_remains_text_in_show_psk_editing() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.show_psk = true;
+    app.show_psk_editing = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::En);
+    assert_eq!(app.show_psk_value, "l");
+    assert!(app.show_psk, "the dialog must stay open");
+}
+
+#[test]
+fn language_key_remains_text_in_flare_psk_editing() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.flare.open = true;
+    app.flare.editing = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::En);
+    assert_eq!(app.flare.psk, "l");
+    assert!(app.flare.open, "the dialog must stay open");
+}
+
+#[test]
+fn language_indicator_click_stays_clickable_behind_dialogs() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = update_ready_app();
+    app.update.confirming = Some(resolved("1.2.3", "1.3.0"));
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    let row = content
+        .lines()
+        .position(|line| line.contains("[L] Switch to"))
+        .expect("the language indicator must render") as u16;
+    let column = content
+        .lines()
+        .nth(row as usize)
+        .and_then(|line| line.find("[L]"))
+        .expect("the keycap must render") as u16;
+    assert_eq!(
+        app.hits.hit_at(column + 1, row),
+        Some(Hit::LanguageSwitch),
+        "the dialog's outside region must not shadow the language indicator"
+    );
+
+    app.handle_mouse(mouse_click(column + 1, row));
+    assert_eq!(
+        crate::i18n::current(),
+        Language::Zh,
+        "clicking the indicator behind a dialog must switch like the L key"
+    );
+    assert!(
+        app.update.confirming.is_some(),
+        "the confirm layer must stay open instead of receiving the synthesized Esc"
+    );
+}
+
+#[test]
+fn sidebar_click_during_a_confirm_dialog_acts_as_esc_not_navigation() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut app = update_ready_app();
+    app.update.confirming = Some(resolved("1.2.3", "1.3.0"));
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+    // 弹层注册的整屏 Outside 必须优先于更早注册的 Hit::Navigation/Hit::Menu:
+    // 否则点击侧栏会把焦点挪到导航层而确认层还开着,Esc 语义随之脱节。
+    app.handle_mouse(mouse_click(5, 4));
+
+    assert_eq!(
+        app.focus,
+        Focus::Panel,
+        "focus must not land on the sidebar"
+    );
+    assert!(
+        app.update.confirming.is_none(),
+        "the click must resolve to the dialog's outside (Esc) and close it"
+    );
+    assert_eq!(
+        app.exit_state,
+        ExitState::Idle,
+        "the synthesized Esc must not arm the exit"
+    );
+}
+
+#[test]
+fn left_stays_in_the_update_form_on_non_enum_fields() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = update_ready_app();
+    app.update.selected = UpdateField::Version;
+
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+
+    assert_eq!(
+        app.focus,
+        Focus::Panel,
+        "Left on a non-enum field must not fall through to the sidebar"
+    );
+    assert_eq!(app.update.selected, UpdateField::Version);
+}
+
+#[test]
 fn double_escape_opens_confirmation_before_enter_exits() {
     let mut app = ConsoleApp::new();
     let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
