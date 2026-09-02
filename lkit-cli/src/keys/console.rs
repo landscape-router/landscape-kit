@@ -100,6 +100,7 @@ pub(crate) const CONSOLE_CANCEL_WIZARD: &str = "console.cancel_wizard";
 pub(crate) const CONSOLE_READY: &str = "console.ready";
 pub(crate) const CONSOLE_LANGUAGE_SWITCH_HINT: &str = "console.language_switch_hint";
 pub(crate) const CONSOLE_LANGUAGE_CURRENT: &str = "console.language_current";
+pub(crate) const CONSOLE_LANGUAGE_PAUSED: &str = "console.language_paused";
 #[cfg(not(test))]
 pub(crate) const CONSOLE_LANGUAGE_SAVE_FAILED: &str = "console.language_save_failed";
 pub(crate) const CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION: &str = "console.exit_landscape_kit_question";
