@@ -158,11 +158,7 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(content.width);
-    let notice = if app.notice == "Ready" {
-        crate::tr!(crate::keys::CONSOLE_READY).to_string()
-    } else {
-        app.notice.clone()
-    };
+    let notice = app.notice.text();
     let notice_width = content.width.saturating_sub(language_width).max(1);
     let notice_rows = wrapped_rows(notice_width, &notice).max(1);
     let hints_rows = wrapped_rows(content.width, &app.hints()).max(1);
@@ -173,11 +169,7 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     .areas(content);
     let [notice_area, language_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(language_width)]).areas(summary);
-    let notice_color = if app.notice == "Ready" {
-        Color::DarkGray
-    } else {
-        Color::Red
-    };
+    let notice_color = app.notice.color();
     frame.render_widget(
         Paragraph::new(notice)
             .wrap(Wrap { trim: true })
@@ -208,11 +200,7 @@ fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(width);
-    let notice = if app.notice == "Ready" {
-        crate::tr!(crate::keys::CONSOLE_READY).to_string()
-    } else {
-        app.notice.clone()
-    };
+    let notice = app.notice.text();
     let notice_width = width.saturating_sub(language_width).max(1);
     1 + wrapped_rows(notice_width, &notice).max(1) + wrapped_rows(width, &app.hints()).max(1)
 }

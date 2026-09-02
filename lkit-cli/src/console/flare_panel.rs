@@ -8,6 +8,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::ConsoleApp;
+use super::Notice;
 use super::render::register_modal_hits;
 use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
 
@@ -49,7 +50,7 @@ impl ConsoleApp {
         match crate::deployment::config::save_flare(&section) {
             Ok(()) => {
                 self.flare.open = false;
-                self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_SAVED);
+                self.notice = Notice::Success(crate::tr!(crate::keys::CONSOLE_FLARE_SAVED));
             }
             Err(error) => {
                 self.flare.notice =

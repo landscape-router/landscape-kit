@@ -101,20 +101,20 @@ fn update_repository_cycles_within_available_options() {
 fn update_resolution_branches_like_the_update_command() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = update_ready_app();
-    let mut notice = String::new();
+    let mut notice = Notice::Ready;
 
     app.update
         .apply_resolution(&mut notice, resolved("1.2.3", "1.2.3"));
     assert!(notice.contains("already up to date"));
     assert!(app.update.confirming.is_none());
 
-    notice.clear();
+    notice = Notice::Ready;
     app.update
         .apply_resolution(&mut notice, resolved("1.2.4", "1.2.3"));
     assert!(notice.contains("downgrading"));
     assert!(app.update.confirming.is_none());
 
-    notice.clear();
+    notice = Notice::Ready;
     app.update
         .apply_resolution(&mut notice, resolved("1.2.3", "1.2.4"));
     assert!(notice.is_empty(), "an upgrade must not set the notice");

@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::super::{ConsoleAction, ConsoleApp};
+use super::super::{ConsoleAction, ConsoleApp, Notice};
 use super::{WanMode, WizardStep};
 
 impl ConsoleApp {
@@ -12,7 +12,7 @@ impl ConsoleApp {
                     self.network_wizard = None;
                     self.reinit.wizard = false;
                     self.reinit.step = super::super::reinit::ReinitStep::Overview;
-                    self.notice = "Ready".into();
+                    self.notice = Notice::Ready;
                 }
                 KeyCode::Esc => wizard.cancel_confirming = false,
                 _ => {}
@@ -45,7 +45,7 @@ impl ConsoleApp {
                 KeyCode::Enter => {
                     wizard.editing = false;
                     if let Err(error) = wizard.advance_after_edit() {
-                        self.notice = error;
+                        self.notice = Notice::Error(error);
                         wizard.editing = true;
                     }
                 }
@@ -74,7 +74,7 @@ impl ConsoleApp {
                     if wizard.wan_mode == WanMode::Static
                         && let Err(error) = wizard.validate_wan_static()
                     {
-                        self.notice = error;
+                        self.notice = Notice::Error(error);
                         return None;
                     }
                     wizard.step = WizardStep::Lan;
@@ -109,7 +109,7 @@ impl ConsoleApp {
                 KeyCode::Up | KeyCode::Down => wizard.move_focus(key.code == KeyCode::Up),
                 KeyCode::Enter if wizard.focus == wizard.focus_max() => {
                     if let Err(error) = wizard.validate_lan_dhcp() {
-                        self.notice = error;
+                        self.notice = Notice::Error(error);
                         return None;
                     }
                     wizard.step = WizardStep::Confirm;
@@ -122,7 +122,7 @@ impl ConsoleApp {
                     let plan = match wizard.plan() {
                         Ok(plan) => plan,
                         Err(error) => {
-                            self.notice = error;
+                            self.notice = Notice::Error(error);
                             return None;
                         }
                     };
@@ -133,7 +133,8 @@ impl ConsoleApp {
                         self.reinit.step = super::super::reinit::ReinitStep::Credentials;
                         self.reinit.selected = super::super::reinit::ReinitField::AdminUser;
                         self.reinit.editing = false;
-                        self.notice = crate::tr!(crate::keys::CONSOLE_REINIT_ENTER_CREDENTIALS);
+                        self.notice =
+                            Notice::Info(crate::tr!(crate::keys::CONSOLE_REINIT_ENTER_CREDENTIALS));
                         return None;
                     }
                     match self.install.command_with_network_plan(Some(plan)) {
@@ -141,7 +142,7 @@ impl ConsoleApp {
                             self.network_wizard = None;
                             return Some(action);
                         }
-                        Err(error) => self.notice = error,
+                        Err(error) => self.notice = Notice::Error(error),
                     }
                 }
             }
