@@ -213,11 +213,13 @@ fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     1 + wrapped_rows(notice_width, &notice).max(1) + wrapped_rows(width, &app.hints()).max(1)
 }
 
+/// 状态栏右下角的语言指示。`[L]` 是按键提示(keycap 记法),避免裸 `L` 被误读为
+/// 换行/装饰符号。
 fn language_status(language: Language, switch_available: bool) -> String {
     match (language, switch_available) {
-        (Language::En, true) => "L  Language: English (en)",
+        (Language::En, true) => "[L] Language: English (en)",
         (Language::En, false) => "Language: English (en)",
-        (Language::Zh, true) => "L  语言：中文 (zh)",
+        (Language::Zh, true) => "[L] 语言：中文 (zh)",
         (Language::Zh, false) => "语言：中文 (zh)",
     }
     .into()
