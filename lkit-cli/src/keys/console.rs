@@ -107,6 +107,7 @@ pub(crate) const CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION: &str = "console.exit_lands
 pub(crate) const CONSOLE_PRESS_ENTER_TO_EXIT: &str = "console.press_enter_to_exit";
 pub(crate) const CONSOLE_PRESS_ESC_TO_CANCEL: &str = "console.press_esc_to_cancel";
 pub(crate) const CONSOLE_CONFIRM_EXIT: &str = "console.confirm_exit";
+pub(crate) const CONSOLE_EXIT_ARMED_NOTICE: &str = "console.exit_armed_notice";
 pub(crate) const CONSOLE_NAVIGATION: &str = "console.navigation";
 pub(crate) const CONSOLE_INSTALL_UNAVAILABLE: &str = "console.install_unavailable";
 pub(crate) const CONSOLE_ROOT_PRIVILEGES_REQUIRED: &str = "console.root_privileges_required";

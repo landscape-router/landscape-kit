@@ -240,8 +240,7 @@ impl ConsoleApp {
             match self.exit_state {
                 ExitState::Idle => {
                     self.exit_state = ExitState::Armed;
-                    self.notice =
-                        Notice::Info("Exit armed - press Esc again for confirmation".into());
+                    self.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_EXIT_ARMED_NOTICE));
                 }
                 ExitState::Armed => {
                     self.exit_state = ExitState::Confirming;
