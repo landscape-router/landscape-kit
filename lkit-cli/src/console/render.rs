@@ -379,10 +379,10 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let focused = app.focus == Focus::Panel;
     // 左栏:Landscape 安装信息。
     let landscape_lines = overview_landscape_lines(app);
-    // 右栏:lkit 常驻服务(版本 + daemon 运行状态 + 动作行)。
-    let (lkit_lines, action_rows) = overview_lkit_lines(focused);
     // 窄面板回退为上下堆叠,保证 72 列终端(面板约 46 列)可用。
     if area.width < 52 {
+        let content_width = area.width.saturating_sub(2);
+        let (lkit_lines, action_rows) = overview_lkit_lines(focused, content_width);
         let mut lines = landscape_lines;
         lines.push(Line::raw(""));
         lines.push(Line::styled(
@@ -396,7 +396,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         for (row, hit) in action_rows {
             app.hits.block_row(
                 area,
-                block_row_of(&lines, lkit_start + row, area.width.saturating_sub(2)),
+                block_row_of(&lines, lkit_start + row, content_width),
                 hit,
             );
         }
@@ -417,6 +417,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     frame.render_widget(block, area);
     let [landscape_area, lkit_area] =
         Layout::horizontal([Constraint::Min(24), Constraint::Min(24)]).areas(inner);
+    let (lkit_lines, action_rows) = overview_lkit_lines(focused, lkit_area.width);
     frame.render_widget(
         Paragraph::new(landscape_lines)
             .block(Block::default().borders(Borders::RIGHT))
@@ -506,22 +507,33 @@ fn overview_landscape_lines(app: &ConsoleApp) -> Vec<Line<'static>> {
 }
 
 /// Overview 右栏:lkit 常驻服务。返回行与动作行(行号,命中区)列表。
-fn overview_lkit_lines(focused: bool) -> (Vec<Line<'static>>, Vec<(usize, Hit)>) {
+/// 小节标题与动作行上方各带灰色简介,解释常驻服务与急救恢复码是什么,避免
+/// 只有状态没有语义。简介按 `wrap_width` 预折行(见 `wrap_to_width`),保证
+/// 命中区行号模拟与实际渲染一致。
+fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, Vec<(usize, Hit)>) {
     let version = env!("CARGO_PKG_VERSION");
     let running = crate::daemon_worker::daemon_is_running();
-    let mut lines = vec![
-        Line::styled(
-            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::raw(crate::tr!(
-            crate::keys::CONSOLE_OVERVIEW_LKIT_VERSION,
-            version = version
-        )),
-        Line::raw(""),
-    ];
+    let muted = Style::default().fg(Color::DarkGray);
+    let section_help_lines = |text: String| -> Vec<Line<'static>> {
+        super::widgets::wrap_to_width(wrap_width, &text)
+            .into_iter()
+            .map(|line| Line::styled(line, muted))
+            .collect()
+    };
+    let mut lines = vec![Line::styled(
+        crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )];
+    lines.extend(section_help_lines(crate::tr!(
+        crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION_HELP
+    )));
+    lines.push(Line::raw(crate::tr!(
+        crate::keys::CONSOLE_OVERVIEW_LKIT_VERSION,
+        version = version
+    )));
+    lines.push(Line::raw(""));
     lines.push(if running {
         Line::styled(
             crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING),
@@ -563,7 +575,10 @@ fn overview_lkit_lines(focused: bool) -> (Vec<Line<'static>>, Vec<(usize, Hit)>)
         action_rows.push((deploy_row, Hit::OverviewDeploy));
     } else {
         // daemon 运行时提供「查看急救恢复码」动作行:弹出展示当前 `[flare]`
-        // 段 psk 明文,供分发给恢复操作员。
+        // 段 psk 明文,供分发给恢复操作员;动作行上方一行简介说明其用途。
+        lines.extend(section_help_lines(crate::tr!(
+            crate::keys::CONSOLE_OVERVIEW_LKIT_PSK_HELP
+        )));
         let show_row = lines.len();
         lines.push(Line::from(vec![
             Span::styled(if focused { "> " } else { "  " }, selected_style),
