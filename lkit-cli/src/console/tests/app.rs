@@ -265,6 +265,12 @@ fn language_key_remains_text_while_editing() {
     assert_eq!(crate::i18n::current(), Language::En);
     assert_eq!(app.install.version, "l");
     assert!(!app.language_switch_available());
+    // 编辑中底栏回退当前语言,并解释 L 暂停(此时 l 是普通输入字符)。
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("L paused while typing"));
+    assert!(content.contains("Language: English (en)"));
 }
 
 #[test]

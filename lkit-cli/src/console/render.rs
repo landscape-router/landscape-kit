@@ -154,7 +154,11 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         area.width,
         area.height.saturating_sub(1),
     );
-    let language = language_status(crate::i18n::current(), app.language_switch_available());
+    let language = language_status(
+        crate::i18n::current(),
+        app.language_switch_available(),
+        app.editing_any_field(),
+    );
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(content.width);
@@ -200,7 +204,11 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
 /// 与 `render_status` 使用同一个 `wrap_to_width` 预折行,保证预留高度与实际
 /// 渲染行数完全一致。
 fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
-    let language = language_status(crate::i18n::current(), app.language_switch_available());
+    let language = language_status(
+        crate::i18n::current(),
+        app.language_switch_available(),
+        app.editing_any_field(),
+    );
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(width);
@@ -217,12 +225,18 @@ fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
 }
 
 /// 状态栏右下角的语言指示。可切换时显示**目标语言**(按 `L` 或点击即切换到
-/// 所示目标,所见即所得);文本编辑等不可切换状态退回显示当前语言。
-fn language_status(language: Language, switch_available: bool) -> String {
+/// 所示目标,所见即所得);文本编辑中退回当前语言并解释 `L` 暂停(此时 `l` 是
+/// 普通输入字符),退出确认层等其余不可切换状态只显示当前语言。
+fn language_status(language: Language, switch_available: bool, editing: bool) -> String {
     if switch_available {
         crate::tr!(
             crate::keys::CONSOLE_LANGUAGE_SWITCH_HINT,
             language = language.toggled().native_label()
+        )
+    } else if editing {
+        crate::tr!(
+            crate::keys::CONSOLE_LANGUAGE_PAUSED,
+            language = language.native_label()
         )
     } else {
         crate::tr!(

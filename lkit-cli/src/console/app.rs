@@ -410,12 +410,16 @@ impl ConsoleApp {
     /// 语言切换在所有非文本编辑、非退出确认状态下可用，包括确认层、详情页、
     /// 部署前检查弹窗与网络向导;编辑字段时 `l` 保持为普通输入字符。
     pub(super) fn language_switch_available(&self) -> bool {
-        self.exit_state != ExitState::Confirming
-            && !self.install.editing
-            && !self.backup.editing
-            && !self.update.editing
-            && !self.reinit.editing
-            && !self
+        self.exit_state != ExitState::Confirming && !self.editing_any_field()
+    }
+
+    /// 是否有任意文本字段处于编辑态(决定语言指示是否显示"输入中暂停"解释)。
+    pub(super) fn editing_any_field(&self) -> bool {
+        self.install.editing
+            || self.backup.editing
+            || self.update.editing
+            || self.reinit.editing
+            || self
                 .network_wizard
                 .as_ref()
                 .is_some_and(|wizard| wizard.editing)
