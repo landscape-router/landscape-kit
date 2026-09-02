@@ -790,6 +790,13 @@ impl ConsoleApp {
                 self.takeover_choice = 1;
                 self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
+            Hit::LanguageSwitch => {
+                // 语言指示可点击:等价于按 L;不可切换(编辑中)时忽略。
+                if self.language_switch_available() {
+                    self.toggle_language();
+                }
+                None
+            }
         }
     }
 
