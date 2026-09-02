@@ -123,6 +123,8 @@ pub(crate) enum Hit {
     WizardContinue,
     /// 阻塞接管屏:选择行(0=稍后,1=确认接管)。
     TakeoverChoice(usize),
+    /// 底栏语言指示:等价于按 L,切换到所示目标语言。
+    LanguageSwitch,
 }
 
 /// 渲染时收集的可点击区域;后注册者优先(弹层覆盖底层界面)。

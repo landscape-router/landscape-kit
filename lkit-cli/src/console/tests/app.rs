@@ -59,7 +59,9 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
     let english = terminal_content(&terminal);
     assert!(english.contains("Navigation"));
     assert!(english.contains("Ctrl+C Exit"));
-    assert!(english.contains("[L] Language: English (en)"));
+    // 可切换时底栏显示目标语言(所见即所得),不显示当前语言。
+    assert!(english.contains("[L] Switch to 中文 (zh)"));
+    assert!(!english.contains("Language: English"));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
     assert_eq!(crate::i18n::current(), Language::Zh);
@@ -70,11 +72,43 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
     let chinese = terminal_content(&chinese_terminal);
     assert!(chinese.contains("导航"));
     assert!(chinese.contains("Ctrl+C 退出"));
-    assert!(chinese.contains("[L] 语言：中文 (zh)"));
-    assert!(!chinese.contains("Language: English (en)"));
+    assert!(chinese.contains("[L] 切换到 English (en)"));
+    assert!(!chinese.contains("Switch to"));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
     assert_eq!(crate::i18n::current(), Language::En);
+}
+
+#[test]
+fn language_indicator_click_switches_to_the_shown_target() {
+    let _language = LanguageGuard::set(Language::En);
+    let backend = TestBackend::new(100, 28);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut app = ConsoleApp::new();
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    let row = content
+        .lines()
+        .position(|line| line.contains("[L] Switch to"))
+        .expect("the language indicator must render") as u16;
+    let column = content
+        .lines()
+        .nth(row as usize)
+        .and_then(|line| line.find("[L]"))
+        .expect("the keycap must render") as u16;
+    assert_eq!(
+        app.hits.hit_at(column + 1, row),
+        Some(Hit::LanguageSwitch),
+        "the language indicator must be clickable"
+    );
+
+    app.handle_mouse(mouse_click(column + 1, row));
+    assert_eq!(
+        crate::i18n::current(),
+        Language::Zh,
+        "clicking the indicator must switch to the shown target language"
+    );
 }
 
 #[test]
