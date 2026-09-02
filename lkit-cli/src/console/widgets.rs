@@ -191,38 +191,58 @@ pub(crate) fn wrapped_rows(width: u16, text: &str) -> u16 {
 }
 
 /// 按显示宽度预折行文本(优先在空格断行,超宽的无空格段按字符硬切),每行实际
-/// 宽度不超过 `width`。折行后的行交给 Paragraph 渲染不会再触发其词级换行,
-/// `block_row_of` 的按字符换行模拟才能与实际渲染行号一致(词级换行会预留行尾
-/// 空白,两级行号会漂移,命中区会错位)。
+/// 宽度不超过 `width`;输入中的 `\n` 先分段再逐段折行,分段边界总是保留为行边界。
+/// 折行后的行交给 Paragraph 渲染不会再触发其词级换行,`block_row_of` 的按字符
+/// 换行模拟才能与实际渲染行号一致(词级换行会预留行尾空白,两级行号会漂移,
+/// 命中区会错位);底栏高度计算同理复用同一折行结果,消除"模拟按字符、渲染按
+/// 单词"的高度偏差。
 pub(crate) fn wrap_to_width(width: u16, text: &str) -> Vec<String> {
     let width = usize::from(width.max(1));
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut current_width = 0usize;
     for word in text.split(' ') {
-        let word_width = UnicodeWidthStr::width(word);
-        if current_width > 0 && current_width + 1 + word_width <= width {
-            current.push(' ');
-            current.push_str(word);
-            current_width += 1 + word_width;
-            continue;
-        }
-        if current_width > 0 {
-            lines.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        for character in word.chars() {
-            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-            if current_width > 0 && current_width + character_width > width {
+        // 换行符不可显示且必须作为硬行边界,先于此处分段,避免被当作普通字符
+        // 留在行内破坏行数统计。
+        for (index, segment) in word.split('\n').enumerate() {
+            if index > 0 {
                 lines.push(std::mem::take(&mut current));
                 current_width = 0;
             }
-            current.push(character);
-            current_width += character_width;
+            wrap_segment(width, segment, &mut lines, &mut current, &mut current_width);
         }
     }
     lines.push(current);
     lines
+}
+
+fn wrap_segment(
+    width: usize,
+    segment: &str,
+    lines: &mut Vec<String>,
+    current: &mut String,
+    current_width: &mut usize,
+) {
+    let segment_width = UnicodeWidthStr::width(segment);
+    if *current_width > 0 && *current_width + 1 + segment_width <= width {
+        current.push(' ');
+        current.push_str(segment);
+        *current_width += 1 + segment_width;
+        return;
+    }
+    if *current_width > 0 {
+        lines.push(std::mem::take(current));
+        *current_width = 0;
+    }
+    for character in segment.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if *current_width > 0 && *current_width + character_width > width {
+            lines.push(std::mem::take(current));
+            *current_width = 0;
+        }
+        current.push(character);
+        *current_width += character_width;
+    }
 }
 
 /// 拼接 `Line` 的全部 Span 文本,用于按宽度的换行模拟。
@@ -278,5 +298,19 @@ mod tests {
         for line in wrap_to_width(16, text) {
             assert_eq!(wrapped_rows(16, &line), 1);
         }
+    }
+
+    #[test]
+    fn wrap_to_width_keeps_newlines_as_hard_line_boundaries() {
+        let lines = wrap_to_width(20, "applied\nrefreshing the package index");
+        assert_eq!(lines, vec!["applied", "refreshing the", "package index"]);
+        assert!(lines.iter().all(|line| line.width() <= 20));
+    }
+
+    #[test]
+    fn wrap_to_width_resumes_the_same_line_after_a_newline() {
+        // 换行分段后,新段落从空行开始,可与后续单词合并,不会残留上一段的宽度。
+        let lines = wrap_to_width(12, "done\nnext words");
+        assert_eq!(lines, vec!["done", "next words"]);
     }
 }
