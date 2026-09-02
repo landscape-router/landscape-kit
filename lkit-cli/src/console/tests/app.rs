@@ -49,6 +49,49 @@ fn install_menu_stays_selectable_when_not_installed() {
 }
 
 #[test]
+fn left_arrow_returns_from_a_panel_to_navigation() {
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+
+    assert_eq!(app.focus, Focus::Navigation);
+    assert_eq!(app.exit_state, ExitState::Idle);
+}
+
+#[test]
+fn left_arrow_returns_from_install_checks_summary_to_navigation() {
+    let mut app = ConsoleApp::new();
+    app.menu_index = 1;
+    app.focus = Focus::Panel;
+    app.install.checks_selected = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+
+    assert_eq!(app.focus, Focus::Navigation);
+    assert_eq!(app.exit_state, ExitState::Idle);
+}
+
+#[test]
+fn right_arrow_outside_install_leaves_the_install_form_untouched() {
+    let mut app = ConsoleApp::new();
+    app.snapshot = Snapshot::NotInstalled;
+    app.menu_index = 2; // Backup: Right has no in-panel meaning here.
+    app.focus = Focus::Panel;
+    app.install.checks_selected = false;
+    app.install.selected = InstallField::Repository;
+
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+
+    assert_eq!(app.focus, Focus::Panel);
+    assert_eq!(
+        app.install.repository,
+        super::super::install_form::RepositoryMode::Default,
+        "Right outside the Install panel must not change the hidden install form"
+    );
+}
+
+#[test]
 fn language_key_switches_the_tui_and_updates_the_footer() {
     let _language = LanguageGuard::set(Language::En);
     let backend = TestBackend::new(100, 28);
@@ -121,7 +164,7 @@ fn long_panel_hint_wraps_on_dynamic_status_lines() {
 
     let content = terminal_content(&terminal);
     assert!(
-        content.contains("Esc Menu"),
+        content.contains("Esc/← Menu"),
         "the long backup list hint must wrap onto the second hint line instead of truncating"
     );
 }
