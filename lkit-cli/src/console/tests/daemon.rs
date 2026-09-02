@@ -59,6 +59,14 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
     let content = terminal_content(&terminal);
     assert!(content.contains("lkit daemon is not running"));
     assert!(content.contains("[ Deploy the lkit daemon ]"));
+    assert!(
+        content.contains("A systemd service that executes"),
+        "the resident service section must carry a description"
+    );
+    assert!(
+        !content.contains("L2 flare"),
+        "the recovery-code description belongs to the show-psk row, which is hidden while the daemon is down"
+    );
     let row = content
         .lines()
         .position(|line| line.contains("[ Deploy the lkit daemon ]"))
@@ -674,10 +682,23 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
     let content = terminal_content(&terminal);
     assert!(content.contains("[ Show recovery psk ]"));
     assert!(!content.contains("[ Deploy the lkit daemon ]"));
-    let row = content
+    assert!(
+        content.contains("A systemd service that executes"),
+        "the section description must also render while the daemon is running"
+    );
+    let psk_row = content
         .lines()
         .position(|line| line.contains("[ Show recovery psk ]"))
-        .expect("the show psk row must render") as u16;
+        .expect("the show psk row must render");
+    let help_row = content
+        .lines()
+        .position(|line| line.contains("L2 flare"))
+        .expect("the recovery-code description must render");
+    assert!(
+        help_row < psk_row,
+        "the recovery-code description must sit above the action row"
+    );
+    let row = psk_row as u16;
     // 双栏布局:动作行位于右栏(约 62 列起)。
     assert_eq!(
         app.hits.hit_at(65, row),

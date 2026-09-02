@@ -179,7 +179,9 @@
 - 说明：`lkit check` 与 Install 面板部署前检查包含 `service.lkit_daemon` 项：daemon
   运行中为 `pass`；root 下未运行为 `error` 并建议 `lkit self install`（控制台未部署
   daemon 前无法进入安装表单）；非 root 未运行只报 `warning`。进入控制台时 root 下
-  daemon 未运行，底栏提示行直接显示警告；Overview 面板右栏常驻显示 daemon 运行状态行
+  daemon 未运行，底栏提示行直接显示警告；Overview 面板右栏常驻显示 daemon 运行状态行（小节标题下带一行服务简介，
+  说明常驻服务以 systemd 常驻并代控制台执行特权操作；daemon 运行时的“查看
+  急救恢复码”动作行上方带一行恢复码用途简介，两行简介均按栏宽预折行）
   （header 同时显示 daemon 状态徽标），未运行时显示“部署 lkit 常驻服务”动作行：
   Enter 打开确认层（内嵌急救恢复码输入、二次确认与「开始部署」动作行，方向键/Tab
   导航，Enter 在字段上编辑、在动作行上才执行部署；非空 psk 须至少 12 字符且两次
