@@ -276,9 +276,14 @@ fn language_toggle_persists_across_console_sessions() {
     assert!(config.contains("language = \"zh\""), "config: {config}");
     // Esc 需要独立送达:连续写入的 ESC ESC 只触发一次 armed(与
     // bare_lkit_console_restores_terminal_on_exit 相同的输入时序约束)。
+    // 本会话已切换为中文,武装提示是本地化文本且不含纯 ASCII 的独特锚点
+    // (唯一的 ASCII 片段 "Esc" 在武装前的导航提示里也出现),改用固定间隔
+    // 送达第一次 Esc,并以确认层的 "Enter"(按 Enter 退出,中文导航提示
+    // 不含该词)确认第二段武装生效。
     pty.master.write_all(b"\x1b").unwrap();
-    pty.read_until("Exit armed", Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(300));
     pty.master.write_all(b"\x1b").unwrap();
+    pty.read_until("Enter", Duration::from_secs(5));
     std::thread::sleep(Duration::from_millis(200));
     pty.master.write_all(b"\r").unwrap();
     let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
