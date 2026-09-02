@@ -52,7 +52,9 @@ You normally never build these by hand. The e2e suite references them with
 feature (plus `landscape-webserver` inside the fixture crate itself). If you add a
 new fixture program, register it as a `[[bin]]` entry in `lkit-cli/Cargo.toml`
 with `required-features = ["test-support"]`, otherwise `CARGO_BIN_EXE_<name>` will
-not resolve.
+not resolve. The `lkit-test-systemctl`/`lkit-test-init` entries there are three-line
+wrappers that delegate to the real programs, which live as `[[bin]]` targets in the
+fixture crate itself (together with `landscape-webserver` and `lkit-fixture-release`).
 
 ## Questions
 
