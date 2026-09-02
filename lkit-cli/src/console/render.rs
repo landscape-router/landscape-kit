@@ -26,7 +26,7 @@ use super::software::{
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
-use super::widgets::{Clicks, Focus, Hit, Menu, block_row_of, wrapped_rows};
+use super::widgets::{Clicks, Focus, Hit, Menu, block_row_of};
 use super::{ConsoleApp, ExitState};
 use crate::i18n::Language;
 
@@ -158,21 +158,24 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(content.width);
-    let notice = app.notice.text();
-    let notice_width = content.width.saturating_sub(language_width).max(1);
-    let notice_rows = wrapped_rows(notice_width, &notice).max(1);
-    let hints_rows = wrapped_rows(content.width, &app.hints()).max(1);
+    // 状态与提示都先按实际宽度预折行,行数与渲染共用同一折行结果:若交给
+    // Paragraph 自行词级换行,其行数会与按字符模拟的预留高度不一致(词级换行
+    // 预留行尾空白),多行 notice 可能被截掉最后一行。
+    let notice_lines = super::widgets::wrap_to_width(
+        content.width.saturating_sub(language_width).max(1),
+        &app.notice.text(),
+    );
+    let hints_lines = super::widgets::wrap_to_width(content.width, &app.hints());
     let [summary, hints] = Layout::vertical([
-        Constraint::Length(notice_rows),
-        Constraint::Length(hints_rows),
+        Constraint::Length(notice_lines.len().max(1) as u16),
+        Constraint::Length(hints_lines.len().max(1) as u16),
     ])
     .areas(content);
     let [notice_area, language_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(language_width)]).areas(summary);
     let notice_color = app.notice.color();
     frame.render_widget(
-        Paragraph::new(notice)
-            .wrap(Wrap { trim: true })
+        Paragraph::new(notice_lines.into_iter().map(Line::from).collect::<Vec<_>>())
             .style(Style::default().fg(notice_color)),
         notice_area,
     );
@@ -187,22 +190,30 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         language_area,
     );
     frame.render_widget(
-        Paragraph::new(app.hints())
-            .wrap(Wrap { trim: true })
+        Paragraph::new(hints_lines.into_iter().map(Line::from).collect::<Vec<_>>())
             .style(Style::default().fg(Color::DarkGray)),
         hints,
     );
 }
 
 /// 计算 status 区所需行数:1 行边框 + 状态行数 + 提示行数(均至少 1 行)。
+/// 与 `render_status` 使用同一个 `wrap_to_width` 预折行,保证预留高度与实际
+/// 渲染行数完全一致。
 fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     let language = language_status(crate::i18n::current(), app.language_switch_available());
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(width);
-    let notice = app.notice.text();
-    let notice_width = width.saturating_sub(language_width).max(1);
-    1 + wrapped_rows(notice_width, &notice).max(1) + wrapped_rows(width, &app.hints()).max(1)
+    let notice_rows = super::widgets::wrap_to_width(
+        width.saturating_sub(language_width).max(1),
+        &app.notice.text(),
+    )
+    .len()
+    .max(1) as u16;
+    let hints_rows = super::widgets::wrap_to_width(width, &app.hints())
+        .len()
+        .max(1) as u16;
+    1 + notice_rows + hints_rows
 }
 
 /// 状态栏右下角的语言指示。可切换时显示**目标语言**(按 `L` 或点击即切换到

@@ -188,6 +188,30 @@ fn long_notice_wraps_instead_of_truncating() {
 }
 
 #[test]
+fn multiline_notice_renders_every_line() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+    let mut app = ConsoleApp::new();
+    // 换源成功的多行结果:高度预留与渲染必须共用同一折行,最后一行不可被
+    // 高度偏差截掉。
+    let mut notice = Notice::Success("mirror applied to the configured host".into());
+    notice.push_line("refreshing the package index now".into());
+    app.notice = notice;
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("configured host"),
+        "the tail of the first notice line must be visible"
+    );
+    assert!(
+        content.contains("index now"),
+        "the tail of the appended notice line must be visible"
+    );
+}
+
+#[test]
 fn notice_levels_render_with_distinct_colors() {
     let _language = LanguageGuard::set(Language::En);
     // "Q" 在界面其它区域不出现,可作为定位底栏消息首字符的标记。
