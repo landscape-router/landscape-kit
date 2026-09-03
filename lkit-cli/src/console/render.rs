@@ -26,12 +26,11 @@ use super::software::{
 use super::update::{
     render_uninstall, render_uninstall_confirmation, render_update, render_update_confirmation,
 };
-use super::widgets::{Clicks, Focus, Hit, Menu, block_row_of};
+use super::widgets::{Focus, Menu};
 use super::{ConsoleApp, ExitState};
 use crate::i18n::Language;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
-    app.hits.clear();
     if frame.area().width < 72 || frame.area().height < 18 {
         frame.render_widget(
             Paragraph::new(crate::tr!(crate::keys::CONSOLE_TERMINAL_TOO_SMALL))
@@ -40,7 +39,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
             frame.area(),
         );
         if app.exit_state == ExitState::Confirming {
-            render_exit_confirmation(frame, &mut app.hits);
+            render_exit_confirmation(frame);
         }
         return;
     }
@@ -49,7 +48,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         return;
     }
     if let Some(wizard) = &app.network_wizard {
-        render_network_wizard(frame, wizard, &mut app.hits);
+        render_network_wizard(frame, wizard);
         return;
     }
     // status 高度随内容行数动态:短内容 3 行(边框+状态+提示),
@@ -64,13 +63,11 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     render_header(frame, app, header);
     let [navigation, panel] =
         Layout::horizontal([Constraint::Length(24), Constraint::Min(24)]).areas(body);
-    app.hits.add(navigation, Hit::Navigation);
-    app.hits.add(panel, Hit::Panel);
     render_navigation(frame, app, navigation);
     render_panel(frame, app, panel);
     render_status(frame, app, status);
     if app.exit_state == ExitState::Confirming {
-        render_exit_confirmation(frame, &mut app.hits);
+        render_exit_confirmation(frame);
     }
     if app.preflight_dialog {
         render_preflight_dialog(frame, app);
@@ -82,7 +79,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         render_backup_delete_confirmation(frame, app);
     }
     if app.menu() == Menu::Backup && app.backup.corrupt_dialog {
-        render_backup_corrupt_dialog(frame, app);
+        render_backup_corrupt_dialog(frame);
     }
     if app.menu() == Menu::Backup && app.backup.editing {
         render_backup_create_dialog(frame, app);
@@ -117,7 +114,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         render_uninstall_confirmation(frame, app);
     }
     if app.menu() == Menu::Reinit && app.reinit.confirming {
-        render_reinit_confirmation(frame, app);
+        render_reinit_confirmation(frame);
     }
     // 部署确认弹窗可从 Overview 动作行或安装阻断弹框发起,不限定菜单。
     if app.deploy_daemon_confirming {
@@ -135,17 +132,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
 }
 
-/// 注册确认弹层的命中区:弹层整体视为 Enter,弹层外整屏视为 Esc。
-pub(crate) fn register_dialog_hits(hits: &mut Clicks, screen: Rect, area: Rect) {
-    hits.add(screen, Hit::Outside);
-    hits.add(area, Hit::DialogConfirm);
-}
-
-/// 注册输入/进度弹层的命中区:弹层内部不响应,弹层外整屏视为 Esc。
-pub(crate) fn register_modal_hits(hits: &mut Clicks, screen: Rect, area: Rect) {
-    hits.add(screen, Hit::Outside);
-    hits.add(area, Hit::Nothing);
-}
 fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     frame.render_widget(Block::default().borders(Borders::TOP), area);
     let content = Rect::new(
@@ -183,10 +169,6 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
             .style(Style::default().fg(notice_color)),
         notice_area,
     );
-    // 语言指示可点击:点击等价于按 L(编辑中不可切换时点击无效)。
-    if app.language_switch_available() {
-        app.hits.add(language_area, Hit::LanguageSwitch);
-    }
     frame.render_widget(
         Paragraph::new(language)
             .alignment(Alignment::Right)
@@ -224,7 +206,7 @@ fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     1 + notice_rows + hints_rows
 }
 
-/// 状态栏右下角的语言指示。可切换时显示**目标语言**(按 `L` 或点击即切换到
+/// 状态栏右下角的语言指示。可切换时显示**目标语言**(按 `L` 即切换到
 /// 所示目标,所见即所得);文本编辑中退回当前语言并解释 `L` 暂停(此时 `l` 是
 /// 普通输入字符),退出确认层等其余不可切换状态只显示当前语言。
 fn language_status(language: Language, switch_available: bool, editing: bool) -> String {
@@ -245,7 +227,7 @@ fn language_status(language: Language, switch_available: bool, editing: bool) ->
         )
     }
 }
-fn render_exit_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
+fn render_exit_confirmation(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 48.min(screen.width.saturating_sub(2));
     let height = 7.min(screen.height.saturating_sub(2));
@@ -255,7 +237,6 @@ fn render_exit_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
         width,
         height,
     );
-    register_dialog_hits(hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -327,9 +308,7 @@ fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
 fn render_navigation(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let items: Vec<ListItem<'_>> = Menu::ALL
         .iter()
-        .enumerate()
-        .map(|(index, menu)| {
-            app.hits.block_row(area, index as u16, Hit::Menu(index));
+        .map(|menu| {
             let style = if app.menu_available(*menu) {
                 Style::default()
             } else {
@@ -395,7 +374,6 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     // 窄面板回退为上下堆叠,保证 72 列终端(面板约 46 列)可用。
     if area.width < 52 {
         let content_width = area.width.saturating_sub(2);
-        let (lkit_lines, action_rows) = overview_lkit_lines(focused, content_width);
         let mut lines = landscape_lines;
         lines.push(Line::raw(""));
         lines.push(Line::styled(
@@ -404,15 +382,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         ));
-        let lkit_start = lines.len();
-        lines.extend(lkit_lines);
-        for (row, hit) in action_rows {
-            app.hits.block_row(
-                area,
-                block_row_of(&lines, lkit_start + row, content_width),
-                hit,
-            );
-        }
+        lines.extend(overview_lkit_lines(focused, content_width));
         frame.render_widget(
             Paragraph::new(lines)
                 .block(panel_block(
@@ -430,23 +400,14 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     frame.render_widget(block, area);
     let [landscape_area, lkit_area] =
         Layout::horizontal([Constraint::Min(24), Constraint::Min(24)]).areas(inner);
-    let (lkit_lines, action_rows) = overview_lkit_lines(focused, lkit_area.width);
     frame.render_widget(
         Paragraph::new(landscape_lines)
             .block(Block::default().borders(Borders::RIGHT))
             .wrap(Wrap { trim: false }),
         landscape_area,
     );
-    for (row, hit) in action_rows {
-        // 右栏无边框:直接注册内容区坐标(不用 block_row 的边框偏移)。
-        let content_row = block_row_of(&lkit_lines, row, lkit_area.width);
-        app.hits.add(
-            Rect::new(lkit_area.x, lkit_area.y + content_row, lkit_area.width, 1),
-            hit,
-        );
-    }
     frame.render_widget(
-        Paragraph::new(lkit_lines).wrap(Wrap { trim: false }),
+        Paragraph::new(overview_lkit_lines(focused, lkit_area.width)).wrap(Wrap { trim: false }),
         lkit_area,
     );
 }
@@ -519,13 +480,11 @@ fn overview_landscape_lines(app: &ConsoleApp) -> Vec<Line<'static>> {
     }
 }
 
-/// Overview 右栏:lkit 常驻服务。返回行与动作行(行号,命中区)列表。
-/// 小节标题与动作行上方各带灰色简介,解释常驻服务与急救恢复码是什么,避免
-/// 只有状态没有语义。所有可能超宽的动态行(简介、版本号、daemon 状态)均按
-/// `wrap_width` 预折行(见 `wrap_to_width`),保证命中区行号模拟与实际渲染
-/// 一致——任何一行漏折都会让 `block_row_of` 的按字符模拟与 ratatui 的词级
-/// 换行漂移,动作行命中区错位一整行。
-fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, Vec<(usize, Hit)>) {
+/// Overview 右栏:lkit 常驻服务。小节标题与动作行上方各带灰色简介,解释常驻
+/// 服务与急救恢复码是什么,避免只有状态没有语义。所有可能超宽的动态行(简介、
+/// 版本号、daemon 状态)均按 `wrap_width` 预折行(见 `wrap_to_width`),避免交给
+/// ratatui 词级换行后行数与预留高度不一致导致内容被截断。
+fn overview_lkit_lines(focused: bool, wrap_width: u16) -> Vec<Line<'static>> {
     let version = env!("CARGO_PKG_VERSION");
     let running = crate::daemon_worker::daemon_is_running();
     let muted = Style::default().fg(Color::DarkGray);
@@ -582,9 +541,7 @@ fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, V
     };
     // daemon 未运行时提供「部署 daemon」动作行:确认后在 TUI 内后台执行
     // `lkit self install`,不退出控制台。
-    let mut action_rows = Vec::new();
     if !running {
-        let deploy_row = lines.len();
         lines.push(Line::from(vec![
             Span::styled(if focused { "> " } else { "  " }, selected_style),
             Span::styled(
@@ -592,7 +549,6 @@ fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, V
                 action_style,
             ),
         ]));
-        action_rows.push((deploy_row, Hit::OverviewDeploy));
     } else {
         // daemon 运行时提供「查看急救恢复码」动作行:弹出展示当前 `[flare]`
         // 段 psk 明文,供分发给恢复操作员;动作行上方一行简介说明其用途。
@@ -600,7 +556,6 @@ fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, V
             crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_PSK_HELP),
             muted,
         ));
-        let show_row = lines.len();
         lines.push(Line::from(vec![
             Span::styled(if focused { "> " } else { "  " }, selected_style),
             Span::styled(
@@ -608,9 +563,8 @@ fn overview_lkit_lines(focused: bool, wrap_width: u16) -> (Vec<Line<'static>>, V
                 action_style,
             ),
         ]));
-        action_rows.push((show_row, Hit::OverviewShowPsk));
     }
-    (lines, action_rows)
+    lines
 }
 pub(crate) fn panel_block(title: &str, focused: bool) -> Block<'static> {
     let title = if focused {

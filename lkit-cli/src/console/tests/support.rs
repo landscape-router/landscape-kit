@@ -9,7 +9,6 @@ use crate::deployment::config::{RepositorySource, RepositorySourceKind};
 use crate::i18n::Language;
 use crate::network::config::DEFAULT_MANAGEMENT_CIDR;
 use crate::network::discovery::{DefaultRoute, Interface};
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use unicode_width::UnicodeWidthStr;
@@ -236,36 +235,5 @@ pub(crate) fn resolved(current: &str, target: &str) -> ResolvedUpdate {
     ResolvedUpdate {
         current: semver::Version::parse(current).unwrap(),
         target: semver::Version::parse(target).unwrap(),
-    }
-}
-
-pub(crate) fn mouse_click(column: u16, row: u16) -> MouseEvent {
-    MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column,
-        row,
-        modifiers: KeyModifiers::NONE,
-    }
-}
-
-pub(crate) fn mouse_scroll(down: bool) -> MouseEvent {
-    MouseEvent {
-        kind: if down {
-            MouseEventKind::ScrollDown
-        } else {
-            MouseEventKind::ScrollUp
-        },
-        column: 30,
-        row: 10,
-        modifiers: KeyModifiers::NONE,
-    }
-}
-
-pub(crate) fn mouse_right_click(column: u16, row: u16) -> MouseEvent {
-    MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Right),
-        column,
-        row,
-        modifiers: KeyModifiers::NONE,
     }
 }

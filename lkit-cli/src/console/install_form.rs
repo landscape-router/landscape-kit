@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::preflight::{render_preflight_details, render_preflight_summary};
 use super::render::{display_pad, mask, panel_block};
-use super::widgets::{Focus, Hit, block_row_of};
+use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp};
 use crate::commands::Commands;
 use crate::commands::install::Install;
@@ -452,15 +452,7 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
             },
         ));
     }
-    let content_width = area.width.saturating_sub(2);
     let lines: Vec<Line> = form_rows.iter().map(|(_, line)| line.clone()).collect();
-    for (row, (field, _)) in form_rows.iter().enumerate() {
-        app.hits.block_row(
-            area,
-            block_row_of(&lines, row, content_width),
-            Hit::InstallField(*field),
-        );
-    }
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
