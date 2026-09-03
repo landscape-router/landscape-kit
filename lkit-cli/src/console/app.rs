@@ -11,7 +11,7 @@ use super::reinit;
 use super::reinit::ReinitPanel;
 use super::software::SoftwarePanel;
 use super::update::{UninstallPanel, UpdatePanel};
-use super::widgets::{Clicks, Focus, Menu};
+use super::widgets::{Focus, Menu};
 use crate::commands::Commands;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,7 +41,6 @@ pub(super) struct ConsoleApp {
     pub(super) uninstall: UninstallPanel,
     pub(super) flare: FlareDialog,
     pub(super) takeover_choice: usize,
-    pub(super) hits: Clicks,
     /// Overview「部署 daemon」动作的确认层与后台执行状态。
     pub(super) deploy_daemon_confirming: bool,
     /// 部署确认弹窗中输入的急救恢复码(flare psk,编辑中为明文,渲染时掩码)。
@@ -86,7 +85,6 @@ impl ConsoleApp {
             uninstall: UninstallPanel::default(),
             flare: FlareDialog::default(),
             takeover_choice: 0,
-            hits: Clicks::default(),
             deploy_daemon_confirming: false,
             deploy_psk: String::new(),
             deploy_psk_confirmation: String::new(),

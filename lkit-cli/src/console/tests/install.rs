@@ -502,38 +502,3 @@ fn enter_on_start_installation_dispatches_the_install_command() {
         .expect("Enter on the start installation row must dispatch");
     assert!(matches!(action, ConsoleAction::Command { .. }));
 }
-
-#[test]
-fn mouse_click_install_field_enters_editing_and_checks_switches_back() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.menu_index = 1;
-    app.focus = Focus::Panel;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 6));
-    assert!(
-        app.install.editing,
-        "clicking the version field must edit it"
-    );
-    assert_eq!(app.install.selected, InstallField::Version);
-    app.handle_mouse(mouse_click(30, 3));
-    assert!(app.install.checks_selected);
-    assert!(!app.install.editing);
-}
-
-#[test]
-fn mouse_scroll_moves_preflight_details() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.menu_index = 1;
-    app.preflight.state = PreflightState::Complete(sample_preflight_report());
-    app.preflight.expanded = true;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert_eq!(app.preflight.scroll, 0);
-    app.handle_mouse(mouse_scroll(true));
-    assert_eq!(app.preflight.scroll, 1);
-    app.handle_mouse(mouse_scroll(false));
-    assert_eq!(app.preflight.scroll, 0);
-}

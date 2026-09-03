@@ -49,7 +49,7 @@
 - 证据：[`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
 - 说明：面板检测失败时显示错误且确认 Enter 不启动安装（无 worker 产生）；非 root
   （`test-support` 下注入 `allow_non_root=false`）确认 Enter 报权限错误、不启动安装；
-  面板渲染显示发行版摘要与软件行（含鼠标点击命中）。CLI 非 root 安装报错阻断、
+  面板渲染显示发行版摘要与软件行。CLI 非 root 安装报错阻断、
   `--non-interactive` 无参数报参数使用错误。
 
 ## SFT-05

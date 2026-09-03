@@ -20,7 +20,7 @@
 ## 选项行
 
 - "稍后"(默认)与"确认执行":
-  - 选中行 `FOCUS_SELECTED` 反色 + `> ` 标记,可点击;
+  - 选中行 `FOCUS_SELECTED` 反色 + `> ` 标记;
   - 未选中默认色;
 - "稍后":Enter/Esc/Ctrl+C 退出 TUI 回 shell;
 - "确认执行":退出 TUI 后按命令行语义内联运行 `lkit network confirm`

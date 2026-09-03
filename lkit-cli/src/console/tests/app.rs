@@ -124,38 +124,6 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
 }
 
 #[test]
-fn language_indicator_click_switches_to_the_shown_target() {
-    let _language = LanguageGuard::set(Language::En);
-    let backend = TestBackend::new(100, 28);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut app = ConsoleApp::new();
-
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content = terminal_content(&terminal);
-    let row = content
-        .lines()
-        .position(|line| line.contains("[L] Switch to"))
-        .expect("the language indicator must render") as u16;
-    let column = content
-        .lines()
-        .nth(row as usize)
-        .and_then(|line| line.find("[L]"))
-        .expect("the keycap must render") as u16;
-    assert_eq!(
-        app.hits.hit_at(column + 1, row),
-        Some(Hit::LanguageSwitch),
-        "the language indicator must be clickable"
-    );
-
-    app.handle_mouse(mouse_click(column + 1, row));
-    assert_eq!(
-        crate::i18n::current(),
-        Language::Zh,
-        "clicking the indicator must switch to the shown target language"
-    );
-}
-
-#[test]
 fn long_panel_hint_wraps_on_dynamic_status_lines() {
     let _language = LanguageGuard::set(Language::En);
     let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
@@ -412,70 +380,6 @@ fn language_key_remains_text_in_flare_psk_editing() {
     assert_eq!(crate::i18n::current(), Language::En);
     assert_eq!(app.flare.psk, "l");
     assert!(app.flare.open, "the dialog must stay open");
-}
-
-#[test]
-fn language_indicator_click_stays_clickable_behind_dialogs() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = update_ready_app();
-    app.update.confirming = Some(resolved("1.2.3", "1.3.0"));
-
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content = terminal_content(&terminal);
-    let row = content
-        .lines()
-        .position(|line| line.contains("[L] Switch to"))
-        .expect("the language indicator must render") as u16;
-    let column = content
-        .lines()
-        .nth(row as usize)
-        .and_then(|line| line.find("[L]"))
-        .expect("the keycap must render") as u16;
-    assert_eq!(
-        app.hits.hit_at(column + 1, row),
-        Some(Hit::LanguageSwitch),
-        "the dialog's outside region must not shadow the language indicator"
-    );
-
-    app.handle_mouse(mouse_click(column + 1, row));
-    assert_eq!(
-        crate::i18n::current(),
-        Language::Zh,
-        "clicking the indicator behind a dialog must switch like the L key"
-    );
-    assert!(
-        app.update.confirming.is_some(),
-        "the confirm layer must stay open instead of receiving the synthesized Esc"
-    );
-}
-
-#[test]
-fn sidebar_click_during_a_confirm_dialog_acts_as_esc_not_navigation() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = update_ready_app();
-    app.update.confirming = Some(resolved("1.2.3", "1.3.0"));
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-
-    // 弹层注册的整屏 Outside 必须优先于更早注册的 Hit::Navigation/Hit::Menu:
-    // 否则点击侧栏会把焦点挪到导航层而确认层还开着,Esc 语义随之脱节。
-    app.handle_mouse(mouse_click(5, 4));
-
-    assert_eq!(
-        app.focus,
-        Focus::Panel,
-        "focus must not land on the sidebar"
-    );
-    assert!(
-        app.update.confirming.is_none(),
-        "the click must resolve to the dialog's outside (Esc) and close it"
-    );
-    assert_eq!(
-        app.exit_state,
-        ExitState::Idle,
-        "the synthesized Esc must not arm the exit"
-    );
 }
 
 #[test]
@@ -884,59 +788,4 @@ fn start_update_validates_before_background_resolution() {
         "a valid form must start the background resolver"
     );
     let _ = std::fs::remove_dir_all(&app.install.install_dir);
-}
-
-#[test]
-fn mouse_click_selects_navigation_menu_and_switches_focus() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.menu_index = 1;
-    app.focus = Focus::Panel;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert_eq!(app.hits.hit_at(10, 4), Some(Hit::Menu(1)));
-    assert_eq!(app.hits.hit_at(10, 5), Some(Hit::Menu(2)));
-    assert_eq!(app.hits.hit_at(30, 3), Some(Hit::InstallChecks));
-    assert_eq!(app.hits.hit_at(50, 19), Some(Hit::Panel));
-    app.handle_mouse(mouse_click(10, 5));
-    assert_eq!(app.menu_index, 2);
-    assert_eq!(app.focus, Focus::Panel);
-    app.handle_mouse(mouse_click(5, 25));
-    assert_eq!(
-        app.focus,
-        Focus::Panel,
-        "clicks outside any region are ignored"
-    );
-    app.handle_mouse(mouse_click(10, 3));
-    assert_eq!(app.menu_index, 0);
-    assert_eq!(app.focus, Focus::Panel);
-}
-
-#[test]
-fn mouse_click_dialog_inside_confirms_and_outside_cancels() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.exit_state = ExitState::Confirming;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert!(matches!(
-        app.handle_mouse(mouse_click(49, 13)),
-        Some(ConsoleAction::Quit)
-    ));
-
-    let mut app = ConsoleApp::new();
-    app.exit_state = ExitState::Confirming;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert!(app.handle_mouse(mouse_click(2, 2)).is_none());
-    assert_eq!(app.exit_state, ExitState::Idle);
-}
-
-#[test]
-fn mouse_right_click_acts_as_escape_and_returns_to_navigation() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut app = ConsoleApp::new();
-    app.focus = Focus::Panel;
-    app.handle_mouse(mouse_right_click(30, 10));
-    assert_eq!(app.focus, Focus::Navigation);
-    assert_eq!(app.exit_state, ExitState::Idle);
 }

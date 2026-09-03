@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::ConsoleApp;
 use super::Notice;
-use super::render::register_modal_hits;
+
 use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
 
 #[derive(Default)]
@@ -73,7 +73,6 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let section = crate::deployment::config::load_flare();
     let devices = section

@@ -8,8 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use super::render::{panel_block, register_dialog_hits};
-use super::widgets::{Focus, Hit, block_row_of};
+use super::render::panel_block;
+use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::mirror::{Host, MirrorName, MirrorStatus};
 
@@ -43,21 +43,6 @@ pub(crate) fn apply_toggle_rows(host: &Host) -> Vec<MirrorToggleRow> {
         crate::mirror::Family::Debian => vec![MirrorToggleRow::Cdrom, MirrorToggleRow::Security],
         crate::mirror::Family::Ubuntu => vec![MirrorToggleRow::Cdrom],
         _ => Vec::new(),
-    }
-}
-
-/// 把确认层的开关焦点移到 `target` 行（点击命中行时先移焦点再切换）。
-pub(crate) fn focus_mirror_toggle(
-    confirming: &mut Option<MirrorConfirm>,
-    host: &Host,
-    target: MirrorToggleRow,
-) {
-    if let Some(MirrorConfirm::Apply { toggle, .. }) = confirming
-        && let Some(index) = apply_toggle_rows(host)
-            .iter()
-            .position(|row| *row == target)
-    {
-        *toggle = index;
     }
 }
 
@@ -546,24 +531,6 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
 
 pub(crate) fn render_mirror(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let lines = panel_lines(app);
-    // 命中区：镜像行（内容行 2..）与恢复动作行（内容行 3 + 镜像数）。
-    let row_hits: Vec<(u16, Hit)> = if matches!(&app.mirror.host, Some(Ok(_))) {
-        let width = area.width.saturating_sub(2);
-        let mut hits = Vec::with_capacity(MirrorName::all().len() + 1);
-        for (index, mirror) in MirrorName::all().into_iter().enumerate() {
-            hits.push((
-                block_row_of(&lines, index + 2, width),
-                Hit::MirrorField(mirror),
-            ));
-        }
-        hits.push((
-            block_row_of(&lines, MirrorName::all().len() + 3, width),
-            Hit::MirrorRestore,
-        ));
-        hits
-    } else {
-        Vec::new()
-    };
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel_block(
@@ -573,9 +540,6 @@ pub(crate) fn render_mirror(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
             .wrap(Wrap { trim: true }),
         area,
     );
-    for (row, hit) in row_hits {
-        app.hits.block_row(area, row, hit);
-    }
 }
 
 pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
@@ -588,7 +552,6 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     // 可见开关行：`(行类型, 渲染行, 是否勾选)`。
     let mut toggle_rows: Vec<(MirrorToggleRow, Line<'static>, bool)> = Vec::new();
@@ -662,26 +625,12 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         ));
         lines.push(Line::raw(""));
     }
-    // 开关行与命中区：点击某行先把焦点移过去再切换。
-    let toggle_hits: Vec<(MirrorToggleRow, usize)> = if !toggle_rows.is_empty() {
-        let mut hits = Vec::with_capacity(toggle_rows.len());
-        for (row, line, _) in &toggle_rows {
-            lines.push(line.clone());
-            hits.push((*row, lines.len() - 1));
-        }
+    // 开关行。
+    for (_, line, _) in &toggle_rows {
+        lines.push(line.clone());
+    }
+    if !toggle_rows.is_empty() {
         lines.push(Line::raw(""));
-        hits
-    } else {
-        Vec::new()
-    };
-    let content_width = area.width.saturating_sub(2);
-    for (row, line_index) in toggle_hits {
-        let hit_row = block_row_of(&lines, line_index, content_width);
-        let hit = match row {
-            MirrorToggleRow::Cdrom => Hit::MirrorCdromToggle,
-            MirrorToggleRow::Security => Hit::MirrorSecurityToggle,
-        };
-        app.hits.block_row(area, hit_row, hit);
     }
     lines.push(Line::styled(
         crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_ENTER),

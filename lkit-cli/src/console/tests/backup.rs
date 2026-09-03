@@ -417,21 +417,3 @@ fn exit_confirmation_takes_precedence_over_backup_panel_keys() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.backup.details, Some(0));
 }
-
-#[test]
-fn mouse_click_backup_rows_open_details_and_create_dialog() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = backup_ready_app();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 4));
-    assert_eq!(app.backup.details, Some(0));
-
-    let mut app = backup_ready_app();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 3));
-    assert!(
-        app.backup.editing,
-        "clicking the create row must open the remark dialog"
-    );
-}

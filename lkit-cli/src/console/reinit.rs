@@ -6,7 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::render::panel_block;
-use super::widgets::{Focus, Hit, block_row_of};
+use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
 use crate::network::config::NetworkPlan;
@@ -283,12 +283,7 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
             Style::default().fg(Color::Yellow),
         ));
         lines.push(Line::raw(""));
-        let begin_row = lines.len();
         let begin = crate::tr!(crate::keys::CONSOLE_REINIT_BEGIN);
-        if focused {
-            app.hits
-                .add(block_row_area(area, &lines, begin_row), Hit::ReinitAction);
-        }
         lines.push(Line::styled(
             format!("{} {begin}", if focused { ">" } else { " " }),
             Style::default().add_modifier(if focused {
@@ -301,13 +296,6 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         for field in ReinitField::ALL {
             if !field.editable() {
                 continue;
-            }
-            let row_index = lines.len();
-            if focused {
-                app.hits.add(
-                    block_row_area(area, &lines, row_index),
-                    Hit::ReinitField(field),
-                );
             }
             let value = field.value(&app.reinit);
             let cursor = if focused && app.reinit.selected == field {
@@ -346,12 +334,7 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
             ));
             lines.push(Line::raw(""));
         }
-        let execute_row = lines.len();
         let execute = crate::tr!(crate::keys::CONSOLE_REINIT_EXECUTE);
-        if focused {
-            app.hits
-                .add(block_row_area(area, &lines, execute_row), Hit::ReinitAction);
-        }
         lines.push(Line::styled(
             format!(
                 "{} {execute}",
@@ -381,21 +364,8 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
     );
 }
 
-/// 计算 `lines` 中 `row_index` 行在带边框面板内容区内的实际行偏移（模拟换行），
-/// 并返回整行的可点击区域。内容行本身不换行，前面的长文本行可能换行。
-fn block_row_area(area: Rect, lines: &[Line], row_index: usize) -> Rect {
-    let width = area.width.saturating_sub(2);
-    let row = block_row_of(lines, row_index, width);
-    Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1).saturating_add(row),
-        area.width.saturating_sub(2),
-        1,
-    )
-}
-
 /// 确认层：清空范围、保护备份与确认窗口说明。
-pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
     let height = 12.min(screen.height.saturating_sub(2));
@@ -405,7 +375,6 @@ pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         width,
         height,
     );
-    super::render::register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let lines = vec![
         Line::styled(
@@ -432,5 +401,4 @@ pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>, app: &mut Consol
             .wrap(Wrap { trim: true }),
         area,
     );
-    app.hits.add(area, Hit::DialogConfirm);
 }
