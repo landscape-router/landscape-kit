@@ -10,9 +10,9 @@ use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::render::{panel_block, register_dialog_hits, register_modal_hits};
-use super::widgets::{Focus, Hit, block_row_of};
-use super::{ConsoleAction, ConsoleApp};
+use super::render::panel_block;
+use super::widgets::Focus;
+use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::mirror::Host;
 use crate::software::base::{BasePackage, BasePackageDialog};
 use crate::software::{DockerSource, InstallPhase, Software};
@@ -223,21 +223,21 @@ impl SoftwarePanel {
     }
 
     /// 确认弹框选择:提交为 Chosen 并启动后台安装。
-    pub(crate) fn confirm_base_dialog(&mut self, notice: &mut String) {
+    pub(crate) fn confirm_base_dialog(&mut self, notice: &mut Notice) {
         let packages = self
             .base_dialog_mut()
             .map(|dialog| dialog.selected_packages())
             .unwrap_or_default();
         self.base_packages = BasePackagesState::Chosen(packages.clone());
         if packages.is_empty() {
-            *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_NONE);
+            *notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_NONE));
             return;
         }
         match self.start_base_install() {
             Ok(()) => {
-                *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_INSTALLING);
+                *notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_INSTALLING));
             }
-            Err(message) => *notice = message,
+            Err(message) => *notice = Notice::Error(message),
         }
     }
 
@@ -248,7 +248,7 @@ impl SoftwarePanel {
         }
     }
 
-    pub(crate) fn poll(&mut self, notice: &mut String) {
+    pub(crate) fn poll(&mut self, notice: &mut Notice) {
         while let Some(run) = &self.install {
             let message = run.receiver.try_recv();
             match message {
@@ -263,12 +263,14 @@ impl SoftwarePanel {
                     match result {
                         Ok(()) => {
                             self.refresh_status();
-                            *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_INSTALLED);
+                            *notice = Notice::Success(crate::tr!(
+                                crate::keys::CONSOLE_SOFTWARE_INSTALLED
+                            ));
                         }
                         Err(error) => {
                             // 取消或失败后都刷新状态,面板恢复可用可重新选择源。
                             self.refresh_status();
-                            *notice = error;
+                            *notice = Notice::Error(error);
                         }
                     }
                 }
@@ -277,7 +279,8 @@ impl SoftwarePanel {
                     self.install = None;
                     self.cancel_confirming = false;
                     self.refresh_status();
-                    *notice = crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED);
+                    *notice =
+                        Notice::Error(crate::tr!(crate::keys::CONSOLE_SOFTWARE_WORKER_STOPPED));
                 }
             }
         }
@@ -290,9 +293,11 @@ impl SoftwarePanel {
                     self.refresh_status();
                     match result {
                         Ok(()) => {
-                            *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_INSTALLED_OK);
+                            *notice = Notice::Success(crate::tr!(
+                                crate::keys::CONSOLE_BASE_PACKAGES_INSTALLED_OK
+                            ));
                         }
-                        Err(error) => *notice = error,
+                        Err(error) => *notice = Notice::Error(error),
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -300,7 +305,9 @@ impl SoftwarePanel {
                     self.base_install = None;
                     self.base_cancel_confirming = false;
                     self.refresh_status();
-                    *notice = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_WORKER_STOPPED);
+                    *notice = Notice::Error(crate::tr!(
+                        crate::keys::CONSOLE_BASE_PACKAGES_WORKER_STOPPED
+                    ));
                 }
             }
         }
@@ -330,7 +337,7 @@ impl ConsoleApp {
                     if dialog.on_confirm_row() {
                         self.software.confirm_base_dialog(&mut self.notice);
                     } else if let Err(message) = dialog.toggle() {
-                        self.notice = message;
+                        self.notice = Notice::Error(message);
                     }
                 }
                 KeyCode::Esc => self.software.cancel_base_dialog(),
@@ -363,12 +370,12 @@ impl ConsoleApp {
                 KeyCode::Enter => {
                     match self.software.start_install(confirm) {
                         Ok(()) => {
-                            self.notice = crate::tr!(
+                            self.notice = Notice::Info(crate::tr!(
                                 crate::keys::CONSOLE_SOFTWARE_INSTALLING,
                                 software = confirm.software.label()
-                            );
+                            ));
                         }
-                        Err(message) => self.notice = message,
+                        Err(message) => self.notice = Notice::Error(message),
                     }
                     self.software.confirming = None;
                     return Some(None);
@@ -409,10 +416,10 @@ impl ConsoleApp {
                             .position(|entry| *entry == software)
                             .unwrap_or(0);
                         if self.software.installed[index] {
-                            self.notice = crate::tr!(
+                            self.notice = Notice::Info(crate::tr!(
                                 crate::keys::SOFTWARE_ALREADY_INSTALLED,
                                 software = software.label()
-                            );
+                            ));
                             return Some(None);
                         }
                         self.software.confirming = Some(SoftwareConfirm {
@@ -548,23 +555,6 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
 
 pub(crate) fn render_software(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     let lines = panel_lines(app);
-    let row_hits: Vec<(u16, Hit)> = if matches!(&app.software.host, Some(Ok(_))) {
-        let width = area.width.saturating_sub(2);
-        let mut hits = Vec::with_capacity(Software::all().len() + 1);
-        for (index, software) in Software::all().into_iter().enumerate() {
-            hits.push((
-                block_row_of(&lines, index + 2, width),
-                Hit::SoftwareField(software),
-            ));
-        }
-        hits.push((
-            block_row_of(&lines, Software::all().len() + 3, width),
-            Hit::SoftwareBasePackages,
-        ));
-        hits
-    } else {
-        Vec::new()
-    };
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel_block(
@@ -574,9 +564,6 @@ pub(crate) fn render_software(frame: &mut Frame<'_>, app: &mut ConsoleApp, area:
             .wrap(Wrap { trim: true }),
         area,
     );
-    for (row, hit) in row_hits {
-        app.hits.block_row(area, row, hit);
-    }
 }
 
 pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
@@ -589,7 +576,6 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let Some(confirm) = app.software.confirming else {
         return;
@@ -625,10 +611,6 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
         ),
         Line::raw(""),
     ];
-    // 来源行命中区：点击切换来源。
-    let content_width = area.width.saturating_sub(2);
-    let hit_row = block_row_of(&lines, 2, content_width);
-    app.hits.block_row(area, hit_row, Hit::SoftwareSourceToggle);
     lines.push(Line::styled(
         crate::tr!(crate::keys::CONSOLE_SOFTWARE_CONFIRM_ENTER),
         Style::default().fg(Color::Green),
@@ -661,7 +643,6 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let phase_text = match run.phase {
         InstallPhase::Preparing => crate::tr!(crate::keys::CONSOLE_SOFTWARE_PHASE_PREPARING),
@@ -710,7 +691,7 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
         gauge_area,
     );
     if app.software.cancel_confirming {
-        render_software_cancel_confirmation(frame, app);
+        render_software_cancel_confirmation(frame);
     }
 }
 
@@ -730,8 +711,6 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
         width,
         height,
     );
-    app.hits.add(screen, Hit::Outside);
-    app.hits.add(area, Hit::Nothing);
     frame.render_widget(Clear, area);
     let mut lines: Vec<Line<'_>> = Vec::new();
     for (index, entry) in dialog.entries.iter().enumerate() {
@@ -772,11 +751,8 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
                 },
             ),
         ]));
-        app.hits
-            .block_row(area, index as u16, Hit::BasePackageRow(index));
     }
     lines.push(Line::raw(""));
-    let confirm_row = lines.len();
     let confirm_selected = dialog.on_confirm_row();
     let confirm_style = if confirm_selected {
         Style::default()
@@ -795,8 +771,6 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
             confirm_style,
         ),
     ]));
-    app.hits
-        .block_row(area, confirm_row as u16, Hit::BasePackageConfirm);
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_HINTS),
@@ -824,7 +798,6 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let cancel_hint = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_CANCEL_HINT);
     frame.render_widget(
@@ -845,12 +818,12 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
         area,
     );
     if app.software.base_cancel_confirming {
-        render_base_packages_cancel_confirmation(frame, app);
+        render_base_packages_cancel_confirmation(frame);
     }
 }
 
 /// 基础包安装取消确认层:Enter 确认取消(终止 worker),Esc 关闭继续安装。
-fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
     let height = 9.min(screen.height.saturating_sub(2));
@@ -860,7 +833,6 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -892,7 +864,7 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &mut Con
 }
 
 /// 取消安装确认层:Enter 确认取消(终止 worker),Esc 关闭继续安装。
-fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+fn render_software_cancel_confirmation(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
     let height = 9.min(screen.height.saturating_sub(2));
@@ -902,7 +874,6 @@ fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleA
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![

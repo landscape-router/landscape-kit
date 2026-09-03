@@ -7,7 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::ConsoleApp;
-use super::render::{panel_block, register_dialog_hits, register_modal_hits};
+use super::Notice;
+use super::render::panel_block;
 
 /// daemon 部署后台线程的最终结果:成功返回与 CLI 相同的结果消息,失败返回错误文本。
 pub(super) type DeployResult = Result<String, String>;
@@ -95,15 +96,15 @@ impl ConsoleApp {
     pub(super) fn save_show_psk_dialog(&mut self) {
         let psk = self.show_psk_value.trim().to_string();
         if psk.is_empty() {
-            self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_REQUIRED);
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_REQUIRED));
             return;
         }
         if psk.len() < crate::deployment::config::FLARE_PSK_MIN_LENGTH {
-            self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT);
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT));
             return;
         }
         if psk != self.show_psk_confirmation.trim() {
-            self.notice = crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH);
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH));
             return;
         }
         let mut section = crate::deployment::config::load_flare()
@@ -113,10 +114,13 @@ impl ConsoleApp {
             Ok(()) => {
                 self.show_psk = false;
                 self.show_psk_editing = false;
-                self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_SAVED);
+                self.notice = Notice::Success(crate::tr!(crate::keys::CONSOLE_FLARE_SAVED));
             }
             Err(error) => {
-                self.notice = crate::tr!(crate::keys::CONSOLE_FLARE_SAVE_FAILED, error = error);
+                self.notice = Notice::Error(crate::tr!(
+                    crate::keys::CONSOLE_FLARE_SAVE_FAILED,
+                    error = error
+                ));
             }
         }
     }
@@ -155,7 +159,9 @@ impl ConsoleApp {
             Err(TryRecvError::Disconnected) => {
                 self.deploy_daemon = None;
                 self.deploy_daemon_confirming = false;
-                self.notice = crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_WORKER_STOPPED);
+                self.notice = Notice::Error(crate::tr!(
+                    crate::keys::CONSOLE_DEPLOY_DAEMON_WORKER_STOPPED
+                ));
                 return;
             }
         };
@@ -163,12 +169,12 @@ impl ConsoleApp {
         self.deploy_daemon_confirming = false;
         match result {
             Ok(message) => {
-                self.notice = message;
+                self.notice = Notice::Success(message);
                 // 部署成功后预检报告已过期(daemon 检查此前报告 error 并挡住了
                 // 安装表单),自动重跑,报告更新后表单门禁自然放行。
                 self.preflight.restart();
             }
-            Err(error) => self.notice = error,
+            Err(error) => self.notice = Notice::Error(error),
         }
     }
 }
@@ -186,7 +192,6 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let psk_row = psk_edit_row(app, PskDialogField::Psk, true);
     let confirmation_row = psk_edit_row(app, PskDialogField::Confirmation, true);
@@ -308,7 +313,6 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let psk_display = if app.show_psk_value.is_empty() {
         crate::tr!(crate::keys::CONSOLE_SHOW_PSK_EMPTY)
@@ -390,7 +394,6 @@ pub(crate) fn render_daemon_deploy_progress(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![

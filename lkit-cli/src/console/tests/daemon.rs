@@ -59,15 +59,13 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
     let content = terminal_content(&terminal);
     assert!(content.contains("lkit daemon is not running"));
     assert!(content.contains("[ Deploy the lkit daemon ]"));
-    let row = content
-        .lines()
-        .position(|line| line.contains("[ Deploy the lkit daemon ]"))
-        .expect("deploy row must render") as u16;
-    // 双栏布局:部署动作行位于右栏(约 62 列起)。
-    assert_eq!(
-        app.hits.hit_at(65, row),
-        Some(Hit::OverviewDeploy),
-        "the deploy row must be clickable"
+    assert!(
+        content.contains("A systemd service that executes"),
+        "the resident service section must carry a description"
+    );
+    assert!(
+        !content.contains("L2 flare"),
+        "the recovery-code description belongs to the show-psk row, which is hidden while the daemon is down"
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -152,7 +150,7 @@ fn deploy_confirm_runs_in_background_and_writes_the_result_to_the_notice() {
     assert!(
         app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -179,29 +177,6 @@ fn running_daemon_enter_opens_the_show_psk_dialog() {
 }
 
 #[test]
-fn mouse_click_on_deploy_row_opens_the_confirm_layer() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("mouse", "99999999\n");
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content = terminal_content(&terminal);
-    let row = content
-        .lines()
-        .position(|line| line.contains("[ Deploy the lkit daemon ]"))
-        .expect("deploy row must render") as u16;
-    assert_eq!(
-        app.hits.hit_at(65, row),
-        Some(Hit::OverviewDeploy),
-        "the deploy row must be clickable"
-    );
-    app.handle_mouse(mouse_click(65, row));
-    assert!(app.deploy_daemon_confirming);
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
 fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog", "99999999\n");
@@ -221,15 +196,6 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
     assert!(content.contains("Install blocked"));
     assert!(content.contains("[ Deploy the lkit daemon ]"));
     assert!(content.contains("Enter deploy daemon"));
-    let row = content
-        .lines()
-        .position(|line| line.contains("[ Deploy the lkit daemon ]"))
-        .expect("the deploy button must render in the dialog") as u16;
-    assert_eq!(
-        app.hits.hit_at(50, row),
-        Some(Hit::DeployDaemon),
-        "the dialog deploy button must be clickable"
-    );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
@@ -281,7 +247,7 @@ fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() 
     assert!(
         app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -335,40 +301,7 @@ fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() 
     assert!(
         app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
         "unexpected notice: {}",
-        app.notice
-    );
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn preflight_dialog_mouse_click_on_deploy_button_opens_the_confirm_dialog() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("dialog-mouse", "99999999\n");
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.menu_index = 1;
-    app.focus = Focus::Panel;
-    app.preflight.state = PreflightState::Complete(daemon_blocked_report());
-    app.preflight_dialog = true;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content = terminal_content(&terminal);
-    let row = content
-        .lines()
-        .position(|line| line.contains("[ Deploy the lkit daemon ]"))
-        .expect("the deploy button must render in the dialog") as u16;
-    app.handle_mouse(mouse_click(50, row));
-    assert!(
-        !app.preflight_dialog,
-        "clicking the button must close the dialog"
-    );
-    assert!(
-        app.deploy_daemon_confirming,
-        "clicking the button must open the deploy confirm dialog"
-    );
-    assert!(
-        app.deploy_daemon.is_none(),
-        "the deploy must not start until the confirm dialog is confirmed"
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -601,7 +534,7 @@ fn deploy_confirm_rejects_a_mismatched_confirmation_without_starting() {
     assert!(
         app.notice.contains("do not match"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -631,7 +564,7 @@ fn deploy_confirm_rejects_a_short_recovery_code_without_starting() {
     assert!(
         app.notice.contains("at least 12 characters"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -674,15 +607,21 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
     let content = terminal_content(&terminal);
     assert!(content.contains("[ Show recovery psk ]"));
     assert!(!content.contains("[ Deploy the lkit daemon ]"));
-    let row = content
+    assert!(
+        content.contains("A systemd service that executes"),
+        "the section description must also render while the daemon is running"
+    );
+    let psk_row = content
         .lines()
         .position(|line| line.contains("[ Show recovery psk ]"))
-        .expect("the show psk row must render") as u16;
-    // 双栏布局:动作行位于右栏(约 62 列起)。
-    assert_eq!(
-        app.hits.hit_at(65, row),
-        Some(Hit::OverviewShowPsk),
-        "the show psk row must be clickable"
+        .expect("the show psk row must render");
+    let help_row = content
+        .lines()
+        .position(|line| line.contains("L2 flare"))
+        .expect("the recovery-code description must render");
+    assert!(
+        help_row < psk_row,
+        "the recovery-code description must sit above the action row"
     );
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -832,7 +771,7 @@ fn show_psk_dialog_rejects_a_mismatched_confirmation_without_saving() {
     assert!(
         app.notice.contains("do not match"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     let section = crate::deployment::config::load_flare().unwrap();
     assert_eq!(
@@ -840,25 +779,6 @@ fn show_psk_dialog_rejects_a_mismatched_confirmation_without_saving() {
         Some("an-existing-recovery-code"),
         "a rejected save must not modify the config"
     );
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn mouse_click_on_show_psk_row_opens_the_dialog() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) =
-        territory_with_pidfile("show-psk-mouse", &format!("{}\n", std::process::id()));
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content = terminal_content(&terminal);
-    let row = content
-        .lines()
-        .position(|line| line.contains("[ Show recovery psk ]"))
-        .expect("the show psk row must render") as u16;
-    app.handle_mouse(mouse_click(65, row));
-    assert!(app.show_psk, "clicking the row must open the dialog");
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }

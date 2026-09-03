@@ -15,7 +15,20 @@ fn backup_menu_lists_backups_and_opens_details() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Backup"));
     assert!(content.contains("Create backup"));
-    assert!(content.contains("20260807-131500-ab12cd34"));
+    // 列表只显示 ID 的随机后缀,完整 ID 在详情页。
+    assert!(content.contains("ab12cd34"));
+    // 时间排第一列,大小按人类可读单位渲染,表头在最上方。
+    let expected_time = chrono::DateTime::parse_from_rfc3339("2026-08-07T13:15:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string();
+    assert!(
+        content.contains(&expected_time),
+        "the list must show the local creation time, got: {content}"
+    );
+    assert!(content.contains("1.5 MiB"));
+    assert!(content.contains("Created") && content.contains("Size") && content.contains("Remark"));
     assert!(content.contains("before upgrade"));
 
     let mut app = backup_ready_app();
@@ -28,10 +41,75 @@ fn backup_menu_lists_backups_and_opens_details() {
     assert!(details.contains("Backup details"));
     assert!(details.contains("x86_64"));
     assert!(details.contains("edge"));
+    assert!(
+        details.contains("1.5 MiB"),
+        "details must show the file size"
+    );
     assert!(details.contains("Press R to restore"));
 
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(app.backup.details, None);
+}
+
+#[test]
+fn backup_list_aligns_rows_with_and_without_remark() {
+    let _language = LanguageGuard::set(Language::En);
+    // 备注为空的行只是最后一列留空,时间/大小/ID/版本列必须与有备注的行逐列对齐。
+    let mut without_remark = sample_backup_entry();
+    let metadata = without_remark.metadata.as_mut().unwrap();
+    metadata.remark = String::new();
+    metadata.backup_id = "20260807-120000-deadbeef".into();
+    metadata.created_at = chrono::DateTime::parse_from_rfc3339("2026-08-07T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    without_remark.path =
+        std::path::PathBuf::from("/opt/landscape/backups/20260807-120000-deadbeef.lkb");
+    without_remark.size = Some(2_097_152);
+
+    let mut app = ConsoleApp::new();
+    app.menu_index = 2;
+    app.focus = Focus::Panel;
+    app.snapshot = installed_snapshot();
+    app.backup.state = BackupListState::Complete(vec![sample_backup_entry(), without_remark]);
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+
+    let remarked = content
+        .lines()
+        .find(|line| line.contains("before upgrade"))
+        .expect("the remarked row must render");
+    let plain = content
+        .lines()
+        .find(|line| line.contains("deadbeef"))
+        .expect("the unremarked row must render");
+    let header = content
+        .lines()
+        .find(|line| line.contains("Created") && line.contains("Remark"))
+        .expect("the backup table header must render");
+    // 按字符位置比较各列起点:时间/大小/ID/版本列在两行中必须对齐,
+    // 备注为空的行只是该列留空。
+    let char_column = |line: &str, needle: &str| {
+        line.find(needle)
+            .map(|byte| line[..byte].chars().count())
+            .unwrap_or(usize::MAX)
+    };
+    for (cell, header_label) in [
+        ("2026-08-07", "Created"),
+        ("MiB", "Size"),
+        ("1.2.3", "Landscape"),
+    ] {
+        assert_eq!(
+            char_column(remarked, cell),
+            char_column(plain, cell),
+            "the {cell} column must align between rows with and without a remark"
+        );
+        assert!(
+            char_column(header, header_label) <= char_column(remarked, cell),
+            "the {header_label} header must sit at or before its column"
+        );
+    }
 }
 
 #[test]
@@ -416,22 +494,4 @@ fn exit_confirmation_takes_precedence_over_backup_panel_keys() {
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.backup.details, Some(0));
-}
-
-#[test]
-fn mouse_click_backup_rows_open_details_and_create_dialog() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = backup_ready_app();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 4));
-    assert_eq!(app.backup.details, Some(0));
-
-    let mut app = backup_ready_app();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    app.handle_mouse(mouse_click(30, 3));
-    assert!(
-        app.backup.editing,
-        "clicking the create row must open the remark dialog"
-    );
 }

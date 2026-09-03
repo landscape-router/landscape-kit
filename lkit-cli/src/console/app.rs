@@ -1,4 +1,5 @@
 use super::ConsoleAction;
+use super::Notice;
 use super::backup::{BackupListState, BackupPanel};
 use super::daemon_panel::{DeployResult, PskDialogField};
 use super::flare_panel::FlareDialog;
@@ -10,7 +11,7 @@ use super::reinit;
 use super::reinit::ReinitPanel;
 use super::software::SoftwarePanel;
 use super::update::{UninstallPanel, UpdatePanel};
-use super::widgets::{Clicks, Focus, Menu};
+use super::widgets::{Focus, Menu};
 use crate::commands::Commands;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,7 +26,7 @@ pub(super) struct ConsoleApp {
     pub(super) focus: Focus,
     pub(super) install: InstallForm,
     pub(super) snapshot: Snapshot,
-    pub(super) notice: String,
+    pub(super) notice: Notice,
     pub(super) exit_state: ExitState,
     pub(super) preflight: Preflight,
     pub(super) preflight_dialog: bool,
@@ -40,7 +41,6 @@ pub(super) struct ConsoleApp {
     pub(super) uninstall: UninstallPanel,
     pub(super) flare: FlareDialog,
     pub(super) takeover_choice: usize,
-    pub(super) hits: Clicks,
     /// Overview「部署 daemon」动作的确认层与后台执行状态。
     pub(super) deploy_daemon_confirming: bool,
     /// 部署确认弹窗中输入的急救恢复码(flare psk,编辑中为明文,渲染时掩码)。
@@ -70,7 +70,7 @@ impl ConsoleApp {
             focus: Focus::Navigation,
             install,
             snapshot,
-            notice: "Ready".into(),
+            notice: Notice::Ready,
             exit_state: ExitState::Idle,
             preflight: Preflight::default(),
             preflight_dialog: false,
@@ -85,7 +85,6 @@ impl ConsoleApp {
             uninstall: UninstallPanel::default(),
             flare: FlareDialog::default(),
             takeover_choice: 0,
-            hits: Clicks::default(),
             deploy_daemon_confirming: false,
             deploy_psk: String::new(),
             deploy_psk_confirmation: String::new(),
@@ -216,10 +215,13 @@ impl ConsoleApp {
         let language = crate::i18n::current().toggled();
         crate::i18n::configure(language);
         self.exit_state = ExitState::Idle;
-        self.notice = "Ready".into();
+        self.notice = Notice::Ready;
         #[cfg(not(test))]
         if let Err(error) = crate::deployment::config::write_language(language) {
-            self.notice = crate::tr!(crate::keys::CONSOLE_LANGUAGE_SAVE_FAILED, error = error);
+            self.notice = Notice::Error(crate::tr!(
+                crate::keys::CONSOLE_LANGUAGE_SAVE_FAILED,
+                error = error
+            ));
         }
         self.snapshot = Snapshot::load();
         if !self.menu_available(self.menu()) {
@@ -293,7 +295,7 @@ impl ConsoleApp {
         }
         if self.exit_state == ExitState::Armed {
             self.exit_state = ExitState::Idle;
-            self.notice = "Ready".into();
+            self.notice = Notice::Ready;
         }
         if !self.install.editing || self.menu() != Menu::Install || self.focus != Focus::Panel {
             return;
@@ -403,15 +405,29 @@ impl ConsoleApp {
         }
     }
 
-    /// 语言切换在所有非文本编辑、非退出确认状态下可用，包括确认层、详情页、
-    /// 部署前检查弹窗与网络向导;编辑字段时 `l` 保持为普通输入字符。
+    /// 语言切换在所有非文本编辑、非退出确认状态下可用，包括纯确认层、详情页、
+    /// 部署前检查弹窗与网络向导;编辑字段时 `l` 保持为普通输入字符。内嵌急救
+    /// 恢复码输入的三个弹窗（部署确认、查看/修改、flare 恢复通道）打开期间
+    /// 整体暂停：它们承诺"直接输入即进入编辑"，首字符恰好是 `l` 时也必须
+    /// 落入字段而不是切换语言。
     pub(super) fn language_switch_available(&self) -> bool {
         self.exit_state != ExitState::Confirming
-            && !self.install.editing
-            && !self.backup.editing
-            && !self.update.editing
-            && !self.reinit.editing
-            && !self
+            && !self.deploy_daemon_confirming
+            && !self.show_psk
+            && !self.flare.open
+            && !self.editing_any_field()
+    }
+
+    /// 是否有任意文本字段处于编辑态(决定语言指示是否显示"输入中暂停"解释)。
+    pub(super) fn editing_any_field(&self) -> bool {
+        self.install.editing
+            || self.backup.editing
+            || self.update.editing
+            || self.reinit.editing
+            || self.deploy_psk_editing
+            || self.show_psk_editing
+            || self.flare.editing
+            || self
                 .network_wizard
                 .as_ref()
                 .is_some_and(|wizard| wizard.editing)

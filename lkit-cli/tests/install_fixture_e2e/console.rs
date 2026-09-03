@@ -263,20 +263,27 @@ fn language_toggle_persists_across_console_sessions() {
     command.env("LKIT_LANG", "en");
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
-    pty.read_until("L  Language: English (en)", Duration::from_secs(10));
+    // 底栏显示目标语言;只锚定纯 ASCII 前缀,全角字符在 ratatui 增量 diff 的
+    // pty 字节流中可能不连续(见下方 "English" 锚点说明)。
+    pty.read_until("[L] Switch to", Duration::from_secs(10));
     pty.master.write_all(b"l").unwrap();
-    // ratatui 的增量 diff 对全角字符的列定位会让中文状态行的长串在 pty 字节流
-    // 中不连续(如 "(zh)" 的前缀被跳过);"zh" 是切换后唯一出现的稳定锚点,
-    // 渲染内容本身由 console 单元测试的 buffer 断言覆盖,这里只验证切换生效。
-    pty.read_until("zh", Duration::from_secs(5));
+    // 切换后的中文底栏是 "[L] 切换到 English (en)";目标语言名是切换后唯一
+    // 新出现的连续 ASCII 锚点(中文 UI 不再包含 "zh" 字样,全角文本在增量
+    // diff 字节流中不连续)。
+    pty.read_until("English", Duration::from_secs(5));
     let config = std::fs::read_to_string(&config_path).unwrap();
     assert!(config.contains("[ui]"), "config: {config}");
     assert!(config.contains("language = \"zh\""), "config: {config}");
     // Esc 需要独立送达:连续写入的 ESC ESC 只触发一次 armed(与
     // bare_lkit_console_restores_terminal_on_exit 相同的输入时序约束)。
+    // 本会话已切换为中文,武装提示是本地化文本且不含纯 ASCII 的独特锚点
+    // (唯一的 ASCII 片段 "Esc" 在武装前的导航提示里也出现),改用固定间隔
+    // 送达第一次 Esc,并以确认层的 "Enter"(按 Enter 退出,中文导航提示
+    // 不含该词)确认第二段武装生效。
     pty.master.write_all(b"\x1b").unwrap();
-    pty.read_until("Exit armed", Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(300));
     pty.master.write_all(b"\x1b").unwrap();
+    pty.read_until("Enter", Duration::from_secs(5));
     std::thread::sleep(Duration::from_millis(200));
     pty.master.write_all(b"\r").unwrap();
     let exited = pty.read_until("\x1b[?1049l", Duration::from_secs(5));
@@ -291,11 +298,13 @@ fn language_toggle_persists_across_console_sessions() {
     let mut pty = Pty::open();
     attach_pty(&mut command, &pty);
     let mut child = command.spawn().unwrap();
-    pty.read_until("zh", Duration::from_secs(10));
+    // 中文底栏 "[L] 切换到 English (en)" 含连续 ASCII 的目标语言名;
+    // 英文底栏不含 "English",可区分两种语言态。
+    pty.read_until("English", Duration::from_secs(10));
     pty.master.write_all(b"l").unwrap();
-    // 中文态初始帧即含 "en" 子串(提示行 "Right/Enter")且英文状态行的 diff
-    // 帧可能分片,这里以 config 写回为切换完成的稳定信号(第一会话已用 "zh"
-    // 验证过切换生效的 UI 反馈)。
+    // 英文态底栏 "[L] Switch to 中文 (zh)" 不含稳定的 ASCII 锚点(全角文本
+    // 在增量 diff 字节流中不连续),这里以 config 写回为切换完成的稳定信号
+    // (第一会话已用 "English" 验证过切换生效的 UI 反馈)。
     for _ in 0..50 {
         if std::fs::read_to_string(&config_path)
             .map(|config| config.contains("language = \"en\""))

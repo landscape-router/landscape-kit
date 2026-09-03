@@ -9,9 +9,9 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::network_wizard::Snapshot;
-use super::render::{display_pad, panel_block, register_dialog_hits};
-use super::widgets::{Focus, Hit, block_row_of};
-use super::{ConsoleAction, ConsoleApp};
+use super::render::{display_pad, panel_block};
+use super::widgets::Focus;
+use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
 use crate::commands::update::{ResolvedUpdate, resolve_update_target};
 use crate::deployment::config::{RepositorySource, RepositorySourceKind};
@@ -245,26 +245,26 @@ impl UpdatePanel {
     }
 
     /// 消费后台解析结果,按与命令模式相同的规则分支。
-    pub(crate) fn apply_resolution(&mut self, notice: &mut String, resolved: ResolvedUpdate) {
+    pub(crate) fn apply_resolution(&mut self, notice: &mut Notice, resolved: ResolvedUpdate) {
         match resolved.current.cmp(&resolved.target) {
             std::cmp::Ordering::Equal => {
-                *notice = crate::tr!(
+                *notice = Notice::Info(crate::tr!(
                     crate::keys::UPDATE_ALREADY_UP_TO_DATE,
                     version = resolved.current
-                );
+                ));
             }
             std::cmp::Ordering::Greater => {
-                *notice = crate::tr!(
+                *notice = Notice::Error(crate::tr!(
                     crate::keys::SWITCH_DOWNGRADE_NOT_SUPPORTED,
                     from_version = resolved.current,
                     version = resolved.target
-                );
+                ));
             }
             std::cmp::Ordering::Less => self.confirming = Some(resolved),
         }
     }
 
-    pub(crate) fn poll(&mut self, notice: &mut String) {
+    pub(crate) fn poll(&mut self, notice: &mut Notice) {
         let result = match &self.resolving {
             Some(receiver) => receiver.try_recv(),
             None => return,
@@ -276,12 +276,14 @@ impl UpdatePanel {
             }
             Ok(Err(error)) => {
                 self.resolving = None;
-                *notice = error;
+                *notice = Notice::Error(error);
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.resolving = None;
-                *notice = crate::tr!(crate::keys::CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED);
+                *notice = Notice::Error(crate::tr!(
+                    crate::keys::CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED
+                ));
             }
         }
     }
@@ -350,12 +352,15 @@ impl ConsoleApp {
             KeyCode::Left if self.update.selected == UpdateField::Repository => {
                 self.update.change(false)
             }
+            // 其余字段没有左右语义:Left/Right 在此消费为 no-op,不落穿到主
+            // 处理(否则 Left 会意外把焦点跳回侧栏),与 Install 表单一致。
+            KeyCode::Left | KeyCode::Right => {}
             KeyCode::Enter | KeyCode::Char(' ') => match self.update.selected {
                 UpdateField::Version | UpdateField::RepositoryUrl => self.update.editing = true,
                 UpdateField::Repository => self.update.change(true),
                 UpdateField::Start => {
                     if let Err(error) = self.start_update_resolution() {
-                        self.notice = error;
+                        self.notice = Notice::Error(error);
                     }
                 }
             },
@@ -520,7 +525,6 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         return;
     }
     let mut lines = Vec::new();
-    let content_width = area.width.saturating_sub(2);
     if let Snapshot::Installed { version, .. } = &app.snapshot {
         lines.push(Line::styled(
             format!(
@@ -542,11 +546,6 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         }
         let (label, value) = (field.label(), field.value(&app.update));
         let editable = field.editable();
-        app.hits.block_row(
-            area,
-            block_row_of(&lines, lines.len(), content_width),
-            Hit::UpdateField(field),
-        );
         let selected = focused && app.update.selected == field;
         let selected_style = if selected {
             Style::default()
@@ -619,7 +618,6 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -713,7 +711,6 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
         ));
     }
     lines.push(Line::raw(""));
-    let action_row = lines.len();
     lines.push(Line::styled(
         format!(
             "{}{}",
@@ -724,11 +721,6 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
     ));
-    app.hits.block_row(
-        area,
-        block_row_of(&lines, action_row, area.width.saturating_sub(2)),
-        Hit::UninstallAction,
-    );
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
@@ -750,7 +742,6 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let mut lines = vec![
         Line::styled(

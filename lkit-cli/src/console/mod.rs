@@ -6,6 +6,7 @@ mod flare_panel;
 mod install_form;
 mod mirror;
 mod network_wizard;
+mod notice;
 mod preflight;
 mod reinit;
 mod render;
@@ -15,6 +16,7 @@ mod update;
 mod widgets;
 
 use self::app::{ConsoleApp, ExitState};
+use self::notice::Notice;
 use self::render::render;
 use self::terminal::ConsoleTerminal;
 
@@ -40,7 +42,7 @@ use ratatui::Terminal;
 #[cfg(test)]
 use std::path::PathBuf;
 #[cfg(test)]
-use widgets::{Focus, Hit, Menu};
+use widgets::{Focus, Menu};
 
 /// 仅在 console 内部传递,低频构造;`Command` 携带完整命令结构便于分发,保持平坦布局。
 #[allow(clippy::large_enum_variant)]
@@ -62,10 +64,12 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
     // 提前在底栏提示,避免用户填写完安装参数、退出控制台委托时才失败。
     match crate::daemon_worker::delegation_block() {
         Some(crate::daemon_worker::DelegationBlock::DaemonNotRunning) => {
-            app.notice = crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE);
+            app.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
         }
         Some(crate::daemon_worker::DelegationBlock::WorkerSpawnUnavailable) => {
-            app.notice = crate::tr!(crate::keys::CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE);
+            app.notice = Notice::Info(crate::tr!(
+                crate::keys::CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE
+            ));
         }
         None => {}
     }
@@ -87,15 +91,9 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
                 }
             }
             Event::Paste(value) => app.handle_paste(&value),
-            // 鼠标点击暂时禁用:忽略鼠标事件,终端不再捕获鼠标
-            Event::Mouse(_) => {}
-            // Event::Mouse(mouse) => {
-            //     if let Some(action) = app.handle_mouse(mouse) {
-            //         return Ok(action);
-            //     }
-            // }
             Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => {}
             Event::Key(_) => {}
+            Event::Mouse(_) => {}
         }
     }
 }

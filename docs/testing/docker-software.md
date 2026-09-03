@@ -15,7 +15,7 @@
 | 容器镜像 | 家族 | 来源 | 覆盖点 |
 | --- | --- | --- | --- |
 | `debian:bookworm` | apt | official | `docker.list` 官方 URL、debian 代号、`docker.gpg` keyring 有效性 |
-| `ubuntu:24.04` | apt | ustc | `docker.list` 指向 USTC 镜像、ubuntu 代号、x86_64/aarch64（CI）两种架构的 `arch=` 映射 |
+| `ubuntu:24.04` | apt | official | `docker.list` 官方 URL、ubuntu 代号、`docker.gpg` keyring 有效性、x86_64/aarch64（CI）两种架构的 `arch=` 映射 |
 | `fedora:latest` | dnf | aliyun | `docker-ce.repo` 按 `VERSION_ID` 主版本生成 baseurl、`gpgkey` 指向镜像 |
 | `archlinux:latest` | pacman | ustc | 官方仓库真实安装（来源参数被接受，pacman 不写第三方仓库） |
 

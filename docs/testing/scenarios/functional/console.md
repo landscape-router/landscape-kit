@@ -35,14 +35,17 @@
 
 ## UI-04
 
-**Esc 从 Install 面板返回侧栏,Left 与 Right 共同切换安装选项**
+**Esc 从 Install 面板返回侧栏，Left 与 Right 各司其职**
 
 - 测试层：Rust 单元
 - 状态：`已覆盖`
 - 证据：[控制台输入规格](../../../interaction/console.md)、[控制台按键测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖从侧栏进入 Install 面板后使用 Esc 返回侧栏菜单选择（退出确认只在导航层
   生效，面板内 Esc 不进入退出等待态）；Left 与 Right 在表单内切换仓库枚举且不改变焦点
-  （Left 反向、Right 正向，检查汇总态保持不变）。
+  （Left 反向、Right 正向，检查汇总态保持不变）。没有左右切换语义的面板按 Left 返回
+  侧栏导航、按 Right 无动作（Install 检查汇总态的 Enter/Right 是展开检查详情，Update
+  非枚举字段的 Left/Right 为 no-op 不落回侧栏）；Backup 详情页内 Left 由详情视图消费，
+  仅 Esc 返回列表。
 
 ## UI-05
 
@@ -57,12 +60,14 @@
 
 ## UI-06
 
-**控制台即时切换并在底栏显示语言**
+**控制台即时切换并在底栏显示切换目标语言**
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
 - 证据：[控制台输入规格](../../../interaction/console.md)、[本地化规格](../../../interaction/i18n.md)、[控制台测试](../../../../lkit-cli/src/console/)
-- 说明：断言英文底栏、`L` 切换后的中文导航与中文底栏，并验证文本编辑状态下 `l` 仍写入字段而不切换语言。
+- 说明：断言英文底栏显示目标语言（`[L] Switch to 中文 (zh)`，所见即所得）、`L` 切换
+  后的中文导航与中文底栏（`[L] 切换到 English (en)`），
+  并验证文本编辑状态下 `l` 仍写入字段而不切换语言。
 
 ## UI-07
 
@@ -125,10 +130,11 @@
 - 状态：`已覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[备份命令](../../../commands/backup.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：未安装或非 root 时面板只显示原因提示。已安装时列出备份（与 `backup list`
-  同源的后台完整校验），Enter 打开 metadata 详情（**备注排第一**，进入详情自动后台
+  同源的后台完整校验，带表头,列依次为创建时间/大小/ID 后缀/版本/备注,备注为空
+  不影响列对齐），Enter 打开 metadata 详情（**备注排第一**,含文件大小,进入详情自动后台
   `verify` 并写底栏，V 可手动重校验，R 打开恢复确认层但校验失败时弹损坏框），顶部
   创建动作支持备注编辑并在 Enter 后生成与 CLI 等价的结构化 `Backup`/`Restore` 请求；
-  列表行单行展示、备注排第一且按剩余长度截断，完整备注进详情页。恢复确认层 Enter 前必须通过校验
+  列表行单行展示、备注恒排最后且按剩余长度截断，完整备注进详情页。恢复确认层 Enter 前必须通过校验
   （未校验先启动并提示校验中，失败弹损坏框），通过才提交；`--yes` 由控制台确认层覆盖。
 - 缺口：真实备份文件的列表加载与损坏条目标记依赖安装现场，测试通过注入 metadata 覆盖
   渲染与按键路径；后台 verify 与恢复委托 worker 的端到端执行未自动化。
@@ -175,18 +181,20 @@
 - 说明：`lkit check` 与 Install 面板部署前检查包含 `service.lkit_daemon` 项：daemon
   运行中为 `pass`；root 下未运行为 `error` 并建议 `lkit self install`（控制台未部署
   daemon 前无法进入安装表单）；非 root 未运行只报 `warning`。进入控制台时 root 下
-  daemon 未运行，底栏提示行直接显示警告；Overview 面板右栏常驻显示 daemon 运行状态行
+  daemon 未运行，底栏提示行直接显示警告；Overview 面板右栏常驻显示 daemon 运行状态行（小节标题下带一行服务简介，
+  说明常驻服务以 systemd 常驻并代控制台执行特权操作；daemon 运行时的“查看
+  急救恢复码”动作行上方带一行恢复码用途简介，两行简介均按栏宽预折行）
   （header 同时显示 daemon 状态徽标），未运行时显示“部署 lkit 常驻服务”动作行：
   Enter 打开确认层（内嵌急救恢复码输入、二次确认与「开始部署」动作行，方向键/Tab
   导航，Enter 在字段上编辑、在动作行上才执行部署；非空 psk 须至少 12 字符且两次
   输入一致，不满足时拒绝部署并留在弹窗），确认后在 TUI 内后台线程执行
   `lkit self install`（进度弹层，结果写底栏，不退出控制台），成功后状态行变绿、
   动作行消失、预检自动重跑；daemon 运行时右栏提供“查看急救恢复码”动作行，
-  Enter/空格或点击弹出「查看/修改急救恢复码」弹窗：psk 明文展示，内嵌 psk 与二次
+  Enter/空格弹出「查看/修改急救恢复码」弹窗：psk 明文展示，内嵌 psk 与二次
   确认两个输入框和「保存」动作行，保存时校验非空、至少 12 字符且两次一致后写回
   `[flare]` 段。安装阻断
-  弹框内因 daemon 检查被拦时直接提供部署按钮（`D` 键或点击，按钮常显选中态），
-  点击打开与 Overview 相同的部署确认弹窗（内嵌急救恢复码输入与二次确认），
+  弹框内因 daemon 检查被拦时直接提供部署按钮（`D`/Enter，按钮常显选中态），
+  打开与 Overview 相同的部署确认弹窗（内嵌急救恢复码输入与二次确认），
   确认后执行部署，部署完成后表单门禁自动放行。
 - 缺口：`delegation_blocked` 的 root 分支依赖真实 euid，标准单测环境（非 root）只
   覆盖 `daemon_is_running` 的 pidfile 语义、检查函数分支与部署后台线程的失败路径
@@ -211,3 +219,18 @@
   可执行性的判定有单元测试覆盖（见 [`S-4b`](../../nspawn-systemd.md)）。
 - 缺口：root 分支依赖真实 euid 与地盘 pidfile，标准单测只覆盖非 root（不阻断）
   路径；root 环境的 TUI 现场行为与 nspawn smoke 的 S-4b 待运行验证。
+
+## UI-16
+
+**底栏状态消息按级别染色（就绪/信息/成功/失败）**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[样式验收标准](../../../interaction/ui/README.md)、
+  `console::notice` 单元测试与
+  `console::tests::app::notice_levels_render_with_distinct_colors`
+- 说明：底栏 notice 为 `console::notice::Notice` 枚举（`Ready`/`Info`/`Success`/
+  `Error`），渲染时分别以灰/黄/绿/红着色，取代旧的 `"Ready"` 哨兵字符串与
+  "非 Ready 一律红字"约定；多行结果（换源/恢复的追加行）经 `push_line` 拼接并
+  保持首行级别染色；`Ready` 文案在渲染时按当前语言惰性翻译，语言切换后底栏
+  就绪文案即时更新。

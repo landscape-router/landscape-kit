@@ -49,7 +49,7 @@
 - 证据：[`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
 - 说明：面板检测失败时显示错误且确认 Enter 不启动安装（无 worker 产生）；非 root
   （`test-support` 下注入 `allow_non_root=false`）确认 Enter 报权限错误、不启动安装；
-  面板渲染显示发行版摘要与软件行（含鼠标点击命中）。CLI 非 root 安装报错阻断、
+  面板渲染显示发行版摘要与软件行。CLI 非 root 安装报错阻断、
   `--non-interactive` 无参数报参数使用错误。
 
 ## SFT-05
@@ -78,7 +78,8 @@
 - 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
   `debian:bookworm`/`ubuntu:24.04`/`fedora:latest`/`archlinux:latest` 容器（root，无需
   test-support）执行 `lkit software install docker --yes`，每个发行版覆盖一个来源
-  （debian=official、ubuntu=ustc、fedora=aliyun、arch=ustc）：
+  （debian=official、ubuntu=official、fedora=aliyun、arch=ustc；CI runner 在海外，
+  ubuntu 使用官方源，国内镜像的 URL 映射由单元测试覆盖）：
   断言 apt `docker.list` 按真实 `VERSION_CODENAME` 与架构写入官方/镜像 URL、
   `docker.gpg` 为有效 keyring、dnf `docker-ce.repo` 按真实 `VERSION_ID` 主版本生成
   baseurl 与 gpgkey 指向阿里云、pacman 真实安装且来源参数被接受；安装后断言真实

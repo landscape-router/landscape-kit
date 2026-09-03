@@ -352,70 +352,6 @@ fn mirror_confirmation_shows_cdrom_toggle_for_apt_families() {
     ));
 }
 
-#[test]
-fn mirror_confirmation_click_toggles_the_clicked_row() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = debian_ready_app();
-    // 焦点在 CD 源行（默认）；点击 security 行应直接切换 security。
-    app.mirror.confirming = Some(MirrorConfirm::Apply {
-        mirror: MirrorName::Aliyun,
-        replace_security: false,
-        disable_cdrom: true,
-        toggle: 0,
-    });
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let mut security_row = None;
-    for row in 0..28 {
-        if app
-            .hits
-            .hit_at(40, row)
-            .is_some_and(|hit| hit == Hit::MirrorSecurityToggle)
-        {
-            security_row = Some(row);
-            break;
-        }
-    }
-    let Some(row) = security_row else {
-        panic!("no clickable security toggle row found");
-    };
-    app.handle_mouse(mouse_click(40, row));
-    assert!(matches!(
-        app.mirror.confirming,
-        Some(MirrorConfirm::Apply {
-            replace_security: true,
-            disable_cdrom: true,
-            ..
-        })
-    ));
-    // 点击 CD 源行：焦点先移到该行，再切换为不注释。
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let mut cdrom_row = None;
-    for row in 0..28 {
-        if app
-            .hits
-            .hit_at(40, row)
-            .is_some_and(|hit| hit == Hit::MirrorCdromToggle)
-        {
-            cdrom_row = Some(row);
-            break;
-        }
-    }
-    let Some(row) = cdrom_row else {
-        panic!("no clickable cdrom toggle row found");
-    };
-    app.handle_mouse(mouse_click(40, row));
-    assert!(matches!(
-        app.mirror.confirming,
-        Some(MirrorConfirm::Apply {
-            replace_security: true,
-            disable_cdrom: false,
-            toggle: 0,
-            ..
-        })
-    ));
-}
-
 #[cfg(feature = "test-support")]
 #[test]
 fn mirror_confirmation_dialog_executes_apply() {
@@ -456,9 +392,10 @@ fn mirror_confirmation_dialog_executes_apply() {
     assert!(app.mirror.confirming.is_none());
     assert!(
         app.notice
+            .text()
             .contains("switched the Ubuntu package sources to Tsinghua TUNA"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     let rewritten = std::fs::read_to_string(&sources).unwrap();
     assert!(
@@ -519,13 +456,14 @@ fn mirror_apply_skips_refresh_worker_under_test_injection() {
         allow_non_root: true,
         skip_refresh: true,
     });
-    let mut notice = "applied\n".to_string();
+    let mut notice = Notice::Success("applied".into());
     let mut panel = MirrorPanel::default();
     panel.start_refresh(Family::Ubuntu, &mut notice);
     assert!(panel.refreshing.is_none());
     assert!(
         notice.contains("package index refreshed"),
-        "test injection must complete the refresh synchronously: {notice}"
+        "test injection must complete the refresh synchronously: {}",
+        notice.text()
     );
     let _ = std::fs::remove_dir_all(&temp);
 }
@@ -540,7 +478,7 @@ fn mirror_refresh_worker_blocks_until_done() {
     assert!(
         app.notice.contains("refreshing the package index"),
         "while refreshing, further mirror operations must be blocked with a hint: {}",
-        app.notice
+        app.notice.text()
     );
 }
 
@@ -550,58 +488,10 @@ fn mirror_refresh_completion_writes_notice_and_unblocks() {
     let _ = sender.send(Ok::<(), String>(()));
     let mut app = mirror_ready_app();
     app.mirror.refreshing = Some(MirrorRefreshRun { receiver });
-    let mut notice = String::new();
+    let mut notice = Notice::Ready;
     app.mirror.poll_refresh(&mut notice);
     assert!(app.mirror.refreshing.is_none());
     assert!(notice.contains("package index refreshed"));
-}
-
-#[test]
-fn mirror_rows_are_mouse_clickable() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = mirror_ready_app();
-    app.focus = Focus::Panel;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    // 在面板区域内找到第一行镜像的命中区。
-    let mut first_row = None;
-    for row in 4..12 {
-        if let Some(Hit::MirrorField(MirrorName::Official)) = app.hits.hit_at(40, row) {
-            first_row = Some(row);
-            break;
-        }
-    }
-    let Some(row) = first_row else {
-        panic!("no clickable mirror row found");
-    };
-    app.handle_mouse(mouse_click(40, row));
-    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Official));
-    assert!(matches!(
-        app.mirror.confirming,
-        Some(MirrorConfirm::Apply {
-            mirror: MirrorName::Official,
-            replace_security: false,
-            disable_cdrom: true,
-            toggle: 0,
-        })
-    ));
-    app.mirror.confirming = None;
-
-    app.handle_mouse(mouse_click(40, row + 1));
-    assert_eq!(app.mirror.selected, MirrorRow::Mirror(MirrorName::Ustc));
-    app.mirror.confirming = None;
-
-    let restore_hit = (4..28).find(|row| {
-        app.hits
-            .hit_at(40, *row)
-            .is_some_and(|hit| hit == Hit::MirrorRestore)
-    });
-    let Some(restore_row) = restore_hit else {
-        panic!("no clickable restore row found");
-    };
-    app.handle_mouse(mouse_click(40, restore_row));
-    assert_eq!(app.mirror.selected, MirrorRow::Restore);
-    assert_eq!(app.mirror.confirming, Some(MirrorConfirm::Restore));
 }
 
 #[test]
@@ -625,7 +515,7 @@ fn mirror_navigation_skips_unavailable_mirrors() {
     assert!(
         app.notice.contains("does not provide"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     // 恢复动作仍可达。
     app.mirror.selected = MirrorRow::Mirror(MirrorName::Bfsu);

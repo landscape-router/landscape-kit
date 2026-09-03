@@ -5,6 +5,7 @@ use super::support::*;
 use crate::i18n::Language;
 use crate::network::config::{NetworkMode, NetworkPlan, SelectedInterface};
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 
 #[test]
 fn renders_panel_focus_marker_on_overview() {
@@ -49,6 +50,49 @@ fn install_menu_stays_selectable_when_not_installed() {
 }
 
 #[test]
+fn left_arrow_returns_from_a_panel_to_navigation() {
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+
+    assert_eq!(app.focus, Focus::Navigation);
+    assert_eq!(app.exit_state, ExitState::Idle);
+}
+
+#[test]
+fn left_arrow_returns_from_install_checks_summary_to_navigation() {
+    let mut app = ConsoleApp::new();
+    app.menu_index = 1;
+    app.focus = Focus::Panel;
+    app.install.checks_selected = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+
+    assert_eq!(app.focus, Focus::Navigation);
+    assert_eq!(app.exit_state, ExitState::Idle);
+}
+
+#[test]
+fn right_arrow_outside_install_leaves_the_install_form_untouched() {
+    let mut app = ConsoleApp::new();
+    app.snapshot = Snapshot::NotInstalled;
+    app.menu_index = 2; // Backup: Right has no in-panel meaning here.
+    app.focus = Focus::Panel;
+    app.install.checks_selected = false;
+    app.install.selected = InstallField::Repository;
+
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+
+    assert_eq!(app.focus, Focus::Panel);
+    assert_eq!(
+        app.install.repository,
+        super::super::install_form::RepositoryMode::Default,
+        "Right outside the Install panel must not change the hidden install form"
+    );
+}
+
+#[test]
 fn language_key_switches_the_tui_and_updates_the_footer() {
     let _language = LanguageGuard::set(Language::En);
     let backend = TestBackend::new(100, 28);
@@ -59,7 +103,9 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
     let english = terminal_content(&terminal);
     assert!(english.contains("Navigation"));
     assert!(english.contains("Ctrl+C Exit"));
-    assert!(english.contains("L  Language: English (en)"));
+    // 可切换时底栏显示目标语言(所见即所得),不显示当前语言。
+    assert!(english.contains("[L] Switch to 中文 (zh)"));
+    assert!(!english.contains("Language: English"));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
     assert_eq!(crate::i18n::current(), Language::Zh);
@@ -70,8 +116,8 @@ fn language_key_switches_the_tui_and_updates_the_footer() {
     let chinese = terminal_content(&chinese_terminal);
     assert!(chinese.contains("导航"));
     assert!(chinese.contains("Ctrl+C 退出"));
-    assert!(chinese.contains("L  语言：中文 (zh)"));
-    assert!(!chinese.contains("Language: English (en)"));
+    assert!(chinese.contains("[L] 切换到 English (en)"));
+    assert!(!chinese.contains("Switch to"));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
     assert_eq!(crate::i18n::current(), Language::En);
@@ -87,7 +133,7 @@ fn long_panel_hint_wraps_on_dynamic_status_lines() {
 
     let content = terminal_content(&terminal);
     assert!(
-        content.contains("Esc Menu"),
+        content.contains("Esc/← Menu"),
         "the long backup list hint must wrap onto the second hint line instead of truncating"
     );
 }
@@ -98,7 +144,7 @@ fn long_notice_wraps_instead_of_truncating() {
     let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
     let mut app = ConsoleApp::new();
     let notice = "this is a long status notice that must wrap onto a second line: backup failed";
-    app.notice = notice.into();
+    app.notice = Notice::Error(notice.into());
 
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
@@ -107,6 +153,54 @@ fn long_notice_wraps_instead_of_truncating() {
         content.contains("backup failed"),
         "a long status notice must wrap onto the second status line instead of truncating"
     );
+}
+
+#[test]
+fn multiline_notice_renders_every_line() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+    let mut app = ConsoleApp::new();
+    // 换源成功的多行结果:高度预留与渲染必须共用同一折行,最后一行不可被
+    // 高度偏差截掉。
+    let mut notice = Notice::Success("mirror applied to the configured host".into());
+    notice.push_line("refreshing the package index now".into());
+    app.notice = notice;
+
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+    let content = terminal_content(&terminal);
+    assert!(
+        content.contains("configured host"),
+        "the tail of the first notice line must be visible"
+    );
+    assert!(
+        content.contains("index now"),
+        "the tail of the appended notice line must be visible"
+    );
+}
+
+#[test]
+fn notice_levels_render_with_distinct_colors() {
+    let _language = LanguageGuard::set(Language::En);
+    // "Q" 在界面其它区域不出现,可作为定位底栏消息首字符的标记。
+    for (notice, expected) in [
+        (Notice::Error("Q: boom".into()), Color::Red),
+        (Notice::Success("Q: done".into()), Color::Green),
+        (Notice::Info("Q: working".into()), Color::Yellow),
+    ] {
+        let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+        let mut app = ConsoleApp::new();
+        app.notice = notice;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let cell = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "Q")
+            .expect("the notice marker must be rendered in the status bar");
+        assert_eq!(cell.fg, expected);
+    }
 }
 
 #[test]
@@ -139,6 +233,12 @@ fn language_key_remains_text_while_editing() {
     assert_eq!(crate::i18n::current(), Language::En);
     assert_eq!(app.install.version, "l");
     assert!(!app.language_switch_available());
+    // 编辑中底栏回退当前语言,并解释 L 暂停(此时 l 是普通输入字符)。
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("L paused while typing"));
+    assert!(content.contains("Language: English (en)"));
 }
 
 #[test]
@@ -232,6 +332,73 @@ fn language_key_stays_disabled_while_exit_confirmation_is_open() {
 }
 
 #[test]
+fn recovery_code_typing_reaches_the_field_instead_of_switching_language() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.deploy_daemon_confirming = true;
+    assert!(
+        !app.language_switch_available(),
+        "the deploy dialog promises direct typing, so L must be paused while it is open"
+    );
+
+    for character in "lk9-dead-beef".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    }
+
+    assert_eq!(
+        crate::i18n::current(),
+        Language::En,
+        "typing a recovery code containing l must not switch the language"
+    );
+    assert_eq!(app.deploy_psk, "lk9-dead-beef");
+    assert!(app.deploy_daemon_confirming, "the dialog must stay open");
+}
+
+#[test]
+fn language_key_remains_text_in_show_psk_editing() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.show_psk = true;
+    app.show_psk_editing = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::En);
+    assert_eq!(app.show_psk_value, "l");
+    assert!(app.show_psk, "the dialog must stay open");
+}
+
+#[test]
+fn language_key_remains_text_in_flare_psk_editing() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.flare.open = true;
+    app.flare.editing = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+
+    assert_eq!(crate::i18n::current(), Language::En);
+    assert_eq!(app.flare.psk, "l");
+    assert!(app.flare.open, "the dialog must stay open");
+}
+
+#[test]
+fn left_stays_in_the_update_form_on_non_enum_fields() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = update_ready_app();
+    app.update.selected = UpdateField::Version;
+
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+
+    assert_eq!(
+        app.focus,
+        Focus::Panel,
+        "Left on a non-enum field must not fall through to the sidebar"
+    );
+    assert_eq!(app.update.selected, UpdateField::Version);
+}
+
+#[test]
 fn double_escape_opens_confirmation_before_enter_exits() {
     let mut app = ConsoleApp::new();
     let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
@@ -293,6 +460,10 @@ fn renders_stable_small_terminal_state() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(content.contains("Terminal too small"));
+    assert!(
+        content.contains("72x18"),
+        "the fallback screen must tell the user the minimum size it needs"
+    );
 }
 
 #[test]
@@ -617,59 +788,4 @@ fn start_update_validates_before_background_resolution() {
         "a valid form must start the background resolver"
     );
     let _ = std::fs::remove_dir_all(&app.install.install_dir);
-}
-
-#[test]
-fn mouse_click_selects_navigation_menu_and_switches_focus() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.menu_index = 1;
-    app.focus = Focus::Panel;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert_eq!(app.hits.hit_at(10, 4), Some(Hit::Menu(1)));
-    assert_eq!(app.hits.hit_at(10, 5), Some(Hit::Menu(2)));
-    assert_eq!(app.hits.hit_at(30, 3), Some(Hit::InstallChecks));
-    assert_eq!(app.hits.hit_at(50, 19), Some(Hit::Panel));
-    app.handle_mouse(mouse_click(10, 5));
-    assert_eq!(app.menu_index, 2);
-    assert_eq!(app.focus, Focus::Panel);
-    app.handle_mouse(mouse_click(5, 25));
-    assert_eq!(
-        app.focus,
-        Focus::Panel,
-        "clicks outside any region are ignored"
-    );
-    app.handle_mouse(mouse_click(10, 3));
-    assert_eq!(app.menu_index, 0);
-    assert_eq!(app.focus, Focus::Panel);
-}
-
-#[test]
-fn mouse_click_dialog_inside_confirms_and_outside_cancels() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    app.exit_state = ExitState::Confirming;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert!(matches!(
-        app.handle_mouse(mouse_click(49, 13)),
-        Some(ConsoleAction::Quit)
-    ));
-
-    let mut app = ConsoleApp::new();
-    app.exit_state = ExitState::Confirming;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert!(app.handle_mouse(mouse_click(2, 2)).is_none());
-    assert_eq!(app.exit_state, ExitState::Idle);
-}
-
-#[test]
-fn mouse_right_click_acts_as_escape_and_returns_to_navigation() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut app = ConsoleApp::new();
-    app.focus = Focus::Panel;
-    app.handle_mouse(mouse_right_click(30, 10));
-    assert_eq!(app.focus, Focus::Navigation);
-    assert_eq!(app.exit_state, ExitState::Idle);
 }

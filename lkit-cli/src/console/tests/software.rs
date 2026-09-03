@@ -126,7 +126,7 @@ fn software_panel_enter_on_installed_shows_notice() {
     assert!(
         app.notice.contains("Docker is already installed"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
 }
 
@@ -201,7 +201,7 @@ fn software_confirmation_enter_after_detection_failure_shows_notice() {
     assert!(
         app.notice.contains("could not be detected"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
 }
 
@@ -315,7 +315,7 @@ fn software_cancel_after_confirm_allows_reselecting_source() {
     app.update();
     assert!(app.software.install.is_none());
     assert_eq!(
-        app.notice,
+        app.notice.text(),
         crate::tr!(crate::keys::SOFTWARE_CANCELLED),
         "the cancellation notice must be shown"
     );
@@ -327,26 +327,6 @@ fn software_cancel_after_confirm_allows_reselecting_source() {
         app.software.confirming.is_some(),
         "after cancellation the panel must allow reselecting the source"
     );
-}
-
-#[test]
-fn software_rows_are_mouse_clickable() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = software_ready_app();
-    app.focus = Focus::Panel;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let row = (4..12).find(|row| {
-        app.hits
-            .hit_at(40, *row)
-            .is_some_and(|hit| hit == Hit::SoftwareField(Software::Docker))
-    });
-    let Some(row) = row else {
-        panic!("no clickable software row found");
-    };
-    app.handle_mouse(mouse_click(40, row));
-    assert_eq!(app.software.selected, SoftwareRow::Docker);
-    assert!(app.software.confirming.is_some());
 }
 
 #[cfg(feature = "test-support")]
@@ -382,7 +362,7 @@ fn software_confirmation_enter_with_non_root_policy_shows_notice() {
     assert!(
         app.notice.contains("root privileges are required"),
         "unexpected notice: {}",
-        app.notice
+        app.notice.text()
     );
     std::fs::remove_dir_all(&temp).unwrap();
 }
@@ -509,7 +489,7 @@ fn base_packages_dialog_confirm_starts_install_with_selection() {
         assert!(
             app.notice.contains("root privileges are required"),
             "unexpected notice: {}",
-            app.notice
+            app.notice.text()
         );
     }
 }

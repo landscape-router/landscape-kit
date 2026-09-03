@@ -27,6 +27,15 @@ impl Language {
         }
     }
 
+    /// 该语言以自身文字书写的名称(附代码),用于语言切换指示:目标语言必须以
+    /// 其自身文字展示,当前界面语言的用户才能认出它。
+    pub(crate) fn native_label(self) -> &'static str {
+        match self {
+            Self::En => "English (en)",
+            Self::Zh => "中文 (zh)",
+        }
+    }
+
     pub(crate) fn toggled(self) -> Self {
         match self {
             Self::En => Self::Zh,
