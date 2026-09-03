@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::ConsoleApp;
 use super::Notice;
-use super::render::{panel_block, register_dialog_hits, register_modal_hits};
+use super::render::panel_block;
 
 /// daemon 部署后台线程的最终结果:成功返回与 CLI 相同的结果消息,失败返回错误文本。
 pub(super) type DeployResult = Result<String, String>;
@@ -192,7 +192,6 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let psk_row = psk_edit_row(app, PskDialogField::Psk, true);
     let confirmation_row = psk_edit_row(app, PskDialogField::Confirmation, true);
@@ -314,7 +313,6 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let psk_display = if app.show_psk_value.is_empty() {
         crate::tr!(crate::keys::CONSOLE_SHOW_PSK_EMPTY)
@@ -396,7 +394,6 @@ pub(crate) fn render_daemon_deploy_progress(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![

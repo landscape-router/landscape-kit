@@ -29,7 +29,7 @@
 - 居中带边框标题 `Confirm update`;
 - 首行加粗问题、`当前 X → 目标 Y` 计划行、复用 switch 流水线说明行、
   白字 Enter 行、灰字 Esc 取消行;
-- 弹窗内点击=Enter、弹窗外=Esc;委托后的全屏页见
+- Enter 确认、Esc 关闭;委托后的全屏页见
   [operation-update.md](operation-update.md)。
 
 ## 证据

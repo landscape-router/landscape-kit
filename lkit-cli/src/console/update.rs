@@ -9,8 +9,8 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::network_wizard::Snapshot;
-use super::render::{display_pad, panel_block, register_dialog_hits};
-use super::widgets::{Focus, Hit, block_row_of};
+use super::render::{display_pad, panel_block};
+use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
 use crate::commands::update::{ResolvedUpdate, resolve_update_target};
@@ -525,7 +525,6 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         return;
     }
     let mut lines = Vec::new();
-    let content_width = area.width.saturating_sub(2);
     if let Snapshot::Installed { version, .. } = &app.snapshot {
         lines.push(Line::styled(
             format!(
@@ -547,11 +546,6 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
         }
         let (label, value) = (field.label(), field.value(&app.update));
         let editable = field.editable();
-        app.hits.block_row(
-            area,
-            block_row_of(&lines, lines.len(), content_width),
-            Hit::UpdateField(field),
-        );
         let selected = focused && app.update.selected == field;
         let selected_style = if selected {
             Style::default()
@@ -624,7 +618,6 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -718,7 +711,6 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
         ));
     }
     lines.push(Line::raw(""));
-    let action_row = lines.len();
     lines.push(Line::styled(
         format!(
             "{}{}",
@@ -729,11 +721,6 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
     ));
-    app.hits.block_row(
-        area,
-        block_row_of(&lines, action_row, area.width.saturating_sub(2)),
-        Hit::UninstallAction,
-    );
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
@@ -755,7 +742,6 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     let mut lines = vec![
         Line::styled(

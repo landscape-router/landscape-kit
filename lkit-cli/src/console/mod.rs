@@ -42,7 +42,7 @@ use ratatui::Terminal;
 #[cfg(test)]
 use std::path::PathBuf;
 #[cfg(test)]
-use widgets::{Focus, Hit, Menu};
+use widgets::{Focus, Menu};
 
 /// 仅在 console 内部传递,低频构造;`Command` 携带完整命令结构便于分发,保持平坦布局。
 #[allow(clippy::large_enum_variant)]
@@ -91,13 +91,9 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
                 }
             }
             Event::Paste(value) => app.handle_paste(&value),
-            Event::Mouse(mouse) => {
-                if let Some(action) = app.handle_mouse(mouse) {
-                    return Ok(action);
-                }
-            }
             Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => {}
             Event::Key(_) => {}
+            Event::Mouse(_) => {}
         }
     }
 }

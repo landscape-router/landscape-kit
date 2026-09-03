@@ -31,7 +31,7 @@
 - 居中带边框标题 `Confirm reinit`;
 - 首行加粗问题、清空范围行、保护 `.lkb` 备份行、确认窗口
   (等待 `lkit network confirm`)说明行、白字 Enter 行、灰字 Esc 行;
-- 弹窗内点击=Enter、弹窗外=Esc;委托后的全屏页见
+- Enter 确认、Esc 关闭;委托后的全屏页见
   [operation-reinit.md](operation-reinit.md)。
 
 ## 证据

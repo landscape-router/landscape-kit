@@ -8,8 +8,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::super::ConsoleApp;
 use super::super::network_wizard::Snapshot;
-use super::super::render::{panel_block, register_dialog_hits, register_modal_hits};
-use super::super::widgets::{Focus, Hit, block_row_of};
+use super::super::render::panel_block;
+use super::super::widgets::Focus;
 use super::BackupListState;
 use crate::backup::lkb::BackupProgress;
 use crate::commands::backup::{architecture_key, scope_key};
@@ -91,7 +91,6 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
                 .add_modifier(Modifier::BOLD)
         },
     )];
-    let mut entry_lines: Vec<usize> = Vec::new();
     match &app.backup.state {
         BackupListState::NotRun | BackupListState::Running(_) => {
             lines.push(Line::raw(""));
@@ -114,7 +113,6 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
             }
             for (index, entry) in rows.iter().enumerate() {
                 let cursor = app.focus == Focus::Panel && app.backup.selected == index + 1;
-                entry_lines.push(lines.len());
                 match &entry.metadata {
                     Some(metadata) => {
                         let available = usize::from(area.width.saturating_sub(2));
@@ -168,15 +166,6 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
                 }
             }
         }
-    }
-    let content_width = area.width.saturating_sub(2);
-    app.hits.block_row(area, 0, Hit::BackupRow(0));
-    for (index, line) in entry_lines.iter().enumerate() {
-        app.hits.block_row(
-            area,
-            block_row_of(&lines, *line, content_width),
-            Hit::BackupRow(index + 1),
-        );
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -292,7 +281,6 @@ pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut Conso
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     let remark = app.backup.remark.clone();
     let remark_display = if remark.is_empty() {
         "_".to_string()
@@ -338,7 +326,6 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    register_modal_hits(&mut app.hits, screen, area);
     let (stage_text, ratio) = match &run.progress {
         BackupProgress::Exporting => (
             crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_PROGRESS_EXPORT),
@@ -405,7 +392,7 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
 }
 
 /// 备份损坏提示弹框:校验失败时 R 键/恢复 Enter 触发,Enter/Esc 关闭。
-pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
     let height = 9.min(screen.height.saturating_sub(2));
@@ -415,7 +402,6 @@ pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>, app: &mut Cons
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -461,7 +447,6 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -510,7 +495,6 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![

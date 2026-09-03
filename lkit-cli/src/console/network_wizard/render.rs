@@ -3,11 +3,9 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
 
 use super::super::ConsoleApp;
-use super::super::render::{display_pad, register_dialog_hits};
-use super::super::widgets::{Clicks, Hit, block_row_of};
+use super::super::render::display_pad;
 use super::{NetworkWizard, Snapshot, WanMode, WizardStep};
 
 /// 以本地时区格式化时刻，如 `2026-08-17 00:22:18 -04:00`。
@@ -29,11 +27,7 @@ fn format_remaining(seconds: i64) -> String {
     }
 }
 
-pub(crate) fn render_network_wizard(
-    frame: &mut Frame<'_>,
-    wizard: &NetworkWizard,
-    hits: &mut Clicks,
-) {
+pub(crate) fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
     let area = frame.area();
     let [title, body, footer] = Layout::vertical([
         Constraint::Length(3),
@@ -47,9 +41,7 @@ pub(crate) fn render_network_wizard(
             .block(Block::default().borders(Borders::BOTTOM)),
         title,
     );
-    hits.add(body, Hit::WizardContinue);
     let mut lines = Vec::new();
-    let mut clickables: Vec<(usize, Hit)> = Vec::new();
     macro_rules! push {
         ($line:expr) => {
             lines.push($line)
@@ -75,7 +67,6 @@ pub(crate) fn render_network_wizard(
                     .find(|route| route.iface == iface.name)
                     .map(|route| route.gateway.to_string())
                     .unwrap_or_else(|| crate::tr!(crate::keys::CONSOLE_GATEWAY_NOT_FOUND));
-                clickables.push((lines.len(), Hit::WizardWan(index)));
                 push!(Line::styled(
                     format!(
                         "{}{}  {}  {}  {}  gw {}",
@@ -101,26 +92,12 @@ pub(crate) fn render_network_wizard(
             ));
             push!(Line::raw(""));
             let tab_focus = wizard.focus == 0;
-            let content_width = body.width.saturating_sub(2);
-            let tab_row = block_row_of(&lines, lines.len(), content_width);
-            let mut tab_x = body.x.saturating_add(1);
             let mut tab_spans = Vec::new();
             for (mode, label) in [
                 (WanMode::Static, crate::tr!(crate::keys::CONSOLE_TAB_STATIC)),
                 (WanMode::Dhcp, crate::tr!(crate::keys::CONSOLE_TAB_DHCP)),
             ] {
                 let tab_text = format!("[ {label} ]");
-                let tab_width = UnicodeWidthStr::width(tab_text.as_str()) as u16;
-                hits.add(
-                    Rect::new(
-                        tab_x,
-                        body.y.saturating_add(1).saturating_add(tab_row),
-                        tab_width,
-                        1,
-                    ),
-                    Hit::WizardTab(mode),
-                );
-                tab_x = tab_x.saturating_add(tab_width).saturating_add(2);
                 let active = wizard.wan_mode == mode;
                 let style = if tab_focus && active {
                     Style::default()
@@ -138,14 +115,12 @@ pub(crate) fn render_network_wizard(
             push!(Line::from(tab_spans));
             push!(Line::raw(""));
             if wizard.wan_mode == WanMode::Static {
-                clickables.push((lines.len(), Hit::WizardField(1)));
                 push!(wizard_field_row(
                     wizard.focus == 1,
                     wizard.editing,
                     &crate::tr!(crate::keys::CONSOLE_IPV4_ADDRESS_CIDR),
                     &wizard.address,
                 ));
-                clickables.push((lines.len(), Hit::WizardField(2)));
                 push!(wizard_field_row(
                     wizard.focus == 2,
                     wizard.editing,
@@ -176,7 +151,6 @@ pub(crate) fn render_network_wizard(
             }
             for (index, iface) in wizard.lan_candidates.iter().enumerate() {
                 let cursor = index == wizard.lan_cursor;
-                clickables.push((lines.len(), Hit::WizardLan(index)));
                 push!(Line::styled(
                     format!(
                         "{}[{}] {}  {}  {}",
@@ -204,21 +178,18 @@ pub(crate) fn render_network_wizard(
                 Style::default().add_modifier(Modifier::BOLD),
             ));
             push!(Line::raw(""));
-            clickables.push((lines.len(), Hit::WizardField(0)));
             push!(wizard_field_row(
                 wizard.focus == 0,
                 wizard.editing,
                 &crate::tr!(crate::keys::CONSOLE_LAN_MANAGEMENT_IPV4_ADDRESS),
                 &wizard.management,
             ));
-            clickables.push((lines.len(), Hit::WizardField(1)));
             push!(wizard_field_row(
                 wizard.focus == 1,
                 wizard.editing,
                 &crate::tr!(crate::keys::CONSOLE_LAN_DHCP_RANGE_START),
                 &wizard.dhcp_start,
             ));
-            clickables.push((lines.len(), Hit::WizardField(2)));
             push!(wizard_field_row(
                 wizard.focus == 2,
                 wizard.editing,
@@ -288,10 +259,6 @@ pub(crate) fn render_network_wizard(
             ));
         }
     }
-    let content_width = body.width.saturating_sub(2);
-    for (index, hit) in clickables {
-        hits.block_row(body, block_row_of(&lines, index, content_width), hit);
-    }
     frame.render_widget(
         Paragraph::new(lines)
             .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_NETWORK_PANEL_TITLE)))
@@ -303,7 +270,7 @@ pub(crate) fn render_network_wizard(
         footer,
     );
     if wizard.cancel_confirming {
-        render_wizard_cancel_confirmation(frame, hits);
+        render_wizard_cancel_confirmation(frame);
     }
 }
 
@@ -360,7 +327,7 @@ fn wizard_hints(wizard: &NetworkWizard) -> String {
     }
 }
 
-fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
+fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
     let screen = frame.area();
     let width = 52.min(screen.width.saturating_sub(2));
     let height = 8.min(screen.height.saturating_sub(2));
@@ -370,7 +337,6 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, hits: &mut Clicks) {
         width,
         height,
     );
-    register_dialog_hits(hits, screen, area);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
@@ -462,7 +428,6 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
         Line::raw(""),
     ];
     let later = crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_LATER);
-    let later_row = lines.len();
     lines.push(Line::from(Span::styled(
         if app.takeover_choice == 0 {
             format!("> {later}")
@@ -478,7 +443,6 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
         },
     )));
     let confirm = crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_CONFIRM);
-    let confirm_row = lines.len();
     let confirm_line = if confirm_allowed {
         if app.takeover_choice == 1 {
             format!("> {confirm}")
@@ -507,17 +471,6 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
         crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_KEY_HINT),
         Style::default().fg(Color::DarkGray),
     ));
-    let content_width = area.width.saturating_sub(2);
-    app.hits.block_row(
-        area,
-        block_row_of(&lines, later_row, content_width),
-        Hit::TakeoverChoice(0),
-    );
-    app.hits.block_row(
-        area,
-        block_row_of(&lines, confirm_row, content_width),
-        Hit::TakeoverChoice(1),
-    );
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)

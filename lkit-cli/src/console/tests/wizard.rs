@@ -1,5 +1,4 @@
 use super::super::network_wizard::*;
-use super::super::widgets::*;
 use super::super::*;
 use super::support::*;
 use crate::i18n::Language;
@@ -325,30 +324,4 @@ fn wizard_render_shows_gateway_and_confirm_summary() {
     assert!(content.contains("10.1.1.105/24"));
     assert!(content.contains("WAN-only"));
     assert!(content.contains("will have their IPv4/IPv6 addresses flushed"));
-}
-
-#[test]
-fn mouse_click_wizard_tab_and_field() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
-    let mut wizard = sample_network_wizard();
-    wizard.step = WizardStep::WanConfig;
-    wizard.wan_mode = WanMode::Static;
-    wizard.focus = 0;
-    app.network_wizard = Some(wizard);
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    assert_eq!(app.hits.hit_at(3, 6), Some(Hit::WizardTab(WanMode::Static)));
-    assert_eq!(app.hits.hit_at(15, 6), Some(Hit::WizardTab(WanMode::Dhcp)));
-    app.handle_mouse(mouse_click(15, 6));
-    assert_eq!(app.network_wizard.as_ref().unwrap().wan_mode, WanMode::Dhcp);
-    app.handle_mouse(mouse_click(3, 6));
-    assert_eq!(
-        app.network_wizard.as_ref().unwrap().wan_mode,
-        WanMode::Static
-    );
-    app.handle_mouse(mouse_click(30, 8));
-    let wizard = app.network_wizard.as_ref().unwrap();
-    assert_eq!(wizard.focus, 1);
-    assert!(wizard.editing);
 }

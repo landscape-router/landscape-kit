@@ -7,8 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::ConsoleApp;
-use super::render::{panel_block, register_dialog_hits};
-use super::widgets::{Focus, Hit, block_row_of};
+use super::render::panel_block;
+use super::widgets::{Focus, block_row_of};
 use crate::check;
 use crate::check::model::{CheckReport, Status};
 
@@ -141,7 +141,7 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
             let daemon_blocked = daemon_check_blocks(report);
             if daemon_blocked {
                 // 按钮常显选中态(黑底青字+Bold):它是弹窗内唯一要突出的动作,
-                // 弹窗没有焦点环,Enter/D 键与鼠标点击都打开部署确认弹窗
+                // 弹窗没有焦点环,Enter/D 键都打开部署确认弹窗
                 // (内嵌急救恢复码输入与二次确认)。
                 lines.push(Line::styled(
                     crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON),
@@ -176,32 +176,6 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
         width,
         height,
     );
-    register_dialog_hits(&mut app.hits, screen, area);
-    // 部署按钮行后于弹层注册命中区(后注册者优先),点击打开部署确认弹窗。
-    if app.preflight_daemon_blocked() {
-        let button_text = crate::tr!(crate::keys::CONSOLE_OVERVIEW_DEPLOY_DAEMON);
-        let button_index = lines
-            .iter()
-            .position(|line| {
-                let text: String = line
-                    .spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect();
-                text.contains(&button_text)
-            })
-            .expect("the deploy button line must be part of the dialog");
-        let row = block_row_of(&lines, button_index, content_width);
-        app.hits.add(
-            Rect::new(
-                area.x.saturating_add(1),
-                area.y.saturating_add(1).saturating_add(row),
-                content_width,
-                1,
-            ),
-            Hit::DeployDaemon,
-        );
-    }
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)
@@ -277,7 +251,6 @@ pub(crate) fn render_preflight_summary(frame: &mut Frame<'_>, app: &mut ConsoleA
     } else {
         Style::default().fg(color)
     };
-    app.hits.block_row(area, 0, Hit::InstallChecks);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(if selected { "> " } else { "  " }, style),
