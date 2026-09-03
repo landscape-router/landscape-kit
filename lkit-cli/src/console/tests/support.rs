@@ -206,6 +206,8 @@ pub(crate) fn sample_backup_entry() -> BackupEntry {
     BackupEntry {
         metadata: Some(sample_backup_metadata()),
         path: PathBuf::from("/opt/landscape/backups/20260807-131500-ab12cd34.lkb"),
+        // 1.5 MiB:列表与详情页按人类可读单位渲染该值。
+        size: Some(1_572_864),
     }
 }
 

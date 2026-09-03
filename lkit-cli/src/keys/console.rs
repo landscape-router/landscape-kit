@@ -199,6 +199,7 @@ pub(crate) const CONSOLE_BACKUP_SELECT_TO_RESTORE: &str = "console.backup_select
 pub(crate) const CONSOLE_BACKUP_REQUIRES_INSTALL: &str = "console.backup_requires_install";
 pub(crate) const CONSOLE_BACKUP_DETAILS_TITLE: &str = "console.backup_details_title";
 pub(crate) const CONSOLE_BACKUP_ID_LABEL: &str = "console.backup_id_label";
+pub(crate) const CONSOLE_BACKUP_SIZE_LABEL: &str = "console.backup_size_label";
 pub(crate) const CONSOLE_BACKUP_CREATED_LABEL: &str = "console.backup_created_label";
 pub(crate) const CONSOLE_BACKUP_VERSION_LABEL: &str = "console.backup_version_label";
 pub(crate) const CONSOLE_BACKUP_LKIT_LABEL: &str = "console.backup_lkit_label";

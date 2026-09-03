@@ -8,9 +8,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::super::ConsoleApp;
 use super::super::network_wizard::Snapshot;
-use super::super::render::panel_block;
+use super::super::render::{display_pad, panel_block};
 use super::super::widgets::Focus;
-use super::BackupListState;
+use super::{BackupEntry, BackupListState};
 use crate::backup::lkb::BackupProgress;
 use crate::commands::backup::{architecture_key, scope_key};
 
@@ -111,60 +111,7 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
                     Style::default().fg(Color::DarkGray),
                 ));
             }
-            for (index, entry) in rows.iter().enumerate() {
-                let cursor = app.focus == Focus::Panel && app.backup.selected == index + 1;
-                match &entry.metadata {
-                    Some(metadata) => {
-                        let available = usize::from(area.width.saturating_sub(2));
-                        let marker = if cursor { "> " } else { "  " };
-                        // 备注排第一,按剩余长度占位:一行内其他信息
-                        // (ID/时间/版本)固定,备注最多占其余宽度并截断。
-                        let fixed = format!(
-                            "{}  {}  {}",
-                            metadata.backup_id, metadata.created_at, metadata.landscape_version
-                        );
-                        let fixed_width =
-                            UnicodeWidthStr::width(marker) + UnicodeWidthStr::width(fixed.as_str());
-                        let remark_room = available.saturating_sub(fixed_width + 2);
-                        let text = if remark_room == 0 {
-                            fixed
-                        } else {
-                            let remark = truncate_width(&metadata.remark, remark_room);
-                            format!("{remark}  {fixed}")
-                        };
-                        lines.push(Line::styled(
-                            format!("{marker}{text}"),
-                            if cursor { highlight } else { Style::default() },
-                        ));
-                    }
-                    None => {
-                        let name = entry
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .trim_end_matches(".lkb")
-                            .to_string();
-                        let truncated = truncate_width(
-                            &format!(
-                                "{}{}  {}",
-                                if cursor { "> " } else { "  " },
-                                name,
-                                crate::tr!(crate::keys::CONSOLE_BACKUP_INVALID_BADGE)
-                            ),
-                            usize::from(area.width.saturating_sub(4)),
-                        );
-                        lines.push(Line::styled(
-                            truncated,
-                            if cursor {
-                                highlight
-                            } else {
-                                Style::default().fg(Color::Red)
-                            },
-                        ));
-                    }
-                }
-            }
+            append_backup_table(&mut lines, rows, app, area);
         }
     }
     frame.render_widget(
@@ -176,6 +123,122 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
             .wrap(Wrap { trim: true }),
         area,
     );
+}
+
+/// 备份列表的表头与条目行。列依次为创建时间、大小、ID 后缀、版本、备注:
+/// 时间排第一(ID 里的时间戳因此冗余,列表只显示随机后缀,完整 ID 在详情页);
+/// 备注恒为最后一列,为空的行只留空白,不再与其他行错位。列宽取数据与表头
+/// 标签的较大者,保证表头与各行逐列对齐。
+fn append_backup_table(
+    lines: &mut Vec<Line<'static>>,
+    rows: &[BackupEntry],
+    app: &ConsoleApp,
+    area: Rect,
+) {
+    let highlight = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let header = [
+        crate::tr!(crate::keys::CONSOLE_BACKUP_CREATED_LABEL),
+        crate::tr!(crate::keys::CONSOLE_BACKUP_SIZE_LABEL),
+        crate::tr!(crate::keys::CONSOLE_BACKUP_ID_LABEL),
+        crate::tr!(crate::keys::CONSOLE_BACKUP_VERSION_LABEL),
+        crate::tr!(crate::keys::CONSOLE_BACKUP_REMARK_LABEL),
+    ];
+    let cells: Vec<Option<(String, String, String, String)>> = rows
+        .iter()
+        .map(|entry| {
+            entry.metadata.as_ref().map(|metadata| {
+                (
+                    metadata
+                        .created_at
+                        .with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d %H:%M")
+                        .to_string(),
+                    entry
+                        .size
+                        .map(format_backup_size)
+                        .unwrap_or_else(|| "-".into()),
+                    short_backup_id(&metadata.backup_id).to_string(),
+                    metadata.landscape_version.clone(),
+                )
+            })
+        })
+        .collect();
+    let mut widths = [0usize; 4];
+    for (column, label) in header.iter().take(4).enumerate() {
+        widths[column] = UnicodeWidthStr::width(label.as_str());
+    }
+    for row in cells.iter().flatten() {
+        for (column, cell) in [&row.0, &row.1, &row.2, &row.3].iter().enumerate() {
+            widths[column] = widths[column].max(UnicodeWidthStr::width(cell.as_str()));
+        }
+    }
+    // 行宽预算:内容区宽度 - marker(2) - 各列宽 - 列间两个空格(5 列共 4 处)。
+    let remark_room = usize::from(area.width.saturating_sub(2))
+        .saturating_sub(widths.iter().sum::<usize>() + 2 * widths.len() + 2);
+
+    let mut header_cells: Vec<String> = header
+        .iter()
+        .take(4)
+        .enumerate()
+        .map(|(column, label)| display_pad(label, widths[column]))
+        .collect();
+    let remark_header = truncate_width(&header[4], remark_room);
+    if !remark_header.is_empty() {
+        header_cells.push(remark_header);
+    }
+    lines.push(Line::styled(
+        format!("  {}", header_cells.join("  ")),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    for (index, (entry, row)) in rows.iter().zip(&cells).enumerate() {
+        let cursor = app.focus == Focus::Panel && app.backup.selected == index + 1;
+        let marker = if cursor { "> " } else { "  " };
+        let style = if cursor { highlight } else { Style::default() };
+        let (row, metadata) = match (row, &entry.metadata) {
+            (Some(row), Some(metadata)) => (row, metadata),
+            _ => {
+                let name = entry
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .trim_end_matches(".lkb")
+                    .to_string();
+                let truncated = truncate_width(
+                    &format!(
+                        "{}{}  {}",
+                        marker,
+                        name,
+                        crate::tr!(crate::keys::CONSOLE_BACKUP_INVALID_BADGE)
+                    ),
+                    usize::from(area.width.saturating_sub(4)),
+                );
+                lines.push(Line::styled(
+                    truncated,
+                    if cursor {
+                        highlight
+                    } else {
+                        Style::default().fg(Color::Red)
+                    },
+                ));
+                continue;
+            }
+        };
+        let mut cells: Vec<String> = [&row.0, &row.1, &row.2, &row.3]
+            .iter()
+            .enumerate()
+            .map(|(column, cell)| format!("{cell:<width$}", width = widths[column]))
+            .collect();
+        let remark = truncate_width(&metadata.remark, remark_room);
+        if !remark.is_empty() {
+            cells.push(remark);
+        }
+        lines.push(Line::styled(format!("{marker}{}", cells.join("  ")), style));
+    }
 }
 
 fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool, area: Rect) {
@@ -214,6 +277,14 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
             "{}  {}",
             crate::tr!(crate::keys::CONSOLE_BACKUP_CREATED_LABEL),
             metadata.created_at
+        )),
+        Line::raw(format!(
+            "{}  {}",
+            crate::tr!(crate::keys::CONSOLE_BACKUP_SIZE_LABEL),
+            entry
+                .size
+                .map(format_backup_size)
+                .unwrap_or_else(|| "-".into())
         )),
         Line::raw(format!(
             "{}  {}",
@@ -523,6 +594,32 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
 }
 
 /// 按显示宽度截断文本:列表行超长时截断为省略号,不换行。
+/// 列表内的短 ID:标准 ID(`日期-时间-随机后缀`)只显示随机后缀,完整 ID
+/// 在详情页展示;不符合标准格式时退回完整 ID。
+fn short_backup_id(backup_id: &str) -> &str {
+    match backup_id.rsplit_once('-') {
+        Some((_, suffix)) if !suffix.is_empty() => suffix,
+        _ => backup_id,
+    }
+}
+
+/// 把字节数格式化为人类可读单位:B 为整数,更大单位(KiB/MiB/GiB/TiB)保留
+/// 一位小数。列表与详情页共用,不追求精确。
+fn format_backup_size(size: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = size as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{size} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 fn truncate_width(text: &str, max_width: usize) -> String {
     use unicode_width::UnicodeWidthStr;
     let width = UnicodeWidthStr::width(text);

@@ -18,6 +18,8 @@ pub(crate) use self::render::{
 pub(crate) struct BackupEntry {
     pub(crate) metadata: Option<BackupMetadata>,
     pub(crate) path: PathBuf,
+    /// 备份文件大小（字节）；文件在列表加载后消失等情况下为 `None`。
+    pub(crate) size: Option<u64>,
 }
 
 pub(crate) enum BackupListState {
@@ -247,7 +249,11 @@ fn load_backups() -> Result<Vec<BackupEntry>, String> {
     .map_err(|error| error.to_string())?;
     Ok(rows
         .into_iter()
-        .map(|(metadata, path)| BackupEntry { metadata, path })
+        .map(|(metadata, path)| BackupEntry {
+            size: std::fs::metadata(&path).ok().map(|file| file.len()),
+            metadata,
+            path,
+        })
         .collect())
 }
 
