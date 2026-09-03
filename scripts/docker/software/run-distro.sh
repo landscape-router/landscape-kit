@@ -77,11 +77,15 @@ debian)
 ubuntu)
   source /etc/os-release
   codename=${VERSION_CODENAME:?missing VERSION_CODENAME}
-  "$lkit" software install docker --yes --source ustc
-  ok "install docker from the USTC mirror"
+  # CI runner 在海外,USTC 等国内镜像对数据中心流量不稳定(DNS/连接失败),
+  # 真实安装使用官方源;USTC 的 URL 映射由单元测试覆盖。
+  "$lkit" software install docker --yes --source official
+  ok "install docker from the official repository"
   assert_contains /etc/apt/sources.list.d/docker.list \
-    "deb [arch=$apt_arch signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu $codename stable"
-  ok "apt source file points at the USTC mirror"
+    "deb [arch=$apt_arch signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $codename stable"
+  gpg --batch --show-keys /etc/apt/keyrings/docker.gpg 2>/dev/null | grep -q '^pub' \
+    || fail "docker.gpg must be a valid dearmored keyring"
+  ok "apt source file and gpg keyring"
   ;;
 
 fedora)
