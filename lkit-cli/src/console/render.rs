@@ -274,7 +274,12 @@ fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let title_width = UnicodeWidthStr::width("Landscape Kit");
     let badge_width = UnicodeWidthStr::width(badge.as_str());
     let daemon_width = UnicodeWidthStr::width(daemon_badge.as_str());
-    let badges_width = badge_width + daemon_width + 4;
+    // demo 构建常驻红底 DEMO 徽标:演示二进制必须一眼可辨。
+    #[cfg(feature = "demo")]
+    let demo_badge_width = UnicodeWidthStr::width(" DEMO ") + 2;
+    #[cfg(not(feature = "demo"))]
+    let demo_badge_width = 0;
+    let badges_width = badge_width + daemon_width + 4 + demo_badge_width;
     let fits = title_width + badges_width + 4 <= usize::from(area.width);
     let title = Paragraph::new(Line::from(vec![Span::styled(
         "Landscape Kit",
@@ -294,13 +299,25 @@ fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     ])
     .areas(area);
     frame.render_widget(title, title_area);
+    let mut badge_spans = Vec::new();
+    #[cfg(feature = "demo")]
+    badge_spans.extend([
+        Span::styled(
+            " DEMO ",
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+    ]);
+    badge_spans.extend([
+        Span::styled(badge, Style::default().fg(color)),
+        Span::raw("  "),
+        Span::styled(daemon_badge, Style::default().fg(daemon_color)),
+    ]);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(badge, Style::default().fg(color)),
-            Span::raw("  "),
-            Span::styled(daemon_badge, Style::default().fg(daemon_color)),
-        ]))
-        .alignment(Alignment::Right),
+        Paragraph::new(Line::from(badge_spans)).alignment(Alignment::Right),
         badges_area,
     );
     frame.render_widget(Block::default().borders(Borders::BOTTOM), area);

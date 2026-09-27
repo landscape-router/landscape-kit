@@ -111,6 +111,10 @@ jobs:
           readelf -h "$binary" | grep -F "Machine:" | grep -F "$ELF_MACHINE"
           ldd "$binary" >/dev/null
           actual_version=$("$binary" --version)
+          if [[ "$actual_version" == *demo* ]]; then
+            echo "$binary was built with the demo feature; release binaries must never be demo builds" >&2
+            exit 1
+          fi
           if [ "$actual_version" != "lkit $VERSION" ]; then
             echo "$binary reported unexpected version: $actual_version" >&2
             exit 1

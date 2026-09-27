@@ -59,13 +59,22 @@ pub(super) struct ConsoleApp {
     pub(super) show_psk_field: PskDialogField,
     pub(super) show_psk_editing: bool,
     pub(super) deploy_daemon: Option<std::sync::mpsc::Receiver<DeployResult>>,
-    /// daemon 部署的后台操作接缝,默认真实现;测试注入 mock。
+    /// daemon 部署的后台操作接缝,默认真实现;测试注入 mock,demo 构建默认 mock。
     pub(super) deploy_ops: std::sync::Arc<dyn DeployOps>,
 }
 
 impl ConsoleApp {
     pub(super) fn new() -> Self {
         let install = InstallForm::default();
+        // demo 构建使用虚构的「已安装(systemd)」初始状态:干净测试机上也能
+        // 走到 Update/Reinit/Backup 面板;正常构建读取真实 territory。
+        #[cfg(feature = "demo")]
+        let snapshot = Snapshot::Installed {
+            version: env!("CARGO_PKG_VERSION").into(),
+            manager: "systemd",
+            initialized: true,
+        };
+        #[cfg(not(feature = "demo"))]
         let snapshot = Snapshot::load();
         Self {
             menu_index: 0,

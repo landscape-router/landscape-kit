@@ -88,6 +88,23 @@ volumes; later runs are incremental. CI runs the same suite per push via the
 fixture e2e workflow (`console` domain filter matches both `console::` and
 `console_screen::`).
 
+## Demo builds
+
+`cargo build -p lkit-cli --features demo` produces a binary where every console
+panel background operation (software install, mirror probe/refresh, backup
+list/create/verify, update resolution, preflight, daemon deploy) is replaced by
+a scripted mock — safe to click through on any machine without touching the
+host (scenario doc:
+[`UI-19`](docs/testing/scenarios/functional/console.md)). The snapshot is
+pinned to `Installed` so gated menus (Update/Reinit) are reachable.
+
+The demo binary is fenced off from real releases three ways: a permanent red
+`DEMO` badge in the console header, a `(demo)` suffix in `--version`, and the
+release workflow rejecting any release artifact whose `--version` mentions
+`demo`. Note the boundary: only TUI panel background operations are mocked —
+CLI subcommands, the post-console network-takeover confirmation, and
+territory/pidfile reads are still real.
+
 ## Questions
 
 For questions that do not belong in an issue, use GitHub Discussions or the issue

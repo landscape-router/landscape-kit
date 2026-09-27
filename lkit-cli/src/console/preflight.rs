@@ -11,6 +11,8 @@ use super::ConsoleApp;
 use super::render::panel_block;
 use super::widgets::{Focus, block_row_of};
 use crate::check;
+#[cfg(feature = "demo")]
+use crate::check::model::{CheckGroup, CheckResult, StatusCounts};
 use crate::check::model::{CheckReport, Status};
 
 pub(crate) enum PreflightState {
@@ -21,12 +23,14 @@ pub(crate) enum PreflightState {
 }
 
 /// 环境检查的后台操作接缝:UI 只消费返回的 `Receiver`。
-/// 生产实现真实跑全量检查;单测注入脚本化 `MockPreflightOps`。
+/// 生产实现真实跑全量检查;`test-support` 注入与 `demo` 构建使用
+/// 脚本化 `MockPreflightOps`。
 pub(crate) trait PreflightOps {
     fn run(&self) -> Receiver<CheckReport>;
 }
 
 /// 生产实现:后台线程执行真实环境检查(`check::run_all`)。
+#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) struct RealPreflightOps;
 
 impl PreflightOps for RealPreflightOps {
@@ -42,6 +46,9 @@ impl PreflightOps for RealPreflightOps {
 }
 
 fn default_preflight_ops() -> Arc<dyn PreflightOps> {
+    #[cfg(feature = "demo")]
+    return Arc::new(DemoPreflightOps);
+    #[cfg(not(feature = "demo"))]
     Arc::new(RealPreflightOps)
 }
 
@@ -77,8 +84,49 @@ impl PreflightOps for MockPreflightOps {
     }
 }
 
+/// demo 构建的脚本化操作:延迟回填一份全通过的检查报告,放行安装表单。
+#[cfg(feature = "demo")]
+pub(crate) struct DemoPreflightOps;
+
+#[cfg(feature = "demo")]
+impl PreflightOps for DemoPreflightOps {
+    fn run(&self) -> Receiver<CheckReport> {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(super::DEMO_STEP_DELAY);
+            let _ = sender.send(demo_preflight_report());
+        });
+        receiver
+    }
+}
+
+/// demo 构建的全通过检查报告:列表可展开浏览。
+#[cfg(feature = "demo")]
+fn demo_preflight_report() -> CheckReport {
+    CheckReport {
+        groups: vec![CheckGroup {
+            title: "Host (demo)".to_string(),
+            results: vec![
+                CheckResult::new("demo.platform", "Platform").set(
+                    Status::Pass,
+                    "x86_64",
+                    "supported",
+                ),
+                CheckResult::new("demo.kernel", "Kernel").set(Status::Pass, "6.1", "supported"),
+            ],
+        }],
+        summary: Status::Pass,
+        counts: StatusCounts {
+            pass: 2,
+            warning: 0,
+            error: 0,
+            unknown: 0,
+        },
+    }
+}
+
 pub(crate) struct Preflight {
-    /// 后台操作接缝,默认真实现;测试注入 mock。
+    /// 后台操作接缝,默认真实现;测试注入 mock,demo 构建默认 mock。
     pub(crate) ops: Arc<dyn PreflightOps>,
     pub(crate) state: PreflightState,
     pub(crate) expanded: bool,

@@ -20,6 +20,7 @@ use crate::deployment::{plan, state};
 
 /// Update 面板后台解析：与命令模式 `lkit update` 相同的状态发现、
 /// 来源解析与目标版本解析/比较（复用 `resolve_update_target`），网络只读，零副作用。
+#[cfg_attr(feature = "demo", allow(dead_code))]
 fn resolve_update_from_console(
     repository: &plan::RepositoryChoice,
     version: &str,
@@ -139,8 +140,8 @@ pub(crate) struct UninstallPanel {
 /// Update 面板：当前版本 + 目标版本/仓库来源表单、后台目标解析与确认层。
 /// 解析与比较规则与命令模式 `lkit update` 一致（共享 `resolve_update_target`），
 /// 更新面板的后台操作接缝:目标版本解析(网络只读)。
-/// UI 只消费返回的 `Receiver`;生产实现真实解析,单测注入脚本化
-/// `MockUpdateOps`。
+/// UI 只消费返回的 `Receiver`;生产实现真实解析,`test-support`
+/// 注入与 `demo` 构建使用脚本化 `MockUpdateOps`。
 pub(crate) trait UpdateOps {
     fn resolve(
         &self,
@@ -150,6 +151,7 @@ pub(crate) trait UpdateOps {
 }
 
 /// 生产实现:后台线程执行与 `lkit update` 相同语义的目标解析。
+#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) struct RealUpdateOps;
 
 impl UpdateOps for RealUpdateOps {
@@ -171,6 +173,9 @@ impl UpdateOps for RealUpdateOps {
 }
 
 fn default_update_ops() -> Arc<dyn UpdateOps> {
+    #[cfg(feature = "demo")]
+    return Arc::new(DemoUpdateOps);
+    #[cfg(not(feature = "demo"))]
     Arc::new(RealUpdateOps)
 }
 
@@ -210,9 +215,32 @@ impl UpdateOps for MockUpdateOps {
     }
 }
 
+/// demo 构建的脚本化操作:延迟回填 1.2.3 → 1.3.0 的升级解析。
+#[cfg(feature = "demo")]
+pub(crate) struct DemoUpdateOps;
+
+#[cfg(feature = "demo")]
+impl UpdateOps for DemoUpdateOps {
+    fn resolve(
+        &self,
+        _repository: plan::RepositoryChoice,
+        _version: String,
+    ) -> Receiver<Result<ResolvedUpdate, String>> {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(super::DEMO_STEP_DELAY);
+            let _ = sender.send(Ok(ResolvedUpdate {
+                current: semver::Version::new(1, 2, 3),
+                target: semver::Version::new(1, 3, 0),
+            }));
+        });
+        receiver
+    }
+}
+
 /// 已是最新与降级在面板内提示,只有升级才打开确认层。
 pub(crate) struct UpdatePanel {
-    /// 后台操作接缝,默认真实现;测试注入 mock。
+    /// 后台操作接缝,默认真实现;测试注入 mock,demo 构建默认 mock。
     pub(crate) ops: Arc<dyn UpdateOps>,
     pub(crate) version: String,
     pub(crate) repository: UpdateRepositoryMode,

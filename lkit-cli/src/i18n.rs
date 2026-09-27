@@ -91,6 +91,7 @@ pub(crate) fn current() -> Language {
         })
 }
 
+#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) fn with_language<T>(language: Language, operation: impl FnOnce() -> T) -> T {
     struct Restore(Option<Language>);
 

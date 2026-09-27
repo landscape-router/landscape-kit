@@ -15,12 +15,14 @@ use super::render::panel_block;
 pub(super) type DeployResult = Result<String, String>;
 
 /// daemon 部署的后台操作接缝:UI 只消费返回的 `Receiver`。
-/// 生产实现真实执行 `lkit self install`;单测注入脚本化 `MockDeployOps`。
+/// 生产实现真实执行 `lkit self install`;`test-support` 注入与 `demo`
+/// 构建使用脚本化 `MockDeployOps`。
 pub(crate) trait DeployOps {
     fn deploy(&self, psk: Option<String>) -> Receiver<DeployResult>;
 }
 
 /// 生产实现:后台线程执行 `lkit self install`(root 检查、安装锁、systemd 语义)。
+#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) struct RealDeployOps;
 
 impl DeployOps for RealDeployOps {
@@ -38,6 +40,9 @@ impl DeployOps for RealDeployOps {
 }
 
 pub(super) fn default_deploy_ops() -> Arc<dyn DeployOps> {
+    #[cfg(feature = "demo")]
+    return Arc::new(DemoDeployOps);
+    #[cfg(not(feature = "demo"))]
     Arc::new(RealDeployOps)
 }
 
@@ -69,6 +74,22 @@ impl DeployOps for MockDeployOps {
     fn deploy(&self, _psk: Option<String>) -> Receiver<DeployResult> {
         let (sender, receiver) = mpsc::channel();
         *self.deploy_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+}
+
+/// demo 构建的脚本化操作:延迟回填部署成功消息。
+#[cfg(feature = "demo")]
+pub(crate) struct DemoDeployOps;
+
+#[cfg(feature = "demo")]
+impl DeployOps for DemoDeployOps {
+    fn deploy(&self, _psk: Option<String>) -> Receiver<DeployResult> {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(super::DEMO_STEP_DELAY);
+            let _ = sender.send(Ok("daemon deployed (demo)".into()));
+        });
         receiver
     }
 }

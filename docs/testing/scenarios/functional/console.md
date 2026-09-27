@@ -295,3 +295,37 @@
   workflow 的 `console` 域（同时匹配 `console::` 与 `console_screen::`）覆盖。
 - 缺口：termlens 断言不含 termios 层的 ECHO 恢复，退出恢复契约的 ECHO 部分
   仍由 [`UI-03`](#ui-03) 的 libc PTY 测试承担。
+
+## UI-19
+
+**面板后台操作抽象为 per-panel ops trait：进程内注入 mock 驱动完整流程，demo 特征构建出可随手点的演示二进制**
+
+- 测试层：Rust 单元（进程内流程测试）
+- 状态：`已覆盖`
+- 证据：[ops 流程测试](../../../../lkit-cli/src/console/tests/ops.rs)、
+  [备份 mock 与样例数据](../../../../lkit-cli/src/console/backup/mock.rs)、
+  [demo 特征](../../../../lkit-cli/Cargo.toml)、
+  [发布守卫](../../../../../.github/workflows/release-lkit.yml)
+- 说明：6 个面板（software、mirror、backup 列表/创建/校验、update、preflight、
+  daemon 部署）各自在面板文件内定义 `XOps` trait——签名即原先 start 函数的
+  spawn 部分（后台线程 + `Receiver` 返回），真实实现 `Real*Ops` 原样搬入，
+  面板持有 `Arc<dyn XOps>` 字段；面板内的门禁校验（root 检查、host 非空）留在
+  面板层不进 trait。`#[cfg(test)] Mock*Ops` 把 channel sender 收进 `Mutex`，
+  测试经 `*_sender()` 以 take 语义取得后直接注入消息（worker 停着不动，drop
+  sender 即模拟 worker 退出后的 `Disconnected`），9 个进程内流程测试据此驱动
+  完整状态机：安装确认层→Phase 推进→Esc 取消层→`Done(Err)` 清理→强制
+  未安装后重装 `Done(Ok)`、非 root 拒绝启动、备份列表 成功/失败/断流 三态、
+  创建进度与校验、预检回填、基础包安装、换源探测+刷新、更新解析升级/同版本
+  分支、daemon 部署——不再依赖真实安装现场即可覆盖面板的后台协作路径。
+  `#[cfg(feature = "demo")] Demo*Ops` 提供同一接缝上的脚本化实现（按
+  `DEMO_STEP_DELAY` 推进阶段、尊重 cancel 标志），`cargo build -p lkit-cli
+  --features demo` 产出可在任何测试机上随手点而不会改动环境的演示二进制：
+  快照固定为 `Installed`（systemd、已初始化，Update/Reinit 菜单可达），
+  防"以假乱真"三重护栏——header 常驻红底 `DEMO` 徽标、`--version` 带
+  `(demo)` 后缀、release workflow 对产物 `--version` 显式拒绝 demo 构建。
+- 边界：demo 只替换 TUI 面板的后台操作；CLI 子命令、控制台退出后内联执行的
+  网络接管确认（`ConsoleAction::Command`）与 territory/pidfile 读取仍真实，
+  演示时不应触发这两类路径。
+- 缺口：demo 构建的徽标与脚本流程没有自动化断言（快照与流程测试都在普通/
+  test-support 构建下运行），依赖 `--version` 冒烟与人工审阅；若要固化可后续
+  为 demo 构建补一组快照。
