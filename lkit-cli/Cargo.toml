@@ -6,11 +6,6 @@ edition.workspace = true
 [features]
 default = []
 test-support = ["dep:lkit-test-fixture", "dep:termlens"]
-# 演示/安全试运行构建:TUI 面板的后台操作(安装、换源、备份、部署、
-# 环境检查)全部替换为脚本化 mock,可在任何测试机上随手点而不会改动
-# 环境。产物必须在 UI(header 徽标)与 `--version` 中显式标注 (demo);
-# 发布流水线构建时禁用本特征并对产物断言。
-demo = []
 
 [[bin]]
 name = "lkit"

@@ -34,10 +34,6 @@ pub(crate) fn localized_command() -> clap::Command {
         .mut_arg("lang", |arg| {
             arg.help(crate::tr_static!(keys::MAIN_LANG_HELP))
         });
-    // demo 构建在 `--version` 中显式标注,防止演示二进制与正式产物混淆;
-    // 发布流水线对产物断言该标记不存在。
-    #[cfg(feature = "demo")]
-    let command = command.version(concat!(env!("CARGO_PKG_VERSION"), " (demo)"));
     let command = localize_subcommands(command);
     if crate::i18n::current() == Language::Zh {
         localize_help(command)

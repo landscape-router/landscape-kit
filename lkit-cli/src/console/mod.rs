@@ -27,11 +27,6 @@ use crossterm::event::{self, Event, KeyEventKind};
 
 use crate::commands::Commands;
 
-/// demo 构建中脚本化操作推进消息的时间步长:足够看清每个阶段,又不至于
-/// 让演示显得卡顿。仅 demo 构建的 Demo*Ops 使用。
-#[cfg(feature = "demo")]
-pub(crate) const DEMO_STEP_DELAY: Duration = Duration::from_millis(600);
-
 // 仅测试构建需要：console/tests/* 经 `use super::super::*;` 从 console 命名空间取用这些名字。
 // 置于 cfg(test) 下，普通构建保持零未使用导入。
 #[cfg(test)]

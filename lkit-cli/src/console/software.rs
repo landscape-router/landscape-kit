@@ -68,8 +68,7 @@ pub(crate) enum BasePackagesState {
 
 /// 软件面板的后台操作接缝:同步 root 检查与安装 worker 的启动。
 /// UI 只消费返回的 `Receiver`(`poll` 轮询),不关心 worker 如何执行。
-/// 生产实现走真实包管理器;`test-support`(单测注入)与 `demo`(演示构建)
-/// 使用脚本化 `MockSoftwareOps`。
+/// 生产实现走真实包管理器;单测注入脚本化 `MockSoftwareOps`。
 pub(crate) trait SoftwareOps {
     fn root_allowed(&self) -> bool;
     fn install(
@@ -86,7 +85,6 @@ pub(crate) trait SoftwareOps {
 }
 
 /// 生产实现:worker 线程执行真实安装流程,进度与结果经 channel 回传。
-#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) struct RealSoftwareOps;
 
 impl SoftwareOps for RealSoftwareOps {
@@ -141,9 +139,6 @@ impl SoftwareOps for RealSoftwareOps {
 }
 
 fn default_software_ops() -> Arc<dyn SoftwareOps> {
-    #[cfg(feature = "demo")]
-    return Arc::new(DemoSoftwareOps);
-    #[cfg(not(feature = "demo"))]
     Arc::new(RealSoftwareOps)
 }
 
@@ -215,70 +210,11 @@ impl SoftwareOps for MockSoftwareOps {
     }
 }
 
-/// demo 构建的脚本化操作:后台线程按 `DEMO_STEP_DELAY` 推进阶段并成功收尾,
-/// 尊重取消标志。
-#[cfg(feature = "demo")]
-pub(crate) struct DemoSoftwareOps;
-
-#[cfg(feature = "demo")]
-impl SoftwareOps for DemoSoftwareOps {
-    fn root_allowed(&self) -> bool {
-        true
-    }
-
-    fn install(
-        &self,
-        _host: Host,
-        _confirm: SoftwareConfirm,
-        cancel: Arc<AtomicBool>,
-    ) -> Receiver<SoftwareInstallMessage> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            for phase in [
-                InstallPhase::Preparing,
-                InstallPhase::InstallingPackages,
-                InstallPhase::StartingService,
-            ] {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                let _ = sender.send(SoftwareInstallMessage::Phase(phase));
-                std::thread::sleep(super::DEMO_STEP_DELAY);
-            }
-            let result = if cancel.load(Ordering::Relaxed) {
-                Err("cancelled (demo)".into())
-            } else {
-                Ok(())
-            };
-            let _ = sender.send(SoftwareInstallMessage::Done(result));
-        });
-        receiver
-    }
-
-    fn base_install(
-        &self,
-        _packages: Vec<BasePackage>,
-        cancel: Arc<AtomicBool>,
-    ) -> Receiver<Result<(), String>> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            std::thread::sleep(super::DEMO_STEP_DELAY);
-            let result = if cancel.load(Ordering::Relaxed) {
-                Err("cancelled (demo)".into())
-            } else {
-                Ok(())
-            };
-            let _ = sender.send(result);
-        });
-        receiver
-    }
-}
-
 /// 软件面板：显示发行版检测结果与软件列表（含安装状态），
 /// 选择未安装的软件后通过确认层选择来源并后台安装；基础系统包通过
 /// 多选弹框勾选缺失的包后后台安装。
 pub(crate) struct SoftwarePanel {
-    /// 后台操作接缝,默认真实现;测试注入 mock,demo 构建默认 mock。
+    /// 后台操作接缝,默认真实现;测试注入 mock。
     pub(crate) ops: Arc<dyn SoftwareOps>,
     pub(crate) host: Option<Result<Host, String>>,
     pub(crate) detected: bool,

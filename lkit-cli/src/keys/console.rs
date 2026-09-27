@@ -210,7 +210,6 @@ pub(crate) const CONSOLE_BACKUP_AUTO_LABEL: &str = "console.backup_auto_label";
 pub(crate) const CONSOLE_BACKUP_SCOPE_LABEL: &str = "console.backup_scope_label";
 pub(crate) const CONSOLE_BACKUP_CONTENTS_LABEL: &str = "console.backup_contents_label";
 pub(crate) const CONSOLE_BACKUP_VERIFY_RUNNING: &str = "console.backup_verify_running";
-#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) const CONSOLE_BACKUP_VERIFIED: &str = "console.backup_verified";
 pub(crate) const CONSOLE_BACKUP_VERIFY_WORKER_STOPPED: &str =
     "console.backup_verify_worker_stopped";

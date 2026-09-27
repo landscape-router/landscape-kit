@@ -1,13 +1,11 @@
-//! 备份面板的脚本化操作与演示样例数据:cfg(test) 手动 mock 供单测注入,
-//! cfg(demo) Demo*Ops 供演示构建;样例条目同时经 `console::tests::support`
-//! 供快照/gallery 测试复用,数据只有一份。
+//! 备份面板的单测 mock 与样例数据:worker 停着不动,测试经 sender 注入
+//! 消息;样例条目同时经 `console::tests::support` 供快照/gallery 测试复用,
+//! 数据只有一份。
 
 use std::path::PathBuf;
 use std::sync::mpsc;
 
 use super::{BackupCreateMessage, BackupEntry, BackupOps};
-#[cfg(feature = "demo")]
-use crate::backup::lkb::BackupProgress;
 use crate::backup::lkb::{BackupArchitecture, BackupContents, BackupMetadata, BackupScope};
 
 #[cfg(test)]
@@ -74,47 +72,6 @@ impl BackupOps for MockBackupOps {
     fn verify(&self, _path: PathBuf) -> mpsc::Receiver<Result<String, String>> {
         let (sender, receiver) = mpsc::channel();
         *self.verify_tx.lock().unwrap() = Some(sender);
-        receiver
-    }
-}
-
-/// demo 构建的脚本化操作:列表延迟回填样例条目、创建走进度阶段、校验直接通过。
-#[cfg(feature = "demo")]
-pub(crate) struct DemoBackupOps;
-
-#[cfg(feature = "demo")]
-impl BackupOps for DemoBackupOps {
-    fn list(&self) -> mpsc::Receiver<Result<Vec<BackupEntry>, String>> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            std::thread::sleep(super::super::DEMO_STEP_DELAY);
-            let _ = sender.send(Ok(backup_rows()));
-        });
-        receiver
-    }
-
-    fn create(&self, _remark: String) -> mpsc::Receiver<BackupCreateMessage> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            for progress in [BackupProgress::Exporting, BackupProgress::Finalizing] {
-                let _ = sender.send(BackupCreateMessage::Progress(progress));
-                std::thread::sleep(super::super::DEMO_STEP_DELAY);
-            }
-            let _ = sender.send(BackupCreateMessage::Done(Ok(sample_backup_metadata())));
-        });
-        receiver
-    }
-
-    fn verify(&self, path: PathBuf) -> mpsc::Receiver<Result<String, String>> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            std::thread::sleep(super::super::DEMO_STEP_DELAY);
-            let id = path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let _ = sender.send(Ok(format!("backup {id} verified (demo)")));
-        });
         receiver
     }
 }

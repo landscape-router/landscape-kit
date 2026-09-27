@@ -223,7 +223,6 @@ fn write_flare_psk(psk: &str) -> Result<(), InstallError> {
 /// 与 systemd 语义,返回结果消息由控制台展示而不直接打印(控制台不另起 lkit
 /// 进程、不解析 CLI 文本输出)。`psk` 为 TUI 部署弹窗收集的急救恢复码:提供时
 /// 在 daemon 启动前写回 `[flare]` 段,`None` 时由 daemon 首启自动生成。
-#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) fn install_daemon(psk: Option<String>) -> Result<String, InstallError> {
     if unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(

@@ -1,7 +1,7 @@
 mod keys;
 mod render;
 
-#[cfg(any(test, feature = "demo"))]
+#[cfg(test)]
 mod mock;
 
 #[cfg(test)]
@@ -51,8 +51,8 @@ pub(crate) enum BackupCreateMessage {
 }
 
 /// 备份面板的后台操作接缝:列表加载、创建备份与完整性校验。
-/// UI 只消费返回的 `Receiver`;生产实现走真实备份流程,`test-support`
-/// 注入与 `demo` 构建使用脚本化 `mock::MockBackupOps`。
+/// UI 只消费返回的 `Receiver`;生产实现走真实备份流程,单测注入
+/// 脚本化 `mock::MockBackupOps`。
 pub(crate) trait BackupOps {
     fn list(&self) -> Receiver<Result<Vec<BackupEntry>, String>>;
     fn create(&self, remark: String) -> Receiver<BackupCreateMessage>;
@@ -60,7 +60,6 @@ pub(crate) trait BackupOps {
 }
 
 /// 生产实现:worker 线程执行真实列表/创建/校验流程。
-#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) struct RealBackupOps;
 
 impl BackupOps for RealBackupOps {
@@ -137,9 +136,6 @@ impl BackupOps for RealBackupOps {
 }
 
 fn default_backup_ops() -> Arc<dyn BackupOps> {
-    #[cfg(feature = "demo")]
-    return Arc::new(mock::DemoBackupOps);
-    #[cfg(not(feature = "demo"))]
     Arc::new(RealBackupOps)
 }
 
@@ -151,7 +147,7 @@ pub(crate) struct BackupCreateRun {
 
 /// 备份面板：列表 + 详情 + 创建备注/进度 + 删除/恢复确认。
 pub(crate) struct BackupPanel {
-    /// 后台操作接缝,默认真实现;测试注入 mock,demo 构建默认 mock。
+    /// 后台操作接缝,默认真实现;测试注入 mock。
     pub(crate) ops: Arc<dyn BackupOps>,
     pub(crate) state: BackupListState,
     pub(crate) selected: usize,
@@ -309,7 +305,6 @@ impl BackupPanel {
 }
 
 /// 与 CLI `backup list` 相同的解析与完整校验。
-#[cfg_attr(feature = "demo", allow(dead_code))]
 fn load_backups() -> Result<Vec<BackupEntry>, String> {
     let root = crate::deployment::state::discover_landscape_root()
         .map_err(|error| error.to_string())?

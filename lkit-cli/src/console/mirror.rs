@@ -84,15 +84,14 @@ pub(crate) struct MirrorRefreshRun {
 }
 
 /// 换源面板的后台操作接缝:镜像可用性探测与换源后的索引刷新。
-/// UI 只消费返回的 `Receiver`;生产实现真实探测/刷新,`test-support`
-/// 注入与 `demo` 构建使用脚本化 `MockMirrorOps`。
+/// UI 只消费返回的 `Receiver`;生产实现真实探测/刷新,单测注入
+/// 脚本化 `MockMirrorOps`。
 pub(crate) trait MirrorOps {
     fn probe(&self, host: Host) -> Receiver<HashMap<MirrorName, MirrorStatus>>;
     fn refresh(&self, family: crate::mirror::Family) -> Receiver<Result<(), String>>;
 }
 
 /// 生产实现:后台线程并行探测全部镜像 / 真实刷新软件包索引。
-#[cfg_attr(feature = "demo", allow(dead_code))]
 pub(crate) struct RealMirrorOps;
 
 impl MirrorOps for RealMirrorOps {
@@ -121,9 +120,6 @@ impl MirrorOps for RealMirrorOps {
 }
 
 fn default_mirror_ops() -> Arc<dyn MirrorOps> {
-    #[cfg(feature = "demo")]
-    return Arc::new(DemoMirrorOps);
-    #[cfg(not(feature = "demo"))]
     Arc::new(RealMirrorOps)
 }
 
@@ -176,36 +172,9 @@ impl MirrorOps for MockMirrorOps {
     }
 }
 
-/// demo 构建的脚本化操作:延迟回填「全部镜像可用」的探测结果与刷新成功。
-#[cfg(feature = "demo")]
-pub(crate) struct DemoMirrorOps;
-
-#[cfg(feature = "demo")]
-impl MirrorOps for DemoMirrorOps {
-    fn probe(&self, _host: Host) -> Receiver<HashMap<MirrorName, MirrorStatus>> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            std::thread::sleep(super::DEMO_STEP_DELAY);
-            let statuses =
-                HashMap::from_iter(MirrorName::all().map(|name| (name, MirrorStatus::Available)));
-            let _ = sender.send(statuses);
-        });
-        receiver
-    }
-
-    fn refresh(&self, _family: crate::mirror::Family) -> Receiver<Result<(), String>> {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            std::thread::sleep(super::DEMO_STEP_DELAY);
-            let _ = sender.send(Ok(()));
-        });
-        receiver
-    }
-}
-
 /// 换源面板：显示发行版检测结果，选择镜像或恢复备份。
 pub(crate) struct MirrorPanel {
-    /// 后台操作接缝,默认真实现;测试注入 mock,demo 构建默认 mock。
+    /// 后台操作接缝,默认真实现;测试注入 mock。
     pub(crate) ops: Arc<dyn MirrorOps>,
     pub(crate) host: Option<Result<Host, String>>,
     pub(crate) detected: bool,
