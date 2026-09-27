@@ -79,7 +79,8 @@ jobs:
       matrix:
         include:
           - domain: console
-            filter: "console::"
+            # 匹配 console::(libc PTY)与 console_screen::(termlens)两个模块。
+            filter: "console"
           - domain: daemon
             filter: "daemon::"
           - domain: frontend

@@ -26,7 +26,6 @@ fn network_takeover_confirms_from_any_ssh_session() {
         !harness.state_path().exists(),
         "a takeover install must not commit state before confirmation"
     );
-    eprintln!("DEBUG FIRST READ");
     let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "awaiting_network_confirmation");
     assert_eq!(
@@ -132,7 +131,6 @@ fn console_blocks_on_pending_network_takeover() {
         "takeover install failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    eprintln!("DEBUG FIRST READ");
     let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "awaiting_network_confirmation");
 
@@ -141,17 +139,17 @@ fn console_blocks_on_pending_network_takeover() {
     attach_pty(&mut command, &pty);
     command.env("LKIT_TERRITORY", &harness.territory);
     let mut child = command.spawn().unwrap();
-    let entered = pty.read_until(
-        "Network takeover awaiting confirmation",
-        Duration::from_secs(10),
+    // 阻塞屏文本在 ratatui 增量 diff 的字节流中按词分片(见 console_screen.rs 的
+    // termlens 说明),只能锚定逐字节连续的片段;动作行最后绘制,等它到达时
+    // phase 行与回滚提示已在流中,后续断言不与绘制进度竞态。
+    let entered = pty.read_until("Confirm now", Duration::from_secs(10));
+    assert!(
+        entered.contains("awaiting_network_confirmation"),
+        "blocking screen phase missing: {entered:?}"
     );
     assert!(
-        entered.contains("awaiting network confirmation"),
-        "blocking screen badge missing: {entered:?}"
-    );
-    assert!(
-        entered.contains("Confirm now"),
-        "blocking screen action missing: {entered:?}"
+        entered.contains("auto rollback"),
+        "blocking screen rollback hint missing: {entered:?}"
     );
     assert!(
         !entered.contains("Navigation"),

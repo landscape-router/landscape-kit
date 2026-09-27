@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = []
-test-support = ["dep:lkit-test-fixture"]
+test-support = ["dep:lkit-test-fixture", "dep:termlens"]
 
 [[bin]]
 name = "lkit"
@@ -55,6 +55,7 @@ uuid = { workspace = true, features = ["v7"] }
 zip = { workspace = true, features = ["deflate"] }
 zstd = { workspace = true }
 lkit-test-fixture = { workspace = true, optional = true }
+termlens = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true, features = ["filters"] }

@@ -1,6 +1,7 @@
 #![cfg(feature = "test-support")]
 
 mod console;
+mod console_screen;
 mod daemon;
 mod frontend;
 mod install;
