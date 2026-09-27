@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::super::network_wizard::Snapshot;
 use super::super::{ConsoleAction, ConsoleApp, Notice};
 use super::{BackupListState, BackupVerifyState, delete_backup_via_console};
 use crate::commands::Commands;
@@ -148,6 +149,12 @@ impl ConsoleApp {
                 _ => {}
             }
             return Some(None);
+        }
+        // 渲染层在非 root/未安装时只画门禁提示(见 render_backup),列表键不得
+        // 穿透打开创建/详情/恢复/删除层;门禁谓词与渲染保持同一份。返回 None
+        // 而非吞键:Esc/Tab/Left 的返回导航语义照常落在主处理。
+        if !matches!(self.snapshot, Snapshot::Installed { .. }) {
+            return None;
         }
         match key.code {
             KeyCode::Up => {

@@ -333,3 +333,27 @@
   刷新，破坏快照确定性）。
 - 缺口：快照不含颜色（沿 [`UI-17`](#ui-17)，色彩断言由 cell 前景色测试承担）；
   瞬态的持续时间与节奏不在静态快照的表达能力内。
+
+## UI-20
+
+**面板门禁负向交互：门禁态下动作键不得穿透**
+
+- 测试层：Rust 单元（键处理状态机）
+- 状态：`已覆盖`
+- 证据：[门禁测试](../../../../lkit-cli/src/console/tests/gates.rs)、
+  [备份键处理](../../../../lkit-cli/src/console/backup/keys.rs)、
+  [更新键处理](../../../../lkit-cli/src/console/update.rs)
+- 说明：Backup/Update 面板的渲染层在非 root（`Snapshot::RootRequired`）或
+  未安装时只画门禁提示、不画列表/表单；键处理层在列表/表单分支前用同一
+  谓词（`matches!(snapshot, Snapshot::Installed)`）先行返回，两层门禁永远
+  一致；门禁返回 `None` 而非吞键，Esc/Tab/Left 返回侧栏导航的语义不受
+  门禁影响（由不变量测试 `navigation_walks_reachable_panels_in_process`
+  锁定）。测试把 app 直接摆进门禁态——含残留列表行（列表曾成功后现场翻转）
+  与会话中途状态刷新两种现场——逐键断言「什么都没发生」：Enter 不打开
+  备份详情/创建弹窗、不进入版本编辑、不启动解析 worker，R/D 不打开恢复/
+  删除确认层。另有备份创建进行中的排他用例：进度弹层期间底层列表键全部
+  无效。门禁分支位于各对话框分支之后，已打开的对话框在状态翻转后仍可
+  Esc 关闭，不会卡死。Reinit/Update/Uninstall 的面板入口本身由
+  `menu_available` 挡在导航层（未安装不可进入）。
+- 缺口：Uninstall 键处理不在 `Menu::ALL` 中（侧栏隐藏的死路径），无键盘
+  通路，未为它单独设门禁测试。

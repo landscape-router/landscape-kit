@@ -403,6 +403,12 @@ impl ConsoleApp {
             }
             return Some(None);
         }
+        // 渲染层在未安装/非 root 时只画门禁提示(见 render_update),表单键不得
+        // 穿透进入编辑或启动解析;门禁谓词与渲染保持同一份。返回 None 而非
+        // 吞键:Esc/Tab/Left 的返回导航语义照常落在主处理。
+        if !matches!(self.snapshot, Snapshot::Installed { .. }) {
+            return None;
+        }
         match key.code {
             KeyCode::Up => {
                 let fields = UpdateField::visible_fields(self.update.repository);
