@@ -1,7 +1,16 @@
 mod keys;
 mod render;
 
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+pub(crate) use mock::MockBackupOps;
+#[cfg(test)]
+pub(crate) use mock::{backup_rows, sample_backup_entry, sample_backup_metadata};
+
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use super::Notice;
@@ -36,86 +45,36 @@ pub(crate) enum BackupVerifyState {
     Complete(Result<String, String>),
 }
 
-enum BackupCreateMessage {
+pub(crate) enum BackupCreateMessage {
     Progress(BackupProgress),
     Done(Result<BackupMetadata, String>),
 }
 
-/// 在 TUI 内执行备份创建：worker 线程跑完整创建流程并通过 channel 回传进度。
-pub(crate) struct BackupCreateRun {
-    receiver: Receiver<BackupCreateMessage>,
-    progress: BackupProgress,
+/// 备份面板的后台操作接缝:列表加载、创建备份与完整性校验。
+/// UI 只消费返回的 `Receiver`;生产实现走真实备份流程,单测注入
+/// 脚本化 `mock::MockBackupOps`。
+pub(crate) trait BackupOps {
+    fn list(&self) -> Receiver<Result<Vec<BackupEntry>, String>>;
+    fn create(&self, remark: String) -> Receiver<BackupCreateMessage>;
+    fn verify(&self, path: PathBuf) -> Receiver<Result<String, String>>;
 }
 
-/// 备份面板：列表 + 详情 + 创建备注/进度 + 删除/恢复确认。
-pub(crate) struct BackupPanel {
-    pub(crate) state: BackupListState,
-    pub(crate) selected: usize,
-    pub(crate) editing: bool,
-    pub(crate) remark: String,
-    pub(crate) details: Option<usize>,
-    pub(crate) details_scroll: u16,
-    pub(crate) verify: BackupVerifyState,
-    /// 校验结果显示的损坏提示弹框（备份损坏时 R/恢复 Enter 触发）。
-    pub(crate) corrupt_dialog: bool,
-    pub(crate) create: Option<BackupCreateRun>,
-    pub(crate) restore_confirming: bool,
-    pub(crate) delete_confirming: bool,
-    pub(crate) delete_target: Option<String>,
-}
+/// 生产实现:worker 线程执行真实列表/创建/校验流程。
+pub(crate) struct RealBackupOps;
 
-impl Default for BackupPanel {
-    fn default() -> Self {
-        Self {
-            state: BackupListState::NotRun,
-            selected: 0,
-            editing: false,
-            remark: String::new(),
-            details: None,
-            details_scroll: 0,
-            verify: BackupVerifyState::Idle,
-            corrupt_dialog: false,
-            create: None,
-            restore_confirming: false,
-            delete_confirming: false,
-            delete_target: None,
-        }
-    }
-}
-
-impl BackupPanel {
-    pub(crate) fn start(&mut self) {
-        if matches!(self.state, BackupListState::Running(_)) {
-            return;
-        }
+impl BackupOps for RealBackupOps {
+    fn list(&self) -> Receiver<Result<Vec<BackupEntry>, String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
         std::thread::spawn(move || {
             let result = crate::i18n::with_language(language, load_backups);
             let _ = sender.send(result);
         });
-        self.state = BackupListState::Running(receiver);
-        self.selected = 0;
-        self.editing = false;
-        self.remark.clear();
-        self.details = None;
-        self.details_scroll = 0;
-        self.verify = BackupVerifyState::Idle;
-        self.corrupt_dialog = false;
-        self.create = None;
-        self.restore_confirming = false;
-        self.delete_confirming = false;
-        self.delete_target = None;
+        receiver
     }
 
-    /// 在后台线程执行完整创建流程（与 CLI 共用 `create_manual_backup`），
-    /// 进度经 channel 回传；结束后由 `poll` 刷新列表并显示结果。
-    pub(crate) fn start_create(&mut self, remark: &str) {
-        if self.create.is_some() {
-            return;
-        }
+    fn create(&self, remark: String) -> Receiver<BackupCreateMessage> {
         let (sender, receiver) = mpsc::channel();
-        let remark = remark.to_string();
         std::thread::spawn(move || {
             let result = (|| {
                 let root = crate::deployment::state::discover_landscape_root()
@@ -141,6 +100,116 @@ impl BackupPanel {
             })();
             let _ = sender.send(BackupCreateMessage::Done(result));
         });
+        receiver
+    }
+
+    fn verify(&self, path: PathBuf) -> Receiver<Result<String, String>> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                let metadata =
+                    crate::backup::lkb::verify_lkb(&bytes).map_err(|error| error.to_string())?;
+                let verify_dir = std::env::temp_dir()
+                    .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
+                crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
+                    .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
+                    .map(|_| {
+                        crate::tr!(
+                            crate::keys::CONSOLE_BACKUP_VERIFIED,
+                            backup_id = metadata.backup_id
+                        )
+                    })
+                    .map_err(|error| {
+                        let _ = std::fs::remove_dir_all(&verify_dir);
+                        error.to_string()
+                    })
+                    .inspect(|_message| {
+                        let _ = std::fs::remove_dir_all(&verify_dir);
+                    })
+            });
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+}
+
+fn default_backup_ops() -> Arc<dyn BackupOps> {
+    Arc::new(RealBackupOps)
+}
+
+/// 在 TUI 内执行备份创建：worker 线程跑完整创建流程并通过 channel 回传进度。
+pub(crate) struct BackupCreateRun {
+    receiver: Receiver<BackupCreateMessage>,
+    progress: BackupProgress,
+}
+
+/// 备份面板：列表 + 详情 + 创建备注/进度 + 删除/恢复确认。
+pub(crate) struct BackupPanel {
+    /// 后台操作接缝,默认真实现;测试注入 mock。
+    pub(crate) ops: Arc<dyn BackupOps>,
+    pub(crate) state: BackupListState,
+    pub(crate) selected: usize,
+    pub(crate) editing: bool,
+    pub(crate) remark: String,
+    pub(crate) details: Option<usize>,
+    pub(crate) details_scroll: u16,
+    pub(crate) verify: BackupVerifyState,
+    /// 校验结果显示的损坏提示弹框（备份损坏时 R/恢复 Enter 触发）。
+    pub(crate) corrupt_dialog: bool,
+    pub(crate) create: Option<BackupCreateRun>,
+    pub(crate) restore_confirming: bool,
+    pub(crate) delete_confirming: bool,
+    pub(crate) delete_target: Option<String>,
+}
+
+impl Default for BackupPanel {
+    fn default() -> Self {
+        Self {
+            ops: default_backup_ops(),
+            state: BackupListState::NotRun,
+            selected: 0,
+            editing: false,
+            remark: String::new(),
+            details: None,
+            details_scroll: 0,
+            verify: BackupVerifyState::Idle,
+            corrupt_dialog: false,
+            create: None,
+            restore_confirming: false,
+            delete_confirming: false,
+            delete_target: None,
+        }
+    }
+}
+
+impl BackupPanel {
+    pub(crate) fn start(&mut self) {
+        if matches!(self.state, BackupListState::Running(_)) {
+            return;
+        }
+        self.state = BackupListState::Running(self.ops.list());
+        self.selected = 0;
+        self.editing = false;
+        self.remark.clear();
+        self.details = None;
+        self.details_scroll = 0;
+        self.verify = BackupVerifyState::Idle;
+        self.corrupt_dialog = false;
+        self.create = None;
+        self.restore_confirming = false;
+        self.delete_confirming = false;
+        self.delete_target = None;
+    }
+
+    /// 在后台线程执行完整创建流程（与 CLI 共用 `create_manual_backup`），
+    /// 进度经 channel 回传；结束后由 `poll` 刷新列表并显示结果。
+    pub(crate) fn start_create(&mut self, remark: &str) {
+        if self.create.is_some() {
+            return;
+        }
+        let receiver = self.ops.create(remark.to_string());
         self.create = Some(BackupCreateRun {
             receiver,
             progress: BackupProgress::Exporting,

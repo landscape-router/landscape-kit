@@ -66,10 +66,156 @@ pub(crate) enum BasePackagesState {
     Chosen(Vec<BasePackage>),
 }
 
+/// 软件面板的后台操作接缝:同步 root 检查与安装 worker 的启动。
+/// UI 只消费返回的 `Receiver`(`poll` 轮询),不关心 worker 如何执行。
+/// 生产实现走真实包管理器;单测注入脚本化 `MockSoftwareOps`。
+pub(crate) trait SoftwareOps {
+    fn root_allowed(&self) -> bool;
+    fn install(
+        &self,
+        host: Host,
+        confirm: SoftwareConfirm,
+        cancel: Arc<AtomicBool>,
+    ) -> Receiver<SoftwareInstallMessage>;
+    fn base_install(
+        &self,
+        packages: Vec<BasePackage>,
+        cancel: Arc<AtomicBool>,
+    ) -> Receiver<Result<(), String>>;
+}
+
+/// 生产实现:worker 线程执行真实安装流程,进度与结果经 channel 回传。
+pub(crate) struct RealSoftwareOps;
+
+impl SoftwareOps for RealSoftwareOps {
+    fn root_allowed(&self) -> bool {
+        crate::software::root_allowed()
+    }
+
+    fn install(
+        &self,
+        host: Host,
+        confirm: SoftwareConfirm,
+        cancel: Arc<AtomicBool>,
+    ) -> Receiver<SoftwareInstallMessage> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                let phase_sender = sender.clone();
+                crate::software::install(
+                    &host,
+                    confirm.software,
+                    confirm.source,
+                    false,
+                    &cancel,
+                    &mut |phase| {
+                        let _ = phase_sender.send(SoftwareInstallMessage::Phase(phase));
+                    },
+                )
+                .map_err(|error| error.to_string())
+            });
+            let _ = sender.send(SoftwareInstallMessage::Done(result));
+        });
+        receiver
+    }
+
+    fn base_install(
+        &self,
+        packages: Vec<BasePackage>,
+        cancel: Arc<AtomicBool>,
+    ) -> Receiver<Result<(), String>> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                crate::software::base::install(&packages, false, &cancel)
+                    .map_err(|error| error.to_string())
+            });
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+}
+
+fn default_software_ops() -> Arc<dyn SoftwareOps> {
+    Arc::new(RealSoftwareOps)
+}
+
+/// 单测注入用的手动 mock:worker 不产生任何消息,测试通过 `install_sender`/
+/// `base_sender` 直接向通道注入(包括 drop 发送端触发 Disconnected 路径)。
+#[cfg(test)]
+pub(crate) struct MockSoftwareOps {
+    root: bool,
+    install_tx: std::sync::Mutex<Option<mpsc::Sender<SoftwareInstallMessage>>>,
+    base_tx: std::sync::Mutex<Option<mpsc::Sender<Result<(), String>>>>,
+}
+
+#[cfg(test)]
+impl MockSoftwareOps {
+    /// `root` 控制 `root_allowed()` 的返回,覆盖非 root 的前置拒绝分支。
+    pub(crate) fn manual(root: bool) -> Self {
+        Self {
+            root,
+            install_tx: std::sync::Mutex::new(None),
+            base_tx: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// 拿走最近一次 `install()` 的通道发送端(所有权转移;drop 即模拟
+    /// worker 意外退出触发 Disconnected)。
+    pub(crate) fn install_sender(&self) -> mpsc::Sender<SoftwareInstallMessage> {
+        self.install_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("install() must be called before grabbing the sender")
+    }
+
+    /// 拿走最近一次 `base_install()` 的通道发送端(所有权转移)。
+    pub(crate) fn base_sender(&self) -> mpsc::Sender<Result<(), String>> {
+        self.base_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("base_install() must be called before grabbing the sender")
+    }
+}
+
+#[cfg(test)]
+impl SoftwareOps for MockSoftwareOps {
+    fn root_allowed(&self) -> bool {
+        self.root
+    }
+
+    fn install(
+        &self,
+        _host: Host,
+        _confirm: SoftwareConfirm,
+        _cancel: Arc<AtomicBool>,
+    ) -> Receiver<SoftwareInstallMessage> {
+        let (sender, receiver) = mpsc::channel();
+        *self.install_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+
+    fn base_install(
+        &self,
+        _packages: Vec<BasePackage>,
+        _cancel: Arc<AtomicBool>,
+    ) -> Receiver<Result<(), String>> {
+        let (sender, receiver) = mpsc::channel();
+        *self.base_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+}
+
 /// 软件面板：显示发行版检测结果与软件列表（含安装状态），
 /// 选择未安装的软件后通过确认层选择来源并后台安装；基础系统包通过
 /// 多选弹框勾选缺失的包后后台安装。
 pub(crate) struct SoftwarePanel {
+    /// 后台操作接缝,默认真实现;测试注入 mock。
+    pub(crate) ops: Arc<dyn SoftwareOps>,
     pub(crate) host: Option<Result<Host, String>>,
     pub(crate) detected: bool,
     /// 与 `Software::all()` 对齐的安装状态。
@@ -90,6 +236,7 @@ pub(crate) struct SoftwarePanel {
 impl Default for SoftwarePanel {
     fn default() -> Self {
         Self {
+            ops: default_software_ops(),
             host: None,
             detected: false,
             installed: Software::all().into_iter().map(|_| false).collect(),
@@ -144,31 +291,11 @@ impl SoftwarePanel {
         let Some(Ok(host)) = &self.host else {
             return Err(crate::tr!(crate::keys::CONSOLE_SOFTWARE_DETECT_FAILED));
         };
-        if !crate::software::root_allowed() {
+        if !self.ops.root_allowed() {
             return Err(crate::tr!(crate::keys::SOFTWARE_ROOT_REQUIRED));
         }
-        let host = host.clone();
         let cancel = Arc::new(AtomicBool::new(false));
-        let worker_cancel = Arc::clone(&cancel);
-        let (sender, receiver) = mpsc::channel();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                let phase_sender = sender.clone();
-                crate::software::install(
-                    &host,
-                    confirm.software,
-                    confirm.source,
-                    false,
-                    &worker_cancel,
-                    &mut |phase| {
-                        let _ = phase_sender.send(SoftwareInstallMessage::Phase(phase));
-                    },
-                )
-                .map_err(|error| error.to_string())
-            });
-            let _ = sender.send(SoftwareInstallMessage::Done(result));
-        });
+        let receiver = self.ops.install(host.clone(), confirm, Arc::clone(&cancel));
         self.install = Some(SoftwareInstallRun {
             receiver,
             phase: InstallPhase::Preparing,
@@ -186,21 +313,11 @@ impl SoftwarePanel {
         if packages.is_empty() || self.base_install.is_some() {
             return Ok(());
         }
-        if !crate::software::root_allowed() {
+        if !self.ops.root_allowed() {
             return Err(crate::tr!(crate::keys::SOFTWARE_ROOT_REQUIRED));
         }
-        let packages = packages.clone();
         let cancel = Arc::new(AtomicBool::new(false));
-        let worker_cancel = Arc::clone(&cancel);
-        let (sender, receiver) = mpsc::channel();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                crate::software::base::install(&packages, false, &worker_cancel)
-                    .map_err(|error| error.to_string())
-            });
-            let _ = sender.send(result);
-        });
+        let receiver = self.ops.base_install(packages.clone(), Arc::clone(&cancel));
         self.base_install = Some(BasePackagesInstallRun { receiver, cancel });
         Ok(())
     }

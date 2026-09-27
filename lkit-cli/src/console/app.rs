@@ -1,7 +1,7 @@
 use super::ConsoleAction;
 use super::Notice;
 use super::backup::{BackupListState, BackupPanel};
-use super::daemon_panel::{DeployResult, PskDialogField};
+use super::daemon_panel::{DeployOps, DeployResult, PskDialogField, default_deploy_ops};
 use super::flare_panel::FlareDialog;
 use super::install_form::InstallForm;
 use super::mirror::MirrorPanel;
@@ -59,6 +59,8 @@ pub(super) struct ConsoleApp {
     pub(super) show_psk_field: PskDialogField,
     pub(super) show_psk_editing: bool,
     pub(super) deploy_daemon: Option<std::sync::mpsc::Receiver<DeployResult>>,
+    /// daemon 部署的后台操作接缝,默认真实现;测试注入 mock。
+    pub(super) deploy_ops: std::sync::Arc<dyn DeployOps>,
 }
 
 impl ConsoleApp {
@@ -96,6 +98,7 @@ impl ConsoleApp {
             show_psk_field: PskDialogField::Psk,
             show_psk_editing: false,
             deploy_daemon: None,
+            deploy_ops: default_deploy_ops(),
         }
     }
 

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
@@ -137,8 +138,82 @@ pub(crate) struct UninstallPanel {
 
 /// Update 面板：当前版本 + 目标版本/仓库来源表单、后台目标解析与确认层。
 /// 解析与比较规则与命令模式 `lkit update` 一致（共享 `resolve_update_target`），
+/// 更新面板的后台操作接缝:目标版本解析(网络只读)。
+/// UI 只消费返回的 `Receiver`;生产实现真实解析,单测注入脚本化
+/// `MockUpdateOps`。
+pub(crate) trait UpdateOps {
+    fn resolve(
+        &self,
+        repository: plan::RepositoryChoice,
+        version: String,
+    ) -> Receiver<Result<ResolvedUpdate, String>>;
+}
+
+/// 生产实现:后台线程执行与 `lkit update` 相同语义的目标解析。
+pub(crate) struct RealUpdateOps;
+
+impl UpdateOps for RealUpdateOps {
+    fn resolve(
+        &self,
+        repository: plan::RepositoryChoice,
+        version: String,
+    ) -> Receiver<Result<ResolvedUpdate, String>> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                resolve_update_from_console(&repository, &version)
+            });
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+}
+
+fn default_update_ops() -> Arc<dyn UpdateOps> {
+    Arc::new(RealUpdateOps)
+}
+
+/// 单测注入用的手动 mock:worker 停着不动,测试经 `resolve_sender` 注入。
+#[cfg(test)]
+pub(crate) struct MockUpdateOps {
+    resolve_tx: std::sync::Mutex<Option<mpsc::Sender<Result<ResolvedUpdate, String>>>>,
+}
+
+#[cfg(test)]
+impl MockUpdateOps {
+    pub(crate) fn manual() -> Self {
+        Self {
+            resolve_tx: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn resolve_sender(&self) -> mpsc::Sender<Result<ResolvedUpdate, String>> {
+        self.resolve_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("resolve() must be called before grabbing the sender")
+    }
+}
+
+#[cfg(test)]
+impl UpdateOps for MockUpdateOps {
+    fn resolve(
+        &self,
+        _repository: plan::RepositoryChoice,
+        _version: String,
+    ) -> Receiver<Result<ResolvedUpdate, String>> {
+        let (sender, receiver) = mpsc::channel();
+        *self.resolve_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+}
+
 /// 已是最新与降级在面板内提示,只有升级才打开确认层。
 pub(crate) struct UpdatePanel {
+    /// 后台操作接缝,默认真实现;测试注入 mock。
+    pub(crate) ops: Arc<dyn UpdateOps>,
     pub(crate) version: String,
     pub(crate) repository: UpdateRepositoryMode,
     pub(crate) repository_url: String,
@@ -153,6 +228,7 @@ pub(crate) struct UpdatePanel {
 impl Default for UpdatePanel {
     fn default() -> Self {
         Self {
+            ops: default_update_ops(),
             version: "latest".into(),
             repository: UpdateRepositoryMode::Github,
             repository_url: plan::DEFAULT_HTTP_MIRROR.into(),
@@ -370,7 +446,7 @@ impl ConsoleApp {
     }
 
     /// 校验表单并启动后台目标解析（与命令模式相同的版本、来源与 URL 校验）。
-    fn start_update_resolution(&mut self) -> Result<(), String> {
+    pub(crate) fn start_update_resolution(&mut self) -> Result<(), String> {
         if self.update.resolving.is_some() {
             return Ok(());
         }
@@ -388,7 +464,6 @@ impl ConsoleApp {
                 crate::keys::CONSOLE_UPDATE_REPOSITORY_UNAVAILABLE
             ));
         }
-        let (sender, receiver) = mpsc::channel();
         let repository = match self.update.repository {
             UpdateRepositoryMode::Current => self
                 .update
@@ -405,14 +480,7 @@ impl ConsoleApp {
             }
         };
         let version = self.update.version.trim().to_string();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                resolve_update_from_console(&repository, &version)
-            });
-            let _ = sender.send(result);
-        });
-        self.update.resolving = Some(receiver);
+        self.update.resolving = Some(self.update.ops.resolve(repository, version));
         Ok(())
     }
 

@@ -5,6 +5,7 @@ mod gallery;
 mod install;
 mod invariants;
 mod mirror;
+mod ops;
 mod reinit;
 mod snapshots;
 mod software;

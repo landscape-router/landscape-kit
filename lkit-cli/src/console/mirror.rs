@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use super::render::panel_block;
@@ -82,8 +83,99 @@ pub(crate) struct MirrorRefreshRun {
     pub(crate) receiver: Receiver<Result<(), String>>,
 }
 
+/// 换源面板的后台操作接缝:镜像可用性探测与换源后的索引刷新。
+/// UI 只消费返回的 `Receiver`;生产实现真实探测/刷新,单测注入
+/// 脚本化 `MockMirrorOps`。
+pub(crate) trait MirrorOps {
+    fn probe(&self, host: Host) -> Receiver<HashMap<MirrorName, MirrorStatus>>;
+    fn refresh(&self, family: crate::mirror::Family) -> Receiver<Result<(), String>>;
+}
+
+/// 生产实现:后台线程并行探测全部镜像 / 真实刷新软件包索引。
+pub(crate) struct RealMirrorOps;
+
+impl MirrorOps for RealMirrorOps {
+    fn probe(&self, host: Host) -> Receiver<HashMap<MirrorName, MirrorStatus>> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let statuses = crate::i18n::with_language(language, || crate::mirror::probe_all(&host));
+            let _ = sender.send(statuses);
+        });
+        receiver
+    }
+
+    fn refresh(&self, family: crate::mirror::Family) -> Receiver<Result<(), String>> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                crate::mirror::refresh::refresh_index(family, false)
+                    .map_err(|error| error.to_string())
+            });
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+}
+
+fn default_mirror_ops() -> Arc<dyn MirrorOps> {
+    Arc::new(RealMirrorOps)
+}
+
+/// 单测注入用的手动 mock:worker 停着不动,测试经 `probe_sender`/
+/// `refresh_sender` 向通道注入。
+#[cfg(test)]
+pub(crate) struct MockMirrorOps {
+    probe_tx: std::sync::Mutex<Option<mpsc::Sender<HashMap<MirrorName, MirrorStatus>>>>,
+    refresh_tx: std::sync::Mutex<Option<mpsc::Sender<Result<(), String>>>>,
+}
+
+#[cfg(test)]
+impl MockMirrorOps {
+    pub(crate) fn manual() -> Self {
+        Self {
+            probe_tx: std::sync::Mutex::new(None),
+            refresh_tx: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn probe_sender(&self) -> mpsc::Sender<HashMap<MirrorName, MirrorStatus>> {
+        self.probe_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("probe() must be called before grabbing the sender")
+    }
+
+    pub(crate) fn refresh_sender(&self) -> mpsc::Sender<Result<(), String>> {
+        self.refresh_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("refresh() must be called before grabbing the sender")
+    }
+}
+
+#[cfg(test)]
+impl MirrorOps for MockMirrorOps {
+    fn probe(&self, _host: Host) -> Receiver<HashMap<MirrorName, MirrorStatus>> {
+        let (sender, receiver) = mpsc::channel();
+        *self.probe_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+
+    fn refresh(&self, _family: crate::mirror::Family) -> Receiver<Result<(), String>> {
+        let (sender, receiver) = mpsc::channel();
+        *self.refresh_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+}
+
 /// 换源面板：显示发行版检测结果，选择镜像或恢复备份。
 pub(crate) struct MirrorPanel {
+    /// 后台操作接缝,默认真实现;测试注入 mock。
+    pub(crate) ops: Arc<dyn MirrorOps>,
     pub(crate) host: Option<Result<Host, String>>,
     pub(crate) detected: bool,
     /// 镜像可用性探测结果（worker 线程回填）。`None` = 未探测/探测中。
@@ -99,6 +191,7 @@ pub(crate) struct MirrorPanel {
 impl Default for MirrorPanel {
     fn default() -> Self {
         Self {
+            ops: default_mirror_ops(),
             host: None,
             detected: false,
             availability: None,
@@ -125,22 +218,15 @@ impl MirrorPanel {
     }
 
     /// 后台 worker 探测全部镜像可用性（超时 2 秒/镜像，并行），不阻塞 TUI 主循环。
-    fn start_probe(&mut self) {
+    pub(crate) fn start_probe(&mut self) {
         if self.probing || self.availability.is_some() {
             return;
         }
         let Some(Ok(host)) = &self.host else {
             return;
         };
-        let (sender, receiver) = mpsc::channel();
-        let host = host.clone();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let statuses = crate::i18n::with_language(language, || crate::mirror::probe_all(&host));
-            let _ = sender.send(statuses);
-        });
+        self.probing_rx = Some(self.ops.probe(host.clone()));
         self.probing = true;
-        self.probing_rx = Some(receiver);
     }
 
     /// 主循环轮询：探测完成后回填结果（由 `ConsoleApp::update` 调用）。
@@ -173,16 +259,9 @@ impl MirrorPanel {
             notice.push_line(crate::tr!(crate::keys::SET_MIRROR_REFRESHED));
             return;
         }
-        let (sender, receiver) = mpsc::channel();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                crate::mirror::refresh::refresh_index(family, false)
-                    .map_err(|error| error.to_string())
-            });
-            let _ = sender.send(result);
+        self.refreshing = Some(MirrorRefreshRun {
+            receiver: self.ops.refresh(family),
         });
-        self.refreshing = Some(MirrorRefreshRun { receiver });
         notice.push_line(crate::tr!(crate::keys::SET_MIRROR_REFRESHING));
     }
 

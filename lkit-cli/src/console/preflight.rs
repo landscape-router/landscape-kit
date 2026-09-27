@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
@@ -19,7 +20,66 @@ pub(crate) enum PreflightState {
     Failed(String),
 }
 
+/// 环境检查的后台操作接缝:UI 只消费返回的 `Receiver`。
+/// 生产实现真实跑全量检查;单测注入脚本化 `MockPreflightOps`。
+pub(crate) trait PreflightOps {
+    fn run(&self) -> Receiver<CheckReport>;
+}
+
+/// 生产实现:后台线程执行真实环境检查(`check::run_all`)。
+pub(crate) struct RealPreflightOps;
+
+impl PreflightOps for RealPreflightOps {
+    fn run(&self) -> Receiver<CheckReport> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let report = crate::i18n::with_language(language, check::run_all);
+            let _ = sender.send(report);
+        });
+        receiver
+    }
+}
+
+fn default_preflight_ops() -> Arc<dyn PreflightOps> {
+    Arc::new(RealPreflightOps)
+}
+
+/// 单测注入用的手动 mock:worker 停着不动,测试经 `run_sender` 注入。
+#[cfg(test)]
+pub(crate) struct MockPreflightOps {
+    run_tx: std::sync::Mutex<Option<mpsc::Sender<CheckReport>>>,
+}
+
+#[cfg(test)]
+impl MockPreflightOps {
+    pub(crate) fn manual() -> Self {
+        Self {
+            run_tx: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn run_sender(&self) -> mpsc::Sender<CheckReport> {
+        self.run_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("run() must be called before grabbing the sender")
+    }
+}
+
+#[cfg(test)]
+impl PreflightOps for MockPreflightOps {
+    fn run(&self) -> Receiver<CheckReport> {
+        let (sender, receiver) = mpsc::channel();
+        *self.run_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+}
+
 pub(crate) struct Preflight {
+    /// 后台操作接缝,默认真实现;测试注入 mock。
+    pub(crate) ops: Arc<dyn PreflightOps>,
     pub(crate) state: PreflightState,
     pub(crate) expanded: bool,
     pub(crate) scroll: u16,
@@ -28,6 +88,7 @@ pub(crate) struct Preflight {
 impl Default for Preflight {
     fn default() -> Self {
         Self {
+            ops: default_preflight_ops(),
             state: PreflightState::NotRun,
             expanded: false,
             scroll: 0,
@@ -40,13 +101,7 @@ impl Preflight {
         if matches!(&self.state, PreflightState::Running(_)) {
             return;
         }
-        let (sender, receiver) = mpsc::channel();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let report = crate::i18n::with_language(language, check::run_all);
-            let _ = sender.send(report);
-        });
-        self.state = PreflightState::Running(receiver);
+        self.state = PreflightState::Running(self.ops.run());
         self.scroll = 0;
     }
 

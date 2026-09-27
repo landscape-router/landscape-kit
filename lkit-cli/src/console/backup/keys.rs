@@ -1,5 +1,3 @@
-use std::sync::mpsc;
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::{ConsoleAction, ConsoleApp, Notice};
@@ -238,7 +236,7 @@ impl ConsoleApp {
     }
 
     /// 校验选中的备份:详情页校验详情条目,列表页校验选中条目。
-    fn start_backup_verify(&mut self) {
+    pub(crate) fn start_backup_verify(&mut self) {
         let Some(entry) = self
             .backup
             .details_entry()
@@ -249,35 +247,7 @@ impl ConsoleApp {
         if matches!(self.backup.verify, BackupVerifyState::Running(_)) {
             return;
         }
-        let path = entry.path.clone();
-        let (sender, receiver) = mpsc::channel();
-        let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-                let metadata =
-                    crate::backup::lkb::verify_lkb(&bytes).map_err(|error| error.to_string())?;
-                let verify_dir = std::env::temp_dir()
-                    .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
-                crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
-                    .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
-                    .map(|_| {
-                        crate::tr!(
-                            crate::keys::CONSOLE_BACKUP_VERIFIED,
-                            backup_id = metadata.backup_id
-                        )
-                    })
-                    .map_err(|error| {
-                        let _ = std::fs::remove_dir_all(&verify_dir);
-                        error.to_string()
-                    })
-                    .inspect(|_message| {
-                        let _ = std::fs::remove_dir_all(&verify_dir);
-                    })
-            });
-            let _ = sender.send(result);
-        });
-        self.backup.verify = BackupVerifyState::Running(receiver);
+        self.backup.verify = BackupVerifyState::Running(self.backup.ops.verify(entry.path.clone()));
         self.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_BACKUP_VERIFY_RUNNING));
     }
 

@@ -1,4 +1,5 @@
-use std::sync::mpsc::{self, TryRecvError};
+use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -12,6 +13,65 @@ use super::render::panel_block;
 
 /// daemon 部署后台线程的最终结果:成功返回与 CLI 相同的结果消息,失败返回错误文本。
 pub(super) type DeployResult = Result<String, String>;
+
+/// daemon 部署的后台操作接缝:UI 只消费返回的 `Receiver`。
+/// 生产实现真实执行 `lkit self install`;单测注入脚本化 `MockDeployOps`。
+pub(crate) trait DeployOps {
+    fn deploy(&self, psk: Option<String>) -> Receiver<DeployResult>;
+}
+
+/// 生产实现:后台线程执行 `lkit self install`(root 检查、安装锁、systemd 语义)。
+pub(crate) struct RealDeployOps;
+
+impl DeployOps for RealDeployOps {
+    fn deploy(&self, psk: Option<String>) -> Receiver<DeployResult> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        std::thread::spawn(move || {
+            let result = crate::i18n::with_language(language, || {
+                crate::commands::lkit_self::install_daemon(psk).map_err(|error| error.to_string())
+            });
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+}
+
+pub(super) fn default_deploy_ops() -> Arc<dyn DeployOps> {
+    Arc::new(RealDeployOps)
+}
+
+/// 单测注入用的手动 mock:worker 停着不动,测试经 `deploy_sender` 注入。
+#[cfg(test)]
+pub(crate) struct MockDeployOps {
+    deploy_tx: std::sync::Mutex<Option<mpsc::Sender<DeployResult>>>,
+}
+
+#[cfg(test)]
+impl MockDeployOps {
+    pub(crate) fn manual() -> Self {
+        Self {
+            deploy_tx: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn deploy_sender(&self) -> mpsc::Sender<DeployResult> {
+        self.deploy_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("deploy() must be called before grabbing the sender")
+    }
+}
+
+#[cfg(test)]
+impl DeployOps for MockDeployOps {
+    fn deploy(&self, _psk: Option<String>) -> Receiver<DeployResult> {
+        let (sender, receiver) = mpsc::channel();
+        *self.deploy_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+}
 
 /// psk 弹窗(部署确认与查看/修改)中的导航单元:两个急救恢复码输入字段
 /// 加一个动作行(部署/保存)。方向键或 Tab 在单元间移动,Enter 进入编辑
@@ -133,17 +193,9 @@ impl ConsoleApp {
         if self.deploy_daemon.is_some() {
             return Ok(());
         }
-        let (sender, receiver) = mpsc::channel();
-        let language = crate::i18n::current();
         let psk = self.deploy_psk.trim().to_string();
         let psk = (!psk.is_empty()).then_some(psk);
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                crate::commands::lkit_self::install_daemon(psk).map_err(|error| error.to_string())
-            });
-            let _ = sender.send(result);
-        });
-        self.deploy_daemon = Some(receiver);
+        self.deploy_daemon = Some(self.deploy_ops.deploy(psk));
         Ok(())
     }
 
