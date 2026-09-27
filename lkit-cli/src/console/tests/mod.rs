@@ -1,6 +1,7 @@
 mod app;
 mod backup;
 mod daemon;
+mod gallery;
 mod install;
 mod invariants;
 mod mirror;

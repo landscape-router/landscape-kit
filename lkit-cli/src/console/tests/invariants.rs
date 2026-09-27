@@ -173,3 +173,50 @@ fn layout_geometry_is_stable_at_canonical_size() {
         .collect();
     assert_eq!(tail, "(zh)", "language indicator right-aligned at row 26");
 }
+
+/// 导航状态机走查:与 e2e 的 PTY 走查(console_screen::walks_all_panels)
+/// 相同的按键序列,在进程内直接驱动 `handle_key`。面板流程状态机不依赖
+/// 真实终端,可以也应该在这里固化;e2e 只负责真 PTY 下的字节流语义
+/// (Esc 独立送达、增量 diff)。
+#[test]
+fn navigation_walks_reachable_panels_in_process() {
+    let _territory = DaemonTerritory::new("nav-walk", false);
+    let key = |code: crossterm::event::KeyCode| {
+        crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    };
+    let mut app = ConsoleApp::new();
+    use crossterm::event::KeyCode;
+    assert_eq!((app.menu(), app.focus), (Menu::Overview, Focus::Navigation));
+
+    // Right 进入 Overview 面板,Esc 返回导航,Down 前进,Right 进入目标面板。
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!((app.menu(), app.focus), (Menu::Overview, Focus::Panel));
+    let successors = [
+        (Menu::Overview, Menu::Install),
+        (Menu::Install, Menu::Backup),
+        (Menu::Backup, Menu::Mirror),
+        (Menu::Mirror, Menu::Software),
+    ];
+    for (prev, next) in successors {
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(
+            (app.menu(), app.focus),
+            (prev, Focus::Navigation),
+            "Esc must return to navigation focus without moving the menu"
+        );
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            app.menu(),
+            next,
+            "Down after Esc must land on the next available menu item"
+        );
+        app.handle_key(key(KeyCode::Right));
+        assert_eq!((app.menu(), app.focus), (next, Focus::Panel));
+    }
+
+    // 未安装世界里 Update/Reinit 不可选:从 Software 继续 Down 不应落在它们上。
+    app.handle_key(key(KeyCode::Esc));
+    app.handle_key(key(KeyCode::Down));
+    assert_ne!(app.menu(), Menu::Update);
+    assert_ne!(app.menu(), Menu::Reinit);
+}

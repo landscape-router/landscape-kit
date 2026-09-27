@@ -7,7 +7,6 @@
 //! (或 `cargo insta review`)更新快照并逐屏审阅。备份列表的时间列依赖本地时区,
 //! 断言前统一规范化为 `<DATE>`,快照因此与时区无关。
 
-use super::super::backup::BackupEntry;
 use super::super::*;
 use super::support::*;
 use crate::i18n::Language;
@@ -32,31 +31,6 @@ fn assert_screen_snapshot(
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         insta::assert_snapshot!(name, terminal.backend());
     });
-}
-
-/// 备份列表:一条常规记录 + 一条超长备注(钉住截断省略号)+ 一条损坏记录
-/// (钉住红色 INVALID 徽标行),列对齐跨行可见。
-fn backup_rows() -> Vec<BackupEntry> {
-    let mut long_remark = sample_backup_metadata();
-    long_remark.backup_id = "20260901-090000-feedface".into();
-    long_remark.created_at = chrono::DateTime::parse_from_rfc3339("2026-09-01T09:00:00Z")
-        .unwrap()
-        .into();
-    long_remark.remark = "urgent snapshot taken right before the firewall migration window".into();
-    long_remark.landscape_version = "0.9.0".into();
-    vec![
-        sample_backup_entry(),
-        BackupEntry {
-            metadata: Some(long_remark),
-            path: PathBuf::from("/opt/landscape/backups/20260901-090000-feedface.lkb"),
-            size: Some(3_500_000),
-        },
-        BackupEntry {
-            metadata: None,
-            path: PathBuf::from("/opt/landscape/backups/20260902-1010-broken.lkb"),
-            size: None,
-        },
-    ]
 }
 
 #[test]

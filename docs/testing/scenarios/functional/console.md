@@ -251,7 +251,11 @@
 - 说明：18 张整屏快照（7 个面板、72×18 边界屏、71×17 too-small 屏、Overview
   窄屏堆叠回退、长中文通知底栏折行、退出确认层、预检弹窗，含英文与中文）把
   完整布局逐字符固定在 `snapshots/*.snap`；备份时间列在断言前规范化为
-  `<DATE>`，快照与运行环境时区无关。布局不变量测试补充三条结构性质：
+  `<DATE>`，快照与运行环境时区无关。`console::tests::gallery`（env 门控，
+  `LKIT_CONSOLE_GALLERY` 指向输出目录才运行）把同一批屏的 Buffer 渲染成
+  彩色 `gallery.html` 与逐屏 txt，供人工审阅实际视觉效果；由
+  `scripts/console-layout-gallery.sh` 在 docker 内两阶段驱动（有网编译、断网
+  产出）。布局不变量测试补充结构性质：
   72×18 边界两侧 too-small 提示恰好出现/消失；宽度 40..=120 × 高度
   {18, 24, 40} 全扫描下底栏提示逐行完整可见、长通知结尾词不被预留高度截断
   （048fa3b、c786c61 的 bug 类）；100×28 规范尺寸下 header 底边、侧栏 24 列、
@@ -275,7 +279,16 @@
   直接可用——ratatui 增量 diff 字节流中全角字符不连续的旧限制不复存在；等待
   一律使用有界 `wait_until`，替代旧测试的固定 sleep。覆盖：中文会话语言切换
   与 `[ui] language` 写回、alternate screen 进入/退出、SIGWINCH 缩放到
-  60×14 进入 too-small 提示屏再放大恢复完整布局。本地运行一律通过
+  60×14 进入 too-small 提示屏再放大恢复完整布局、面板走查
+  （`walks_all_panels_and_dumps_real_screens`：Esc/Down/Right 每步以屏幕锚点
+  确认上一个键被处理——Esc 必须独立送达，crossterm 会把紧跟的转义序列并入
+  同一次解析；Install 面板进入时自动运行的环境检查层会先消费一次 Esc，测试
+  对此自适应补发。未安装世界里 Update/Reinit 菜单不可选，由快照覆盖其布局；
+  可达面板每屏 dump 到 `$LKIT_CONSOLE_GALLERY/real-*.txt`，与 gallery 单测
+  互补——这里证明真实 crossterm/PTY 路径下用户实际看到的屏幕）。导航状态机
+  本身（菜单门控、焦点切换）不依赖终端，由进程内单测
+  （`console::tests::invariants::navigation_walks_reachable_panels_in_process`
+  直接驱动 `handle_key`）固化，e2e 只保留真 PTY 字节流语义。本地运行一律通过
   `scripts/test-docker-console.sh`：容器内编译后以 `--network none` 运行
   （仅剩 loopback，物理上不可能触碰宿主机网络），并以 root 身份执行，使
   [`UI-13`](#ui-13) 这类 root-only 场景在本地也可验证；CI 侧由 fixture e2e

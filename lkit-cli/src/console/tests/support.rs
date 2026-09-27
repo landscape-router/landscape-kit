@@ -240,6 +240,31 @@ pub(crate) fn resolved(current: &str, target: &str) -> ResolvedUpdate {
     }
 }
 
+/// 备份列表:一条常规记录 + 一条超长备注(钉住截断省略号)+ 一条损坏记录
+/// (钉住红色 INVALID 徽标行),列对齐跨行可见。快照与 gallery 共用。
+pub(crate) fn backup_rows() -> Vec<BackupEntry> {
+    let mut long_remark = sample_backup_metadata();
+    long_remark.backup_id = "20260901-090000-feedface".into();
+    long_remark.created_at = chrono::DateTime::parse_from_rfc3339("2026-09-01T09:00:00Z")
+        .unwrap()
+        .into();
+    long_remark.remark = "urgent snapshot taken right before the firewall migration window".into();
+    long_remark.landscape_version = "0.9.0".into();
+    vec![
+        sample_backup_entry(),
+        BackupEntry {
+            metadata: Some(long_remark),
+            path: PathBuf::from("/opt/landscape/backups/20260901-090000-feedface.lkb"),
+            size: Some(3_500_000),
+        },
+        BackupEntry {
+            metadata: None,
+            path: PathBuf::from("/opt/landscape/backups/20260902-1010-broken.lkb"),
+            size: None,
+        },
+    ]
+}
+
 /// 整屏快照与布局不变量测试的确定性 daemon 状态:隔离 lkit 地盘并写入指定
 /// 状态的 pidfile(运行 = 当前测试进程的 pid,未运行 = 必定不存在的 pid)。
 /// 守卫存活期间(header 徽标、Overview 常驻服务状态都读该 pidfile),渲染
