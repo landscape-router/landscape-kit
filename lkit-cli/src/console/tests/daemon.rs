@@ -53,7 +53,7 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
     let (_guard, territory) = territory_with_pidfile("not-running", "99999999\n");
     let backend = TestBackend::new(100, 28);
     let mut terminal = Terminal::new(backend).unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
@@ -78,7 +78,7 @@ fn overview_shows_running_without_deploy_row_when_daemon_is_alive() {
         territory_with_pidfile("running", &format!("{}\n", std::process::id()));
     let backend = TestBackend::new(100, 28);
     let mut terminal = Terminal::new(backend).unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
@@ -92,7 +92,7 @@ fn overview_shows_running_without_deploy_row_when_daemon_is_alive() {
 fn overview_enter_opens_confirm_and_esc_cancels() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("confirm", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     assert!(!app.deploy_daemon_confirming);
 
@@ -124,7 +124,7 @@ fn overview_enter_opens_confirm_and_esc_cancels() {
 fn deploy_confirm_runs_in_background_and_writes_the_result_to_the_notice() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.deploy_daemon_confirming);
@@ -161,7 +161,7 @@ fn running_daemon_enter_opens_the_show_psk_dialog() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) =
         territory_with_pidfile("enter-ignored", &format!("{}\n", std::process::id()));
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
@@ -181,7 +181,7 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog", "99999999\n");
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(daemon_blocked_report());
@@ -204,7 +204,7 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
 fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog-enter", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(daemon_blocked_report());
@@ -257,7 +257,7 @@ fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() 
 fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog-deploy", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(daemon_blocked_report());
@@ -311,7 +311,7 @@ fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() 
 fn deploy_confirm_dialog_renders_on_the_install_menu_from_the_preflight_path() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog-render", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(daemon_blocked_report());
@@ -332,7 +332,7 @@ fn deploy_confirm_dialog_renders_on_the_install_menu_from_the_preflight_path() {
 fn f_opens_the_flare_dialog_on_the_overview_panel() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("flare-open", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     assert!(!app.flare.open);
 
@@ -349,7 +349,7 @@ fn f_opens_the_flare_dialog_on_the_overview_panel() {
 fn flare_dialog_renders_the_current_configuration() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("flare-render", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
@@ -366,7 +366,7 @@ fn flare_dialog_renders_the_current_configuration() {
 fn flare_dialog_edits_and_saves_the_psk_into_the_config() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("flare-save", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
@@ -390,7 +390,7 @@ fn flare_dialog_edits_and_saves_the_psk_into_the_config() {
 fn flare_dialog_rejects_a_short_psk_and_stays_open() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("flare-short", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
@@ -414,7 +414,7 @@ fn flare_dialog_rejects_a_short_psk_and_stays_open() {
 fn deploy_confirm_shows_the_recovery_code_field_and_explains_its_purpose() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy-flare-render", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.deploy_daemon_confirming);
@@ -432,7 +432,7 @@ fn deploy_confirm_shows_the_recovery_code_field_and_explains_its_purpose() {
 fn deploy_confirm_accepts_an_edited_recovery_code_and_starts_the_deploy() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy-flare-edit", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     // psk 字段:直接输入进入编辑,Enter 提交编辑。
@@ -471,7 +471,7 @@ fn deploy_confirm_accepts_an_edited_recovery_code_and_starts_the_deploy() {
 fn deploy_confirm_enter_edits_instead_of_deploying_and_arrows_navigate() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy-flare-arrows", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     // 弹窗打开即聚焦 psk 字段:Enter 进入编辑而不是直接部署。
@@ -509,7 +509,7 @@ fn deploy_confirm_enter_edits_instead_of_deploying_and_arrows_navigate() {
 fn deploy_confirm_rejects_a_mismatched_confirmation_without_starting() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy-flare-mismatch", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     for character in "an-operator-chosen-code".chars() {
@@ -544,7 +544,7 @@ fn deploy_confirm_rejects_a_mismatched_confirmation_without_starting() {
 fn deploy_confirm_rejects_a_short_recovery_code_without_starting() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy-flare-short", "99999999\n");
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     for character in "eshort".chars() {
@@ -579,7 +579,7 @@ fn deploy_confirm_prefills_an_existing_recovery_code() {
         ..crate::deployment::config::default_flare_section()
     })
     .unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(
@@ -601,7 +601,7 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
         territory_with_pidfile("show-psk-row", &format!("{}\n", std::process::id()));
     let backend = TestBackend::new(100, 28);
     let mut terminal = Terminal::new(backend).unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
@@ -632,7 +632,7 @@ fn overview_does_not_show_show_psk_row_when_daemon_is_down() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("no-show-psk-row", "99999999\n");
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
@@ -654,7 +654,7 @@ fn show_psk_dialog_displays_the_configured_psk_in_plain_text() {
         ..crate::deployment::config::default_flare_section()
     })
     .unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.show_psk, "Enter must open the show psk dialog");
@@ -681,7 +681,7 @@ fn show_psk_dialog_edits_both_fields_and_saves() {
         ..crate::deployment::config::default_flare_section()
     })
     .unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(
@@ -717,7 +717,7 @@ fn show_psk_dialog_edits_the_psk_field_and_saves_the_new_value() {
         ..crate::deployment::config::default_flare_section()
     })
     .unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     // psk 字段:Enter 进入编辑,清空旧值后输入新值。
@@ -757,7 +757,7 @@ fn show_psk_dialog_rejects_a_mismatched_confirmation_without_saving() {
         ..crate::deployment::config::default_flare_section()
     })
     .unwrap();
-    let mut app = ConsoleApp::new();
+    let mut app = overview_app();
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));

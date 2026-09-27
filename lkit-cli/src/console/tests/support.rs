@@ -167,6 +167,16 @@ pub(crate) fn installed_snapshot() -> Snapshot {
     }
 }
 
+/// Overview/daemon 弹窗流程测试的固定世界。`Snapshot::load` 在非 root 主机
+/// 直接返回 RootRequired(euid 前置检查),而 root CI 容器里对空地盘探测出
+/// NotInstalled——弹窗测试不关心安装状态,统一钉为 NotInstalled,行为与
+/// 运行环境无关。
+pub(crate) fn overview_app() -> ConsoleApp {
+    let mut app = ConsoleApp::new();
+    app.snapshot = Snapshot::NotInstalled;
+    app
+}
+
 pub(crate) use super::super::backup::{backup_rows, sample_backup_entry, sample_backup_metadata};
 
 pub(crate) fn pending_takeover_snapshot() -> Snapshot {

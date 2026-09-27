@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use super::daemon_panel::PskDialogField;
 use super::install_form::InstallField;
-use super::network_wizard::NetworkWizard;
+use super::network_wizard::{NetworkWizard, Snapshot};
 use super::preflight::{GateState, PreflightState};
 use super::widgets::{Focus, Menu};
 use super::{ConsoleAction, ConsoleApp, ExitState, Notice};
@@ -373,8 +373,19 @@ impl ConsoleApp {
     /// psk、确认与「开始部署」动作行间移动,Enter 在字段上进入编辑、在动作行上
     /// 后台执行 `lkit self install`(留在 TUI 内,不退出)。daemon 运行时
     /// Enter/空格打开「查看/修改急救恢复码」弹窗。`f` 打开 flare 恢复通道弹窗。
-    /// 其余按键返回 `None` 交给通用处理(保持 Esc 返回菜单选择等标准语义)。
+    /// 三个弹窗都读写仅 root 可访问的地盘配置,RootRequired 世界(左栏已在
+    /// 提示需要 root)不打开弹窗,动作键直接给 root 提示。其余按键返回 `None`
+    /// 交给通用处理(保持 Esc 返回菜单选择等标准语义)。
     pub(super) fn handle_overview_key(&mut self, key: KeyEvent) -> Option<Option<ConsoleAction>> {
+        if matches!(self.snapshot, Snapshot::RootRequired)
+            && matches!(
+                key.code,
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f' | 'F')
+            )
+        {
+            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_ROOT_PRIVILEGES_REQUIRED));
+            return Some(None);
+        }
         match key.code {
             KeyCode::Enter | KeyCode::Char(' ') if self.daemon_deploy_available() => {
                 self.open_deploy_dialog();

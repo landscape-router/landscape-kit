@@ -108,3 +108,27 @@ fn backup_list_keys_inert_while_create_runs() {
     assert!(!app.backup.restore_confirming);
     assert!(!app.backup.delete_confirming);
 }
+
+/// 非 root 世界进 Overview:左栏提示需要 root,Enter/空格/'f' 不得打开
+/// 部署/查看 psk/flare 弹窗,动作键直接给出 root 提示。
+#[test]
+fn overview_dialogs_inert_when_root_required() {
+    let _language = LanguageGuard::set(crate::i18n::Language::En);
+    let _territory = DaemonTerritory::new("gate-overview-root", false);
+    let mut app = ConsoleApp::new();
+    app.focus = Focus::Panel;
+    app.snapshot = Snapshot::RootRequired;
+
+    app.handle_key(key(KeyCode::Enter));
+    assert!(
+        !app.deploy_daemon_confirming,
+        "Enter must not open the deploy dialog in a root-required world"
+    );
+    assert!(!app.show_psk);
+    app.handle_key(key(KeyCode::Char('f')));
+    assert!(
+        !app.flare.open,
+        "'f' must not open the flare dialog in a root-required world"
+    );
+    assert!(app.notice.contains("Root privileges are required"));
+}
