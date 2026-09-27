@@ -73,6 +73,10 @@ scripts under `scripts/`, never in unit tests.
 
 - Behavior changes must be reflected in `docs/`.
 - There is no language requirement for new documents.
+- Describe the current state, not the history of getting there. Do not write
+  additive/changelog-style prose (“additionally added…”, “on top of this we now
+  also…”, “previously X, now Y”) — merge new facts into a single description of
+  what exists today; git owns the change history.
 
 ### Test Scenario Documentation
 
