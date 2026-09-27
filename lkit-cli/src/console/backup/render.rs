@@ -384,13 +384,14 @@ pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut Conso
 }
 
 /// 创建备份进行中的居中弹窗：阶段文案 + 文件数 Gauge。
+/// 退出提示(Ctrl+C)由底栏常驻显示,弹窗内不重复。
 pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let Some(run) = &app.backup.create else {
         return;
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 7.min(screen.height.saturating_sub(2));
+    let height = 4.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -432,12 +433,8 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
         vertical: 1,
         horizontal: 1,
     });
-    let [stage_area, gauge_area, hint_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(inner);
+    let [stage_area, gauge_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_RUNNING)),
@@ -454,11 +451,6 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
             .gauge_style(Style::default().fg(Color::Cyan))
             .use_unicode(false),
         gauge_area,
-    );
-    frame.render_widget(
-        Paragraph::new(crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CREATE_RUNNING))
-            .style(Style::default().fg(Color::DarkGray)),
-        hint_area,
     );
 }
 

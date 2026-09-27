@@ -793,8 +793,9 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
                 crate::keys::CONSOLE_SOFTWARE_CONFIRM_TITLE,
                 software = software_label
             ))),
-        Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2)),
+        area,
     );
+    // Gauge 画在弹窗内最后一行内容位(底边框上方一行)。
     let gauge_area = Rect::new(
         area.x.saturating_add(2),
         area.y.saturating_add(area.height.saturating_sub(2)),
