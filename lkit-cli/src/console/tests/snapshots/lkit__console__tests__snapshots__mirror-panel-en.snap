@@ -1,0 +1,32 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                                              Landscape: installed  daemon: not running"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Mirror──────────────────────────────────────────────────────────────────┐"
+"│  Overview            ││Detecting the host distribution…                                          │"
+"│  Install             ││                                                                          │"
+"│  Backup              ││                                                                          │"
+"│  Update              ││                                                                          │"
+"│> Mirror              ││                                                                          │"
+"│  Common software     ││                                                                          │"
+"│  Reinit              ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
+"↑↓: select source  Enter: switch / restore  Ctrl+C: exit                                            "

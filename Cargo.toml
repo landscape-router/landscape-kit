@@ -29,6 +29,7 @@ dotenvy = "0.15.7"
 flate2 = "1"
 futures-util = "0.3"
 glob = "0.3.4"
+insta = "1"
 libc = "0.2"
 lkit-repository = { path = "crates/lkit-repository" }
 lkit-test-fixture = { path = "crates/lkit-test-fixture" }

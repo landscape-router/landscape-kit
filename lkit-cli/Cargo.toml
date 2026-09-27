@@ -56,5 +56,8 @@ zip = { workspace = true, features = ["deflate"] }
 zstd = { workspace = true }
 lkit-test-fixture = { workspace = true, optional = true }
 
+[dev-dependencies]
+insta = { workspace = true, features = ["filters"] }
+
 [build-dependencies]
 toml = { workspace = true }

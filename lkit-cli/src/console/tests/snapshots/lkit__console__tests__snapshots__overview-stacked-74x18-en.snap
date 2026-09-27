@@ -1,0 +1,22 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                        Landscape: installed  daemon: not run"
+"──────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Overview──────────────────────────────────────┐"
+"│> Overview            ││Landscape is installed                          │"
+"│  Install             ││                                                │"
+"│  Backup              ││Version       1.2.3                             │"
+"│  Update              ││Service       systemd                           │"
+"│  Mirror              ││Initialization complete                         │"
+"│  Common software     ││Install root  /root/.lkit/landscape             │"
+"│  Reinit              ││                                                │"
+"│                      ││lkit resident service                           │"
+"│                      ││lkit resident service                           │"
+"│                      ││A systemd service that executes the privileged  │"
+"│                      ││operations (install, update, reinit) delegated  │"
+"└──────────────────────┘└────────────────────────────────────────────────┘"
+"──────────────────────────────────────────────────────────────────────────"
+"Ready                                              [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(66, " "), (68, " ")]
+"Ctrl+C Exit  Enter Deploy  Esc/← Menu                                     "

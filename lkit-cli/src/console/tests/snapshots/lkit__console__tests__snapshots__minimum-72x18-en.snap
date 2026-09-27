@@ -1,0 +1,22 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                       Landscape: not installed  daemon: no"
+"────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌Overview──────────────────────────────────────┐"
+"│> Overview            ││Landscape is not installed                    │"
+"│  Install             ││                                              │"
+"│  Backup              ││Install root  /root/.lkit/landscape           │"
+"│  Update              ││                                              │"
+"│  Mirror              ││lkit resident service                         │"
+"│  Common software     ││lkit resident service                         │"
+"│  Reinit              ││A systemd service that executes the privileged│"
+"│                      ││operations (install, update, reinit) delegated│"
+"│                      ││by this console.                              │"
+"│                      ││lkit version  0.5.0                           │"
+"└──────────────────────┘└──────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────"
+"Ready                                            [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(64, " "), (66, " ")]
+"Ctrl+C Exit  Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Exit   "
+"prompt                                                                  "

@@ -1,0 +1,32 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                                              Landscape: installed  daemon: not running"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Reinit──────────────────────────────────────────────────────────────────┐"
+"│  Overview            ││Landscape 1.2.3 (systemd, initialization complete)                        │"
+"│  Install             ││                                                                          │"
+"│  Backup              ││Reinit is unavailable: it needs a systemd installation whose host network │"
+"│  Update              ││services were handed over to Landscape (NetworkManager, networking,       │"
+"│  Mirror              ││firewalld, systemd-resolved stopped/disabled/masked).                     │"
+"│  Common software     ││                                                                          │"
+"│> Reinit              ││Use `lkit install --takeover-network` for a first takeover, or run `lkit  │"
+"│                      ││reinit` from a terminal.                                                  │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
+"Enter: edit / begin; ↑↓: select; Ctrl+C: exit                                                       "
