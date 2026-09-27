@@ -59,10 +59,16 @@ fixture crate itself (together with `landscape-webserver` and `lkit-fixture-rele
 ## Console TUI testing
 
 The console layout is pinned by three layers (scenario docs:
-[`UI-17`](docs/testing/scenarios/functional/console.md)/[`UI-18`](docs/testing/scenarios/functional/console.md)):
+[`UI-17`](docs/testing/scenarios/functional/console.md)/[`UI-18`](docs/testing/scenarios/functional/console.md)/
+[`UI-19`](docs/testing/scenarios/functional/console.md)):
 
-- **Whole-screen snapshots** (`lkit-cli/src/console/tests/snapshots.rs`, 18 screens
-  via ratatui's `TestBackend` + `insta`). After an intentional layout change, update
+- **Whole-screen snapshots** (`lkit-cli/src/console/tests/snapshots.rs`, 29 screens
+  via ratatui's `TestBackend` + `insta`): static panel states plus mock-ops-driven
+  mid-flow screens (install confirm/progress, base-package progress, mirror probe
+  results, backup create dialog/progress and verified detail, update confirmation,
+  daemon deploy dialog/progress, expanded preflight) — states only reachable while
+  a worker is actually running, driven by injecting `Mock*Ops` channel messages.
+  After an intentional layout change, update
   with `INSTA_UPDATE=always cargo test -p lkit-cli --features test-support --bin lkit
   console::tests::snapshots` (or `cargo insta review`) and review the diffs — the
   `CARGO_PKG_VERSION` string appears in them on every version bump, and backup

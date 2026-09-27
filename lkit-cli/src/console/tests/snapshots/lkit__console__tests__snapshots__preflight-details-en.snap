@@ -1,0 +1,32 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                                          Landscape: not installed  daemon: not running"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Environment checks──────────────────────────────────────────────────────┐"
+"│  Overview            ││1 pass / 1 warn / 0 error / 0 unknown                                     │"
+"│> Install             ││                                                                          │"
+"│  Backup              ││Host platform                                                             │"
+"│  Update              ││PASS   Operating system  linux                                            │"
+"│  Mirror              ││WARN   CPU architecture  riscv64                                          │"
+"│  Common software     ││Release availability is unknown                                           │"
+"│  Reinit              ││Confirm that a compatible release asset exists                            │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
+"Ctrl+C Exit  Up/Down Scroll  PgUp/PgDn Page  R Re-run  Esc Close                                    "

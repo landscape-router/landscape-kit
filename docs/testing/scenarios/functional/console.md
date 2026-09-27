@@ -295,3 +295,35 @@
   workflow 的 `console` 域（同时匹配 `console::` 与 `console_screen::`）覆盖。
 - 缺口：termlens 断言不含 termios 层的 ECHO 恢复，退出恢复契约的 ECHO 部分
   仍由 [`UI-03`](#ui-03) 的 libc PTY 测试承担。
+
+## UI-19
+
+**面板后台操作抽象为 per-panel ops trait：进程内 mock 流程测试与流程驱动快照**
+
+- 测试层：Rust 单元（进程内流程测试 + insta 快照）
+- 状态：`已覆盖`
+- 证据：[ops 流程测试](../../../../lkit-cli/src/console/tests/ops.rs)、
+  [快照测试](../../../../lkit-cli/src/console/tests/snapshots.rs)、
+  [快照文件](../../../../lkit-cli/src/console/tests/snapshots/)
+- 说明：6 个面板（software、mirror、backup 列表/创建/校验、update、preflight、
+  daemon 部署）各自在面板文件内定义 `XOps` trait——签名即原先 start 函数的
+  spawn 部分（后台线程 + `Receiver` 返回），真实实现 `Real*Ops` 原样搬入，
+  面板持有 `Arc<dyn XOps>` 字段；门禁校验（root 检查、host 非空）留在面板层
+  不进 trait。`#[cfg(test)] Mock*Ops` 把 channel sender 收进 `Mutex`，测试经
+  `*_sender()` 以 take 语义取得后直接注入消息（drop sender 即模拟 worker
+  退出后的 `Disconnected`）。两层测试建立在这条接缝上：
+  （1）`console::tests::ops` 的 9 个流程测试驱动完整状态机——安装确认层→
+  Phase 推进→取消层→`Done(Err)` 清理→重装 `Done(Ok)`、非 root 拒绝、备份
+  列表 成功/失败/断流 三态、创建进度与校验、预检回填、基础包、换源探测+刷新、
+  更新解析升级/同版本分支、daemon 部署；（2）11 张流程驱动快照把「进行中/
+  成功瞬间」的瞬态屏逐字符钉进 `snapshots/*.snap`——安装确认层与进度
+  （Installing packages + Gauge）、基础包进度、换源探测结果回填（含
+  unavailable/unknown 标注）、备份创建备注弹窗与进度（0% Gauge）、详情页 +
+  底栏 verified、更新确认层（1.2.3 → 1.3.0）、daemon 部署确认弹窗与部署中、
+  预检详情展开。这些屏只有在 worker 真正推进时才会出现，直接摆字段摆不出，
+  此前只能真机人肉走一遍；驱动方式与流程测试一致（注入 mock → 按键/start →
+  通道注入 → poll → 渲染）。注意 mock sender 必须绑定变量活过 `poll`：
+  临时值语句尾即 drop，`poll` 下一条消息就是 `Disconnected`，会走 worker
+  退出清理分支（清 run 并触发真实主机状态刷新，破坏快照确定性）。
+- 缺口：快照不含颜色（沿 [`UI-17`](#ui-17)，色彩断言由 cell 前景色测试承担）；
+  瞬态的持续时间与节奏不在静态快照的表达能力内。

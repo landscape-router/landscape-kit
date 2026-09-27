@@ -1,0 +1,32 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                                              Landscape: installed  daemon: not running"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Common software─────────────────────────────────────────────────────────┐"
+"│  Overview            ││Host: Debian (bookworm) (package manager: apt)                            │"
+"│  Install             ││                                                                          │"
+"│  Backup              ││> Docker  [not installed]                                                 │"
+"│  Update              ││                                                                          │"
+"│  Mirror              ││Base packages  [5 missing]                                                │"
+"│> Common software     ││                                                                          │"
+"│  Reinit         ┌Base packages─────────────────────────────────────────────────┐                 │"
+"│                 │Installing base packages...                                   │                 │"
+"│                 │                                                              │                 │"
+"│                 │Esc Cancel installation                                       │                 │"
+"│                 │                                                              │                 │"
+"│                 │                                                              │                 │"
+"│                 │                                                              │                 │"
+"│                 │                                                              │                 │"
+"│                 └──────────────────────────────────────────────────────────────┘                 │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
+"Ctrl+C Exit  Esc Cancel installation                                                                "

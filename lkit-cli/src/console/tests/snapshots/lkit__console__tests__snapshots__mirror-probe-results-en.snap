@@ -1,0 +1,32 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                                              Landscape: installed  daemon: not running"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Mirror──────────────────────────────────────────────────────────────────┐"
+"│  Overview            ││Host: Debian (package manager: apt)                                       │"
+"│  Install             ││                                                                          │"
+"│  Backup              ││> Official                                                                │"
+"│  Update              ││USTC                                                                      │"
+"│> Mirror              ││Tencent Cloud (unavailable)                                               │"
+"│  Common software     ││Huawei Cloud (unknown)                                                    │"
+"│  Reinit              ││Aliyun                                                                    │"
+"│                      ││Nanjing University                                                        │"
+"│                      ││SJTU                                                                      │"
+"│                      ││Zhejiang University                                                       │"
+"│                      ││Lanzhou University                                                        │"
+"│                      ││HUST                                                                      │"
+"│                      ││BFSU                                                                      │"
+"│                      ││Tsinghua TUNA                                                             │"
+"│                      ││                                                                          │"
+"│                      ││Restore the backed-up original sources                                    │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
+"↑↓: select source  Enter: switch / restore  Ctrl+C: exit                                            "
