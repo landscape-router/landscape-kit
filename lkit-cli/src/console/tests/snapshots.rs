@@ -4,13 +4,16 @@
 //!
 //! 维护方式:有意变更布局后运行
 //! `INSTA_UPDATE=always cargo test -p lkit-cli --features test-support --bin lkit console::tests::snapshots`
-//! (或 `cargo insta review`)更新快照并逐屏审阅。备份列表的时间列依赖本地时区,
-//! 断言前统一规范化为 `<DATE>`,快照因此与时区无关。
+//! (或 `cargo insta review`)更新快照并逐屏审阅。备份列表的时间列(分)与
+//! takeover 屏的截止/当前时刻(秒+时区偏移)依赖运行时刻和本地时区,断言前
+//! 统一规范化为 `<DATE>`,快照因此与时刻、时区无关。
 
-use super::super::backup::{BackupCreateMessage, BackupListState, MockBackupOps};
+use super::super::backup::{
+    BackupCreateMessage, BackupListState, BackupVerifyState, MockBackupOps,
+};
 use super::super::daemon_panel::MockDeployOps;
-use super::super::mirror::MockMirrorOps;
-use super::super::software::{MockSoftwareOps, SoftwareInstallMessage};
+use super::super::mirror::{MirrorConfirm, MockMirrorOps};
+use super::super::software::{BasePackagesState, MockSoftwareOps, SoftwareInstallMessage};
 use super::super::update::MockUpdateOps;
 use super::super::*;
 use super::support::*;
@@ -18,7 +21,7 @@ use crate::backup::lkb::BackupProgress;
 use crate::i18n::Language;
 use crate::mirror::{Family, Host, MirrorName, MirrorStatus};
 use crate::software::InstallPhase;
-use crate::software::base::BasePackage;
+use crate::software::base::{BasePackage, BasePackageDialog};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -35,7 +38,12 @@ fn assert_screen_snapshot(
     prepare: impl FnOnce(&mut ConsoleApp),
 ) {
     let mut settings = insta::Settings::clone_current();
-    settings.add_filter(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "<DATE>");
+    // 日期时间统一屏蔽到 <DATE>:备份列表精确到分,takeover 屏精确到秒并带本地
+    // 时区偏移;秒数与偏移随运行时刻/主机时区变化,一并纳入过滤。
+    settings.add_filter(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?( [+-]\d{2}:\d{2})?",
+        "<DATE>",
+    );
     settings.bind(|| {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut app = ConsoleApp::new();
@@ -437,5 +445,194 @@ fn snapshot_preflight_details_en() {
         app.focus = Focus::Panel;
         app.preflight.state = PreflightState::Complete(sample_preflight_report());
         app.preflight.expanded = true;
+    });
+}
+
+// ---- 弹框/确认层与整屏状态全覆盖:此前未钉的对话框与向导/阻塞屏。纯对话框
+// 状态直接置字段(与 exit-confirmation/preflight-dialog 同风格),安装取消层
+// 这类流程瞬态仍经 mock 驱动。卸载面板已从侧栏隐藏(死路径),不钉。 ----
+
+#[test]
+fn snapshot_mirror_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("mirror-confirm", false);
+    assert_screen_snapshot("mirror-confirm-en", 100, 28, |app| {
+        app.snapshot = installed_snapshot();
+        app.menu_index = 4;
+        app.focus = Focus::Panel;
+        app.mirror.host = Some(Ok(Host {
+            family: Family::Debian,
+            codename: None,
+        }));
+        app.mirror.detected = true;
+        app.mirror.confirming = Some(MirrorConfirm::Apply {
+            mirror: MirrorName::Ustc,
+            replace_security: false,
+            disable_cdrom: true,
+            toggle: 0,
+        });
+    });
+}
+
+#[test]
+fn snapshot_base_packages_dialog_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("base-dialog", false);
+    assert_screen_snapshot("base-packages-dialog-en", 100, 28, |app| {
+        *app = software_ready_app(Arc::new(MockSoftwareOps::manual(true)));
+        app.software.base_packages = BasePackagesState::Choosing {
+            dialog: BasePackageDialog::open(),
+            previous: Box::new(BasePackagesState::NotChosen),
+        };
+    });
+}
+
+#[test]
+fn snapshot_reinit_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("reinit-confirm", false);
+    assert_screen_snapshot("reinit-confirm-en", 100, 28, |app| {
+        app.snapshot = installed_snapshot();
+        app.menu_index = 6;
+        app.focus = Focus::Panel;
+        app.reinit.confirming = true;
+    });
+}
+
+#[test]
+fn snapshot_show_psk_dialog_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("show-psk", false);
+    assert_screen_snapshot("show-psk-dialog-en", 100, 28, |app| {
+        app.snapshot = installed_snapshot();
+        app.focus = Focus::Panel;
+        app.show_psk = true;
+        app.show_psk_value = "recovery-psk-example".into();
+    });
+}
+
+#[test]
+fn snapshot_flare_dialog_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("flare-dialog", false);
+    assert_screen_snapshot("flare-dialog-en", 100, 28, |app| {
+        app.snapshot = installed_snapshot();
+        app.focus = Focus::Panel;
+        app.flare.open = true;
+        app.flare.psk = "recovery-psk-example".into();
+    });
+}
+
+#[test]
+fn snapshot_backup_restore_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("restore-confirm", false);
+    assert_screen_snapshot("backup-restore-confirm-en", 100, 28, |app| {
+        *app = backup_ready_app();
+        app.backup.state = BackupListState::Complete(backup_rows());
+        app.backup.selected = 1;
+        app.backup.verify = BackupVerifyState::Complete(Ok("verified".into()));
+        app.backup.restore_confirming = true;
+    });
+}
+
+#[test]
+fn snapshot_backup_delete_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("delete-confirm", false);
+    assert_screen_snapshot("backup-delete-confirm-en", 100, 28, |app| {
+        *app = backup_ready_app();
+        app.backup.state = BackupListState::Complete(backup_rows());
+        app.backup.selected = 1;
+        // 删除确认层按 delete_target 在列表中查元数据,不设则不渲染弹窗。
+        app.backup.delete_target = Some("20260807-131500-ab12cd34".into());
+        app.backup.delete_confirming = true;
+    });
+}
+
+#[test]
+fn snapshot_backup_corrupt_dialog_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("corrupt-dialog", false);
+    assert_screen_snapshot("backup-corrupt-dialog-en", 100, 28, |app| {
+        *app = backup_ready_app();
+        app.backup.state = BackupListState::Complete(backup_rows());
+        // 损坏条目是列表第三行(selected 从 1 起)。
+        app.backup.selected = 3;
+        app.backup.corrupt_dialog = true;
+    });
+}
+
+#[test]
+fn snapshot_software_cancel_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("sw-cancel", false);
+    let mock = Arc::new(MockSoftwareOps::manual(true));
+    assert_screen_snapshot("software-cancel-confirm-en", 100, 28, |app| {
+        *app = software_ready_app(mock);
+        app.handle_key(key(KeyCode::Enter)); // 打开确认层
+        app.handle_key(key(KeyCode::Enter)); // 启动安装
+        app.handle_key(key(KeyCode::Esc)); // 安装中 Esc 打开取消确认层
+    });
+}
+
+#[test]
+fn snapshot_base_cancel_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("base-cancel", false);
+    let mock = Arc::new(MockSoftwareOps::manual(true));
+    assert_screen_snapshot("base-cancel-confirm-en", 100, 28, |app| {
+        *app = software_ready_app(mock);
+        app.software.base_packages = BasePackagesState::Chosen(vec![BasePackage::all()[0]]);
+        app.software.start_base_install().unwrap();
+        app.handle_key(key(KeyCode::Esc)); // 基础包安装中 Esc 打开取消确认层
+    });
+}
+
+#[test]
+fn snapshot_takeover_blocking_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("takeover-block", false);
+    assert_screen_snapshot("takeover-blocking-en", 100, 28, |app| {
+        app.snapshot = pending_takeover_snapshot();
+    });
+}
+
+#[test]
+fn snapshot_wizard_wan_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("wizard-wan", false);
+    assert_screen_snapshot("wizard-wan-en", 100, 28, |app| {
+        app.snapshot = Snapshot::NotInstalled;
+        app.network_wizard = Some(sample_network_wizard());
+    });
+}
+
+#[test]
+fn snapshot_wizard_wan_config_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("wizard-wan-config", false);
+    assert_screen_snapshot("wizard-wan-config-en", 100, 28, |app| {
+        app.snapshot = Snapshot::NotInstalled;
+        let mut wizard = routes_armed_wizard();
+        wizard.step = super::super::network_wizard::WizardStep::WanConfig;
+        wizard.address = "10.1.1.105/24".into();
+        wizard.gateway = "10.1.1.1".into();
+        app.network_wizard = Some(wizard);
+    });
+}
+
+#[test]
+fn snapshot_wizard_confirm_en() {
+    let _language = LanguageGuard::set(Language::En);
+    let _territory = DaemonTerritory::new("wizard-confirm", false);
+    assert_screen_snapshot("wizard-confirm-en", 100, 28, |app| {
+        app.snapshot = Snapshot::NotInstalled;
+        let mut wizard = routes_armed_wizard();
+        // 确认页的 WAN 行读 address/gateway 字段(与 routes 列表无关),不设则显示空值。
+        wizard.address = "10.1.1.105/24".into();
+        wizard.gateway = "10.1.1.1".into();
+        wizard.step = super::super::network_wizard::WizardStep::Confirm;
+        app.network_wizard = Some(wizard);
     });
 }

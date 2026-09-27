@@ -62,12 +62,16 @@ The console layout is pinned by three layers (scenario docs:
 [`UI-17`](docs/testing/scenarios/functional/console.md)/[`UI-18`](docs/testing/scenarios/functional/console.md)/
 [`UI-19`](docs/testing/scenarios/functional/console.md)):
 
-- **Whole-screen snapshots** (`lkit-cli/src/console/tests/snapshots.rs`, 29 screens
-  via ratatui's `TestBackend` + `insta`): static panel states plus mock-ops-driven
-  mid-flow screens (install confirm/progress, base-package progress, mirror probe
-  results, backup create dialog/progress and verified detail, update confirmation,
-  daemon deploy dialog/progress, expanded preflight) — states only reachable while
-  a worker is actually running, driven by injecting `Mock*Ops` channel messages.
+- **Whole-screen snapshots** (`lkit-cli/src/console/tests/snapshots.rs`, 43 screens
+  via ratatui's `TestBackend` + `insta`): the seven panels and narrow/too-small
+  boundary screens, every dialog in the console (install/update/mirror/reinit/
+  daemon-deploy confirmations, backup create/restore/delete/corrupt, the
+  base-package picker, install-cancel confirmations, show-psk, flare, expanded
+  preflight), the pending-takeover blocking screen and the network wizard's
+  WAN/WAN-config/confirm steps, and worker mid-flow states (install/base-package
+  progress with gauge, mirror probe results, backup create progress, verified
+  backup detail) — states only reachable while a worker is actually running are
+  driven by injecting `Mock*Ops` channel messages.
   After an intentional layout change, update
   with `INSTA_UPDATE=always cargo test -p lkit-cli --features test-support --bin lkit
   console::tests::snapshots` (or `cargo insta review`) and review the diffs — the

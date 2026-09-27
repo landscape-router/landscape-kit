@@ -1,0 +1,32 @@
+---
+source: lkit-cli/src/console/tests/snapshots.rs
+expression: terminal.backend()
+---
+"Landscape Kit                                              Landscape: installed  daemon: not running"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"┌Navigation────────────┐┌> Reinit──────────────────────────────────────────────────────────────────┐"
+"│  Overview            ││Landscape 1.2.3 (systemd, initialization complete)                        │"
+"│  Install             ││                                                                          │"
+"│  Backup              ││Reinit is unavailable: it needs a systemd installation whose host network │"
+"│  Update              ││services were handed over to Landscape (NetworkManager, networking,       │"
+"│  Mirror              ││firewalld, systemd-resolved stopped/disabled/masked).                     │"
+"│  Common so┌Confirm reinit────────────────────────────────────────────────────────────┐           │"
+"│> Reinit   │Wipe all configuration except the new credentials and the WAN/LAN plan,   │run `lkit  │"
+"│           │then rebuild the database with the same Landscape version.                │           │"
+"│           │                                                                          │           │"
+"│           │The commit waits for `lkit network confirm`; this session may disconnect  │           │"
+"│           │and the reinit otherwise rolls back within the confirmation window.       │           │"
+"│           │                                                                          │           │"
+"│           │A protection .lkb backup is created first (restorable with `lkit          │           │"
+"│           │restore`).                                                                │           │"
+"│           │                                                                          │           │"
+"│           │Press Enter to confirm, Esc to cancel                                     │           │"
+"│           └──────────────────────────────────────────────────────────────────────────┘           │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"│                      ││                                                                          │"
+"└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
+"────────────────────────────────────────────────────────────────────────────────────────────────────"
+"Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
+"Enter: confirm reinit; Esc: cancel                                                                  "

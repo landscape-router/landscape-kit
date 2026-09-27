@@ -9,7 +9,7 @@ expression: terminal.backend()
 "│  Install             ││                                                                          │"
 "│> Backup              ││Remark  before upgrade                                                    │"
 "│  Update              ││Backup ID  20260807-131500-ab12cd34                                       │"
-"│  Mirror              ││Created  <DATE>:00 UTC                                          │"
+"│  Mirror              ││Created  <DATE> UTC                                          │"
 "│  Common software     ││Size  1.5 MiB                                                             │"
 "│  Reinit              ││Landscape  1.2.3                                                          │"
 "│                      ││lkit  0.1.3                                                               │"

@@ -315,15 +315,21 @@
   （1）`console::tests::ops` 的 9 个流程测试驱动完整状态机——安装确认层→
   Phase 推进→取消层→`Done(Err)` 清理→重装 `Done(Ok)`、非 root 拒绝、备份
   列表 成功/失败/断流 三态、创建进度与校验、预检回填、基础包、换源探测+刷新、
-  更新解析升级/同版本分支、daemon 部署；（2）11 张流程驱动快照把「进行中/
-  成功瞬间」的瞬态屏逐字符钉进 `snapshots/*.snap`——安装确认层与进度
-  （Installing packages + Gauge）、基础包进度、换源探测结果回填（含
-  unavailable/unknown 标注）、备份创建备注弹窗与进度（0% Gauge）、详情页 +
-  底栏 verified、更新确认层（1.2.3 → 1.3.0）、daemon 部署确认弹窗与部署中、
-  预检详情展开。这些屏只有在 worker 真正推进时才会出现，直接摆字段摆不出，
-  此前只能真机人肉走一遍；驱动方式与流程测试一致（注入 mock → 按键/start →
-  通道注入 → poll → 渲染）。注意 mock sender 必须绑定变量活过 `poll`：
-  临时值语句尾即 drop，`poll` 下一条消息就是 `Disconnected`，会走 worker
-  退出清理分支（清 run 并触发真实主机状态刷新，破坏快照确定性）。
+  更新解析升级/同版本分支、daemon 部署；（2）25 张流程/夹具驱动快照（连同
+  [`UI-17`](#ui-17) 的 18 张静态屏共 43 张）把「进行中/成功瞬间」与全部
+  对话框逐字符钉进 `snapshots/*.snap`——worker 推进中才出现的瞬态：安装
+  确认层与进度（Installing packages + Gauge）、基础包进度、换源探测结果
+  回填（含 unavailable/unknown 标注）、备份创建进度（0% Gauge）与校验后的
+  详情页（底栏 verified）、更新确认层（1.2.3 → 1.3.0）、daemon 部署确认
+  与部署中、预检详情展开；纯对话框态：换源确认层（checkbox 组）、基础包
+  选择弹窗、reinit 确认层、Show psk 与 flare 弹窗、备份 恢复/删除/损坏
+  三种确认层（删除层需设 `delete_target` 才会渲染）、安装中与基础包安装中
+  的取消确认层；整屏态：takeover 阻塞屏、网络向导 WAN 选择/WAN 配置/最终
+  确认三步（确认步的 `address`/`gateway` 是独立字段，向导夹具的 routes
+  不回填它们）。瞬态屏直接摆字段摆不出，驱动方式与流程测试一致（注入
+  mock → 按键/start → 通道注入 → poll → 渲染）。注意 mock sender 必须
+  绑定变量活过 `poll`：临时值语句尾即 drop，`poll` 下一条消息就是
+  `Disconnected`，会走 worker 退出清理分支（清 run 并触发真实主机状态
+  刷新，破坏快照确定性）。
 - 缺口：快照不含颜色（沿 [`UI-17`](#ui-17)，色彩断言由 cell 前景色测试承担）；
   瞬态的持续时间与节奏不在静态快照的表达能力内。
