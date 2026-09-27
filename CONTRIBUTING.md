@@ -56,6 +56,38 @@ not resolve. The `lkit-test-systemctl`/`lkit-test-init` entries there are three-
 wrappers that delegate to the real programs, which live as `[[bin]]` targets in the
 fixture crate itself (together with `landscape-webserver` and `lkit-fixture-release`).
 
+## Console TUI testing
+
+The console layout is pinned by three layers (scenario docs:
+[`UI-17`](docs/testing/scenarios/functional/console.md)/[`UI-18`](docs/testing/scenarios/functional/console.md)):
+
+- **Whole-screen snapshots** (`lkit-cli/src/console/tests/snapshots.rs`, 18 screens
+  via ratatui's `TestBackend` + `insta`). After an intentional layout change, update
+  with `INSTA_UPDATE=always cargo test -p lkit-cli --features test-support --bin lkit
+  console::tests::snapshots` (or `cargo insta review`) and review the diffs — the
+  `CARGO_PKG_VERSION` string appears in them on every version bump, and backup
+  timestamps are normalized to `<DATE>` so snapshots are timezone-independent.
+- **Layout invariants** (`invariants.rs`): the 72x18 too-small boundary, a
+  40..=120-column sweep asserting footer notices/hints are never clipped, and the
+  canonical 100x28 geometry (header rule, 24-column sidebar, status separator,
+  right-aligned language indicator).
+- **Screen-level e2e** (`tests/install_fixture_e2e/console_screen.rs`) drives the
+  bare `lkit` binary through [termlens](https://github.com/vyncint/termlens)
+  (real PTY + VT decoding), so assertions anchor on localized screen text —
+  including Chinese — instead of raw escape byte streams.
+
+Never run the e2e suite on your host; use the docker entry instead:
+
+```sh
+scripts/test-docker-console.sh          # builds in a container, then runs with
+                                        # --network none (loopback only) as root
+```
+
+The first run populates the `lkit-console-e2e-target`/`lkit-console-e2e-cargo`
+volumes; later runs are incremental. CI runs the same suite per push via the
+fixture e2e workflow (`console` domain filter matches both `console::` and
+`console_screen::`).
+
 ## Questions
 
 For questions that do not belong in an issue, use GitHub Discussions or the issue

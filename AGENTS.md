@@ -26,6 +26,9 @@ cargo test -p lkit-cli <module-filter>
 - The e2e fixture suite (`lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs in CI
   on every push and as a PR check via `.github/workflows/test-fixture-e2e.yml`, not locally before each
   commit. To run it manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
+- For the console TUI domain prefer the docker-isolated entry
+  `scripts/test-docker-console.sh`: it builds in a container and runs the suite with
+  `--network none` (loopback only) as root, so it can never touch host networking.
 
 ### Testing Hygiene
 

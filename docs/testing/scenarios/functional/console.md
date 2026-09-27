@@ -67,7 +67,9 @@
 - 证据：[控制台输入规格](../../../interaction/console.md)、[本地化规格](../../../interaction/i18n.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：断言英文底栏显示目标语言（`[L] Switch to 中文 (zh)`，所见即所得）、`L` 切换
   后的中文导航与中文底栏（`[L] 切换到 English (en)`），
-  并验证文本编辑状态下 `l` 仍写入字段而不切换语言。
+  并验证文本编辑状态下 `l` 仍写入字段而不切换语言。中文界面的完整屏幕由
+  [`UI-17`](#ui-17) 快照与 [`UI-18`](#ui-18) termlens 用例（中文屏幕文本锚点、
+  切换后写回 `[ui] language`）固定。
 
 ## UI-07
 
@@ -169,7 +171,8 @@
   返回与 CLI 等价的结构化 `Network confirm` 请求，退出 TUI 后按现状命令行语义内联执行
   （不限制 SSH 会话来源）。`rolling_back` 阶段“确认执行”不可用，只留“稍后”。
 - 缺口：PTY E2E 在非 root 环境跳过（快照显示 RootRequired），阻塞屏的完整端到端路径
-  只在 root 环境验证；确认执行的委托 worker 全屏路径与 QEMU 现场未自动化。
+  只在 root 环境验证（本地可经 [`UI-18`](#ui-18) 的 docker 隔离脚本以 root 运行）；
+  确认执行的委托 worker 全屏路径与 QEMU 现场未自动化。
 
 ## UI-14
 
@@ -234,3 +237,48 @@
   "非 Ready 一律红字"约定；多行结果（换源/恢复的追加行）经 `push_line` 拼接并
   保持首行级别染色；`Ready` 文案在渲染时按当前语言惰性翻译，语言切换后底栏
   就绪文案即时更新。
+
+## UI-17
+
+**整屏布局经 insta 快照与宽度扫描不变量固定**
+
+- 测试层：Ratatui TestBackend、insta 快照
+- 状态：`已覆盖`
+- 证据：[快照测试](../../../../lkit-cli/src/console/tests/snapshots.rs)、
+  [快照文件](../../../../lkit-cli/src/console/tests/snapshots/)、
+  [布局不变量](../../../../lkit-cli/src/console/tests/invariants.rs)、
+  [insta 快照配方](https://ratatui.rs/recipes/testing/snapshots)
+- 说明：18 张整屏快照（7 个面板、72×18 边界屏、71×17 too-small 屏、Overview
+  窄屏堆叠回退、长中文通知底栏折行、退出确认层、预检弹窗，含英文与中文）把
+  完整布局逐字符固定在 `snapshots/*.snap`；备份时间列在断言前规范化为
+  `<DATE>`，快照与运行环境时区无关。布局不变量测试补充三条结构性质：
+  72×18 边界两侧 too-small 提示恰好出现/消失；宽度 40..=120 × 高度
+  {18, 24, 40} 全扫描下底栏提示逐行完整可见、长通知结尾词不被预留高度截断
+  （048fa3b、c786c61 的 bug 类）；100×28 规范尺寸下 header 底边、侧栏 24 列、
+  面板起点、底栏分隔线与语言指示右对齐的几何坐标。有意变更布局时用
+  `INSTA_UPDATE=always`（或 `cargo insta review`）更新快照并逐屏审阅；快照
+  内嵌 `CARGO_PKG_VERSION`，版本号变更会自然出现在 diff 中。
+- 缺口：快照不含颜色（insta 对 `TestBackend` 的 Display 不输出样式），色彩
+  断言仍由既有的 cell 前景色测试承担。
+
+## UI-18
+
+**屏幕级 e2e（termlens 真 PTY + VT 解码）与 docker 隔离运行入口**
+
+- 测试层：termlens PTY E2E、docker 隔离脚本
+- 状态：`已覆盖`
+- 证据：[termlens 用例](../../../../lkit-cli/tests/install_fixture_e2e/console_screen.rs)、
+  [docker 隔离脚本](../../../../scripts/test-docker-console.sh)、
+  [termlens](https://github.com/vyncint/termlens)
+- 说明：`console_screen` 模块用 termlens 在真 PTY 中驱动裸 `lkit`，断言对象是
+  VT 解码后的屏幕网格而非原始字节流，中文锚点（`导航`、`切换到 English`）
+  直接可用——ratatui 增量 diff 字节流中全角字符不连续的旧限制不复存在；等待
+  一律使用有界 `wait_until`，替代旧测试的固定 sleep。覆盖：中文会话语言切换
+  与 `[ui] language` 写回、alternate screen 进入/退出、SIGWINCH 缩放到
+  60×14 进入 too-small 提示屏再放大恢复完整布局。本地运行一律通过
+  `scripts/test-docker-console.sh`：容器内编译后以 `--network none` 运行
+  （仅剩 loopback，物理上不可能触碰宿主机网络），并以 root 身份执行，使
+  [`UI-13`](#ui-13) 这类 root-only 场景在本地也可验证；CI 侧由 fixture e2e
+  workflow 的 `console` 域（同时匹配 `console::` 与 `console_screen::`）覆盖。
+- 缺口：termlens 断言不含 termios 层的 ECHO 恢复，退出恢复契约的 ECHO 部分
+  仍由 [`UI-03`](#ui-03) 的 libc PTY 测试承担。
