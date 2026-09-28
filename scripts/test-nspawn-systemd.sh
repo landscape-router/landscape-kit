@@ -234,7 +234,7 @@ nspawn_pid=$!
 machine_started=true
 
 echo "== boot the nspawn machine"
-for _ in $(seq 1 100); do
+for ((i = 0; i < 100; i++)); do
   machinectl show "$machine" >/dev/null 2>&1 && break
   kill -0 "$nspawn_pid" 2>/dev/null || {
     cat "$test_root/nspawn.log" >&2
@@ -248,6 +248,10 @@ machinectl show "$machine" >/dev/null 2>&1 || {
   exit 1
 }
 
+# machine_shell / machine_shell_bg 的 payload 会经 systemd-run 变成瞬态单元
+# 的 ExecStart:systemd 按单元(空)环境展开 `${VAR...}`(含 `${VAR#pat}`、
+# `${VAR%pat}`,未定义即空串),但不触碰 `$(...)` 与裸 `$VAR`。payload 内
+# 严禁使用花括号参数展开——需要截断用 cut,剥后缀用 basename 的 suffix 参数。
 machine_shell() {
   if [[ $LKIT_NSPAWN_DEBUG == 1 ]]; then
     echo ">> machine: $1" >&2
@@ -296,7 +300,7 @@ machine_dump() {
 }
 
 system_bus_ready=false
-for _ in $(seq 1 100); do
+for ((i = 0; i < 100; i++)); do
   if machine_shell "true" >/dev/null 2>&1; then
     system_bus_ready=true
     break
@@ -464,9 +468,9 @@ PY
   echo "   restore: start"
   machine_shell "systemctl start landscape-router.service"
   echo "   restore: wait-active"
-  machine_shell 'for i in $(seq 1 100); do systemctl is-active --quiet landscape-router.service && break; sleep 0.1; done; systemctl is-active --quiet landscape-router.service'
+  machine_shell 'for ((i = 0; i < 100; i++)); do systemctl is-active --quiet landscape-router.service && break; sleep 0.1; done; systemctl is-active --quiet landscape-router.service'
   echo "   restore: wait-ready"
-  machine_shell 'for i in $(seq 1 200); do (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null && break; sleep 0.1; done; (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null || exit 1'
+  machine_shell 'for ((i = 0; i < 200; i++)); do (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null && break; sleep 0.1; done; (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null || exit 1'
 }
 
 # S-1 委托提交与结果回收:CLI 写请求、daemon 认领、子进程完成真实卸载、结果回。
@@ -485,9 +489,9 @@ echo "== worker S-2: the daemon finishes after the frontend disconnects"
 restore_scene
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
-machine_shell 'for i in $(seq 1 200); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
+machine_shell 'for ((i = 0; i < 200; i++)); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
 machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -9 || true'
-machine_shell 'for i in $(seq 1 300); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
+machine_shell 'for ((i = 0; i < 300; i++)); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
 machine_shell "! systemctl is-active --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 
@@ -497,14 +501,66 @@ machine_shell "systemctl is-active --quiet lkit.service"
 # Ctrl+C 会被忽略(仅 Downloading 阶段可取消),因此取消由 cancel 文件驱动。
 echo "== worker S-3: the daemon cancels the delegated worker and recovers"
 restore_scene
-# 同一会话内完成「后台启动 CLI + 轮询 request 文件 + 写 cancel」,避开多次
-# systemd-run 启动开销(委托的 uninstall 无下载阶段,本地操作 ~2s 即完成);
-# KillMode=process 保证会话结束后 CLI 前端与 daemon 交互不受影响。
+# 同一会话内完成「后台启动 CLI + 等事务 journal + 写 cancel」,避开多次
+# systemd-run 启动开销;KillMode=process 保证会话结束后 CLI 前端与 daemon
+# 交互不受影响。cancel 的目标 id 不从 /run/lkit/operations/ 的目录内容推断
+# (S-2 的 SIGKILL 残留、request.json 被认领删除都会让按文件名猜测出错),
+# 而是等事务 journal 出现(= worker 正在执行,处于 SIGTERM 窗口)后,从活
+# worker 进程的 /proc/<pid>/environ 读 executor 注入的
+# LKIT_INTERNAL_PRESENTATION_EVENTS 提取 id。此前三轮 CI 失败(空 op id)
+# 的共同根因是 systemd 对瞬态单元 ExecStart 的 `${VAR...}` 展开,把
+# `${VAR#pat}` / `${VAR%pat}` 换成了空串——payload 内只允许 `$(...)` 和
+# 裸 `$VAR`,截断用 cut,剥后缀用 basename 的 suffix 参数。每步取值失败都
+# 转储现场并退出,不静默继续。
 machine_shell_bg \
   'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &
-for i in $(seq 1 600); do T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); [ -n "$T" ] && break; sleep 0.02; done; echo "== S-3 txn=[$T]"; test -n "$T"; OPID=$(ls /run/lkit/operations/ | grep -m1 -oE "^[0-9a-f-]+"); test -n "$OPID"; CANCEL="/run/lkit/operations/$OPID.cancel"; echo "== S-3 cancel file: [$CANCEL]"; touch "$CANCEL"'
-machine_shell 'for i in $(seq 1 200); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0' || { machine_dump "S-3 worker-not-cancelled"; exit 1; }
-machine_shell 'for i in $(seq 1 300); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1' || { machine_dump "S-3 recovery-timeout"; exit 1; }
+T=
+for ((i = 0; i < 750; i++)); do
+  T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1)
+  [ -n "$T" ] && break
+  sleep 0.02
+done
+if [ -z "$T" ]; then
+  echo "== S-3 FAIL: no transaction journal after 15s"
+  ls -la /root/.lkit/transactions/ /run/lkit/operations/ 2>&1
+  exit 1
+fi
+echo "== S-3 txn=[$T]"
+# pgrep 每轮扫描全部匹配 pid,取第一个 environ 中带非空
+# LKIT_INTERNAL_PRESENTATION_EVENTS 值的(spawn 窗口的瞬时匹配或读取竞争
+# 只会得到空值,重试即可跳过)。
+WPID=
+PRES=
+for ((i = 0; i < 15; i++)); do
+  for cand in $(pgrep -f "^/usr/local/bin/lkit --internal-daemon-worker" || true); do
+    PRES=$(tr "\0" "\n" </proc/$cand/environ 2>/dev/null | grep "^LKIT_INTERNAL_PRESENTATION_EVENTS=" | head -1 | cut -d= -f2-)
+    if [ -n "$PRES" ]; then
+      WPID=$cand
+      break
+    fi
+    PRES=
+  done
+  [ -n "$WPID" ] && break
+  sleep 0.03
+done
+if [ -z "$WPID" ]; then
+  echo "== S-3 FAIL: no running daemon worker with a presentation path"
+  pgrep -a -f lkit 2>&1 || true
+  ps aux 2>&1 | grep lkit | grep -v grep
+  ls -la /run/lkit/operations/ 2>&1
+  exit 1
+fi
+OPID=$(basename "$PRES" .presentation.jsonl)
+case "$OPID" in
+  ""|*[!0-9a-f-]*)
+    echo "== S-3 FAIL: unexpected operation id [$OPID] from [$PRES]"
+    exit 1
+    ;;
+esac
+echo "== S-3 op=[$OPID] worker=[$WPID] from=[$PRES]"
+touch "/run/lkit/operations/$OPID.cancel"' || { machine_dump "S-3 setup-failed"; exit 1; }
+machine_shell 'for ((i = 0; i < 200; i++)); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0' || { machine_dump "S-3 worker-not-cancelled"; exit 1; }
+machine_shell 'for ((i = 0; i < 300; i++)); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1' || { machine_dump "S-3 recovery-timeout"; exit 1; }
 machine_shell "systemctl is-active --quiet lkit.service"
 machine_shell "systemctl is-active --quiet landscape-router.service"
 
