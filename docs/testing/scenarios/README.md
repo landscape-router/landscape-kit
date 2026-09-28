@@ -22,7 +22,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
 | Ratatui 管理控制台 | `UI-01` 至 `UI-20` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-08` | [i18n.md](functional/i18n.md) |
-| 首次安装 | `INS-01` 至 `INS-05`、`INS-07` 至 `INS-18` | [install.md](functional/install.md) |
+| 首次安装 | `INS-01` 至 `INS-05`、`INS-07` 至 `INS-19` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-10` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-09` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-11` | [switch.md](functional/switch.md) |
@@ -32,7 +32,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
-| 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
+| 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-04` | [security-and-environment.md](functional/security-and-environment.md) |
 | 网络接管 | `NET-01` 至 `NET-12` | [network-takeover.md](functional/network-takeover.md) |
 | 宿主网络适配 | `HNET-01` 至 `HNET-08` | [hostnet.md](functional/hostnet.md) |
 | 主机换源 | `MIR-01` 至 `MIR-11` | [mirror.md](functional/mirror.md) |

@@ -55,3 +55,12 @@
 - 状态：`部分覆盖`
 - 证据：[check 适用范围](../../../check.md#适用范围)、[安装入口](../../../release/lkit.md#安装入口)
 - 缺口：Fedora、Arch Linux 和 openSUSE 的完整宿主 preflight 仍需低频 VM smoke。
+
+## ENV-04
+
+**`lkit check` 的端口判定区分受管实例、摘要漂移与外部实例**
+
+- 测试层：Rust 单元
+- 状态：`部分覆盖`
+- 证据：`check::ports` 单元测试——受管实例 → `pass`、摘要漂移 → `warning`（附 `lkit repair --repair-binary` 建议）、外部实例 → `error`（附 `lkit migrate` 或停止建议）、混合占用与属主不可读维持 `error`；判定复用 `service::process::is_managed` / `is_managed_relaxed`；状态读取经 `LKIT_TERRITORY` 在临时目录注入（`read_state_under_temp_territory_classifies_managed_listener`）。
+- 缺口：真实主机安装状态与 `/proc/net` 组合的端到端断言仍由低频验收承担。
