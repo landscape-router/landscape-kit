@@ -12,7 +12,7 @@ expression: terminal.backend()
 "│  Mirror              ││  Base packages  [5 missing]                                              │"
 "│> Common software┌Base packages─────────────────────────────────────────────────┐                 │"
 "│  Reinit         │> [x] pppd (ppp)  not installed                               │                 │"
-"│                 │  ✓  ip (iproute2)  installed                                 │                 │"
+"│                 │  ✓   ip (iproute2)  installed                                │                 │"
 "│                 │  [ ] iw (iw)  not installed                                  │                 │"
 "│                 │  [ ] hostapd (hostapd)  not installed                        │                 │"
 "│                 │  [x] sysctl (procps)  not installed                          │                 │"

@@ -827,10 +827,10 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
         } else {
             Style::default()
         };
-        // 勾选标记统一占 3 列(`[x]`/`[ ]`/`✓ )+ 一个空格,已装、勾选、未勾选
-        // 三态的包名列逐行对齐。
+        // 勾选标记统一占 4 列(`✓` 占 1 列 + 3 空格,`[x] `/`[ ] ` 占 4 列),
+        // 已装、勾选、未勾选三态的包名列逐行对齐。
         let marker = if entry.installed {
-            "✓  "
+            "✓   "
         } else if entry.selected {
             "[x] "
         } else {
