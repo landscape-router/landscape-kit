@@ -455,7 +455,7 @@ pub(crate) fn render_install_form(frame: &mut Frame<'_>, app: &mut ConsoleApp, a
     let lines: Vec<Line> = form_rows.iter().map(|(_, line)| line.clone()).collect();
     frame.render_widget(
         Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(panel_block(
                 &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
                 app.focus == Focus::Panel && !form.checks_selected,
@@ -478,7 +478,7 @@ pub(crate) fn render_install_help(frame: &mut Frame<'_>, app: &ConsoleApp, area:
                 Block::bordered()
                     .title(crate::tr!(crate::keys::CONSOLE_ABOUT_PREFIX, title = title)),
             )
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         area,
     );
 }

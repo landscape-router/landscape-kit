@@ -9,7 +9,7 @@ expression: terminal.backend()
 "│Select the WAN interface                                                                          │"
 "│                                                                                                  │"
 "│> 1  ens32  00:0c:29:a4:09:08  10.1.1.105/24  gw not found                                        │"
-"│2  ens33  00:0c:29:a4:09:12  no IPv4  gw not found                                                │"
+"│  2  ens33  00:0c:29:a4:09:12  no IPv4  gw not found                                              │"
 "│                                                                                                  │"
 "│                                                                                                  │"
 "│                                                                                                  │"

@@ -789,3 +789,25 @@ fn start_update_validates_before_background_resolution() {
     );
     let _ = std::fs::remove_dir_all(&app.install.install_dir);
 }
+
+#[test]
+fn exit_confirmation_dims_the_underlay_but_not_the_dialog() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let mut app = ConsoleApp::new();
+    app.exit_state = ExitState::Confirming;
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    // 弹窗外的底层(标题"Landscape Kit")被压暗为暗灰前景,不再与弹窗争夺注意力。
+    let title = buffer
+        .content
+        .iter()
+        .find(|cell| cell.symbol() == "L")
+        .expect("the header title must be rendered behind the dialog");
+    assert_eq!(title.fg, Color::DarkGray);
+    // 弹窗自身的边框保持默认前景,压暗只作用于弹窗绘制前已有的内容。
+    // 48x4 弹窗居中于 80x24:左上角边框在 (16, 10)。
+    let border = &terminal.backend().buffer()[(16, 10)];
+    assert_eq!(border.symbol(), "┌");
+    assert_eq!(border.fg, Color::Reset);
+}

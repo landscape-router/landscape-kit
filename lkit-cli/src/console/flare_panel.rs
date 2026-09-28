@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::ConsoleApp;
 use super::Notice;
@@ -73,7 +73,7 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let section = crate::deployment::config::load_flare();
     let devices = section
         .as_ref()
@@ -144,7 +144,7 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     lines.push(super::render::dialog_hint_line(app));
     frame.render_widget(
         Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_FLARE_DIALOG_TITLE))),
         area,
     );

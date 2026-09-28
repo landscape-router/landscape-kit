@@ -9,7 +9,7 @@ expression: terminal.backend()
 "│  Install             ││                                                                          │"
 "│  Backup              ││> Docker  [not installed]                                                 │"
 "│  Update              ││                                                                          │"
-"│  Mirror              ││Base packages  [5 missing]                                                │"
+"│  Mirror              ││  Base packages  [5 missing]                                              │"
 "│> Common software     ││                                                                          │"
 "│  Reinit         ┌Install Docker────────────────────────────────────────────────┐                 │"
 "│                 │Installing Docker…                                            │                 │"

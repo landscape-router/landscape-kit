@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::ConsoleApp;
 use super::render::panel_block;
@@ -220,11 +220,10 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_INSTALL_BLOCKED))),
         area,
     );
@@ -322,7 +321,7 @@ pub(crate) fn render_preflight_details(
                 &crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS),
                 focused,
             ))
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .scroll((preflight.scroll, 0)),
         area,
     );

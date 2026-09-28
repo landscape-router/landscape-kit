@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::super::ConsoleApp;
 use super::super::render::display_pad;
@@ -258,7 +258,7 @@ pub(crate) fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizar
     frame.render_widget(
         Paragraph::new(lines)
             .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_NETWORK_PANEL_TITLE)))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         body,
     );
     frame.render_widget(
@@ -333,7 +333,7 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, wizard: &NetworkWiza
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::raw(""),
@@ -341,7 +341,7 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, wizard: &NetworkWiza
             Line::styled(wizard_hints(wizard), Style::default().fg(Color::DarkGray)),
         ])
         .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CANCEL_WIZARD))),
         area,
     );
@@ -458,14 +458,11 @@ pub(crate) fn render_pending_takeover(frame: &mut Frame<'_>, app: &mut ConsoleAp
         crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_KEY_HINT),
         Style::default().fg(Color::DarkGray),
     ));
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true })
-            .block(
-                Block::bordered().title(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)),
-            ),
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::bordered().title(crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)),
+        ),
         area,
     );
 }

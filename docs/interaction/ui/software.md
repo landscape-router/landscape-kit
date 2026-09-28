@@ -23,6 +23,8 @@
 - 居中带边框标题,列出 Landscape 依赖的基础系统包
   (`pppd (ppp)`、`ip (iproute2)`、`iw (iw)`、`hostapd (hostapd)`、
   `sysctl (procps)`);
+- 勾选标记统一占 3 列等宽(`✓  ` 已安装、`[x] ` 勾选、`[ ] ` 未勾选),
+  各行的包名列逐列对齐;
 - 已安装的包显示 `✓` + 绿字"已安装",置灰不可切换(按 PATH 探测二进制);
 - 缺失的包显示 `[x]`/`[ ]` 勾选态,默认全部勾选,Space/Enter 切换;
 - 末行绿字动作项 "Install selected packages",选中 `FOCUS_SELECTED`;

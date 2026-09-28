@@ -1,8 +1,8 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
+use ratatui::widgets::{Block, Gauge, Paragraph, Wrap};
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
@@ -37,7 +37,7 @@ pub(crate) fn render_backup(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
                 &crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
                 focused,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -63,7 +63,7 @@ pub(crate) fn render_backup(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
                 &crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
                 focused,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -120,7 +120,7 @@ fn render_backup_list(frame: &mut Frame<'_>, app: &mut ConsoleApp, focused: bool
                 &crate::tr!(crate::keys::CONSOLE_BACKUP_MENU),
                 focused,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -328,7 +328,7 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
                 &crate::tr!(crate::keys::CONSOLE_BACKUP_DETAILS_TITLE),
                 focused,
             ))
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .scroll((app.backup.details_scroll, 0)),
         area,
     );
@@ -350,7 +350,7 @@ pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut Conso
     } else {
         format!("{remark}_")
     };
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_SCOPE)),
@@ -368,8 +368,7 @@ pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut Conso
             Line::raw(""),
             dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_TITLE))),
         area,
     );
@@ -427,13 +426,13 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
     });
     let [stage_area, gauge_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner);
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
         Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_RUNNING)),
         area,
     );
     frame.render_widget(
-        Paragraph::new(stage_text).wrap(Wrap { trim: true }),
+        Paragraph::new(stage_text).wrap(Wrap { trim: false }),
         stage_area,
     );
     frame.render_widget(
@@ -457,7 +456,7 @@ pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>, app: &ConsoleA
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -467,8 +466,7 @@ pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>, app: &ConsoleA
             Line::raw(""),
             dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_CORRUPT_DIALOG))),
         area,
     );
@@ -491,7 +489,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::raw(crate::tr!(
@@ -505,8 +503,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
             Line::raw(""),
             dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_TITLE))),
         area,
     );
@@ -530,7 +527,7 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::raw(crate::tr!(
@@ -541,8 +538,7 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
             Line::raw(""),
             dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_TITLE))),
         area,
     );

@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::render::{dialog_hint_line, panel_block};
 use super::widgets::Focus;
@@ -359,7 +359,7 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
                 &crate::tr!(crate::keys::CONSOLE_REINIT_MENU),
                 focused,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -375,7 +375,7 @@ pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let lines = vec![
         Line::styled(
             crate::tr!(crate::keys::CONSOLE_REINIT_CONFIRM_WIPE),
@@ -394,7 +394,7 @@ pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp
     frame.render_widget(
         Paragraph::new(lines)
             .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_REINIT_CONFIRM_TITLE)))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         area,
     );
 }

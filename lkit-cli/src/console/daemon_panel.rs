@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::ConsoleApp;
 use super::Notice;
@@ -247,7 +247,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let psk_row = psk_edit_row(app, PskDialogField::Psk, true);
     let confirmation_row = psk_edit_row(app, PskDialogField::Confirmation, true);
     let start_row = dialog_action_row(
@@ -277,7 +277,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
             Line::raw(""),
             super::render::dialog_hint_line(app),
         ])
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_TITLE))),
         area,
     );
@@ -366,7 +366,7 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let psk_display = if app.show_psk_value.is_empty() {
         crate::tr!(crate::keys::CONSOLE_SHOW_PSK_EMPTY)
     } else {
@@ -397,7 +397,7 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
             Line::raw(""),
             super::render::dialog_hint_line(app),
         ])
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_SHOW_PSK_TITLE))),
         area,
     );
@@ -449,7 +449,7 @@ pub(crate) fn render_daemon_deploy_progress(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -458,7 +458,7 @@ pub(crate) fn render_daemon_deploy_progress(frame: &mut Frame<'_>, app: &mut Con
             ),
             Line::raw(""),
         ])
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(panel_block(
             &crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_TITLE),
             true,

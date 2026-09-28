@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
@@ -515,8 +515,10 @@ impl ConsoleApp {
     }
 }
 
-/// 面板内容行数：主机行、空行、镜像列表、空行、恢复动作。
-fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
+/// 面板内容行数：主机行、空行、镜像列表、空行、恢复动作。镜像列表共 12 项,
+/// 面板放不下时按选中项定位可见窗口(`mirror_window`),Restore 动作行不参与
+/// 滚动、恒为列表后第一行。
+fn panel_lines(app: &ConsoleApp, area: Rect) -> Vec<Line<'_>> {
     let mut lines = Vec::new();
     match &app.mirror.host {
         None => {
@@ -533,13 +535,35 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
             ));
         }
         Some(Ok(host)) => {
-            lines.push(Line::raw(crate::tr!(
+            // 主机行按内容宽度预折行:折行行数计入固定行,列表容量才不会把
+            // Restore 行挤出面板。
+            let content_width = area.width.saturating_sub(2).max(1);
+            let host_text = crate::tr!(
                 crate::keys::CONSOLE_MIRROR_HOST,
                 summary = host.summary(),
                 manager = host.family.package_manager()
-            )));
+            );
+            let host_rows = super::widgets::wrap_to_width(content_width, &host_text).len();
+            lines.push(Line::raw(host_text));
             lines.push(Line::raw(""));
-            for mirror in MirrorName::all() {
+            let mirrors = MirrorName::all();
+            let selected_index = match app.mirror.selected {
+                MirrorRow::Mirror(mirror) => mirrors
+                    .iter()
+                    .position(|candidate| *candidate == mirror)
+                    .unwrap_or(0),
+                MirrorRow::Restore => mirrors.len(),
+            };
+            // 固定行:主机行(含折行)、两个空行、Restore 行,探测中再加一行。
+            let fixed_rows = host_rows + 3 + usize::from(app.mirror.probing);
+            let capacity = usize::from(area.height.saturating_sub(2)).saturating_sub(fixed_rows);
+            let (start, visible) = mirror_window(mirrors.len(), selected_index, capacity);
+            let ellipsis = Line::styled("  …", Style::default().fg(Color::DarkGray));
+            if start > 0 {
+                lines.push(ellipsis.clone());
+            }
+            for mirror in &mirrors[start..start + visible] {
+                let mirror = *mirror;
                 let status = status_of(&app.mirror.availability, mirror);
                 let marker = if app.mirror.selected == MirrorRow::Mirror(mirror) {
                     "> "
@@ -583,6 +607,9 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
                 };
                 lines.push(Line::from(Span::styled(text, style)));
             }
+            if start + visible < mirrors.len() {
+                lines.push(ellipsis);
+            }
             lines.push(Line::raw(""));
             let marker = if app.mirror.selected == MirrorRow::Restore {
                 "> "
@@ -608,15 +635,39 @@ fn panel_lines(app: &ConsoleApp) -> Vec<Line<'_>> {
     lines
 }
 
+/// 镜像列表的可见窗口:容量放得下时全量显示;放不下时以选中项为中心截取,
+/// 被截断的一端由调用方渲染省略号行(省略号行也占容量,先预留再定位,两轮
+/// 内收敛)。`selected` 允许等于 `len`(选中落在 Restore 行),窗口锚到底部。
+pub(crate) fn mirror_window(len: usize, selected: usize, capacity: usize) -> (usize, usize) {
+    if capacity >= len {
+        return (0, len);
+    }
+    let mut visible = capacity.min(len).max(1);
+    let mut start;
+    for _ in 0..2 {
+        start = selected.saturating_sub(visible / 2).min(len - visible);
+        let reserved = usize::from(start > 0) + usize::from(start + visible < len);
+        let next = capacity.saturating_sub(reserved).clamp(1, len);
+        if next == visible {
+            return (start, visible);
+        }
+        visible = next;
+    }
+    (
+        selected.saturating_sub(visible / 2).min(len - visible),
+        visible,
+    )
+}
+
 pub(crate) fn render_mirror(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
-    let lines = panel_lines(app);
+    let lines = panel_lines(app, area);
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel_block(
                 &crate::tr!(crate::keys::CONSOLE_MIRROR_MENU),
                 app.focus == Focus::Panel,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -631,7 +682,7 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     // 可见开关行：`(行类型, 渲染行, 是否勾选)`。
     let mut toggle_rows: Vec<(MirrorToggleRow, Line<'static>, bool)> = Vec::new();
     let (title, question) = match &app.mirror.confirming {
@@ -712,7 +763,7 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     lines.push(dialog_hint_line(app));
     frame.render_widget(
         Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(Block::bordered().title(title)),
         area,
     );

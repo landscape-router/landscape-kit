@@ -237,7 +237,7 @@ fn render_exit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![Line::raw(""), dialog_hint_line(app)])
             .alignment(Alignment::Center)
@@ -250,6 +250,18 @@ fn render_exit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
 /// 视线聚焦在弹窗上,按键说明跟随弹窗;底栏保持一致作为第二显示位。
 pub(crate) fn dialog_hint_line(app: &ConsoleApp) -> Line<'static> {
     Line::styled(app.hints(), Style::default().fg(Color::DarkGray))
+}
+
+/// 弹窗绘制的起点:先把整屏底层压暗(前景统一退为暗灰、清掉高亮背景),
+/// 再清空弹窗矩形。弹窗外的底层残词不再与弹窗争夺注意力;层叠弹窗
+/// (如进度层上的取消确认)重复调用只是再次压暗已压暗的内容,无副作用。
+pub(crate) fn begin_dialog(frame: &mut Frame<'_>, area: Rect) {
+    for cell in frame.buffer_mut().content.iter_mut() {
+        cell.fg = Color::DarkGray;
+        cell.bg = Color::Reset;
+        cell.modifier = Modifier::empty();
+    }
+    frame.render_widget(Clear, area);
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
@@ -282,12 +294,11 @@ fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
         frame.render_widget(title.block(Block::default().borders(Borders::BOTTOM)), area);
         return;
     }
-    // 标题靠左、徽标组靠右(space-between 布局)。
-    let [title_area, badges_area] = Layout::horizontal([
-        Constraint::Length(usize::from(area.width) as u16),
-        Constraint::Length(badges_width as u16),
-    ])
-    .areas(area);
+    // 标题靠左、徽标组靠右(space-between 布局):标题取剩余宽度,徽标组
+    // 恰好取所需宽度,不设会互相挤压的超额约束。
+    let [title_area, badges_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(badges_width as u16)])
+            .areas(area);
     frame.render_widget(title, title_area);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -350,7 +361,7 @@ fn render_panel(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
                     &crate::tr!(crate::keys::CONSOLE_INSTALL_MENU),
                     focused,
                 ))
-                .wrap(Wrap { trim: true }),
+                .wrap(Wrap { trim: false }),
                 area,
             );
         }
@@ -371,12 +382,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
         let content_width = area.width.saturating_sub(2);
         let mut lines = landscape_lines;
         lines.push(Line::raw(""));
-        lines.push(Line::styled(
-            crate::tr!(crate::keys::CONSOLE_OVERVIEW_LKIT_SECTION),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ));
+        // 小节标题由 `overview_lkit_lines` 自带,这里不再重复追加。
         lines.extend(overview_lkit_lines(focused, content_width));
         frame.render_widget(
             Paragraph::new(lines)

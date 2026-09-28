@@ -91,6 +91,39 @@ fn mirror_panel_renders_host_and_mirror_options() {
 }
 
 #[test]
+fn mirror_window_shows_all_when_capacity_fits() {
+    assert_eq!(mirror_window(12, 5, 20), (0, 12));
+    assert_eq!(mirror_window(12, 5, 12), (0, 12));
+}
+
+#[test]
+fn mirror_window_keeps_selection_visible_and_reserves_ellipsis_rows() {
+    // 容量 7:两端省略号各占一行,实际可见 5 项,窗口以选中项居中。
+    assert_eq!(mirror_window(12, 5, 7), (3, 5));
+    // 选中第一项:只截断底部,顶部不需要省略号行。
+    assert_eq!(mirror_window(12, 0, 7), (0, 6));
+    // 选中末项与选中 Restore(等价 len):窗口锚到底部,只截断顶部。
+    assert_eq!(mirror_window(12, 11, 7), (6, 6));
+    assert_eq!(mirror_window(12, 12, 7), (6, 6));
+}
+
+#[test]
+fn mirror_panel_pins_restore_row_when_list_overflows() {
+    let _language = LanguageGuard::set(Language::En);
+    // 最小高度(18 行)终端:面板内容放不下 12 项镜像,列表按容量截断、
+    // Restore 行保持可见。
+    let mut app = mirror_ready_app();
+    let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains('…'));
+    assert!(content.contains("Official"));
+    // 窗口从第一项开始截断,底部的镜像在窗口外不可见。
+    assert!(!content.contains("Tsinghua TUNA"));
+    assert!(content.contains("Restore the backed-up original sources"));
+}
+
+#[test]
 fn mirror_panel_detection_failure_is_shown() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = mirror_ready_app();

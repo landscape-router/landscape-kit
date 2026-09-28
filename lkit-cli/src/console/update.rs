@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -593,7 +593,7 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
                 &crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
                 focused,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -670,7 +670,7 @@ pub(crate) fn render_update(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
     }
     frame.render_widget(
         Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(panel_block(
                 &crate::tr!(crate::keys::CONSOLE_UPDATE_MENU),
                 focused,
@@ -692,7 +692,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::raw(crate::tr!(
@@ -704,8 +704,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
             Line::raw(""),
             dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_TITLE))),
         area,
     );
@@ -734,7 +733,7 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
                 &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
                 focused,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -788,7 +787,7 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
     ));
     frame.render_widget(
         Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(panel_block(
                 &crate::tr!(crate::keys::CONSOLE_UNINSTALL_MENU),
                 focused,
@@ -807,7 +806,7 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let mut lines = Vec::new();
     if let Snapshot::Installed { version, .. } = &app.snapshot {
         lines.push(Line::raw(crate::tr!(
@@ -828,12 +827,9 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
     lines.push(Line::raw(""));
     lines.push(dialog_hint_line(app));
     frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true })
-            .block(
-                Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_TITLE)),
-            ),
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::bordered().title(crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_TITLE)),
+        ),
         area,
     );
 }

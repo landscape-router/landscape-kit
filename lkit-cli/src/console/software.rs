@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
+use ratatui::widgets::{Block, Gauge, Paragraph, Wrap};
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -678,7 +678,7 @@ pub(crate) fn render_software(frame: &mut Frame<'_>, app: &mut ConsoleApp, area:
                 &crate::tr!(crate::keys::CONSOLE_SOFTWARE_MENU),
                 app.focus == Focus::Panel,
             ))
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -693,7 +693,7 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let Some(confirm) = app.software.confirming else {
         return;
     };
@@ -724,7 +724,7 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
     ];
     frame.render_widget(
         Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(Block::bordered().title(crate::tr!(
                 crate::keys::CONSOLE_SOFTWARE_CONFIRM_TITLE,
                 software = confirm.software.label()
@@ -746,7 +746,7 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let phase_text = match run.phase {
         InstallPhase::Preparing => crate::tr!(crate::keys::CONSOLE_SOFTWARE_PHASE_PREPARING),
         InstallPhase::InstallingPackages => {
@@ -774,7 +774,7 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
     ];
     frame.render_widget(
         Paragraph::new(content_lines.clone())
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(Block::bordered().title(crate::tr!(
                 crate::keys::CONSOLE_SOFTWARE_CONFIRM_TITLE,
                 software = software_label
@@ -815,7 +815,7 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let mut lines: Vec<Line<'_>> = Vec::new();
     for (index, entry) in dialog.entries.iter().enumerate() {
         let selected = dialog.cursor == index;
@@ -827,12 +827,14 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
         } else {
             Style::default()
         };
+        // 勾选标记统一占 3 列(`[x]`/`[ ]`/`✓ )+ 一个空格,已装、勾选、未勾选
+        // 三态的包名列逐行对齐。
         let marker = if entry.installed {
-            "✓".to_string()
+            "✓  "
         } else if entry.selected {
-            "[x]".into()
+            "[x] "
         } else {
-            "[ ]".into()
+            "[ ] "
         };
         let status = if entry.installed {
             crate::tr!(crate::keys::SOFTWARE_INSTALLED)
@@ -881,7 +883,7 @@ pub(crate) fn render_base_packages_dialog(frame: &mut Frame<'_>, app: &mut Conso
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_DIALOG_TITLE)),
         ),
         area,
@@ -902,7 +904,7 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     let cancel_hint = crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_CANCEL_HINT);
     frame.render_widget(
         Paragraph::new(vec![
@@ -915,7 +917,7 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
                     .add_modifier(Modifier::BOLD),
             ),
         ])
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(
             Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_DIALOG_TITLE)),
         ),
@@ -937,7 +939,7 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &Console
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -947,8 +949,7 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &Console
             Line::raw(""),
             super::render::dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(
             Block::bordered().title(crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_CANCEL_TITLE)),
         ),
@@ -967,7 +968,7 @@ fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) 
         width,
         height,
     );
-    frame.render_widget(Clear, area);
+    super::render::begin_dialog(frame, area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -977,8 +978,7 @@ fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) 
             Line::raw(""),
             super::render::dialog_hint_line(app),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        .wrap(Wrap { trim: false })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_TITLE))),
         area,
     );
