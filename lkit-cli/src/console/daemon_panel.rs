@@ -240,7 +240,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     }
     let screen = frame.area();
     let width = 72.min(screen.width.saturating_sub(2));
-    let height = 14.min(screen.height.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -260,8 +260,13 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     );
     frame.render_widget(
         Paragraph::new(vec![
+            // 两行短说明各自不折行:第一行是什么,第二行怎么填。
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_PURPOSE),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::styled(
+                crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_INPUT_NOTE),
                 Style::default().fg(Color::DarkGray),
             ),
             Line::raw(""),

@@ -423,7 +423,7 @@ fn deploy_confirm_shows_the_recovery_code_field_and_explains_its_purpose() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Flare recovery psk"));
     assert!(content.contains("Confirm psk"));
-    assert!(content.contains("recovery channel"));
+    assert!(content.contains("rescue channel"));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
@@ -617,7 +617,7 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
         .expect("the show psk row must render");
     let help_row = content
         .lines()
-        .position(|line| line.contains("flare channel"))
+        .position(|line| line.contains("rescue"))
         .expect("the recovery-code description must render");
     assert!(
         help_row < psk_row,
