@@ -14,3 +14,5 @@ pub(crate) const PORTS_ANOTHER_SERVICE_LISTENING: &str = "ports.another_service_
 pub(crate) const PORTS_STOP_SERVICE_OR_MOVE_PORT: &str = "ports.stop_service_or_move_port";
 pub(crate) const PORTS_LISTENER_USED_BY: &str = "ports.listener_used_by";
 pub(crate) const PORTS_LISTENER_OWNER_UNREADABLE: &str = "ports.listener_owner_unreadable";
+pub(crate) const PORTS_PORT_HELD_BY_LANDSCAPE: &str = "ports.port_held_by_landscape";
+pub(crate) const PORTS_SELF_LISTENING_EXPECTED: &str = "ports.self_listening_expected";
