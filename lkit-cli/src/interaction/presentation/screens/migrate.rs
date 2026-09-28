@@ -153,7 +153,7 @@ impl OperationScreen for MigrateScreen {
         frame.render_widget(
             Paragraph::new(log_lines)
                 .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_OUTPUT)))
-                .wrap(Wrap { trim: true }),
+                .wrap(Wrap { trim: false }),
             log_area,
         );
         let hint = if result.is_some() {

@@ -408,8 +408,8 @@ fn render_takeover_confirmation(frame: &mut Frame<'_>) {
                 Style::default().fg(Color::DarkGray),
             ),
         ])
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
+        // 多行正文左对齐(逐行居中在折行时产生锯齿),与控制台弹窗规则一致。
+        .wrap(Wrap { trim: false })
         .block(
             Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_TITLE)),
         ),
