@@ -15,7 +15,7 @@ expression: terminal.backend()
 "│                 │Install Docker? Choose the source, then confirm.              │                 │"
 "│                 │                                                              │                 │"
 "│                 │Source  ◀ Official repository ▶                               │                 │"
-"│                 │Press Space or ← / → to switch the source (click works too)   │                 │"
+"│                 │Press Space or ← / → to switch the source                     │                 │"
 "│                 │                                                              │                 │"
 "│                 │Press Enter to install.                                       │                 │"
 "│                 │Press Esc to cancel.                                          │                 │"

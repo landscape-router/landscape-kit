@@ -64,7 +64,7 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
         "the resident service section must carry a description"
     );
     assert!(
-        !content.contains("L2 flare"),
+        !content.contains("flare channel"),
         "the recovery-code description belongs to the show-psk row, which is hidden while the daemon is down"
     );
     drop(_guard);
@@ -617,7 +617,7 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
         .expect("the show psk row must render");
     let help_row = content
         .lines()
-        .position(|line| line.contains("L2 flare"))
+        .position(|line| line.contains("flare channel"))
         .expect("the recovery-code description must render");
     assert!(
         help_row < psk_row,

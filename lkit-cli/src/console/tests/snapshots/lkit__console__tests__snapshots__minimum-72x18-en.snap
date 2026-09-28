@@ -18,5 +18,5 @@ expression: terminal.backend()
 "└──────────────────────┘└──────────────────────────────────────────────┘"
 "────────────────────────────────────────────────────────────────────────"
 "Ready                                            [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(64, " "), (66, " ")]
-"Ctrl+C Exit  Up/Down Menu  Right/Enter Open  Tab Switch  Esc Esc Exit   "
+"Ctrl+C Exit  Up/Down Menu  Right/Enter Open  Tab Switch  Esc twice Exit "
 "prompt                                                                  "

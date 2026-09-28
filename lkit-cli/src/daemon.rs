@@ -198,7 +198,7 @@ fn flare_needs_restart(
 
 /// 计算当前生效的 flare 配置:有 psk 直接使用,段缺失或无 psk 时生成随机 psk
 /// 并持久化到 `config.toml` 的 `[flare]` 段(缺省字段由 serde 默认值补齐)。
-/// 生成时打印一次 psk,提示分发给恢复操作员。
+/// 生成时打印一次 psk,提示记下保存。
 #[cfg(target_os = "linux")]
 fn effective_flare_config() -> Result<crate::deployment::config::FlareSection, InstallError> {
     use crate::deployment::config::{default_flare_section, generate_psk, load_flare, save_flare};
@@ -212,7 +212,7 @@ fn effective_flare_config() -> Result<crate::deployment::config::FlareSection, I
         section.psk = Some(psk.clone());
         save_flare(&section)?;
         println!(
-            "lkit daemon: generated flare recovery psk (written to {}); distribute it to operators, a later `lkit install` or `lkit flare setup` replaces it: {psk}",
+            "lkit daemon: generated flare recovery psk (written to {}); a later `lkit install` or `lkit flare setup` replaces it: {psk}",
             layout::territory_config_file().display()
         );
     }
