@@ -29,4 +29,4 @@ expression: terminal.backend()
 "└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
 "────────────────────────────────────────────────────────────────────────────────────────────────────"
 "Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
-"Enter: edit / begin; ↑↓: select; Ctrl+C: exit                                                       "
+"Ctrl+C Exit  Up/Down Field  Enter Edit / Start  Esc Menu                                            "
