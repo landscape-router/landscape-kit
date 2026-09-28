@@ -168,3 +168,12 @@
   psk。首次安装成功时输出恢复通道就绪提示，引导用 `lkit flare setup` 查看/设置 psk；
   daemon 先于 install 部署（委托模型），网络接管发生前 L2 恢复通道已在线。完整故障
   场景（接管失败→经 lflare 恢复）见 [FLR-21](../../../flare/scenarios.md)。
+
+## INS-19
+
+**端口被受管实例占用不阻断安装与切换，判定与 `lkit check` 一致**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`部分覆盖`
+- 证据：`service::process::is_managed` / `is_managed_relaxed` 单元测试；`check::ports` 受管/摘要漂移/外部分支单元测试（见 [ENV-04](security-and-environment.md#env-04)）。
+- 缺口：完整「安装或切换时旧受管实例仍在监听端口」的 CLI 端到端现场（含摘要漂移组合）尚无直接断言；`service::preflight::managed_occupancy_ok` 无独立单元测试，由 fixture E2E 与低频验收承担。
