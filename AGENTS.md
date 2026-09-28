@@ -23,7 +23,7 @@ cargo test -p lkit-cli <module-filter>
 
 - Run unit tests for the current change only (e.g. `cargo test -p lkit-cli <module-filter>`),
   never the full test suite after every code change.
-- The e2e fixture suite (`lkit-cli/tests/install_fixture_e2e.rs`, ~6 minutes) runs in CI
+- The e2e fixture suite (`lkit-cli/tests/install_fixture_e2e/`, ~6 minutes) runs in CI
   on every push and as a PR check via `.github/workflows/test-fixture-e2e.yml`, not locally before each
   commit. To run it manually: `cargo test -p lkit-cli --features test-support --test install_fixture_e2e`.
 - For the console TUI domain prefer the docker-isolated entry
@@ -41,8 +41,10 @@ scripts under `scripts/`, never in unit tests.
   (see `test_territory()` in `lkit-cli/src/deployment/layout.rs`). Never write to
   `/root/.lkit`, `/etc/systemd`, `/usr/local`, or any real host path in a unit test.
 - Never spawn real processes (`lkit daemon`, `landscape-webserver`, `systemctl`, ...), bind
-  ports, or drive real systemd/network state from unit tests. Use the fake managers and
-  fixtures the codebase already provides.
+  fixed or externally visible ports, or drive real systemd/network state from unit tests.
+  The only listener a unit test may open is an ephemeral loopback one (`127.0.0.1:0`), as the
+  existing health/download tests do. Use the fake managers and fixtures the codebase already
+  provides.
 - System-level scenarios that cannot be isolated (real daemon deployment, network takeover,
   service manager backends) belong in `lkit-cli/tests/install_fixture_e2e/`, which
   runs only in CI or containers: every test there starts with an `e2e_enabled()` gate and

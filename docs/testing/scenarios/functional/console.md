@@ -29,7 +29,7 @@
 
 - 测试层：PTY CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[控制台恢复契约](../../../interaction/console.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[控制台恢复契约](../../../interaction/console.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
 - 说明：真实 PTY 驱动裸 `lkit`，断言第一次 Esc 只进入等待状态、第二次 Esc 才显示确认层，
   Enter 确认后离开 alternate screen；Ctrl+C 仍立即返回 130，且两条路径均保持 ECHO 启用。
 
@@ -147,7 +147,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
 - 说明：已安装时 Update 菜单可选，未安装/非 root/状态不可读时置灰且导航跳过。面板顶部
   显示当前版本，字段为目标版本（默认 latest，`TargetVersion` 校验）、仓库来源（config.toml
   有效时首项为“当前来源”，损坏时显示错误且只留显式选项）与自定义 URL。激活“开始更新”后
@@ -163,7 +163,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend、PTY CLI fixture E2E
 - 状态：`部分覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e.rs)
+- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
 - 说明：安装根存在未完成网络接管（`awaiting_network_confirmation`、`finalizing`、
   `rolling_back`）时，快照进入 `AwaitingNetworkConfirmation`，TUI 启动即渲染阻塞屏而非
   菜单：显示事务 ID、阶段、管理地址（DHCP 租约时显示占位）、确认截止时间与回滚提示。

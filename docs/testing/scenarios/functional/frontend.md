@@ -6,7 +6,7 @@
 
 - 测试层：单元
 - 状态：`已覆盖`
-- 证据：`load_frontend`/`resolve_active_frontend`（lkit-cli/src/deployment/config.rs）、[配置文件](../deployment/config.md)、[前端开发规范](../../frontend/developer.md)
+- 证据：`load_frontend`/`resolve_active_frontend`（lkit-cli/src/deployment/config.rs）、[配置文件](../../../deployment/config.md)、[前端开发规范](../../../frontend/developer.md)
 - 说明：`[frontend] active` 与 `[[frontend.sources]]` 解析；active 指向不存在的 id
   或 sources 中 id 重复/位置非法时阻断并列出合法 id；缺失 `[frontend]` 段或
   `active = "official"` 等价官方前端。
@@ -17,7 +17,7 @@
 
 - 测试层：单元
 - 状态：`待补充`
-- 证据：[前端开发规范](../../frontend/developer.md)
+- 证据：[前端开发规范](../../../frontend/developer.md)
 - 说明：解析 `/releases/latest`，要求 `static.zip` + `SHASUM256sum.txt`，按清单
   校验大小与 SHA-256；draft/prerelease 或资产缺失时阻断。解析器硬编码
   `api.github.com` 且资产 URL 强制 `github.com:443`，无法在 e2e 用假服务器模拟；
@@ -29,7 +29,7 @@
 
 - 测试层：单元 + e2e fixture
 - 状态：`已覆盖`
-- 证据：[前端开发规范](../../frontend/developer.md)、`frontend_files_for`（lkit-cli/tests/install_fixture_e2e/support/repo.rs）
+- 证据：[前端开发规范](../../../frontend/developer.md)、`frontend_files_for`（lkit-cli/tests/install_fixture_e2e/support/repo.rs）
 - 说明：`repository.json` → `channels/stable.json` → `releases/<version>/manifest.json`
   （`webserver` 空对象、只声明 `static`）；按 `assets.static` 校验下载。
 
@@ -51,7 +51,7 @@
 
 - 测试层：单元 + e2e fixture
 - 状态：`已覆盖`
-- 证据：[备份与回滚](../../backup/lkb-and-rollback.md)、`backup_packs_live_static_and_restore_returns_snapshot`（lkit-cli/tests/install_fixture_e2e/frontend.rs）
+- 证据：[备份与回滚](../../../backup/lkb-and-rollback.md)、`backup_packs_live_static_and_restore_returns_snapshot`（lkit-cli/tests/install_fixture_e2e/frontend.rs）
 - 说明：备份从 `current/static/` 现场打包 `static.zip`（自校验）；目录含符号链接等
   非法条目时备份失败并指明条目；恢复不校验 static 身份，恢复内容即备份快照。
 
@@ -61,7 +61,7 @@
 
 - 测试层：单元 + e2e fixture
 - 状态：`已覆盖`
-- 证据：[`lkit repair`](../../commands/repair.md)、`repair_static_restores_custom_frontend_then_official_flag`（lkit-cli/tests/install_fixture_e2e/frontend.rs）
+- 证据：[`lkit repair`](../../../commands/repair.md)、`repair_static_restores_custom_frontend_then_official_flag`（lkit-cli/tests/install_fixture_e2e/frontend.rs）
 - 说明：激活源非官方时 `repair static` 重新拉取自定义前端；否则恢复官方页面并
   更新 state 身份、刷新版本目录 `static.zip`；`--official` 无条件恢复官方并提示
   下次 switch/update 会重新应用自定义；源不可达时交互询问回退官方。

@@ -17,7 +17,7 @@
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
-- 证据：[版本切换工作流](../../../../lkit-cli/src/workflows/install.rs)、[`lkit switch`](../../../commands/switch.md)
+- 证据：[版本切换工作流](../../../../lkit-cli/src/workflows/switch.rs)、[`lkit switch`](../../../commands/switch.md)
 - 说明：使用 `0.22.2 → 0.21.1` 断言返回参数用法错误，`current`、state 和既有事务不变，
   且不下载目标二进制或静态资产。
 
@@ -100,7 +100,7 @@
 
 - 测试层：Rust workflow、Docker E2E
 - 状态：`已覆盖`
-- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../../docker-lifecycle.md#场景)
+- 证据：[下载与发布目录](../../../repository.md#下载与发布目录)、[`switch_tests.rs` 复用用例](../../../../lkit-cli/src/workflows/install/switch_tests.rs)、[Docker E2E S14](../../docker-lifecycle.md#场景)
 - 说明：`releases/<目标版本>` 残留（如上次切换失败自动回滚后）时，切换不再重复下载：
   已有目录通过可信校验（真实目录非符号链接、后端二进制与 `static/index.html` 齐全、
   `static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致）后直接复用并跳过下载；

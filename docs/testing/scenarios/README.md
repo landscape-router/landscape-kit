@@ -22,12 +22,12 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
 | Ratatui 管理控制台 | `UI-01` 至 `UI-20` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-08` | [i18n.md](functional/i18n.md) |
-| 首次安装 | `INS-01` 至 `INS-18` | [install.md](functional/install.md) |
+| 首次安装 | `INS-01` 至 `INS-05`、`INS-07` 至 `INS-18` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-10` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-09` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-11` | [switch.md](functional/switch.md) |
 | 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-14` | [backup-and-restore.md](functional/backup-and-restore.md) |
-| 卸载 | `UNI-01` 至 `UNI-14` | [uninstall.md](functional/uninstall.md) |
+| 卸载 | `UNI-01` 至 `UNI-13` | [uninstall.md](functional/uninstall.md) |
 | 重新初始化 | `REI-01` 至 `REI-10` | [reinit.md](functional/reinit.md) |
 | 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
@@ -35,7 +35,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-03` | [security-and-environment.md](functional/security-and-environment.md) |
 | 网络接管 | `NET-01` 至 `NET-11` | [network-takeover.md](functional/network-takeover.md) |
 | 宿主网络适配 | `HNET-01` 至 `HNET-08` | [hostnet.md](functional/hostnet.md) |
-| 主机换源 | `MIR-01` 至 `MIR-07` | [mirror.md](functional/mirror.md) |
+| 主机换源 | `MIR-01` 至 `MIR-11` | [mirror.md](functional/mirror.md) |
 | 常用软件安装 | `SFT-01` 至 `SFT-06` | [software.md](functional/software.md) |
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-10` | [self.md](functional/self.md) |

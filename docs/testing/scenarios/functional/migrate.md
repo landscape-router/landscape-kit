@@ -10,7 +10,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（E2E + 单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`migrates_manual_deployment_through_full_cli`（lkit-cli/tests/install_fixture_e2e/migrate.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md)、`migrates_manual_deployment_through_full_cli`（lkit-cli/tests/install_fixture_e2e/migrate.rs）
 - 说明：fixture 实例运行中 → 迁移创建 `.lkb`（旧版本不升级）→ 停止旧 unit → 重建 release/data/current → 注册并启动新受管实例 → 完整健康检查后提交 complete 状态，旧目录不被修改。内联执行（`--test-runtime` 内联 runtime）。
 
 ## MIG-02
@@ -19,7 +19,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（E2E + 单元测试，fake systemctl）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`migrates_in_systemd_mode_with_legacy_unit_adoption`（lkit-cli/src/workflows/migrate/tests.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md)、`migrates_in_systemd_mode_with_legacy_unit_adoption`（lkit-cli/src/workflows/migrate/tests.rs）
 - 说明：按 `ExecStart` 的 config 目录参数（`--config-dir` 或短形式 `-c`）匹配发现旧 unit → stop/disable（fake systemctl 按预置 `main.pid` 真实结束旧实例进程）→ 原件位于 `/etc/systemd/system` 时移入事务目录 → 新受管 unit 的 MainPID 指向迁移后的 release 二进制。单元测试 fixture 与旧 unit 都用真实部署常用的短形式 `-c`/`-w` 书写。
 
 ## MIG-03
@@ -28,7 +28,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（E2E + 单元测试，fake systemctl）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md#失败与恢复)、`migrate_rolls_back_and_restores_legacy_unit_on_activation_failure`（lkit-cli/tests/install_fixture_e2e/migrate.rs）、`systemd_mode_rolls_back_and_restores_legacy_unit_on_activation_failure`（lkit-cli/src/workflows/migrate/tests.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md#失败与恢复)、`migrate_rolls_back_and_restores_legacy_unit_on_activation_failure`（lkit-cli/tests/install_fixture_e2e/migrate.rs）、`systemd_mode_rolls_back_and_restores_legacy_unit_on_activation_failure`（lkit-cli/src/workflows/migrate/tests.rs）
 - 说明：新实例启动即退出 → 自动回滚：注销新 unit、旧 unit 文件放回原位、清理新根、事务 `rolled_back`，CLI 退出码 `5`。
 
 ## MIG-04
@@ -46,7 +46,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`pack_static_zip`（lkit-cli/src/release/repository/archive.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md)、`pack_static_zip`（lkit-cli/src/release/repository/archive.rs）
 - 缺口：打包自校验失败（static 目录含符号链接等非法条目）在 migrate 路径无直接
   断言（备份通用路径 `backup/lkb/write.rs` 的 `rejects_symlinks_in_source_tree` 覆盖）。
 - 说明：迁移备份的 `static.zip` 由 `create_backup` 从旧部署的 `static/` 现场打包
@@ -58,7 +58,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（单元测试 + 真实主机验证）
 - 状态：`部分覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`judges_external_landscape_without_config_args`（lkit-cli/src/service/process.rs）、`extracts_unit_name_from_cgroup`（lkit-cli/src/service/systemd.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md)、`judges_external_landscape_without_config_args`（lkit-cli/src/service/process.rs）、`extracts_unit_name_from_cgroup`（lkit-cli/src/service/systemd.rs）
 - 缺口：cgroup 反查完整链路只在真实 systemd 主机上可触发（单元测试的 fixture
   进程 cgroup 不含 `.service`），需在真实部署上验证；
 - 说明：旧实例 cmdline 完全不带 config 参数（如 `ExecStart=/root/landscape-webserver`）
@@ -72,7 +72,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`preempts_a_plain_file_legacy_unit_at_the_managed_path`、
+- 证据：[migrate 命令](../../../commands/migrate.md)、`preempts_a_plain_file_legacy_unit_at_the_managed_path`、
   `migrates_a_plain_file_legacy_unit_at_the_managed_path`（lkit-cli/src/workflows/migrate/tests.rs）
 - 说明：旧安装器把 unit 以普通文件直接写入受管路径 `/etc/systemd/system/landscape-router.service`
   时，systemd 注册的所有权保护会拒绝覆盖；实例识别已确认该 unit 属于旧部署
@@ -86,7 +86,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（E2E + 单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`switch_cancellation_rolls_back_with_the_cancelled_outcome`
+- 证据：[migrate 命令](../../../commands/migrate.md)、`switch_cancellation_rolls_back_with_the_cancelled_outcome`
   （lkit-cli/src/workflows/migrate/tests.rs）、`cancelling_the_delegated_switch_restores_the_old_instance`
   （lkit-cli/tests/install_fixture_e2e/migrate.rs）
 - 说明：迁移切换完全由事务保护，允许取消。委托路径下 Ctrl+C → 前台写 cancel
@@ -102,7 +102,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`classifies_missing_export_api_as_unsupported`（lkit-cli/src/backup/export.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md)、`classifies_missing_export_api_as_unsupported`（lkit-cli/src/backup/export.rs）
 - 说明：`GET /api/v1/system/config/export` 返回 `404` 时迁移报 `ExportUnsupported`
   （部署的 Landscape 不提供 config export API，需先升级旧部署），与 `500` 等
   服务端故障（`ExportFailed`）区分；检查发生在创建事务之前，失败不留任何现场。
@@ -113,7 +113,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 - 测试层：核心功能（E2E + 单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../commands/migrate.md)、`prepared_migration_resumes_the_switch_phase_in_the_worker`、`resume_rejects_an_unknown_prepared_transaction`（lkit-cli/src/workflows/migrate/tests.rs）、`migrate_delegates_follows_runtime_and_euid`（lkit-cli/src/daemon_worker/mod.rs）、`migrates_manual_deployment_through_daemon_delegation`（lkit-cli/tests/install_fixture_e2e/migrate.rs）
+- 证据：[migrate 命令](../../../commands/migrate.md)、`prepared_migration_resumes_the_switch_phase_in_the_worker`、`resume_rejects_an_unknown_prepared_transaction`（lkit-cli/src/workflows/migrate/tests.rs）、`migrate_delegates_follows_runtime_and_euid`（lkit-cli/src/daemon_worker/mod.rs）、`migrates_manual_deployment_through_daemon_delegation`（lkit-cli/tests/install_fixture_e2e/migrate.rs）
 - 说明：root 下 `lkit migrate` 在前台进程直接执行前置检查（源目录、实例识别、
   export API 检查、迁移 `.lkb`、计划确认），事务标记 `prepared` 后以内部参数
   `--resume <事务 id>` 委托 daemon worker 只执行切换阶段；worker 要求事务 id

@@ -6,7 +6,7 @@
 
 - 测试层：Fixture E2E（`install_fixture_e2e::daemon`）
 - 状态：`已覆盖`
-- 证据：[事务与中断恢复](../../deployment/transactions-and-recovery.md#daemon-自动恢复)
+- 证据：[事务与中断恢复](../../../deployment/transactions-and-recovery.md#daemon-自动恢复)
 - 说明：构造 `activating` 阶段的 install 事务现场，启动 daemon 后断言事务标记
   `failed`、目标 release/current/初始化文件被清理；恢复后 daemon 继续运行，
   SIGTERM 时清理 pidfile 干净退出。
@@ -47,7 +47,7 @@
 
 - 测试层：Rust 单元测试（`network::ifup`，临时 sysfs 目录 + 假 `ip` 命令）
 - 状态：`已覆盖（单元）`
-- 证据：[flare 协议](../../flare/protocol.md#部署形态)、`lkit-cli/src/network/ifup.rs`
+- 证据：[flare 协议](../../../flare/protocol.md#部署形态)、`lkit-cli/src/network/ifup.rs`
 - 缺口：真实网卡上的行为（对 DOWN 的物理网卡执行 `ip link set dev <name> up`）
   未纳入 fixture E2E
 - 说明：网卡 DOWN 时 flare 服务端即使运行也无法收发帧，恢复通道失效。daemon
