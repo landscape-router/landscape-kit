@@ -101,6 +101,9 @@ import zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as archive:
     archive.writestr("static/index.html", "<h1>nspawn fixture</h1>")
 PY
+# live 的 static/ 必须与真实安装一致:保护备份从 current/static 现场打包
+# static.zip 并自校验,顶层缺 index.html 会让备份失败(内容与 static.zip 相同)。
+printf '<h1>nspawn fixture</h1>' >"$release/static/index.html"
 cat >"$release/static/lkit-fixture.json" <<'JSON'
 {
   "schema_version": 1,
@@ -371,6 +374,8 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
     archive.writestr("static/index.html", "<h1>nspawn fixture</h1>")
 PY
   ln -sfn releases/1.0.0 "$install_root/current"
+  # 与初始拼装一致:live static/ 顶层要有 index.html,否则保护备份打包失败。
+  printf '<h1>nspawn fixture</h1>' >"$install_root/releases/1.0.0/static/index.html"
   cat >"$install_root/releases/1.0.0/static/lkit-fixture.json" <<'JSON'
 {
   "schema_version": 1,
