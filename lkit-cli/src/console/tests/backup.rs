@@ -131,10 +131,15 @@ fn backup_menu_without_installation_shows_requirements() {
 fn backup_create_runs_in_console_with_progress_dialog() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = backup_ready_app();
-    app.install.install_dir = std::env::temp_dir()
-        .join(format!("lkit-console-create-{}", std::process::id()))
-        .display()
-        .to_string();
+    let dir = std::env::temp_dir().join(format!("lkit-console-create-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // 钉住自己的 territory:创建 worker 的后台线程会从全局 territory 解析
+    // 安装状态并抢 install.lock。不钉住时它读到的是其他并行测试的 territory
+    // (甚至真实 /root/.lkit),与 delete 测试抢同一把锁造成偶发失败,也可能
+    // 误碰宿主机。钉住后 discover 在本目录找不到状态,worker 走快速失败路径,
+    // 测试只固化「进度弹窗随 create 状态渲染」本身。
+    let _territory = crate::deployment::layout::test_territory(&dir);
+    app.install.install_dir = dir.display().to_string();
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.backup.editing);

@@ -480,8 +480,24 @@ fn snapshot_base_packages_dialog_en() {
     let _territory = DaemonTerritory::new("base-dialog", false);
     assert_screen_snapshot("base-packages-dialog-en", 100, 28, |app| {
         *app = software_ready_app(Arc::new(MockSoftwareOps::manual(true)));
+        // 手工构造全部 5 个条目,不探测宿主 PATH:ip 已装、其余缺失,缺失项
+        // 勾选态取 `selected_by_default`(iw/hostapd 不勾),快照跨机器稳定。
+        let dialog = BasePackageDialog {
+            entries: crate::software::base::BasePackage::all()
+                .into_iter()
+                .map(|package| {
+                    let installed = package == crate::software::base::BasePackage::Iproute2;
+                    crate::software::base::BasePackageEntry {
+                        selected: !installed && package.selected_by_default(),
+                        package,
+                        installed,
+                    }
+                })
+                .collect(),
+            cursor: 0,
+        };
         app.software.base_packages = BasePackagesState::Choosing {
-            dialog: BasePackageDialog::open(),
+            dialog,
             previous: Box::new(BasePackagesState::NotChosen),
         };
     });
