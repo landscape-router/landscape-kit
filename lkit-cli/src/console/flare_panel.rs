@@ -103,30 +103,30 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         ),
         Line::raw(""),
         Line::from(vec![
-            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_DEVICES_LABEL), 17)
+            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_DEVICES_LABEL), 19)
                 .into(),
             devices.clone().into(),
         ]),
         Line::from(vec![
-            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_ETHERTYPE_LABEL), 17)
+            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_ETHERTYPE_LABEL), 19)
                 .into(),
             format!("0x{ethertype:04x}").into(),
         ]),
         Line::from(vec![
             super::render::display_pad(
                 &crate::tr!(crate::keys::CONSOLE_FLARE_FORWARD_PORTS_LABEL),
-                17,
+                19,
             )
             .into(),
             forward_ports.clone().into(),
         ]),
         Line::from(vec![
-            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_TOKEN_LABEL), 17)
+            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_TOKEN_LABEL), 19)
                 .into(),
             token.into(),
         ]),
         Line::from(vec![
-            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL), 17)
+            super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL), 19)
                 .into(),
             psk_display.into(),
             cursor.into(),

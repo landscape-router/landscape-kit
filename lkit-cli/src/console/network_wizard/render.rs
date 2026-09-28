@@ -282,7 +282,7 @@ fn wizard_field_row(focused: bool, editing: bool, label: &str, value: &str) -> L
     let marker = if focused && editing { "_" } else { "" };
     Line::from(vec![
         Span::styled(if focused { "> " } else { "  " }, style),
-        Span::styled(display_pad(label, 20), style),
+        Span::styled(display_pad(label, 28), style),
         Span::styled(format!("{value}{marker}"), style),
     ])
 }

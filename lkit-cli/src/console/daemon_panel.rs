@@ -318,7 +318,7 @@ fn psk_edit_row(app: &ConsoleApp, field: PskDialogField, masked: bool) -> Line<'
     Line::from(vec![
         Span::styled(if active { "> " } else { "  " }, selected_style),
         Span::styled(
-            super::render::display_pad(&label, 17),
+            super::render::display_pad(&label, 19),
             if active {
                 selected_style
             } else {
@@ -424,7 +424,7 @@ fn show_psk_row(app: &ConsoleApp, field: PskDialogField, value: String) -> Line<
     Line::from(vec![
         Span::styled(if active { "> " } else { "  " }, selected_style),
         Span::styled(
-            super::render::display_pad(&label, 17),
+            super::render::display_pad(&label, 19),
             if active {
                 selected_style
             } else {
