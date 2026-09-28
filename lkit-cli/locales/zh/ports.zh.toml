@@ -12,3 +12,5 @@ ports.another_service_listening = "端口被其他服务监听，Landscape 无�
 ports.stop_service_or_move_port = "停止占用该端口的服务，或为其更换端口"
 ports.listener_used_by = "%{protocol} %{address}:%{port} 被 %{comm}（pid=%{pid}）占用"
 ports.listener_owner_unreadable = "%{protocol} %{address}:%{port} 被监听，但监听者信息不可读取"
+ports.port_held_by_landscape = "%{port} 由 Landscape 自身监听"
+ports.self_listening_expected = "端口由已部署运行的 Landscape 实例监听，属正常状态"

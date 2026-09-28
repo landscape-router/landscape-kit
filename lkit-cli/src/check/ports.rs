@@ -8,6 +8,7 @@ struct Listener {
     address: String,
     port: u16,
     process: Option<(String, String)>,
+    is_landscape: bool,
 }
 
 pub fn run() -> Vec<CheckResult> {
@@ -58,11 +59,16 @@ fn port_check(
             }
         };
         for (address, inode) in parse_proc_net(&raw, port, is_tcp) {
+            let process = find_process(inode);
+            let is_landscape = process
+                .as_ref()
+                .is_some_and(|(comm, pid)| is_landscape_process(pid, comm));
             listeners.push(Listener {
                 protocol,
                 address,
                 port,
-                process: find_process(inode),
+                process,
+                is_landscape,
             });
         }
     }
@@ -123,6 +129,19 @@ fn build_port_result(
             crate::tr!(crate::keys::PORTS_PORT_FREE),
         );
     }
+    // 已部署并运行的 Landscape 实例会长期监听 53/6300/6443；监听者全部为
+    // Landscape 自身进程时属正常状态，不是部署冲突（如为混合占用仍按冲突报告）。
+    if listeners.iter().all(|listener| listener.is_landscape) {
+        result = result.set(
+            Status::Pass,
+            crate::tr!(crate::keys::PORTS_PORT_HELD_BY_LANDSCAPE, port = port),
+            crate::tr!(crate::keys::PORTS_SELF_LISTENING_EXPECTED),
+        );
+        for listener in &listeners {
+            result = result.detail(listener_detail(listener));
+        }
+        return result;
+    }
     result = result.set(
         Status::Error,
         crate::tr!(crate::keys::PORTS_PORT_OCCUPIED, port = port),
@@ -130,28 +149,28 @@ fn build_port_result(
     );
     result.suggestion = crate::tr!(crate::keys::PORTS_STOP_SERVICE_OR_MOVE_PORT).to_string();
     for listener in &listeners {
-        match &listener.process {
-            Some((comm, pid)) => {
-                result = result.detail(crate::tr!(
-                    crate::keys::PORTS_LISTENER_USED_BY,
-                    protocol = listener.protocol,
-                    address = listener.address,
-                    port = listener.port,
-                    comm = comm,
-                    pid = pid
-                ))
-            }
-            None => {
-                result = result.detail(crate::tr!(
-                    crate::keys::PORTS_LISTENER_OWNER_UNREADABLE,
-                    protocol = listener.protocol,
-                    address = listener.address,
-                    port = listener.port
-                ))
-            }
-        }
+        result = result.detail(listener_detail(listener));
     }
     result
+}
+
+fn listener_detail(listener: &Listener) -> String {
+    match &listener.process {
+        Some((comm, pid)) => crate::tr!(
+            crate::keys::PORTS_LISTENER_USED_BY,
+            protocol = listener.protocol,
+            address = listener.address,
+            port = listener.port,
+            comm = comm,
+            pid = pid
+        ),
+        None => crate::tr!(
+            crate::keys::PORTS_LISTENER_OWNER_UNREADABLE,
+            protocol = listener.protocol,
+            address = listener.address,
+            port = listener.port
+        ),
+    }
 }
 
 fn find_process(inode: u64) -> Option<(String, String)> {
@@ -187,6 +206,24 @@ fn find_process(inode: u64) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// 监听者是否为运行中的 Landscape 实例自身（`landscape-webserver`）。
+/// 已部署运行的主机上，53/6300/6443 由该进程长期监听，这种占用不属于部署冲突。
+fn is_landscape_process(pid: &str, comm: &str) -> bool {
+    if std::fs::read_link(format!("/proc/{pid}/exe"))
+        .is_ok_and(|exe| exe.to_string_lossy().ends_with("/landscape-webserver"))
+    {
+        return true;
+    }
+    // exe 不可读时（例如权限受限）退回进程名判断。
+    is_landscape_comm(comm)
+}
+
+/// `/proc/<pid>/comm` 最多 15 个字符（`TASK_COMM_LEN` - 1），
+/// `landscape-webserver` 在其中被截断为 `landscape-webse`。
+fn is_landscape_comm(comm: &str) -> bool {
+    comm.starts_with("landscape-webse")
 }
 
 #[cfg(test)]
@@ -255,6 +292,7 @@ mod tests {
             address: "00000000".to_string(),
             port: 53,
             process: Some(("named".to_string(), "123".to_string())),
+            is_landscape: false,
         }];
         let result = build_port_result("port.test", "test port", 53, listeners);
         assert_eq!(result.status, Status::Error);
@@ -274,6 +312,7 @@ mod tests {
             address: "00000000".to_string(),
             port: 53,
             process: None,
+            is_landscape: false,
         }];
         let result = build_port_result("port.test", "test port", 53, listeners);
         assert_eq!(result.status, Status::Error);
@@ -283,5 +322,55 @@ mod tests {
                 .iter()
                 .any(|d| d.contains("owner information is unreadable"))
         );
+    }
+
+    #[test]
+    fn landscape_self_listeners_report_pass() {
+        let listeners = vec![Listener {
+            protocol: "tcp",
+            address: "00000000".to_string(),
+            port: 6300,
+            process: Some(("landscape-webse".to_string(), "378".to_string())),
+            is_landscape: true,
+        }];
+        let result = build_port_result("port.test", "test port", 6300, listeners);
+        assert_eq!(result.status, Status::Pass);
+        assert_eq!(result.value, "6300 held by Landscape itself");
+        assert!(
+            result
+                .details
+                .iter()
+                .any(|d| d.contains("landscape-webse") && d.contains("378"))
+        );
+    }
+
+    #[test]
+    fn mixed_self_and_foreign_listeners_still_report_error() {
+        let listeners = vec![
+            Listener {
+                protocol: "tcp",
+                address: "00000000".to_string(),
+                port: 53,
+                process: Some(("landscape-webse".to_string(), "378".to_string())),
+                is_landscape: true,
+            },
+            Listener {
+                protocol: "udp",
+                address: "00000000".to_string(),
+                port: 53,
+                process: Some(("named".to_string(), "123".to_string())),
+                is_landscape: false,
+            },
+        ];
+        let result = build_port_result("port.test", "test port", 53, listeners);
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.value, "53 occupied");
+    }
+
+    #[test]
+    fn landscape_comm_prefix_matches_truncated_name() {
+        assert!(is_landscape_comm("landscape-webse"));
+        assert!(!is_landscape_comm("named"));
+        assert!(!is_landscape_comm("landscape-flare"));
     }
 }
