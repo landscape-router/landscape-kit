@@ -123,7 +123,7 @@ fn resize_roundtrips_through_the_too_small_screen() {
         .unwrap();
     terminal.send(Key::Esc).unwrap();
     terminal
-        .wait_until(|screen| screen.contains("Exit Landscape Kit?"))
+        .wait_until(|screen| screen.contains("Confirm exit"))
         .unwrap();
     terminal.send(Key::Enter).unwrap();
     assert!(terminal.wait_exit().unwrap().success());
@@ -223,7 +223,7 @@ fn walks_all_panels_and_dumps_real_screens() {
         .unwrap();
     terminal.send(Key::Esc).unwrap();
     terminal
-        .wait_until(|screen| screen.contains("Exit Landscape Kit?"))
+        .wait_until(|screen| screen.contains("Confirm exit"))
         .unwrap();
     terminal.send(Key::Enter).unwrap();
     assert!(terminal.wait_exit().unwrap().success());
