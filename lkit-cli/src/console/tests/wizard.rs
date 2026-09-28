@@ -275,8 +275,8 @@ fn wizard_cancel_confirmation_fits_on_narrow_terminals() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(
-        content.contains("Cancel network wizard?") && content.contains("Esc continue wizard"),
-        "the cancel dialog must show the question and the full hint line without truncation"
+        content.contains("Cancel wizard") && content.contains("Esc continue wizard"),
+        "the cancel dialog must show its title and the full hint line without truncation"
     );
 }
 

@@ -230,7 +230,7 @@ fn language_status(language: Language, switch_available: bool, editing: bool) ->
 fn render_exit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 48.min(screen.width.saturating_sub(2));
-    let height = 6.min(screen.height.saturating_sub(2));
+    let height = 4.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -239,17 +239,9 @@ fn render_exit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     );
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::raw(""),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::raw(""),
-            dialog_hint_line(app),
-        ])
-        .alignment(Alignment::Center)
-        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CONFIRM_EXIT))),
+        Paragraph::new(vec![Line::raw(""), dialog_hint_line(app)])
+            .alignment(Alignment::Center)
+            .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CONFIRM_EXIT))),
         area,
     );
 }

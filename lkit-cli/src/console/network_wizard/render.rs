@@ -326,7 +326,7 @@ fn wizard_hints(wizard: &NetworkWizard) -> String {
 fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
     let screen = frame.area();
     let width = 52.min(screen.width.saturating_sub(2));
-    let height = 7.min(screen.height.saturating_sub(2));
+    let height = 4.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -336,11 +336,6 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, wizard: &NetworkWiza
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::raw(""),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_QUESTION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
             Line::raw(""),
             // 向导整屏替换主界面,提示来源是向导自身底栏,与它共用同一结果。
             Line::styled(wizard_hints(wizard), Style::default().fg(Color::DarkGray)),

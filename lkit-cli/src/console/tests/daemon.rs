@@ -115,7 +115,7 @@ fn overview_enter_opens_confirm_and_esc_cancels() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
-    assert!(content.contains("Deploy the lkit daemon?"));
+    assert!(content.contains("Deploy the lkit daemon"));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
@@ -321,7 +321,7 @@ fn deploy_confirm_dialog_renders_on_the_install_menu_from_the_preflight_path() {
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
-    assert!(content.contains("Deploy the lkit daemon?"));
+    assert!(content.contains("Deploy the lkit daemon"));
     assert!(content.contains("Confirm psk"));
     assert!(content.contains("[ Start deployment ]"));
     drop(_guard);

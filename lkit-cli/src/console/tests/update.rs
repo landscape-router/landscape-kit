@@ -133,7 +133,7 @@ fn update_confirmation_builds_console_confirmed_command() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(content.contains("Confirm update"));
-    assert!(content.contains("Update Landscape?"));
+    assert!(content.contains("Confirm update"));
     assert!(content.contains("1.2.3 -> target 1.2.4"));
     assert!(content.contains("Ctrl+C Exit  Enter Update  Esc Cancel"));
 

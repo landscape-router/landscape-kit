@@ -281,7 +281,7 @@ fn software_cancel_layer_renders() {
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
-    assert!(content.contains("Cancel the installation?"));
+    assert!(content.contains("Cancel installation"));
     assert!(content.contains("Ctrl+C Exit  Enter Cancel install  Esc Keep installing"));
 }
 

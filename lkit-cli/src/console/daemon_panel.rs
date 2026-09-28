@@ -240,7 +240,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     }
     let screen = frame.area();
     let width = 72.min(screen.width.saturating_sub(2));
-    let height = 16.min(screen.height.saturating_sub(2));
+    let height = 14.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -260,11 +260,6 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     );
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_QUESTION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::raw(""),
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_PURPOSE),
                 Style::default().fg(Color::DarkGray),

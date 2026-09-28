@@ -686,7 +686,7 @@ pub(crate) fn render_software(frame: &mut Frame<'_>, app: &mut ConsoleApp, area:
 pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -699,11 +699,8 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
     };
     let lines = vec![
         Line::styled(
-            crate::tr!(
-                crate::keys::CONSOLE_SOFTWARE_CONFIRM_QUESTION,
-                software = confirm.software.label()
-            ),
-            Style::default().add_modifier(Modifier::BOLD),
+            crate::tr!(crate::keys::CONSOLE_SOFTWARE_CONFIRM_LEAD),
+            Style::default().fg(Color::DarkGray),
         ),
         Line::raw(""),
         Line::from(vec![
@@ -898,7 +895,7 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
     }
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -933,7 +930,7 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
 fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 8.min(screen.height.saturating_sub(2));
+    let height = 6.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -943,11 +940,6 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &Console
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_CANCEL_QUESTION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::raw(""),
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_BASE_PACKAGES_CANCEL_NOTE),
                 Style::default().fg(Color::DarkGray),
@@ -968,7 +960,7 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &Console
 fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -978,11 +970,6 @@ fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) 
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_QUESTION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::raw(""),
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_NOTE),
                 Style::default().fg(Color::DarkGray),

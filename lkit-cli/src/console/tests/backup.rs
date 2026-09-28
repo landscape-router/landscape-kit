@@ -191,7 +191,7 @@ fn backup_restore_flow_builds_restore_command() {
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
-    assert!(content.contains("Restore this backup?"));
+    assert!(content.contains("Confirm restore"));
     assert!(content.contains("version 1.2.3"));
     assert!(content.contains("Ctrl+C Exit  Enter Restore  Esc Cancel"));
     assert!(
@@ -315,7 +315,7 @@ fn backup_delete_confirms_and_removes_the_backup() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(content.contains("Confirm delete"));
-    assert!(content.contains("Delete this backup?"));
+    assert!(content.contains("Confirm delete"));
     assert!(content.contains("version 1.2.3"));
     assert!(content.contains("Ctrl+C Exit  Enter Delete  Esc Cancel"));
 

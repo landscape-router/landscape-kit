@@ -685,7 +685,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -695,11 +695,6 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_QUESTION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::raw(""),
             Line::raw(crate::tr!(
                 crate::keys::CONSOLE_UPDATE_CONFIRM_PLAN,
                 current = resolved.current,
@@ -805,7 +800,7 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
 pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -813,13 +808,7 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
         height,
     );
     frame.render_widget(Clear, area);
-    let mut lines = vec![
-        Line::styled(
-            crate::tr!(crate::keys::CONSOLE_UNINSTALL_CONFIRM_QUESTION),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Line::raw(""),
-    ];
+    let mut lines = Vec::new();
     if let Snapshot::Installed { version, .. } = &app.snapshot {
         lines.push(Line::raw(crate::tr!(
             crate::keys::CONSOLE_UNINSTALL_CONFIRM_PLAN,

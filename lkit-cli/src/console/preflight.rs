@@ -173,13 +173,7 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
             Line::raw(error.clone()),
         ],
         PreflightState::Complete(report) => {
-            let mut lines = vec![
-                Line::styled(
-                    crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS_BLOCK_INSTALLATION),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Line::raw(""),
-            ];
+            let mut lines = Vec::new();
             let items = blocking_items(report);
             if items.is_empty() {
                 lines.push(Line::raw(crate::tr!(

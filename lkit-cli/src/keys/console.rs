@@ -42,8 +42,6 @@ pub(crate) const CONSOLE_ATTENTION_REQUIRED_BADGE: &str = "console.attention_req
 pub(crate) const CONSOLE_TERMINAL_TOO_SMALL: &str = "console.terminal_too_small";
 pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_COULD_NOT_COMPLETE: &str =
     "console.environment_checks_could_not_complete";
-pub(crate) const CONSOLE_ENVIRONMENT_CHECKS_BLOCK_INSTALLATION: &str =
-    "console.environment_checks_block_installation";
 pub(crate) const CONSOLE_CHECKS_DID_NOT_PASS: &str = "console.checks_did_not_pass";
 pub(crate) const CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R: &str =
     "console.dialog_enter_details_esc_close_r";
@@ -86,8 +84,6 @@ pub(crate) const CONSOLE_WIZARD_HINT_CONFIG: &str = "console.wizard_hint_config"
 pub(crate) const CONSOLE_WIZARD_HINT_LAN: &str = "console.wizard_hint_lan";
 pub(crate) const CONSOLE_WIZARD_HINT_EDIT: &str = "console.wizard_hint_edit";
 pub(crate) const CONSOLE_WIZARD_HINT_CONFIRM: &str = "console.wizard_hint_confirm";
-pub(crate) const CONSOLE_CANCEL_NETWORK_WIZARD_QUESTION: &str =
-    "console.cancel_network_wizard_question";
 pub(crate) const CONSOLE_CANCEL_WIZARD: &str = "console.cancel_wizard";
 pub(crate) const CONSOLE_READY: &str = "console.ready";
 pub(crate) const CONSOLE_LANGUAGE_SWITCH_HINT: &str = "console.language_switch_hint";
@@ -95,7 +91,6 @@ pub(crate) const CONSOLE_LANGUAGE_CURRENT: &str = "console.language_current";
 pub(crate) const CONSOLE_LANGUAGE_PAUSED: &str = "console.language_paused";
 #[cfg(not(test))]
 pub(crate) const CONSOLE_LANGUAGE_SAVE_FAILED: &str = "console.language_save_failed";
-pub(crate) const CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION: &str = "console.exit_landscape_kit_question";
 pub(crate) const CONSOLE_CONFIRM_EXIT: &str = "console.confirm_exit";
 pub(crate) const CONSOLE_EXIT_ARMED_NOTICE: &str = "console.exit_armed_notice";
 pub(crate) const CONSOLE_NAVIGATION: &str = "console.navigation";
@@ -138,7 +133,6 @@ pub(crate) const CONSOLE_OVERVIEW_SHOW_PSK: &str = "console.overview_show_psk";
 pub(crate) const CONSOLE_OVERVIEW_LKIT_PSK_HELP: &str = "console.overview_lkit_psk_help";
 pub(crate) const CONSOLE_OVERVIEW_HINT_DEPLOY: &str = "console.overview_hint_deploy";
 pub(crate) const CONSOLE_DEPLOY_DAEMON_TITLE: &str = "console.deploy_daemon_title";
-pub(crate) const CONSOLE_DEPLOY_DAEMON_QUESTION: &str = "console.deploy_daemon_question";
 pub(crate) const CONSOLE_DEPLOY_FLARE_PURPOSE: &str = "console.deploy_flare_purpose";
 pub(crate) const CONSOLE_DEPLOY_FLARE_EMPTY: &str = "console.deploy_flare_empty";
 pub(crate) const CONSOLE_DEPLOY_PSK_MISMATCH: &str = "console.deploy_psk_mismatch";
@@ -203,9 +197,7 @@ pub(crate) const CONSOLE_BACKUP_VERIFIED: &str = "console.backup_verified";
 pub(crate) const CONSOLE_BACKUP_VERIFY_WORKER_STOPPED: &str =
     "console.backup_verify_worker_stopped";
 pub(crate) const CONSOLE_BACKUP_RESTORE_TITLE: &str = "console.backup_restore_title";
-pub(crate) const CONSOLE_BACKUP_RESTORE_QUESTION: &str = "console.backup_restore_question";
 pub(crate) const CONSOLE_BACKUP_CORRUPT_DIALOG: &str = "console.backup_corrupt_dialog";
-pub(crate) const CONSOLE_BACKUP_CORRUPT_TITLE: &str = "console.backup_corrupt_title";
 pub(crate) const CONSOLE_BACKUP_CORRUPT_QUESTION: &str = "console.backup_corrupt_question";
 pub(crate) const CONSOLE_BACKUP_RESTORE_PLAN: &str = "console.backup_restore_plan";
 pub(crate) const CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE: &str =
@@ -228,7 +220,6 @@ pub(crate) const CONSOLE_BACKUP_CREATE_WORKER_STOPPED: &str =
     "console.backup_create_worker_stopped";
 pub(crate) const CONSOLE_BACKUP_HINT_CREATE_RUNNING: &str = "console.backup_hint_create_running";
 pub(crate) const CONSOLE_BACKUP_DELETE_TITLE: &str = "console.backup_delete_title";
-pub(crate) const CONSOLE_BACKUP_DELETE_QUESTION: &str = "console.backup_delete_question";
 pub(crate) const CONSOLE_BACKUP_DELETE_PLAN: &str = "console.backup_delete_plan";
 pub(crate) const CONSOLE_BACKUP_DELETED: &str = "console.backup_deleted";
 pub(crate) const CONSOLE_BACKUP_HINT_DELETE_CONFIRM: &str = "console.backup_hint_delete_confirm";
@@ -245,7 +236,6 @@ pub(crate) const CONSOLE_UPDATE_RESOLVE_WORKER_STOPPED: &str =
 pub(crate) const CONSOLE_UPDATE_REPOSITORY_UNAVAILABLE: &str =
     "console.update_repository_unavailable";
 pub(crate) const CONSOLE_UPDATE_CONFIRM_TITLE: &str = "console.update_confirm_title";
-pub(crate) const CONSOLE_UPDATE_CONFIRM_QUESTION: &str = "console.update_confirm_question";
 pub(crate) const CONSOLE_UPDATE_CONFIRM_PLAN: &str = "console.update_confirm_plan";
 pub(crate) const CONSOLE_UPDATE_CONFIRM_NOTE: &str = "console.update_confirm_note";
 pub(crate) const CONSOLE_UPDATE_HINT_PANEL: &str = "console.update_hint_panel";
@@ -261,7 +251,6 @@ pub(crate) const CONSOLE_UNINSTALL_RETAINED: &str = "console.uninstall_retained"
 pub(crate) const CONSOLE_UNINSTALL_HOST_NETWORK_WARNING: &str =
     "console.uninstall_host_network_warning";
 pub(crate) const CONSOLE_UNINSTALL_CONFIRM_TITLE: &str = "console.uninstall_confirm_title";
-pub(crate) const CONSOLE_UNINSTALL_CONFIRM_QUESTION: &str = "console.uninstall_confirm_question";
 pub(crate) const CONSOLE_UNINSTALL_CONFIRM_PLAN: &str = "console.uninstall_confirm_plan";
 pub(crate) const CONSOLE_UNINSTALL_HINT_PANEL: &str = "console.uninstall_hint_panel";
 pub(crate) const CONSOLE_UNINSTALL_HINT_CONFIRM: &str = "console.uninstall_hint_confirm";
@@ -289,7 +278,7 @@ pub(crate) const CONSOLE_SOFTWARE_DETECT_FAILED: &str = "console.software_detect
 pub(crate) const CONSOLE_SOFTWARE_HOST: &str = "console.software_host";
 pub(crate) const CONSOLE_SOFTWARE_SOURCE_ROW: &str = "console.software_source_row";
 pub(crate) const CONSOLE_SOFTWARE_CONFIRM_TITLE: &str = "console.software_confirm_title";
-pub(crate) const CONSOLE_SOFTWARE_CONFIRM_QUESTION: &str = "console.software_confirm_question";
+pub(crate) const CONSOLE_SOFTWARE_CONFIRM_LEAD: &str = "console.software_confirm_lead";
 pub(crate) const CONSOLE_SOFTWARE_INSTALLING: &str = "console.software_installing";
 pub(crate) const CONSOLE_SOFTWARE_PHASE_PREPARING: &str = "console.software_phase_preparing";
 pub(crate) const CONSOLE_SOFTWARE_PHASE_PACKAGES: &str = "console.software_phase_packages";
@@ -298,7 +287,6 @@ pub(crate) const CONSOLE_SOFTWARE_INSTALLED: &str = "console.software_installed"
 pub(crate) const CONSOLE_SOFTWARE_WORKER_STOPPED: &str = "console.software_worker_stopped";
 pub(crate) const CONSOLE_SOFTWARE_CANCEL_HINT: &str = "console.software_cancel_hint";
 pub(crate) const CONSOLE_SOFTWARE_CANCEL_TITLE: &str = "console.software_cancel_title";
-pub(crate) const CONSOLE_SOFTWARE_CANCEL_QUESTION: &str = "console.software_cancel_question";
 pub(crate) const CONSOLE_SOFTWARE_CANCEL_NOTE: &str = "console.software_cancel_note";
 pub(crate) const CONSOLE_SOFTWARE_HINT_PANEL: &str = "console.software_hint_panel";
 pub(crate) const CONSOLE_SOFTWARE_HINT_CONFIRM: &str = "console.software_hint_confirm";
@@ -319,8 +307,6 @@ pub(crate) const CONSOLE_BASE_PACKAGES_NONE: &str = "console.base_packages_none"
 pub(crate) const CONSOLE_BASE_PACKAGES_WORKER_STOPPED: &str =
     "console.base_packages_worker_stopped";
 pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_HINT: &str = "console.base_packages_cancel_hint";
-pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_QUESTION: &str =
-    "console.base_packages_cancel_question";
 pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_NOTE: &str = "console.base_packages_cancel_note";
 pub(crate) const CONSOLE_BASE_PACKAGES_CANCEL_TITLE: &str = "console.base_packages_cancel_title";
 pub(crate) const CONSOLE_REINIT_VERSION_LABEL: &str = "console.reinit_version_label";
