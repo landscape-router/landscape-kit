@@ -51,8 +51,8 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         render_network_wizard(frame, wizard);
         return;
     }
-    // status 高度随内容行数动态:短内容 3 行(边框+状态+提示),
-    // 长内容最多 5 行,换行不截断、不留空行。
+    // status 高度随内容行数动态:短内容 3 行(边框+状态+提示),长内容封顶
+    // 5 行(状态与提示各最多 2 行,超出截断加省略号,见 `capped_wrap`)。
     let status_height = status_height_for(app, frame.area().width);
     let [header, body, status] = Layout::vertical([
         Constraint::Length(2),
@@ -151,11 +151,11 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
     // 状态与提示都先按实际宽度预折行,行数与渲染共用同一折行结果:若交给
     // Paragraph 自行词级换行,其行数会与按字符模拟的预留高度不一致(词级换行
     // 预留行尾空白),多行 notice 可能被截掉最后一行。
-    let notice_lines = super::widgets::wrap_to_width(
-        content.width.saturating_sub(language_width).max(1),
+    let notice_lines = capped_wrap(
         &app.notice.text(),
+        content.width.saturating_sub(language_width).max(1),
     );
-    let hints_lines = super::widgets::wrap_to_width(content.width, &app.hints());
+    let hints_lines = capped_wrap(&app.hints(), content.width);
     let [summary, hints] = Layout::vertical([
         Constraint::Length(notice_lines.len().max(1) as u16),
         Constraint::Length(hints_lines.len().max(1) as u16),
@@ -183,7 +183,7 @@ fn render_status(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: Rect) {
 }
 
 /// 计算 status 区所需行数:1 行边框 + 状态行数 + 提示行数(均至少 1 行)。
-/// 与 `render_status` 使用同一个 `wrap_to_width` 预折行,保证预留高度与实际
+/// 与 `render_status` 使用同一个 `capped_wrap` 预折行,保证预留高度与实际
 /// 渲染行数完全一致。
 fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     let language = language_status(
@@ -194,16 +194,30 @@ fn status_height_for(app: &ConsoleApp, width: u16) -> u16 {
     let language_width = (UnicodeWidthStr::width(language.as_str()) as u16)
         .saturating_add(2)
         .min(width);
-    let notice_rows = super::widgets::wrap_to_width(
-        width.saturating_sub(language_width).max(1),
+    let notice_rows = capped_wrap(
         &app.notice.text(),
+        width.saturating_sub(language_width).max(1),
     )
     .len()
     .max(1) as u16;
-    let hints_rows = super::widgets::wrap_to_width(width, &app.hints())
-        .len()
-        .max(1) as u16;
+    let hints_rows = capped_wrap(&app.hints(), width).len().max(1) as u16;
     1 + notice_rows + hints_rows
+}
+
+/// 状态/提示预折行,各自最多保留 2 行:更多内容在行尾以省略号提示被截断,
+/// 状态区高度因此封顶(1 边框 + 2 状态行 + 2 提示行 = 5 行),不会把 body
+/// 压破。折行与截断按显示宽计算,CJK 行不会被字符数骗过。
+pub(crate) fn capped_wrap(text: &str, width: u16) -> Vec<String> {
+    const MAX_ROWS: usize = 2;
+    let mut lines = super::widgets::wrap_to_width(width, text);
+    if lines.len() > MAX_ROWS {
+        lines.truncate(MAX_ROWS);
+        let room = usize::from(width).saturating_sub(1).max(1);
+        let last = lines.last_mut().expect("truncated to MAX_ROWS > 0");
+        while UnicodeWidthStr::width(last.as_str()) > room && last.pop().is_some() {}
+        last.push('…');
+    }
+    lines
 }
 
 /// 状态栏右下角的语言指示。可切换时显示**目标语言**(按 `L` 即切换到

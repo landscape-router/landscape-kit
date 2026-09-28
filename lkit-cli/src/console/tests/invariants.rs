@@ -2,10 +2,12 @@
 //! 快照(snapshots.rs)固定“具体长什么样”,这里固定“任何允许的终端尺寸下
 //! 都必须成立的结构性质”:
 //! - 72×18 最小尺寸边界两侧,too-small 提示恰好出现/消失;
-//! - 底栏提示按预折行逐行完整可见、长通知的结尾词仍在屏上——预留高度不足
-//!   导致底行被截断的 bug 类(048fa3b、c786c61)在任意宽度下都会被抓到;
+//! - 底栏提示按(封顶 2 行的)预折行逐行完整可见,长通知被截断时行尾必有
+//!   省略号标记——预留高度不足导致底行被静默截断的 bug 类(048fa3b、
+//!   c786c61)在任意宽度下都会被抓到;
 //! - header 底边、侧栏/面板分栏、底栏分隔线、语言指示右对齐的几何坐标。
 
+use super::super::render::capped_wrap;
 use super::super::widgets::wrap_to_width;
 use super::super::*;
 use super::support::*;
@@ -110,19 +112,27 @@ fn footer_content_survives_every_width_and_height() {
                 if too_small {
                     continue;
                 }
-                // 提示按整屏内容宽度预折行(render_status 与此处共用 wrap_to_width),
-                // 每行都必须完整落在屏上。
-                for line in wrap_to_width(width, &app.hints()) {
+                // 提示按整屏内容宽度预折行且封顶 2 行(render_status 与此处共用
+                // capped_wrap),每一行都必须完整落在屏上。
+                for line in capped_wrap(&app.hints(), width) {
                     assert!(
                         content.contains(&line),
                         "{name}: hints line {line:?} missing at {width}x{height}"
                     );
                 }
-                // 通知结尾词若被预留高度截掉即失败(词级折行不会拆开单词)。
-                if let Some(tail) = app.notice.text().split_whitespace().next_back() {
+                // 通知首行必须可见;超过 2 行被截断时,行尾必须有省略号标记
+                // (静默截断才是 bug)。
+                if let Some(head) = capped_wrap(&app.notice.text(), width).first() {
+                    let head_word = head.split_whitespace().next_back().unwrap_or(head);
                     assert!(
-                        content.contains(tail),
-                        "{name}: notice tail {tail:?} missing at {width}x{height}"
+                        content.contains(head_word),
+                        "{name}: notice head {head_word:?} missing at {width}x{height}"
+                    );
+                }
+                if wrap_to_width(width, &app.notice.text()).len() > 2 {
+                    assert!(
+                        content.contains('…'),
+                        "{name}: truncated notice must end with an ellipsis at {width}x{height}"
                     );
                 }
             }

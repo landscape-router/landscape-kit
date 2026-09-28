@@ -811,3 +811,25 @@ fn exit_confirmation_dims_the_underlay_but_not_the_dialog() {
     assert_eq!(border.symbol(), "┌");
     assert_eq!(border.fg, Color::Reset);
 }
+
+#[test]
+fn status_area_caps_notice_and_hints_at_two_rows_each() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut terminal = Terminal::new(TestBackend::new(72, 18)).unwrap();
+    let mut app = ConsoleApp::new();
+    // 5 行 notice:状态区必须封顶在 1 边框 + 2 状态行 + 2 提示行 = 5 行,
+    // 最后一行以省略号提示截断,body 仍保有 Min(8)。
+    app.notice = Notice::Success("one\ntwo\nthree\nfour\nfive".into());
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("one"));
+    assert!(content.contains("two"));
+    assert!(content.contains('…'));
+    // 只有前两行进入状态区,其余被截断。
+    assert!(!content.contains("three"));
+    assert!(!content.contains("five"));
+    // 状态区封顶 5 行:2 header + 11 body 后,第 14 行(索引 13)是底栏顶边框。
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 18);
+    assert!(lines[13].starts_with("───"));
+}
