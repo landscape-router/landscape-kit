@@ -56,7 +56,12 @@ impl ConsoleApp {
         match wizard.step {
             WizardStep::Wan => match key.code {
                 KeyCode::Up => wizard.set_wan(wizard.wan.saturating_sub(1)),
-                KeyCode::Down => wizard.set_wan((wizard.wan + 1).min(wizard.interfaces.len() - 1)),
+                KeyCode::Down => {
+                    // 与下方 LAN 光标同构:空列表时不动,避免 len()-1 下溢。
+                    if !wizard.interfaces.is_empty() {
+                        wizard.set_wan((wizard.wan + 1).min(wizard.interfaces.len() - 1));
+                    }
+                }
                 KeyCode::Enter => {
                     wizard.apply_wan_selection();
                     wizard.step = WizardStep::WanConfig;

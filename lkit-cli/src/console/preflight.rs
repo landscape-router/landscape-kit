@@ -297,7 +297,8 @@ pub(crate) fn render_preflight_summary(frame: &mut Frame<'_>, app: &mut ConsoleA
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(if selected { "> " } else { "  " }, style),
-            Span::styled(format!("{status:<9}"), status_style),
+            // 按显示宽补齐到 9 列,检查名与状态列对齐。
+            Span::styled(super::render::display_pad(&status, 9), status_style),
             Span::raw(detail),
         ]))
         .style(style)

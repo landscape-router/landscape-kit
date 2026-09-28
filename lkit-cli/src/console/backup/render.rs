@@ -231,7 +231,8 @@ fn append_backup_table(
         let mut cells: Vec<String> = [&row.0, &row.1, &row.2, &row.3]
             .iter()
             .enumerate()
-            .map(|(column, cell)| format!("{cell:<width$}", width = widths[column]))
+            // 与表头一致按显示宽补齐,非 ASCII 单元格不会把后续列顶歪。
+            .map(|(column, cell)| display_pad(cell, widths[column]))
             .collect();
         let remark = truncate_width(&metadata.remark, remark_room);
         if !remark.is_empty() {

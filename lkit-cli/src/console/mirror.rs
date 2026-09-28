@@ -738,8 +738,9 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
             crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_RESTORE_TITLE),
             crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_RESTORE),
         ),
-        // 渲染入口（render.rs）已保证 confirming 非 None。
-        None => unreachable!(),
+        // 渲染入口(render.rs)只在 confirming 非 None 时调用;空态防御性返回,
+        // 渲染路径不 panic。
+        None => return,
     };
     let mut lines = vec![
         Line::styled(question, Style::default().add_modifier(Modifier::BOLD)),

@@ -109,18 +109,19 @@ impl UpdateField {
 impl UpdateRepositoryMode {
     fn label(self, source: Option<&RepositorySource>) -> String {
         match self {
-            Self::Current => {
-                let source =
-                    source.expect("the current source is selected without a config source");
-                crate::tr!(
+            Self::Current => match source {
+                // 不变量:Current 选项只在配置里存在当前源时生成;渲染路径
+                // 防御性兜底,源缺失时退为「当前来源不可用」提示。
+                Some(source) => crate::tr!(
                     crate::keys::UPDATE_REPOSITORY_CURRENT,
                     kind = match source.kind {
                         RepositorySourceKind::Github => "github",
                         RepositorySourceKind::Http => "http",
                     },
                     location = source.location
-                )
-            }
+                ),
+                None => crate::tr!(crate::keys::CONSOLE_UPDATE_REPOSITORY_UNAVAILABLE),
+            },
             Self::Github => crate::tr!(crate::keys::UPDATE_REPOSITORY_GITHUB),
             Self::Mirror => crate::tr!(crate::keys::UPDATE_REPOSITORY_MIRROR),
             Self::Custom => crate::tr!(crate::keys::UPDATE_REPOSITORY_CUSTOM),
