@@ -121,7 +121,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
     rollback::write_state_snapshot(root, &transaction.transaction_id, state)?;
 
     // 停止服务前生成完整的新初始化配置(版本固定为当前活动版本)。
-    let init_config = pipeline::build_init_config(&version, credentials, Some(network))?;
+    let init_config = pipeline::build_init_config(root, &version, credentials, Some(network))?;
     super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
     operation_progress(OperationPhase::Preparing, Some((1, 4)));
 

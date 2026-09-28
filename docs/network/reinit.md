@@ -26,7 +26,19 @@
 
 ## 新配置生成
 
-新 `landscape_init.toml` 由 `LandscapeInit` 构建器生成,`version` 固定为当前活动版本:
+新 `landscape_init.toml` 的生成方式按活动版本分两条路径:
+
+- **活动版本 ≥ 0.25.1**:调用活动 release 目录下 `landscape-webserver` 二进制的
+  `config` 子命令(`--stdout`)生成。这是 Landscape 侧文档化的稳定部署接口:lkit 只依赖
+  其 flag 面,不再镜像 `landscape_init.toml` 的内部格式;生成的文件内嵌目标二进制版本,
+  只能被同版本导入,因此必须由目标 binary 自己生成。lkit 传入的参数:admin 凭据
+  (`--admin-user`/`--admin-pass`)、WAN/LAN 拓扑与地址、DHCP 范围与租期(43200 秒,与旧
+  路径一致)、WAN 管理静态映射(`--static-nat 22:22 --static-nat 6443:6443`),以及
+  `--enable firewall --disable nat`(lkit 的服务集一直是 WAN 上 firewall 而非 nat);
+- **活动版本 < 0.25.1 或无网络计划的安装**:维持 lkit 进程内的 `LandscapeInit`
+  手拼路径(旧版本不具备完整 flag 面,该路径冻结保留,仅服务旧版本)。
+
+两条路径产出的语义一致,`version` 固定为当前活动版本:
 
 - 凭据:用户重新输入的 admin 用户与密码;
 - 网络实体:WAN 物理接口与静态 IPv4/prefix/网关或 DHCP client、WAN route、Landscape

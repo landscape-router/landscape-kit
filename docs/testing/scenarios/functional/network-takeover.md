@@ -98,6 +98,19 @@
 - 说明：fixture 通过异常 `current` 链接注入清理失败，断言退出码 `6`、事务为 `failed` 且
   残留 data 未被删除。
 
+## NET-12
+
+**目标 release ≥ 0.25.1 时初始化配置由 `landscape config` 子命令生成**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[config 子命令适配层](../../../../lkit-cli/src/network/config_cli.rs)、[fixture 生成器](../../../../crates/lkit-test-fixture/src/config_cli.rs)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[网络重配置·新配置生成](../../../network/reinit.md)
+- 说明：lkit 调用目标 release 目录下 `landscape-webserver config --stdout`（内嵌目标
+  二进制版本，install 与 reinit 共用）；版本门槛为 `>= 0.25.1`（预发布版本不算达标），
+  更早版本与无网络计划的安装维持 lkit 手拼路径。fixture 的 `landscape-webserver` 实现了
+  同名子命令（版本从 release 目录名推导），e2e 因此走真实子命令路径并断言生成文件结构。
+  两条路径服务集一致：WAN 上 firewall、不启用 nat，DHCP 租期 43200 秒。
+
 ## NET-08
 
 **SELinux 与不受支持的活动网络管理器在任何网络变更前阻断**

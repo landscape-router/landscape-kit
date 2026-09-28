@@ -130,7 +130,7 @@ async fn first_install_impl<P: DocsProbe>(
         crate::interaction::presentation::operation_phase(
             crate::interaction::presentation::OperationPhase::Applying,
         );
-        let init_config = build_init_config(&release.version, credentials, network)?;
+        let init_config = build_init_config(root, &release.version, credentials, network)?;
         write_init_config(root, &init_config)?;
         let before = capture_before(manager, ManagedService::LandscapeRouter)?;
         let backup_dir = layout::territory_backups_dir()

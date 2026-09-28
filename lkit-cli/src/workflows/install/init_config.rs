@@ -48,11 +48,24 @@ struct AdminAuth<'a> {
 }
 
 pub(crate) fn build_init_config(
+    root: &InstallRoot,
     version: &semver::Version,
     credentials: &Credentials,
     network: Option<&crate::network::config::NetworkPlan>,
 ) -> Result<String, InstallError> {
     if let Some(network) = network {
+        // >= 0.25.1 的 release 由目标二进制的 `config` 子命令生成初始化配置:
+        // 生成的文件内嵌目标二进制版本且只能被同版本导入,必须用目标 release
+        // 目录下的 webserver 生成(此时尚未激活 `current` 链接)。
+        if crate::network::config_cli::config_cli_available(version) {
+            let binary = root
+                .canonical
+                .join("releases")
+                .join(version.to_string())
+                .join(crate::release::artifacts::WEBSERVER_BINARY);
+            let args = crate::network::config_cli::config_subcommand_args(credentials, network)?;
+            return crate::network::config_cli::generate_init_config_via_cli(&binary, &args);
+        }
         let config = crate::network::config::LandscapeInit::new(
             version,
             &credentials.admin_user,
@@ -100,26 +113,111 @@ pub(super) fn write_init_config(root: &InstallRoot, content: &str) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
 
     fn version() -> semver::Version {
         semver::Version::new(1, 2, 3)
     }
 
+    fn credentials() -> Credentials {
+        Credentials {
+            admin_user: "admin".into(),
+            password: "Secret123".into(),
+        }
+    }
+
+    fn temp_root(name: &str) -> InstallRoot {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "lkit-init-config-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        InstallRoot {
+            install_root: dir.clone(),
+            canonical: dir,
+        }
+    }
+
     #[test]
-    fn builds_minimal_init_config() {
-        let config = build_init_config(
-            &version(),
-            &Credentials {
-                admin_user: "admin".into(),
-                password: "Secret123".into(),
-            },
-            None,
-        )
-        .unwrap();
+    fn builds_minimal_init_config_without_a_network_plan() {
+        let root = temp_root("minimal");
+        let config = build_init_config(&root, &version(), &credentials(), None).unwrap();
         assert_eq!(
             config,
             "version = \"1.2.3\"\n\n[config.auth]\nadmin_user = \"admin\"\nadmin_pass = \"Secret123\"\n"
         );
+        std::fs::remove_dir_all(root.canonical).unwrap();
+    }
+
+    fn routed_lan_plan() -> crate::network::config::NetworkPlan {
+        crate::network::config::NetworkPlan {
+            mode: crate::network::config::NetworkMode::RoutedLan {
+                wan: "ens3".into(),
+                wan_ipv4: Some(crate::network::config::WanIpv4Config::Dhcp),
+                lan: vec!["ens4".into()],
+                management: "192.168.10.1/24".parse().unwrap(),
+                dhcp_start: "192.168.10.100".parse().unwrap(),
+                dhcp_end: "192.168.10.254".parse().unwrap(),
+            },
+            selected_macs: vec![
+                crate::network::config::SelectedInterface {
+                    name: "ens3".into(),
+                    mac: "52:54:00:00:00:01".into(),
+                },
+                crate::network::config::SelectedInterface {
+                    name: "ens4".into(),
+                    mac: "52:54:00:00:00:02".into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn releases_before_the_config_cli_threshold_keep_the_hand_assembled_path() {
+        let root = temp_root("legacy");
+        let config = build_init_config(
+            &root,
+            &semver::Version::new(0, 25, 0),
+            &credentials(),
+            Some(&routed_lan_plan()),
+        )
+        .unwrap();
+        assert_eq!(config.split('"').nth(1), Some("0.25.0"));
+        assert!(config.contains("[[firewalls]]"));
+        assert!(config.contains("[[route_wans]]"));
+        std::fs::remove_dir_all(root.canonical).unwrap();
+    }
+
+    #[test]
+    fn supported_releases_generate_the_init_config_via_the_target_binary() {
+        let root = temp_root("config-cli");
+        let release = root.canonical.join("releases/1.2.3");
+        std::fs::create_dir_all(&release).unwrap();
+        std::fs::write(
+            release.join(crate::release::artifacts::WEBSERVER_BINARY),
+            "#!/bin/sh\nprintf 'version = \"1.2.3\"\\n'\n",
+        )
+        .unwrap();
+        let binary = release.join(crate::release::artifacts::WEBSERVER_BINARY);
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config =
+            build_init_config(&root, &version(), &credentials(), Some(&routed_lan_plan())).unwrap();
+        assert_eq!(config, "version = \"1.2.3\"\n");
+        std::fs::remove_dir_all(root.canonical).unwrap();
+    }
+
+    #[test]
+    fn missing_target_binary_surfaces_a_parameter_usage_error() {
+        let root = temp_root("missing-binary");
+        let error = build_init_config(&root, &version(), &credentials(), Some(&routed_lan_plan()))
+            .unwrap_err();
+        assert!(error.to_string().contains("cannot run"), "{error}");
+        std::fs::remove_dir_all(root.canonical).unwrap();
     }
 }

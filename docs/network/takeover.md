@@ -15,6 +15,11 @@ systemd-resolved 或其他软件包，也不收集 PPPoE 用户名、密码或 M
 的原始状态，然后依次 stop、disable、mask；回滚按原始 installed、enable 和 active 状态
 恢复。
 
+初始化配置的生成方式按目标 release 版本区分:≥ 0.25.1 时 lkit 调用目标 release 目录下
+`landscape-webserver config` 子命令生成(Landscape 的稳定部署接口,生成文件内嵌目标
+二进制版本、只能被同版本导入);更早版本由 lkit 进程内手拼。两条路径产出下述相同的
+语义内容,详见[网络重配置](reinit.md)的「新配置生成」一节。
+
 ## 单网口
 
 用户选择唯一 WAN 后必须确认 Landscape 不支持单臂 WAN/LAN 路由。CLI 优先使用该接口

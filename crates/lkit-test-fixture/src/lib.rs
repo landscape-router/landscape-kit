@@ -19,6 +19,8 @@ pub const SYSTEMCTL_CONFIG_ENV: &str = "LKIT_TEST_SYSTEMCTL_CONFIG";
 pub const INIT_CONFIG_ENV: &str = "LKIT_TEST_INIT_CONFIG";
 pub const FIXTURE_BUILD_VERSION: Option<&str> = option_env!("LKIT_FIXTURE_BUILD_VERSION");
 
+pub mod config_cli;
+
 pub mod contract {
     pub const DOCS_PATH: &str = "/api/docs";
     pub const EXPORT_PATH: &str = "/api/v1/system/config/export";

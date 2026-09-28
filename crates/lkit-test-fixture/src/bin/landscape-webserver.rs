@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
@@ -17,7 +17,7 @@ use lkit_test_fixture::contract::{
 };
 use lkit_test_fixture::{
     FIXTURE_BUILD_VERSION, FIXTURE_CONFIG_ENV, FIXTURE_CONFIG_FILE, LandscapeApiResponse,
-    LandscapeFixtureConfig, Scenario, export_response_with_content,
+    LandscapeFixtureConfig, Scenario, config_cli, export_response_with_content,
 };
 use tokio::net::{TcpListener, UdpSocket};
 
@@ -28,7 +28,16 @@ struct Args {
     web: Option<PathBuf>,
 
     #[arg(short, long)]
-    config_dir: PathBuf,
+    config_dir: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    /// Generate landscape_init.toml from deployment flags, like the real binary.
+    Config(config_cli::ConfigCliArgs),
 }
 
 #[derive(Clone)]
@@ -51,6 +60,12 @@ pub async fn main() -> ExitCode {
 async fn run() -> Result<()> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let args = Args::parse();
+    if let Some(Command::Config(config)) = args.command {
+        return run_config_cli(config);
+    }
+    let config_dir = args
+        .config_dir
+        .context("--config-dir is required outside the `config` subcommand")?;
     let config_path = resolve_config_path(
         std::env::var_os(FIXTURE_CONFIG_ENV).map(PathBuf::from),
         args.web.as_deref(),
@@ -66,7 +81,7 @@ async fn run() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(config.ready_delay_ms)).await;
     }
 
-    prepare_data(&args.config_dir, &config)?;
+    prepare_data(&config_dir, &config)?;
     if let Some(web) = &args.web {
         anyhow::ensure!(
             web.is_dir(),
@@ -90,7 +105,7 @@ async fn run() -> Result<()> {
         .route(EXPORT_PATH, get(export_config))
         .with_state(AppState {
             config: config.clone(),
-            config_dir: args.config_dir.clone(),
+            config_dir,
         });
     let tls = tls_config().await?;
     let https_address = SocketAddr::new(config.listen_address, config.https_port);
@@ -141,6 +156,43 @@ fn resolve_config_path(env_path: Option<PathBuf>, web: Option<&Path>) -> Result<
         .context(
             "LKIT_LANDSCAPE_FIXTURE_CONFIG is not set and fixture config is missing from --web",
         )
+}
+
+/// 真实二进制的 `config` 子命令内嵌自身版本;fixture 从所在 release 目录名推导
+/// (lkit 按 `releases/<version>/landscape-webserver` 调用,与真实契约等价)。
+fn release_version_from_exe() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.parent()?
+                .file_name()?
+                .to_str()?
+                .parse::<semver::Version>()
+                .ok()
+        })
+        .map(|version| version.to_string())
+        .unwrap_or_else(|| "0.0.0".to_string())
+}
+
+fn run_config_cli(args: config_cli::ConfigCliArgs) -> Result<()> {
+    let version = release_version_from_exe();
+    let content = config_cli::build_init_toml(&args, &version)?;
+    if args.stdout {
+        print!("{content}");
+        return Ok(());
+    }
+    let dir = args.dir.context("either --stdout or --dir is required")?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let path = dir.join(INIT_CONFIG);
+    if path.exists() && !args.force {
+        bail!(
+            "{} already exists; pass --force to overwrite",
+            path.display()
+        );
+    }
+    std::fs::write(&path, &content).with_context(|| format!("write {}", path.display()))?;
+    println!("{}", path.display());
+    Ok(())
 }
 
 fn validate_build_version(
