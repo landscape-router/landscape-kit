@@ -6,7 +6,7 @@ TCP-over-IP 隧道（`lflare` 客户端 ↔ `lkit flare` 服务端），用于�
 
 - [协议规范](protocol.md)：帧格式、密钥计划、握手流程、隧道与端口转发、服务端防护
 - [测试体系](testing.md)：Docker L2 bridge 双容器 e2e 的入口、拓扑与日志契约
-- [测试场景](scenarios.md)：`FLR-01` 至 `FLR-18` 场景目录
+- [测试场景](scenarios.md)：`FLR-01` 至 `FLR-26` 场景目录
 
 ## 客户端用法
 

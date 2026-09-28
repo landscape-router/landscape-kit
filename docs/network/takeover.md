@@ -41,7 +41,7 @@ Landscape firewall 和管理端口的 Local 静态映射；DHCP 模式设置 WAN
 route 和 DHCP。初始化配置中只有 `br_lan` 的 zone type 为 `lan`，所选 LAN 物理接口的
 zone type 为 `undefined`，只通过 controller（上游）关联到 `br_lan`。CLI 使用所选 WAN
 发现顺序中的首个 IPv4 和该接口首个默认网关；缺任一项时
-使用 DHCP。控制台向导展示相同的 IPv4 与网关：WAN 配置面板顶部用 Static / DHCP client
+使用 DHCP。控制台向导展示相同的 IPv4 与网关：WAN 配置面板顶部用静态 / DHCP 客户端
 两个 tab 切换模式，选中 WAN 后预填两项（完整对默认 Static，缺任一项默认 DHCP），静态
 模式下地址/CIDR 与网关在同一页编辑，页面底部是“确认并继续”按钮；LAN 的 DHCP 配置
 （管理地址、地址池起始与结束）在同一页表单中一次性填写并确认。向导结束前显示完整计划
