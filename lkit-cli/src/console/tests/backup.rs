@@ -45,7 +45,7 @@ fn backup_menu_lists_backups_and_opens_details() {
         details.contains("1.5 MiB"),
         "details must show the file size"
     );
-    assert!(details.contains("Press R to restore"));
+    assert!(details.contains("R Restore"));
 
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(app.backup.details, None);
@@ -193,7 +193,7 @@ fn backup_restore_flow_builds_restore_command() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Restore this backup?"));
     assert!(content.contains("version 1.2.3"));
-    assert!(content.contains("Press Enter to restore."));
+    assert!(content.contains("Ctrl+C Exit  Enter Restore  Esc Cancel"));
     assert!(
         content.contains("SQLite data file"),
         "the restore confirmation must warn about the minimal scope"
@@ -317,7 +317,7 @@ fn backup_delete_confirms_and_removes_the_backup() {
     assert!(content.contains("Confirm delete"));
     assert!(content.contains("Delete this backup?"));
     assert!(content.contains("version 1.2.3"));
-    assert!(content.contains("Press Enter to delete."));
+    assert!(content.contains("Ctrl+C Exit  Enter Delete  Esc Cancel"));
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(!app.backup.delete_confirming);

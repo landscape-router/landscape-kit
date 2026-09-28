@@ -184,8 +184,8 @@ fn software_confirmation_dialog_renders() {
     assert!(content.contains("Install Docker"));
     assert!(content.contains("Source"));
     assert!(content.contains("Tsinghua TUNA mirror"));
-    assert!(content.contains("Press Space or"));
-    assert!(content.contains("Press Enter to install"));
+    assert!(content.contains("◀"));
+    assert!(content.contains("Ctrl+C Exit  Left/Right Source  Enter Install  Esc Cancel"));
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn software_cancel_layer_renders() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(content.contains("Cancel the installation?"));
-    assert!(content.contains("Press Enter to cancel."));
+    assert!(content.contains("Ctrl+C Exit  Enter Cancel install  Esc Keep installing"));
 }
 
 #[test]

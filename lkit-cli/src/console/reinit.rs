@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::render::panel_block;
+use super::render::{dialog_hint_line, panel_block};
 use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
@@ -365,7 +365,7 @@ pub(crate) fn render_reinit(frame: &mut Frame<'_>, app: &mut ConsoleApp, area: R
 }
 
 /// 确认层：清空范围、保护备份与确认窗口说明。
-pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>) {
+pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
     let height = 12.min(screen.height.saturating_sub(2));
@@ -389,11 +389,7 @@ pub(crate) fn render_reinit_confirmation(frame: &mut Frame<'_>) {
         Line::raw(""),
         Line::raw(crate::tr!(crate::keys::CONSOLE_REINIT_CONFIRM_BACKUP)),
         Line::raw(""),
-        Line::raw(crate::tr!(crate::keys::CONSOLE_REINIT_CONFIRM_PROMPT)),
-        Line::styled(
-            crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-            Style::default().fg(Color::DarkGray),
-        ),
+        dialog_hint_line(app),
     ];
     frame.render_widget(
         Paragraph::new(lines)

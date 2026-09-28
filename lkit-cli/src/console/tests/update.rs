@@ -135,7 +135,7 @@ fn update_confirmation_builds_console_confirmed_command() {
     assert!(content.contains("Confirm update"));
     assert!(content.contains("Update Landscape?"));
     assert!(content.contains("1.2.3 -> target 1.2.4"));
-    assert!(content.contains("Press Enter to update."));
+    assert!(content.contains("Ctrl+C Exit  Enter Update  Esc Cancel"));
 
     let action = app
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
@@ -314,7 +314,7 @@ fn uninstall_panel_renders_summary_and_opens_confirmation() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Confirm uninstall"));
     assert!(content.contains("Version 1.2.3"));
-    assert!(content.contains("Enter to confirm uninstall"));
+    assert!(content.contains("Enter Uninstall"));
 
     app.handle_uninstall_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(

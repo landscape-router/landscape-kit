@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use super::render::panel_block;
+use super::render::{dialog_hint_line, panel_block};
 use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::mirror::{Host, MirrorName, MirrorStatus};
@@ -708,17 +708,8 @@ pub(crate) fn render_mirror_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     for (_, line, _) in &toggle_rows {
         lines.push(line.clone());
     }
-    if !toggle_rows.is_empty() {
-        lines.push(Line::raw(""));
-    }
-    lines.push(Line::styled(
-        crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_ENTER),
-        Style::default().fg(Color::Green),
-    ));
-    lines.push(Line::styled(
-        crate::tr!(crate::keys::CONSOLE_MIRROR_CONFIRM_ESC),
-        Style::default().fg(Color::DarkGray),
-    ));
+    lines.push(Line::raw(""));
+    lines.push(dialog_hint_line(app));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })

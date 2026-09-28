@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::network_wizard::Snapshot;
-use super::render::{display_pad, panel_block};
+use super::render::{dialog_hint_line, display_pad, panel_block};
 use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
 use crate::commands::Commands;
@@ -685,7 +685,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 11.min(screen.height.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -707,11 +707,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
             )),
             Line::raw(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_NOTE)),
             Line::raw(""),
-            Line::raw(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_PRESS_ENTER)),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
@@ -809,7 +805,7 @@ pub(crate) fn render_uninstall(frame: &mut Frame<'_>, app: &mut ConsoleApp, area
 pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 13.min(screen.height.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -841,13 +837,7 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
         ));
     }
     lines.push(Line::raw(""));
-    lines.push(Line::raw(crate::tr!(
-        crate::keys::CONSOLE_UNINSTALL_CONFIRM_PRESS_ENTER
-    )));
-    lines.push(Line::styled(
-        crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-        Style::default().fg(Color::DarkGray),
-    ));
+    lines.push(dialog_hint_line(app));
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(Alignment::Center)

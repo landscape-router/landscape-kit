@@ -20,7 +20,7 @@ expression: terminal.backend()
 "│                      ││Contents  binary=true static=true static_archive=false init_config=true   │"
 "│                      ││geo_cache=false                                                           │"
 "│                      ││                                                                          │"
-"│                      ││Press R to restore 20260807-131500-ab12cd34 or V to verify it.            │"
+"│                      ││                                                                          │"
 "│                      ││                                                                          │"
 "│                      ││                                                                          │"
 "│                      ││                                                                          │"

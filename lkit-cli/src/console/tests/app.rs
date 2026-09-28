@@ -438,7 +438,7 @@ fn double_escape_opens_confirmation_before_enter_exits() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(confirmation.contains("Exit Landscape Kit?"));
-    assert!(confirmation.contains("Press Enter to exit"));
+    assert!(confirmation.contains("Ctrl+C Exit  Enter Confirm  Esc Cancel"));
 
     assert!(matches!(
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),

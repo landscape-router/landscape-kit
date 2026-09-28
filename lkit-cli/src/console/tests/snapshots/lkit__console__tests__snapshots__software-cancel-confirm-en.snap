@@ -18,7 +18,7 @@ expression: terminal.backend()
 "│                 │    written source files stay and are replaced on the next    │                 │"
 "│                 │                           attempt.                           │                 │"
 "│                 │                                                              │                 │"
-"│                 │                    Press Enter to cancel.                    │                 │"
+"│                 │    Ctrl+C Exit  Enter Cancel install  Esc Keep installing    │                 │"
 "│                 └──────────────────────────────────────────────────────────────┘                 │"
 "│                      ││                                                                          │"
 "│                      ││                                                                          │"
@@ -29,4 +29,4 @@ expression: terminal.backend()
 "└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
 "────────────────────────────────────────────────────────────────────────────────────────────────────"
 "Installing Docker…                                                           [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
-"Ctrl+C Exit  Esc Cancel installation                                                                "
+"Ctrl+C Exit  Enter Cancel install  Esc Keep installing                                              "

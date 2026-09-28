@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::super::ConsoleApp;
 use super::super::network_wizard::Snapshot;
-use super::super::render::{display_pad, panel_block};
+use super::super::render::{dialog_hint_line, display_pad, panel_block};
 use super::super::widgets::Focus;
 use super::{BackupEntry, BackupListState};
 use crate::backup::lkb::BackupProgress;
@@ -321,14 +321,6 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
             crate::tr!(crate::keys::CONSOLE_BACKUP_CONTENTS_LABEL),
             contents
         )),
-        Line::raw(""),
-        Line::styled(
-            crate::tr!(
-                crate::keys::CONSOLE_BACKUP_DETAILS_RESTORE_HINT,
-                id = metadata.backup_id
-            ),
-            Style::default().fg(Color::DarkGray),
-        ),
     ];
     frame.render_widget(
         Paragraph::new(lines)
@@ -345,7 +337,7 @@ fn render_backup_details(frame: &mut Frame<'_>, app: &ConsoleApp, focused: bool,
 pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 68.min(screen.width.saturating_sub(2));
-    let height = 11.min(screen.height.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -374,7 +366,7 @@ pub(crate) fn render_backup_create_dialog(frame: &mut Frame<'_>, app: &mut Conso
                 ),
             ]),
             Line::raw(""),
-            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_CREATE_HINT)),
+            dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
@@ -455,10 +447,10 @@ pub(crate) fn render_backup_create_progress(frame: &mut Frame<'_>, app: &mut Con
 }
 
 /// 备份损坏提示弹框:校验失败时 R 键/恢复 Enter 触发,Enter/Esc 关闭。
-pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>) {
+pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 8.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -481,10 +473,7 @@ pub(crate) fn render_backup_corrupt_dialog(frame: &mut Frame<'_>) {
                 Style::default().fg(Color::DarkGray),
             ),
             Line::raw(""),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
@@ -503,7 +492,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 13.min(screen.height.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -527,11 +516,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
                 crate::keys::CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE
             )),
             Line::raw(""),
-            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_RESTORE_PRESS_ENTER)),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
@@ -551,7 +536,7 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 11.min(screen.height.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -572,11 +557,7 @@ pub(crate) fn render_backup_delete_confirmation(frame: &mut Frame<'_>, app: &mut
                 version = metadata.landscape_version
             )),
             Line::raw(""),
-            Line::raw(crate::tr!(crate::keys::CONSOLE_BACKUP_DELETE_PRESS_ENTER)),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })

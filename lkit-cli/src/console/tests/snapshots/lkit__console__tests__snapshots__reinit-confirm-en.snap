@@ -20,7 +20,7 @@ expression: terminal.backend()
 "│           │A protection .lkb backup is created first (restorable with `lkit          │           │"
 "│           │restore`).                                                                │           │"
 "│           │                                                                          │           │"
-"│           │Press Enter to confirm, Esc to cancel                                     │           │"
+"│           │Ctrl+C Exit  Enter Confirm reinit  Esc Cancel                             │           │"
 "│           └──────────────────────────────────────────────────────────────────────────┘           │"
 "│                      ││                                                                          │"
 "│                      ││                                                                          │"
@@ -29,4 +29,4 @@ expression: terminal.backend()
 "└──────────────────────┘└──────────────────────────────────────────────────────────────────────────┘"
 "────────────────────────────────────────────────────────────────────────────────────────────────────"
 "Ready                                                                        [L] Switch to 中文 (zh)" Hidden by multi-width symbols: [(92, " "), (94, " ")]
-"Enter: confirm reinit; Esc: cancel                                                                  "
+"Ctrl+C Exit  Enter Confirm reinit  Esc Cancel                                                       "

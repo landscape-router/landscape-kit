@@ -39,7 +39,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
             frame.area(),
         );
         if app.exit_state == ExitState::Confirming {
-            render_exit_confirmation(frame);
+            render_exit_confirmation(frame, app);
         }
         return;
     }
@@ -67,7 +67,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     render_panel(frame, app, panel);
     render_status(frame, app, status);
     if app.exit_state == ExitState::Confirming {
-        render_exit_confirmation(frame);
+        render_exit_confirmation(frame, app);
     }
     if app.preflight_dialog {
         render_preflight_dialog(frame, app);
@@ -79,7 +79,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         render_backup_delete_confirmation(frame, app);
     }
     if app.menu() == Menu::Backup && app.backup.corrupt_dialog {
-        render_backup_corrupt_dialog(frame);
+        render_backup_corrupt_dialog(frame, app);
     }
     if app.menu() == Menu::Backup && app.backup.editing {
         render_backup_create_dialog(frame, app);
@@ -114,7 +114,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         render_uninstall_confirmation(frame, app);
     }
     if app.menu() == Menu::Reinit && app.reinit.confirming {
-        render_reinit_confirmation(frame);
+        render_reinit_confirmation(frame, app);
     }
     // 部署确认弹窗可从 Overview 动作行或安装阻断弹框发起,不限定菜单。
     if app.deploy_daemon_confirming {
@@ -227,10 +227,10 @@ fn language_status(language: Language, switch_available: bool, editing: bool) ->
         )
     }
 }
-fn render_exit_confirmation(frame: &mut Frame<'_>) {
+fn render_exit_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 48.min(screen.width.saturating_sub(2));
-    let height = 7.min(screen.height.saturating_sub(2));
+    let height = 6.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -240,21 +240,24 @@ fn render_exit_confirmation(frame: &mut Frame<'_>) {
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
+            Line::raw(""),
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_EXIT_LANDSCAPE_KIT_QUESTION),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
-            Line::raw(crate::tr!(crate::keys::CONSOLE_PRESS_ENTER_TO_EXIT)),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_CONFIRM_EXIT))),
         area,
     );
+}
+
+/// 弹窗末行的按键提示:与底栏共用 `hints()` 的同一结果,两处显示永不漂移。
+/// 视线聚焦在弹窗上,按键说明跟随弹窗;底栏保持一致作为第二显示位。
+pub(crate) fn dialog_hint_line(app: &ConsoleApp) -> Line<'static> {
+    Line::styled(app.hints(), Style::default().fg(Color::DarkGray))
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {

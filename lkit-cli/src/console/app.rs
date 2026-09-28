@@ -320,6 +320,13 @@ impl ConsoleApp {
             crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_HINT_CONFIRM)
         } else if self.show_psk {
             crate::tr!(crate::keys::CONSOLE_SHOW_PSK_HINT)
+        } else if self.flare.open {
+            crate::tr!(crate::keys::CONSOLE_FLARE_DIALOG_HINT)
+        } else if self.backup.corrupt_dialog {
+            crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CORRUPT)
+        } else if self.uninstall.confirming {
+            // 卸载面板暂从侧栏隐藏(CLI 提供),确认层提示不依赖菜单解析。
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_CONFIRM)
         } else if self.exit_state == ExitState::Confirming {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ENTER_CONFIRM_ESC_CANCEL)
         } else if self.exit_state == ExitState::Armed {
@@ -329,7 +336,12 @@ impl ConsoleApp {
         } else if self.preflight.expanded && self.menu() == Menu::Install {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_SCROLL)
         } else if self.preflight_dialog {
-            crate::tr!(crate::keys::CONSOLE_HINT_ENTER_DETAILS_ESC_CLOSE_R)
+            // daemon 阻断时 Enter 是部署,否则是查看详情;底栏按状态给正确变体。
+            if self.preflight_daemon_blocked() {
+                crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DEPLOY_ESC_CLOSE_R)
+            } else {
+                crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R)
+            }
         } else if self.install.editing && self.menu() == Menu::Install && self.focus == Focus::Panel
         {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_EDIT)
@@ -344,11 +356,7 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_UPDATE_HINT_PANEL)
             }
         } else if self.menu() == Menu::Uninstall && self.focus == Focus::Panel {
-            if self.uninstall.confirming {
-                crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_CONFIRM)
-            } else {
-                crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_PANEL)
-            }
+            crate::tr!(crate::keys::CONSOLE_UNINSTALL_HINT_PANEL)
         } else if self.menu() == Menu::Mirror && self.focus == Focus::Panel {
             if self.mirror.confirming.is_some() {
                 crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_CONFIRM)
@@ -356,7 +364,10 @@ impl ConsoleApp {
                 crate::tr!(crate::keys::CONSOLE_MIRROR_HINT_PANEL)
             }
         } else if self.menu() == Menu::Software && self.focus == Focus::Panel {
-            if self.software.install.is_some() || self.software.base_install.is_some() {
+            if self.software.cancel_confirming || self.software.base_cancel_confirming {
+                // 两个取消确认层共用一组按键说明:Enter 确认取消,Esc 继续安装。
+                crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_CANCEL_CONFIRM)
+            } else if self.software.install.is_some() || self.software.base_install.is_some() {
                 crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_RUNNING)
             } else if self.software.confirming.is_some() {
                 crate::tr!(crate::keys::CONSOLE_SOFTWARE_HINT_CONFIRM)

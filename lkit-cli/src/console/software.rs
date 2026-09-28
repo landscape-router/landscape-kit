@@ -686,7 +686,7 @@ pub(crate) fn render_software(frame: &mut Frame<'_>, app: &mut ConsoleApp, area:
 pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 10.min(screen.height.saturating_sub(2));
+    let height = 9.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -697,7 +697,7 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
     let Some(confirm) = app.software.confirming else {
         return;
     };
-    let mut lines = vec![
+    let lines = vec![
         Line::styled(
             crate::tr!(
                 crate::keys::CONSOLE_SOFTWARE_CONFIRM_QUESTION,
@@ -722,20 +722,9 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
             ),
             Span::raw("  "),
         ]),
-        Line::styled(
-            crate::tr!(crate::keys::CONSOLE_SOFTWARE_CONFIRM_SWITCH),
-            Style::default().fg(Color::Yellow),
-        ),
         Line::raw(""),
+        super::render::dialog_hint_line(app),
     ];
-    lines.push(Line::styled(
-        crate::tr!(crate::keys::CONSOLE_SOFTWARE_CONFIRM_ENTER),
-        Style::default().fg(Color::Green),
-    ));
-    lines.push(Line::styled(
-        crate::tr!(crate::keys::CONSOLE_SOFTWARE_CONFIRM_ESC),
-        Style::default().fg(Color::DarkGray),
-    ));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
@@ -809,7 +798,7 @@ pub(crate) fn render_software_progress(frame: &mut Frame<'_>, app: &mut ConsoleA
         gauge_area,
     );
     if app.software.cancel_confirming {
-        render_software_cancel_confirmation(frame);
+        render_software_cancel_confirmation(frame, app);
     }
 }
 
@@ -936,15 +925,15 @@ pub(crate) fn render_base_packages_progress(frame: &mut Frame<'_>, app: &mut Con
         area,
     );
     if app.software.base_cancel_confirming {
-        render_base_packages_cancel_confirmation(frame);
+        render_base_packages_cancel_confirmation(frame, app);
     }
 }
 
 /// 基础包安装取消确认层:Enter 确认取消(终止 worker),Esc 关闭继续安装。
-fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>) {
+fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 8.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -964,13 +953,7 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>) {
                 Style::default().fg(Color::DarkGray),
             ),
             Line::raw(""),
-            Line::raw(crate::tr!(
-                crate::keys::CONSOLE_BASE_PACKAGES_CANCEL_PRESS_ENTER
-            )),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            super::render::dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
@@ -982,7 +965,7 @@ fn render_base_packages_cancel_confirmation(frame: &mut Frame<'_>) {
 }
 
 /// 取消安装确认层:Enter 确认取消(终止 worker),Esc 关闭继续安装。
-fn render_software_cancel_confirmation(frame: &mut Frame<'_>) {
+fn render_software_cancel_confirmation(frame: &mut Frame<'_>, app: &ConsoleApp) {
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
     let height = 9.min(screen.height.saturating_sub(2));
@@ -1005,11 +988,7 @@ fn render_software_cancel_confirmation(frame: &mut Frame<'_>) {
                 Style::default().fg(Color::DarkGray),
             ),
             Line::raw(""),
-            Line::raw(crate::tr!(crate::keys::CONSOLE_SOFTWARE_CANCEL_PRESS_ENTER)),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ESC_TO_CANCEL),
-                Style::default().fg(Color::DarkGray),
-            ),
+            super::render::dialog_hint_line(app),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })

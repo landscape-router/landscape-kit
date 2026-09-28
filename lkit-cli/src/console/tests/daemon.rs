@@ -195,7 +195,7 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Install blocked"));
     assert!(content.contains("[ Deploy the lkit daemon ]"));
-    assert!(content.contains("Enter deploy daemon"));
+    assert!(content.contains("Enter Deploy daemon"));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }

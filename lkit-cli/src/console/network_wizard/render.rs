@@ -253,10 +253,6 @@ pub(crate) fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizar
                 crate::tr!(crate::keys::CONSOLE_CONFIRM_LAN_FLUSH_NOTE),
                 Style::default().fg(Color::Yellow),
             ));
-            push!(Line::styled(
-                crate::tr!(crate::keys::CONSOLE_PRESS_ENTER_TO_START_INSTALLATION),
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
         }
     }
     frame.render_widget(
@@ -270,7 +266,7 @@ pub(crate) fn render_network_wizard(frame: &mut Frame<'_>, wizard: &NetworkWizar
         footer,
     );
     if wizard.cancel_confirming {
-        render_wizard_cancel_confirmation(frame);
+        render_wizard_cancel_confirmation(frame, wizard);
     }
 }
 
@@ -327,10 +323,10 @@ fn wizard_hints(wizard: &NetworkWizard) -> String {
     }
 }
 
-fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
+fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>, wizard: &NetworkWizard) {
     let screen = frame.area();
     let width = 52.min(screen.width.saturating_sub(2));
-    let height = 8.min(screen.height.saturating_sub(2));
+    let height = 7.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -340,18 +336,14 @@ fn render_wizard_cancel_confirmation(frame: &mut Frame<'_>) {
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(vec![
+            Line::raw(""),
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_QUESTION),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
-            Line::raw(crate::tr!(
-                crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ENTER
-            )),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_CANCEL_NETWORK_WIZARD_PRESS_ESC),
-                Style::default().fg(Color::DarkGray),
-            ),
+            // 向导整屏替换主界面,提示来源是向导自身底栏,与它共用同一结果。
+            Line::styled(wizard_hints(wizard), Style::default().fg(Color::DarkGray)),
         ])
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })

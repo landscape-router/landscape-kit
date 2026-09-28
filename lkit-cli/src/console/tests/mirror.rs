@@ -181,7 +181,7 @@ fn mirror_confirmation_dialog_renders() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Confirm mirror switch"));
     assert!(content.contains("Aliyun"));
-    assert!(content.contains("Press Enter to confirm"));
+    assert!(content.contains("Ctrl+C Exit  Enter Apply  Space Toggle  Esc Cancel"));
     assert!(
         content.contains("[x] Comment out the CD-ROM source entry"),
         "the cdrom toggle must be shown and checked by default"

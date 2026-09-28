@@ -429,13 +429,13 @@ impl ConsoleApp {
             return;
         }
         match key.code {
-            KeyCode::Enter => {
-                if self.deploy_psk_field == PskDialogField::Action {
-                    self.deploy_with_validated_psk();
-                } else {
+            KeyCode::Enter => match self.deploy_psk_field {
+                PskDialogField::Action => self.deploy_with_validated_psk(),
+                PskDialogField::Cancel => self.deploy_daemon_confirming = false,
+                PskDialogField::Psk | PskDialogField::Confirmation => {
                     self.deploy_psk_editing = true;
                 }
-            }
+            },
             KeyCode::Up | KeyCode::BackTab => {
                 self.deploy_psk_field = self.deploy_psk_field.previous();
             }
@@ -484,13 +484,13 @@ impl ConsoleApp {
             return;
         }
         match key.code {
-            KeyCode::Enter => {
-                if self.show_psk_field == PskDialogField::Action {
-                    self.save_show_psk_dialog();
-                } else {
+            KeyCode::Enter => match self.show_psk_field {
+                PskDialogField::Action => self.save_show_psk_dialog(),
+                PskDialogField::Cancel => self.show_psk = false,
+                PskDialogField::Psk | PskDialogField::Confirmation => {
                     self.show_psk_editing = true;
                 }
-            }
+            },
             KeyCode::Up | KeyCode::BackTab => {
                 self.show_psk_field = self.show_psk_field.previous();
             }

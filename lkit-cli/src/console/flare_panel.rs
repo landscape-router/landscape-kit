@@ -96,7 +96,7 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
         super::render::mask(&app.flare.psk)
     };
     let cursor = if app.flare.editing { "_" } else { "" };
-    let lines = vec![
+    let mut lines = vec![
         Line::styled(
             crate::tr!(crate::keys::CONSOLE_FLARE_DIALOG_PURPOSE),
             Style::default().fg(Color::DarkGray),
@@ -131,16 +131,17 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
             psk_display.into(),
             cursor.into(),
         ]),
-        Line::raw(""),
-        if app.flare.notice.is_empty() {
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_FLARE_DIALOG_HINT),
-                Style::default().fg(Color::Green),
-            )
-        } else {
-            Line::styled(app.flare.notice.clone(), Style::default().fg(Color::Yellow))
-        },
     ];
+    // 保存失败的提示先于按键说明收尾;按键说明与底栏共用同一来源。
+    if !app.flare.notice.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            app.flare.notice.clone(),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(super::render::dialog_hint_line(app));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })

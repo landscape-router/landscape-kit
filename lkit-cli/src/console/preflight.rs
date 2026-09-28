@@ -163,7 +163,7 @@ impl ConsoleApp {
     }
 }
 pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
-    let lines: Vec<Line<'_>> = match &app.preflight.state {
+    let mut lines: Vec<Line<'_>> = match &app.preflight.state {
         PreflightState::Failed(error) => vec![
             Line::styled(
                 crate::tr!(crate::keys::CONSOLE_ENVIRONMENT_CHECKS_COULD_NOT_COMPLETE),
@@ -207,18 +207,13 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
                 ));
                 lines.push(Line::raw(""));
             }
-            lines.push(Line::styled(
-                if daemon_blocked {
-                    crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DEPLOY_ESC_CLOSE_R)
-                } else {
-                    crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R)
-                },
-                Style::default().fg(Color::DarkGray),
-            ));
             lines
         }
         _ => return,
     };
+    // 按键说明跟随弹窗(与底栏同源),高度公式按内容行数自动适配。
+    lines.push(Line::raw(""));
+    lines.push(super::render::dialog_hint_line(app));
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
     // 弹窗内容允许换行,高度按最后一行在内容宽度下的换行后行号计算,不截断。

@@ -14,7 +14,7 @@ expression: terminal.backend()
 "│                                                                                                  │"
 "│Selected LAN interfaces will have their IPv4/IPv6 addresses flushed; unselected interfaces remain │"
 "│unchanged.                                                                                        │"
-"│Press Enter to start installation.                                                                │"
+"│                                                                                                  │"
 "│                                                                                                  │"
 "│                                                                                                  │"
 "│                                                                                                  │"

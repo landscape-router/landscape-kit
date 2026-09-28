@@ -81,14 +81,16 @@ pub(super) enum PskDialogField {
     Psk,
     Confirmation,
     Action,
+    Cancel,
 }
 
 impl PskDialogField {
     pub(super) fn previous(self) -> Self {
         match self {
-            Self::Psk => Self::Action,
+            Self::Psk => Self::Cancel,
             Self::Confirmation => Self::Psk,
             Self::Action => Self::Confirmation,
+            Self::Cancel => Self::Action,
         }
     }
 
@@ -96,7 +98,8 @@ impl PskDialogField {
         match self {
             Self::Psk => Self::Confirmation,
             Self::Confirmation => Self::Action,
-            Self::Action => Self::Psk,
+            Self::Action => Self::Cancel,
+            Self::Cancel => Self::Psk,
         }
     }
 }
@@ -138,7 +141,7 @@ impl ConsoleApp {
         match self.deploy_psk_field {
             PskDialogField::Psk => Some(&mut self.deploy_psk),
             PskDialogField::Confirmation => Some(&mut self.deploy_psk_confirmation),
-            PskDialogField::Action => None,
+            PskDialogField::Action | PskDialogField::Cancel => None,
         }
     }
 
@@ -147,7 +150,7 @@ impl ConsoleApp {
         match self.show_psk_field {
             PskDialogField::Psk => Some(&mut self.show_psk_value),
             PskDialogField::Confirmation => Some(&mut self.show_psk_confirmation),
-            PskDialogField::Action => None,
+            PskDialogField::Action | PskDialogField::Cancel => None,
         }
     }
 
@@ -237,7 +240,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     }
     let screen = frame.area();
     let width = 72.min(screen.width.saturating_sub(2));
-    let height = 17.min(screen.height.saturating_sub(2));
+    let height = 16.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -250,6 +253,10 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     let start_row = dialog_action_row(
         app.deploy_psk_field == PskDialogField::Action,
         crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_START),
+    );
+    let cancel_row = dialog_action_row(
+        app.deploy_psk_field == PskDialogField::Cancel,
+        crate::tr!(crate::keys::CONSOLE_DIALOG_CANCEL),
     );
     frame.render_widget(
         Paragraph::new(vec![
@@ -266,15 +273,9 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
             psk_row,
             confirmation_row,
             start_row,
+            cancel_row,
             Line::raw(""),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_HINT),
-                Style::default().fg(Color::Green),
-            ),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_PRESS_ESC),
-                Style::default().fg(Color::DarkGray),
-            ),
+            super::render::dialog_hint_line(app),
         ])
         .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_TITLE))),
@@ -295,7 +296,7 @@ fn psk_edit_row(app: &ConsoleApp, field: PskDialogField, masked: bool) -> Line<'
             crate::tr!(crate::keys::CONSOLE_CONFIRM_PSK_LABEL),
             &app.deploy_psk_confirmation,
         ),
-        PskDialogField::Action => unreachable!(),
+        PskDialogField::Action | PskDialogField::Cancel => unreachable!(),
     };
     let editing = active && app.deploy_psk_editing;
     let value_display = if editing || !masked {
@@ -358,7 +359,7 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
     }
     let screen = frame.area();
     let width = 88.min(screen.width.saturating_sub(2));
-    let height = 12.min(screen.height.saturating_sub(2));
+    let height = 11.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -378,6 +379,10 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
         app.show_psk_field == PskDialogField::Action,
         crate::tr!(crate::keys::CONSOLE_SHOW_PSK_SAVE),
     );
+    let cancel_row = dialog_action_row(
+        app.show_psk_field == PskDialogField::Cancel,
+        crate::tr!(crate::keys::CONSOLE_DIALOG_CANCEL),
+    );
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -388,11 +393,9 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
             psk_row,
             confirmation_row,
             save_row,
+            cancel_row,
             Line::raw(""),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_SHOW_PSK_HINT),
-                Style::default().fg(Color::Green),
-            ),
+            super::render::dialog_hint_line(app),
         ])
         .wrap(Wrap { trim: true })
         .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_SHOW_PSK_TITLE))),
@@ -407,7 +410,7 @@ fn show_psk_row(app: &ConsoleApp, field: PskDialogField, value: String) -> Line<
     let (label, value) = match field {
         PskDialogField::Psk => (crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL), value),
         PskDialogField::Confirmation => (crate::tr!(crate::keys::CONSOLE_CONFIRM_PSK_LABEL), value),
-        PskDialogField::Action => unreachable!(),
+        PskDialogField::Action | PskDialogField::Cancel => unreachable!(),
     };
     let cursor = if editing { "_" } else { "" };
     let selected_style = if active {
