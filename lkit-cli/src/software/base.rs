@@ -95,6 +95,12 @@ impl BasePackage {
             (Self::Procps, _) => "procps",
         }
     }
+
+    /// 缺失时在弹框中的默认勾选态:无线工具(iw、hostapd)默认不勾选,仅在
+    /// 明确选中时安装;其余基础依赖默认勾选。
+    pub(crate) fn selected_by_default(self) -> bool {
+        !matches!(self, Self::Iw | Self::Hostapd)
+    }
 }
 
 /// 支持的包管理器。`detect` 按 PATH 探测命令,生产主机通常只有一个。
@@ -139,8 +145,8 @@ impl PackageManager {
     }
 }
 
-/// 基础包弹框中的单包条目:已安装的包置灰并默认选中(不可取消),
-/// 缺失的包默认勾选,可切换。
+/// 基础包弹框中的单包条目:已安装的包置灰并显示 `✓`(不可切换),缺失的包
+/// 带勾选框,默认勾选态见 `BasePackage::selected_by_default`,可切换。
 #[derive(Clone, Debug)]
 pub(crate) struct BasePackageEntry {
     pub(crate) package: BasePackage,
@@ -163,7 +169,7 @@ impl BasePackageDialog {
                 .map(|package| BasePackageEntry {
                     package,
                     installed: package.installed(),
-                    selected: !package.installed(),
+                    selected: !package.installed() && package.selected_by_default(),
                 })
                 .collect(),
             cursor: 0,
@@ -410,6 +416,15 @@ mod tests {
             BasePackage::Procps.package_name(PackageManager::Zypper),
             "procps"
         );
+    }
+
+    #[test]
+    fn wireless_tools_are_not_selected_by_default() {
+        assert!(BasePackage::Ppp.selected_by_default());
+        assert!(BasePackage::Iproute2.selected_by_default());
+        assert!(BasePackage::Procps.selected_by_default());
+        assert!(!BasePackage::Iw.selected_by_default());
+        assert!(!BasePackage::Hostapd.selected_by_default());
     }
 
     #[test]
