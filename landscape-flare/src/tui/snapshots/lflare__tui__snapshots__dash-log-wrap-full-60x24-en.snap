@@ -1,0 +1,28 @@
+---
+source: landscape-flare/src/tui/snapshots.rs
+expression: terminal.backend()
+---
+"                lflare · Landscape L2 Session               "
+"┌Connection────────────────────────────────────────────────┐"
+"│Status: Connected · session 42 · aa:bb:cc:dd:ee:ff        │"
+"└──────────────────────────────────────────────────────────┘"
+"┌Mappings (a add · d delete)───────────────────────────────┐"
+"│No port mappings                                          │"
+"└──────────────────────────────────────────────────────────┘"
+"┌Log───────────────────────────────────────────────────────┐"
+"│tunnel keepalive exchange 6 ok · ethertype 0x88b6 · device│"
+"│  auto                                                    │"
+"│tunnel keepalive exchange 7 ok · ethertype 0x88b6 · device│"
+"│  auto                                                    │"
+"│tunnel keepalive exchange 8 ok · ethertype 0x88b6 · device│"
+"│  auto                                                    │"
+"│tunnel keepalive exchange 9 ok · ethertype 0x88b6 · device│"
+"│  auto                                                    │"
+"│tunnel keepalive exchange 10 ok · ethertype 0x88b6 ·      │"
+"│  device auto                                             │"
+"│tunnel keepalive exchange 11 ok · ethertype 0x88b6 ·      │"
+"│  device auto                                             │"
+"│(bottom · Up scrolls through log history)                 │"
+"│                                                          │"
+"└──────────────────────────────────────────────────────────┘"
+"Up focus mappings · PgUp PgDn scroll logs · a add mapping · "

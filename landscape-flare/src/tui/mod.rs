@@ -31,7 +31,7 @@ use render::{
     render_dash, render_exit_confirmation, render_form, render_too_small, terminal_too_small,
 };
 #[cfg(test)]
-use render::{selection_offset, status_line, visible_offset};
+use render::{selection_offset, status_line};
 
 const EVENT_POLL: Duration = Duration::from_millis(100);
 const MAX_LOGS: usize = 400;
@@ -42,7 +42,8 @@ enum Outcome {
     FormQuit,
     /// Session ended (client task returned Ok).
     Disconnected,
-    /// The client task failed (e.g. link open error).
+    /// The client task failed (e.g. link open error) and no form snapshot
+    /// was kept to return to.
     Failed(String),
 }
 
@@ -63,6 +64,9 @@ struct DashState {
     forward_error: Option<String>,
     /// 退出确认层:q/Esc 打开,Enter 确认断开,Ctrl-C 无条件立即退出。
     exit_confirming: bool,
+    /// 连接时的表单快照:客户端任务以硬错误结束(设备消失、链路打开失败
+    /// 等)时回到表单并显示原因,字段值保留,修正后可以直接重连。
+    resume_form: Option<FormState>,
     session_ready: bool,
     connection: ConnectionState,
     advertised_ports: Vec<u16>,
@@ -156,6 +160,8 @@ impl DashState {
     }
 }
 
+/// 仅在 TUI 主循环内移动,低频构造(每次连接/断开一次),保持平坦布局。
+#[allow(clippy::large_enum_variant)]
 enum Phase {
     Form(FormState),
     Dash(DashState),
@@ -270,7 +276,18 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
         }
         if let Some(res) = connect {
             match res {
-                Ok(cfg) => phase = Phase::Dash(spawn_client(cfg)),
+                Ok(cfg) => {
+                    // 连接时保留表单快照:硬错误不再把用户踢出 TUI,而是
+                    // 回到表单显示原因,修正后重连。
+                    let resume = if let Phase::Form(form) = &phase {
+                        Some(form.clone())
+                    } else {
+                        None
+                    };
+                    let mut dash = spawn_client(cfg);
+                    dash.resume_form = resume;
+                    phase = Phase::Dash(dash);
+                }
                 Err(e) => {
                     if let Phase::Form(f) = &mut phase {
                         f.error = Some(e);
@@ -278,7 +295,7 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
                 }
             }
         }
-        let mut finished: Option<Outcome> = None;
+        let mut finished: Option<Phase> = None;
         if let Phase::Dash(dash) = &mut phase
             && dash.client.as_ref().is_some_and(|h| h.is_finished())
         {
@@ -288,11 +305,26 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
                 Ok(Err(e)) => Outcome::Failed(e),
                 Err(e) => Outcome::Failed(format!("client task panicked: {e}")),
             };
-            finished = Some(res);
+            finished = Some(client_outcome_phase(dash, res));
         }
-        if let Some(res) = finished {
-            phase = Phase::Done(res);
+        if let Some(next) = finished {
+            phase = next;
         }
+    }
+}
+
+/// 客户端任务结束后的去向:硬错误且留有表单快照时回到表单并显示原因,
+/// 其余结果(正常断开、用户退出)结束 TUI。
+fn client_outcome_phase(dash: &mut DashState, outcome: Outcome) -> Phase {
+    match outcome {
+        Outcome::Failed(reason) => match dash.resume_form.take() {
+            Some(mut form) => {
+                form.error = Some(reason);
+                Phase::Form(form)
+            }
+            None => Phase::Done(Outcome::Failed(reason)),
+        },
+        outcome => Phase::Done(outcome),
     }
 }
 
@@ -334,6 +366,7 @@ fn spawn_client(cfg: OwnedConfig) -> DashState {
         forward_edit: false,
         forward_error: None,
         exit_confirming: false,
+        resume_form: None,
         session_ready: false,
         connection: ConnectionState::default(),
         advertised_ports: Vec::new(),
@@ -502,6 +535,7 @@ mod tests {
             forward_edit: false,
             forward_error: None,
             exit_confirming: false,
+            resume_form: None,
             session_ready: true,
             connection: ConnectionState::Ready {
                 session_id: 1,
@@ -687,14 +721,8 @@ mod tests {
     #[test]
     fn scroll_windows() {
         // Lists shorter than the window never scroll.
-        assert_eq!(visible_offset(3, 6, 0), 0);
         assert_eq!(selection_offset(3, 6, 2), 0);
-        assert_eq!(visible_offset(0, 0, 0), 0);
-
-        // Dashboard scroll: position is the top row, clamped to the end.
-        assert_eq!(visible_offset(8, 5, 0), 0);
-        assert_eq!(visible_offset(8, 5, 3), 3);
-        assert_eq!(visible_offset(8, 5, 99), 3);
+        assert_eq!(selection_offset(0, 0, 0), 0);
 
         // Selection lists keep the selected row visible: the window only
         // moves down once the selection passes the bottom edge.
@@ -703,5 +731,33 @@ mod tests {
         assert_eq!(selection_offset(8, 6, 6), 1);
         assert_eq!(selection_offset(8, 6, 7), 2);
         assert_eq!(selection_offset(8, 6, 99), 2);
+    }
+
+    #[test]
+    fn client_failure_returns_to_form() {
+        // 硬错误 + 表单快照:回表单、显示原因、字段值保留。
+        let mut dash = test_dash();
+        let mut form = FormState::from_devices(Vec::new(), None);
+        form.psk = "kept-psk".into();
+        dash.resume_form = Some(form);
+        match client_outcome_phase(&mut dash, Outcome::Failed("no such device".into())) {
+            Phase::Form(form) => {
+                assert_eq!(form.psk, "kept-psk");
+                assert_eq!(form.error.as_deref(), Some("no such device"));
+            }
+            _ => panic!("client failure should return to the form"),
+        }
+
+        // 没有快照(防御路径)或非错误结果:仍然结束 TUI。
+        let mut dash = test_dash();
+        assert!(matches!(
+            client_outcome_phase(&mut dash, Outcome::Failed("x".into())),
+            Phase::Done(Outcome::Failed(_))
+        ));
+        let mut dash = test_dash();
+        assert!(matches!(
+            client_outcome_phase(&mut dash, Outcome::Disconnected),
+            Phase::Done(Outcome::Disconnected)
+        ));
     }
 }

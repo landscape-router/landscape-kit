@@ -84,6 +84,7 @@ fn dash_fixture() -> DashFixture {
         forward_edit: false,
         forward_error: None,
         exit_confirming: false,
+        resume_form: None,
         session_ready: false,
         connection: ConnectionState::Searching,
         advertised_ports: Vec::new(),
@@ -485,8 +486,8 @@ fn snapshot_dash_logs_top_en() {
 }
 
 #[test]
-fn snapshot_dash_log_wrap_60x17_en() {
-    assert_dash_snapshot("dash-log-wrap-60x17-en", 60, 17, Language::En, |fixture| {
+fn snapshot_dash_log_wrap_60x24_en() {
+    assert_dash_snapshot("dash-log-wrap-60x24-en", 60, 24, Language::En, |fixture| {
         fixture.ready_session(&[], None);
         fixture.log(
             LogLevel::Info,
@@ -501,6 +502,28 @@ fn snapshot_dash_log_wrap_60x17_en() {
             "duplicate frame detected, dropping retransmit",
         );
     });
+}
+
+#[test]
+fn snapshot_dash_log_wrap_full_60x24_en() {
+    assert_dash_snapshot(
+        "dash-log-wrap-full-60x24-en",
+        60,
+        24,
+        Language::En,
+        |fixture| {
+            // 每条都超过 58 列折成两个物理行:窗口装满时最新日志与底部提示行
+            // 必须仍然可见(此前 Paragraph::wrap 的物理行超出预算,恰好把
+            // 最新一条与提示行从底部裁掉)。
+            fixture.ready_session(&[], None);
+            for i in 0..12 {
+                fixture.log(
+                    LogLevel::Info,
+                    &format!("tunnel keepalive exchange {i} ok · ethertype 0x88b6 · device auto"),
+                );
+            }
+        },
+    );
 }
 
 #[test]

@@ -2370,6 +2370,7 @@ dependencies = [
  "ratatui",
  "rust-i18n",
  "tokio",
+ "unicode-width",
 ]
 
 [[package]]

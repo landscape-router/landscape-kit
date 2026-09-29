@@ -256,15 +256,19 @@
 - 状态：`已覆盖`
 - 证据：[快照测试](../../landscape-flare/src/tui/snapshots.rs)、
   [快照文件](../../landscape-flare/src/tui/snapshots/)
-- 说明：31 张整屏快照把连接表单（默认/填满/校验错误/设备枚举失败/PSK 显示、
+- 说明：32 张整屏快照把连接表单（默认/填满/校验错误/设备枚举失败/PSK 显示、
   设备选择器含溢出与高度预算收缩、60x24 边界）与会话仪表盘（Searching/
   Authenticating/AuthRejected/LinkLost/PeerClosed/Ready、映射空/多行/溢出/
   添加编辑器/拒绝错误、日志滚动/换行/顶部与底部提示、退出确认层、80x24 与
-  60x17 尺寸）在 en/zh 双语下逐字符固定在 `snapshots/*.snap`。屏幕状态由直接
+  60x24 尺寸）在 en/zh 双语下逐字符固定在 `snapshots/*.snap`。屏幕状态由直接
   构造的 `FormState`/`DashState` 经通道 + `drain()` 推进，不含时钟、接口探测
   或网络输入。有意变更布局后以
   `INSTA_UPDATE=always cargo test -p landscape-flare tui::snapshots`
   更新并逐屏审阅；快照不含颜色（insta 对 TestBackend 的输出无样式）。
+  日志窗口按物理行（而非逻辑条目）自底向上装填：长日志按显示宽度词界折行、
+  续行缩进两格，窗口装满时最新日志与底/顶提示行不会被裁掉（由
+  `dash-log-wrap-full-60x24-en` 钉住；此前换行交给 `Paragraph::wrap` 处理，
+  物理行超出预算会恰好裁掉最新一条与提示行）。
 
 ## FLR-28
 
@@ -296,3 +300,18 @@
   (4) 编辑字段自动清除上一轮校验错误；未完成握手按 `d` 给出与 `a` 一致的
   提示。(5) 日志 Home 滚动夹到「窗口恰好贴顶」并显示顶部指示行（此前会越过
   贴顶位置只剩最旧一行日志）。
+
+## FLR-30
+
+**客户端硬错误回到连接表单并保留字段值**
+
+- 测试层：Rust 单元测试
+- 状态：`已覆盖`
+- 证据：[去向判定](../../landscape-flare/src/tui/mod.rs)
+  （`client_outcome_phase`、`DashState::resume_form`）、
+  [单元测试](../../landscape-flare/src/tui/mod.rs)（`client_failure_returns_to_form`）
+- 说明：连接时保留表单快照，客户端任务以硬错误结束（设备消失、链路打开失败、
+  任务 panic 等）时不再把用户踢出 TUI 打印终端错误，而是回到表单、在错误行
+  显示原因、字段值原样保留，修正后可直接重连。正常断开（服务端 teardown、
+  用户确认退出）仍走会话结束路径；断连重连（keepalive 超时）由客户端内部
+  循环处理，不触发该路径。

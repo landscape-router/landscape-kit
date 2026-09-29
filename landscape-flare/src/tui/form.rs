@@ -40,6 +40,7 @@ impl Field {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct FormState {
     pub(super) focus: Field,
     pub(super) psk: String,
