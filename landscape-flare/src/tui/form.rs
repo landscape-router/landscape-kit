@@ -203,11 +203,8 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
     match key.code {
         KeyCode::Char('c') if ctrl => FormAction::Quit,
         KeyCode::Char('q') if ctrl => FormAction::Quit,
-        KeyCode::Char('l' | 'L')
-            if !ctrl
-                && !key.modifiers.contains(KeyModifiers::ALT)
-                && matches!(form.focus, Field::Device | Field::Connect) =>
-        {
+        // F 键不与文本输入冲突,任意焦点(含输入中)都能切换语言。
+        KeyCode::F(3) => {
             crate::i18n::toggle();
             FormAction::None
         }

@@ -49,6 +49,8 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
                 dash.forward_error = None;
                 dash.forward_edit = false;
             }
+            // F3 与 Ctrl-C 一样是全局键:编辑器中也能切换语言,输入不受影响。
+            KeyCode::F(3) => crate::i18n::toggle(),
             _ => {}
         }
         return false;
@@ -70,7 +72,7 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
             dash.exit_confirming = true;
             false
         }
-        KeyCode::Char('l' | 'L') if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+        KeyCode::F(3) => {
             crate::i18n::toggle();
             false
         }

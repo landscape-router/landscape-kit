@@ -3,7 +3,7 @@ source: landscape-flare/src/tui/snapshots.rs
 expression: terminal.backend()
 ---
 "                                    lflare · Landscape L2 Client                                    "
-"Tab/Up Down navigate fields · focus Connect and press Enter · F2 show/hide PSK · l switch language ·"
+"Tab/Up Down navigate fields · focus Connect and press Enter · F2 show/hide PSK · F3 switch language "
 "┌PSK (shared secret, F2 show/hide)─────────────────────────────────────────────────────────────────┐"
 "│                                                                                                  │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────┘"

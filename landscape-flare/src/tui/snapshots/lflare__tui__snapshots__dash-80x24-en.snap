@@ -25,4 +25,4 @@ expression: terminal.backend()
 "│                                                                              │"
 "│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
-"Up focus mappings · PgUp PgDn scroll logs · a add mapping · l switch language · "
+"Up focus mappings · PgUp PgDn scroll logs · a add mapping · F3 switch language ·"

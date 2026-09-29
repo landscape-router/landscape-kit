@@ -501,17 +501,38 @@ mod tests {
     }
 
     #[test]
-    fn language_key_is_text_in_fields_and_toggle_on_connect() {
+    fn language_key_is_text_and_f3_toggles_from_any_field() {
         let _language = LanguageGuard::set(crate::i18n::Language::En);
         let mut form = FormState::from_devices(Vec::new(), None);
         let language_key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        let f3 = KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE);
 
+        // 'l' 在任何字段都是普通文本输入,不再承担语言切换。
         form::handle_key(&mut form, language_key);
         assert_eq!(form.psk, "l");
         assert_eq!(crate::i18n::current(), crate::i18n::Language::En);
 
         form.focus = Field::Connect;
         form::handle_key(&mut form, language_key);
+        assert_eq!(crate::i18n::current(), crate::i18n::Language::En);
+
+        // F3 在任意焦点(含文本输入中)切换语言。
+        form.focus = Field::Psk;
+        form::handle_key(&mut form, f3);
+        assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
+    }
+
+    #[test]
+    fn f3_switches_language_inside_mapping_editor() {
+        let _language = LanguageGuard::set(crate::i18n::Language::En);
+        let mut dash = test_dash();
+        dash.forward_edit = true;
+        dash.forward_input = "80l2:22".into();
+        assert!(!session::handle_key(
+            &mut dash,
+            KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)
+        ));
+        assert_eq!(dash.forward_input, "80l2:22");
         assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
     }
 
