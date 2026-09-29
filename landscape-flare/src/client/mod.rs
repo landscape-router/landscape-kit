@@ -420,8 +420,13 @@ async fn handshake(
                 &cfg.events,
                 ClientEvent::SessionStatus(SessionStatus::AuthRejected(reason.clone())),
             );
-            cfg.log
-                .emit(LogLevel::Warn, format!("  auth rejected: {reason}"));
+            let message = format!("auth rejected by server: {reason}");
+            cfg.log.emit(LogLevel::Warn, format!("  {message}"));
+            // 明确拒绝是终态:只有持有正确 psk 的客户端才会走到 AUTH(错误
+            // psk 的 DISCOVER 被服务端直接静默丢弃),同类凭据重试必然再被
+            // 拒,且每次失败都计入服务端的锁定计数。静默/超时仍由上层照常
+            // 重试,不受影响。
+            return Err(message.into());
         }
         return Ok(None);
     }
