@@ -49,6 +49,8 @@ pub(super) struct FormState {
     pub(super) device: String,
     pub(super) device_index: usize,
     pub(super) device_selecting: bool,
+    /// 打开选择器时的快照:Esc 取消时回滚,Enter/导航离开视为提交。
+    pub(super) device_revert: Option<(String, usize)>,
     pub(super) devices: Vec<Interface>,
     pub(super) devices_err: Option<String>,
     pub(super) ethertype: String,
@@ -96,6 +98,7 @@ impl FormState {
             device: String::new(),
             device_index: 0,
             device_selecting: false,
+            device_revert: None,
             devices,
             devices_err,
             ethertype: "0x88b6".into(),
@@ -207,18 +210,17 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
             crate::i18n::toggle();
             FormAction::None
         }
-        KeyCode::Esc if !form.device_selecting => FormAction::Quit,
         KeyCode::F(2) if form.focus == Field::Psk => {
             form.show_psk = !form.show_psk;
             FormAction::None
         }
         KeyCode::Tab => {
-            form.device_selecting = false;
+            commit_picker_leave(form);
             form.focus = form.focus.next();
             FormAction::None
         }
         KeyCode::BackTab => {
-            form.device_selecting = false;
+            commit_picker_leave(form);
             form.focus = form.focus.prev();
             FormAction::None
         }
@@ -232,7 +234,7 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
                     form.device_name_at(form.device_index).unwrap_or_default()
                 };
             } else {
-                form.device_selecting = false;
+                commit_picker_leave(form);
                 form.focus = form.focus.next();
             }
             FormAction::None
@@ -246,7 +248,7 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
                     form.device_name_at(form.device_index).unwrap_or_default()
                 };
             } else {
-                form.device_selecting = false;
+                commit_picker_leave(form);
                 form.focus = form.focus.prev();
             }
             FormAction::None
@@ -257,12 +259,24 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
             }
             if form.focus == Field::Device {
                 form.device_selecting = !form.device_selecting;
+                // 打开时快照当前值供 Esc 回滚;Enter 关闭即提交,丢弃快照。
+                form.device_revert = if form.device_selecting {
+                    Some((form.device.clone(), form.device_index))
+                } else {
+                    None
+                };
             } else {
                 form.focus = form.focus.next();
             }
             FormAction::None
         }
         KeyCode::Esc => {
+            if form.device_selecting
+                && let Some((device, index)) = form.device_revert.take()
+            {
+                form.device = device;
+                form.device_index = index;
+            }
             form.device_selecting = false;
             FormAction::None
         }
@@ -285,6 +299,7 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
                 }
                 Field::Device | Field::Connect => {}
             }
+            clear_stale_error(form);
             FormAction::None
         }
         KeyCode::Char('u') if ctrl => {
@@ -296,6 +311,7 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
                 Field::Token => form.token.clear(),
                 Field::Device | Field::Connect => {}
             }
+            clear_stale_error(form);
             FormAction::None
         }
         KeyCode::Char(c) if editable => {
@@ -307,8 +323,22 @@ pub(super) fn handle_key(form: &mut FormState, key: KeyEvent) -> FormAction {
                 Field::Token => form.token.push(c),
                 Field::Device | Field::Connect => {}
             }
+            clear_stale_error(form);
             FormAction::None
         }
         _ => FormAction::None,
+    }
+}
+
+/// 导航键离开选择器:按提交处理,丢弃 Esc 回滚快照。
+fn commit_picker_leave(form: &mut FormState) {
+    form.device_selecting = false;
+    form.device_revert = None;
+}
+
+/// 文本字段被编辑后清除上一轮的校验错误,避免修复输入时旧错误滞留。
+fn clear_stale_error(form: &mut FormState) {
+    if !matches!(form.focus, Field::Device | Field::Connect) {
+        form.error = None;
     }
 }

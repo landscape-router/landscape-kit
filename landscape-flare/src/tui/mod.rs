@@ -27,7 +27,9 @@ mod snapshots;
 #[cfg(test)]
 use form::Field;
 use form::{FormAction, FormState, OwnedConfig};
-use render::{render_dash, render_form, render_too_small, terminal_too_small};
+use render::{
+    render_dash, render_exit_confirmation, render_form, render_too_small, terminal_too_small,
+};
 #[cfg(test)]
 use render::{selection_offset, status_line, visible_offset};
 
@@ -59,6 +61,8 @@ struct DashState {
     forward_input: String,
     forward_edit: bool,
     forward_error: Option<String>,
+    /// 退出确认层:q/Esc 打开,Enter 确认断开,Ctrl-C 无条件立即退出。
+    exit_confirming: bool,
     session_ready: bool,
     connection: ConnectionState,
     advertised_ports: Vec<u16>,
@@ -185,6 +189,11 @@ fn draw_dash<B: ratatui::backend::Backend>(
                 render_too_small(f);
             } else {
                 render_dash(f, dash);
+            }
+            // 确认层叠加在整屏之上,与 console 一致:too-small 提示屏期间
+            // 仍然可见,用户不必盲目按键。
+            if dash.exit_confirming {
+                render_exit_confirmation(f);
             }
         })
         .map(|_| ())
@@ -324,6 +333,7 @@ fn spawn_client(cfg: OwnedConfig) -> DashState {
         forward_input: String::new(),
         forward_edit: false,
         forward_error: None,
+        exit_confirming: false,
         session_ready: false,
         connection: ConnectionState::default(),
         advertised_ports: Vec::new(),
@@ -472,14 +482,15 @@ mod tests {
         assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
     }
 
-    #[test]
-    fn add_key_moves_from_logs_to_mapping_editor() {
+    /// 就绪会话的仪表盘夹具:通道 sender 全部关闭(drain 无事可做),
+    /// 键盘路径测试只关心 handle_key 对状态的影响。
+    fn test_dash() -> DashState {
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (forward_tx, _forward_rx) = mpsc::unbounded_channel();
         drop(log_tx);
         drop(event_tx);
-        let mut dash = DashState {
+        DashState {
             log_rx,
             event_rx,
             logs: VecDeque::new(),
@@ -490,6 +501,7 @@ mod tests {
             forward_input: String::new(),
             forward_edit: false,
             forward_error: None,
+            exit_confirming: false,
             session_ready: true,
             connection: ConnectionState::Ready {
                 session_id: 1,
@@ -501,7 +513,12 @@ mod tests {
             notify: Arc::new(Notify::new()),
             forward_tx,
             client: None,
-        };
+        }
+    }
+
+    #[test]
+    fn add_key_moves_from_logs_to_mapping_editor() {
+        let mut dash = test_dash();
 
         assert!(!session::handle_key(
             &mut dash,
@@ -516,6 +533,63 @@ mod tests {
         assert_eq!(dash.focus, DashFocus::Forwards);
         session::handle_key(&mut dash, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(dash.focus, DashFocus::Logs);
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_mapping_editor() {
+        // 编辑器此前把 Ctrl-C 当成不可编辑键吞掉,只能先 Esc 关闭再退出。
+        let mut dash = test_dash();
+        dash.forward_edit = true;
+        dash.forward_input = "8022:22".into();
+        assert!(session::handle_key(
+            &mut dash,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(dash.forward_input, "8022:22");
+    }
+
+    #[test]
+    fn exit_confirmation_flow() {
+        let q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+        let mut dash = test_dash();
+        assert!(!session::handle_key(&mut dash, q));
+        assert!(dash.exit_confirming);
+        // 确认层是模态:其余键不穿透(此处 'a' 不得打开映射编辑器)。
+        assert!(!session::handle_key(
+            &mut dash,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)
+        ));
+        assert!(dash.exit_confirming);
+        assert!(!dash.forward_edit);
+        // Esc 取消回到会话。
+        assert!(!session::handle_key(&mut dash, esc));
+        assert!(!dash.exit_confirming);
+        // 再次打开后 Enter 确认,请求断开退出。
+        assert!(!session::handle_key(&mut dash, q));
+        assert!(session::handle_key(&mut dash, enter));
+
+        // Ctrl-C 在确认层中仍然立即退出(硬出口)。
+        let mut dash = test_dash();
+        assert!(!session::handle_key(&mut dash, q));
+        assert!(session::handle_key(
+            &mut dash,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        ));
+    }
+
+    #[test]
+    fn delete_before_handshake_reports() {
+        let mut dash = test_dash();
+        dash.session_ready = false;
+        dash.focus = DashFocus::Forwards;
+        assert!(!session::handle_key(
+            &mut dash,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)
+        ));
+        assert!(dash.forward_error.is_some());
     }
 
     #[test]
@@ -547,6 +621,67 @@ mod tests {
             FormAction::None
         );
         assert!(!form.device_selecting);
+    }
+
+    #[test]
+    fn form_esc_does_not_quit() {
+        // 表单页 Esc 只用于收起/取消设备选择器,退出统一走 Ctrl-Q/Ctrl-C
+        // (与提示行文案一致)。
+        let mut form = FormState::from_devices(Vec::new(), None);
+        assert_eq!(
+            form::handle_key(&mut form, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            FormAction::None
+        );
+        assert_eq!(form.focus, Field::Psk);
+    }
+
+    #[test]
+    fn picker_esc_reverts_and_tab_commits() {
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+
+        let mut form = FormState::from_devices(vec!["eth0".into(), "eth1".into()], None);
+        form.focus = Field::Device;
+
+        // 打开 → 移动两格 → Esc 取消:回滚到打开前的值。
+        form::handle_key(&mut form, enter);
+        assert!(form.device_selecting);
+        form::handle_key(&mut form, down);
+        form::handle_key(&mut form, down);
+        assert_eq!(form.device, "eth1");
+        form::handle_key(&mut form, esc);
+        assert!(!form.device_selecting);
+        assert_eq!(form.device, "");
+        assert_eq!(form.device_index, 0);
+
+        // Tab 离开选择器按提交处理:保留移动后的选择。
+        form::handle_key(&mut form, enter);
+        form::handle_key(&mut form, down);
+        assert_eq!(form.device, "eth0");
+        form::handle_key(&mut form, tab);
+        assert!(!form.device_selecting);
+        assert_eq!(form.device, "eth0");
+    }
+
+    #[test]
+    fn editing_clears_stale_form_error() {
+        let mut form = FormState::from_devices(Vec::new(), None);
+        form.error = Some("stale".into());
+        form::handle_key(
+            &mut form,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        );
+        assert_eq!(form.psk, "x");
+        assert!(form.error.is_none());
+
+        form.error = Some("stale".into());
+        form::handle_key(
+            &mut form,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        assert!(form.error.is_none());
     }
 
     #[test]

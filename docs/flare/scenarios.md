@@ -256,13 +256,14 @@
 - 状态：`已覆盖`
 - 证据：[快照测试](../../landscape-flare/src/tui/snapshots.rs)、
   [快照文件](../../landscape-flare/src/tui/snapshots/)
-- 说明：28 张整屏快照把连接表单（默认/填满/校验错误/设备枚举失败/PSK 显示、
+- 说明：31 张整屏快照把连接表单（默认/填满/校验错误/设备枚举失败/PSK 显示、
   设备选择器含溢出与高度预算收缩、60x24 边界）与会话仪表盘（Searching/
   Authenticating/AuthRejected/LinkLost/PeerClosed/Ready、映射空/多行/溢出/
-  添加编辑器/拒绝错误、日志滚动/换行/底部提示、80x24 与 60x17 尺寸）在 en/zh
-  双语下逐字符固定在 `snapshots/*.snap`。屏幕状态由直接构造的 `FormState`/
-  `DashState` 经通道 + `drain()` 推进，不含时钟、接口探测或网络输入。有意变更
-  布局后以 `INSTA_UPDATE=always cargo test -p landscape-flare tui::snapshots`
+  添加编辑器/拒绝错误、日志滚动/换行/顶部与底部提示、退出确认层、80x24 与
+  60x17 尺寸）在 en/zh 双语下逐字符固定在 `snapshots/*.snap`。屏幕状态由直接
+  构造的 `FormState`/`DashState` 经通道 + `drain()` 推进，不含时钟、接口探测
+  或网络输入。有意变更布局后以
+  `INSTA_UPDATE=always cargo test -p landscape-flare tui::snapshots`
   更新并逐屏审阅；快照不含颜色（insta 对 TestBackend 的输出无样式）。
 
 ## FLR-28
@@ -277,3 +278,21 @@
 - 说明：终端小于 60x24 时表单与会话页统一渲染「终端过小（至少需要 60x24）」
   提示屏（经 `draw_form`/`draw_dash` 共享路径，与运行期一致）；该守卫由快照
   钉住——此前 71x17 下表单字段会被布局器压成无边框内容行的退化形态。
+
+## FLR-29
+
+**lflare TUI 交互契约：退出确认、Esc 语义与快捷键通路**
+
+- 测试层：Rust 单元测试（含 insta 快照）
+- 状态：`已覆盖`
+- 证据：[按键处理](../../landscape-flare/src/tui/session.rs)、
+  [表单按键处理](../../landscape-flare/src/tui/form.rs)、
+  [确认层快照](../../landscape-flare/src/tui/snapshots/)（`dash-exit-confirm-en/zh`）
+- 说明：与 console 的交互语言对齐——(1) 会话页 `q`/`Esc` 打开「断开连接」
+  确认层，Enter 确认、Esc 取消、其余键不穿透；`Ctrl-C` 是硬出口，在确认层与
+  映射编辑器中都立即退出（编辑器此前会吞掉 Ctrl-C）。(2) 表单页 `Esc` 不再
+  退出程序，只收起/取消设备选择器；退出统一 `Ctrl-Q`/`Ctrl-C`，与提示行一致。
+  (3) 设备选择器打开时快照当前值，`Esc` 取消回滚，Enter/导航离开按提交处理。
+  (4) 编辑字段自动清除上一轮校验错误；未完成握手按 `d` 给出与 `a` 一致的
+  提示。(5) 日志 Home 滚动夹到「窗口恰好贴顶」并显示顶部指示行（此前会越过
+  贴顶位置只剩最旧一行日志）。

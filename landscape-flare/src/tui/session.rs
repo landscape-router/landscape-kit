@@ -12,6 +12,12 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let editable = !ctrl && !key.modifiers.contains(KeyModifiers::ALT);
 
+    // Ctrl-C 是硬出口:退出确认层与映射编辑器都不拦截(编辑器此前会把它与
+    // 普通编辑键一起吞掉,只能先 Esc 关掉编辑器再退出)。
+    if ctrl && key.code == KeyCode::Char('c') {
+        return true;
+    }
+
     if dash.forward_edit {
         match key.code {
             KeyCode::Char(c) if editable => dash.forward_input.push(c),
@@ -48,9 +54,22 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
         return false;
     }
 
+    // 退出确认层:Enter 断开退出,Esc 取消,其余键不穿透(与 console 的
+    // ExitState::Confirming 语义一致)。
+    if dash.exit_confirming {
+        match key.code {
+            KeyCode::Enter => return true,
+            KeyCode::Esc => dash.exit_confirming = false,
+            _ => {}
+        }
+        return false;
+    }
+
     match key.code {
-        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => true,
-        KeyCode::Char('c') if ctrl => true,
+        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+            dash.exit_confirming = true;
+            false
+        }
         KeyCode::Char('l' | 'L') if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
             crate::i18n::toggle();
             false
@@ -98,7 +117,10 @@ pub(super) fn handle_key(dash: &mut DashState, key: KeyEvent) -> bool {
             false
         }
         KeyCode::Char('d') if dash.focus == DashFocus::Forwards => {
-            if dash.session_ready && !dash.forwards.is_empty() {
+            if !dash.session_ready {
+                // 握手未完成时删除是静默 no-op,给出与添加一致的提示。
+                dash.forward_error = Some(crate::tr!("tui.handshake_required"));
+            } else if !dash.forwards.is_empty() {
                 let index = dash.forward_index.min(dash.forwards.len() - 1);
                 let forward = dash.forwards.remove(index);
                 let _ = dash.forward_tx.send(ForwardCommand::Remove(forward));

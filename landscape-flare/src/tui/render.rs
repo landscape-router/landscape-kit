@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::form::{Field, FormState};
 use super::{ClientForwardStatus, ConnectionState, DashFocus, DashState};
@@ -48,6 +48,42 @@ pub(super) fn render_too_small(f: &mut Frame) {
         .alignment(Alignment::Center)
         .block(Block::bordered().title("lflare")),
         f.area(),
+    );
+}
+
+/// 退出确认层:先把整屏底层压暗(前景退为暗灰、清掉高亮背景,弹窗外残词
+/// 不再与弹窗争夺注意力,与 console 的 begin_dialog 同款),再清空并绘制
+/// 居中的确认弹窗。
+pub(super) fn render_exit_confirmation(f: &mut Frame) {
+    for cell in f.buffer_mut().content.iter_mut() {
+        cell.fg = Color::DarkGray;
+        cell.bg = Color::Reset;
+    }
+    let screen = f.area();
+    let width = 52.min(screen.width.saturating_sub(2));
+    let height = 5.min(screen.height.saturating_sub(2));
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    f.render_widget(Clear, area);
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::raw(""),
+            Line::styled(
+                crate::tr!("tui.exit_confirm_message"),
+                Style::default().fg(Color::White),
+            ),
+            Line::styled(
+                crate::tr!("tui.exit_confirm_hint"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title(crate::tr!("tui.exit_confirm_title"))),
+        area,
     );
 }
 
@@ -436,10 +472,28 @@ pub(super) fn render_dash(f: &mut Frame, dash: &DashState) {
     // (渲染窗口只认 inner_rows 行)。
     let show_bottom = dash.focus == DashFocus::Logs && dash.scroll == 0 && total > inner_rows;
     let visible = inner_rows - usize::from(show_bottom);
-    let scroll = dash.scroll.min(total.saturating_sub(1));
-    let end = total.saturating_sub(scroll);
-    let start = end.saturating_sub(visible);
+    // scroll 是自底部的偏移,夹到「窗口恰好贴顶」为止:此前夹到 total-1 会让
+    // Home 越过贴顶位置,只剩最旧一行日志和一片空白。
+    let max_scroll = total.saturating_sub(visible);
+    let scroll = dash.scroll.min(max_scroll);
+    let at_top = max_scroll > 0 && scroll == max_scroll;
+    let log_rows = visible.saturating_sub(usize::from(at_top));
+    let (start, end) = if at_top {
+        (0, log_rows)
+    } else {
+        let end = total.saturating_sub(scroll);
+        (end.saturating_sub(log_rows), end)
+    };
     let mut shown: Vec<Line> = log_lines.drain(start..end).collect();
+    if at_top {
+        shown.insert(
+            0,
+            Line::styled(
+                crate::tr!("tui.log_top"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        );
+    }
     if show_bottom {
         shown.push(Line::styled(
             crate::tr!("tui.log_bottom"),

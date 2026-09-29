@@ -40,7 +40,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-10` | [self.md](functional/self.md) |
 | daemon 自动恢复 | `DAE-01` 至 `DAE-05` | [daemon.md](functional/daemon.md) |
-| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-28` | [flare 文档](../../flare/scenarios.md) |
+| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-29` | [flare 文档](../../flare/scenarios.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

@@ -83,6 +83,7 @@ fn dash_fixture() -> DashFixture {
         forward_input: String::new(),
         forward_edit: false,
         forward_error: None,
+        exit_confirming: false,
         session_ready: false,
         connection: ConnectionState::Searching,
         advertised_ports: Vec::new(),
@@ -472,6 +473,18 @@ fn snapshot_dash_logs_scrolled_en() {
 }
 
 #[test]
+fn snapshot_dash_logs_top_en() {
+    assert_dash_snapshot("dash-logs-top-en", 100, 28, Language::En, |fixture| {
+        fixture.ready_session(&[], None);
+        for i in 0..25 {
+            fixture.log(LogLevel::Info, &format!("tunnel keepalive exchange {i} ok"));
+        }
+        // Home:scroll 夹到「窗口恰好贴顶」,顶部提示行可见而非越界空屏。
+        fixture.dash.scroll = usize::MAX;
+    });
+}
+
+#[test]
 fn snapshot_dash_log_wrap_60x17_en() {
     assert_dash_snapshot("dash-log-wrap-60x17-en", 60, 17, Language::En, |fixture| {
         fixture.ready_session(&[], None);
@@ -505,6 +518,28 @@ fn snapshot_dash_80x24_en() {
 fn snapshot_dash_too_small_71x17_en() {
     assert_dash_snapshot("dash-too-small-71x17-en", 71, 17, Language::En, |fixture| {
         fixture.ready_session(&[], None);
+    });
+}
+
+#[test]
+fn snapshot_dash_exit_confirm_en() {
+    assert_dash_snapshot("dash-exit-confirm-en", 100, 28, Language::En, |fixture| {
+        let forwards = [(8022, 22)];
+        fixture.ready_session(&forwards, Some("enp5s0"));
+        fixture.forward_state((8022, 22), ClientForwardStatus::Listening);
+        fixture.dash.focus = DashFocus::Forwards;
+        fixture.dash.exit_confirming = true;
+    });
+}
+
+#[test]
+fn snapshot_dash_exit_confirm_zh() {
+    assert_dash_snapshot("dash-exit-confirm-zh", 100, 28, Language::Zh, |fixture| {
+        let forwards = [(8022, 22)];
+        fixture.ready_session(&forwards, Some("enp5s0"));
+        fixture.forward_state((8022, 22), ClientForwardStatus::Listening);
+        fixture.dash.focus = DashFocus::Forwards;
+        fixture.dash.exit_confirming = true;
     });
 }
 
