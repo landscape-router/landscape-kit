@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use crate::deployment::plan::InstallError;
 use crate::interaction::credentials::Credentials;
 use crate::network::config::{
-    Ipv4Cidr, MANAGEMENT_BRIDGE, NetworkMode, NetworkPlan, WanIpv4Config, network_error,
+    Ipv4Cidr, MANAGEMENT_BRIDGE, NetworkMode, NetworkPlan, WanIpv4Config,
 };
 
 /// `landscape config` 子命令自该版本起提供 lkit 依赖的完整 flag 面
@@ -73,12 +73,11 @@ pub(crate) fn config_subcommand_args(
                     push_wan_iface(&mut args, wan);
                     args.extend(["--wan-mode".to_string(), "dhcp".to_string()]);
                 }
-                // 向导与接管发现都恒产生 Some;None 计划无法用子命令表达。
+                // 注册 WAN 接口但不配置地址,与旧手拼路径的 None 分支等价
+                // (向导与接管发现目前都恒产生 Some)。
                 None => {
-                    return Err(network_error(
-                        "a RoutedLan plan without a WAN IPv4 mode cannot be expressed via \
-                         `landscape config`",
-                    ));
+                    push_wan_iface(&mut args, wan);
+                    args.extend(["--wan-mode".to_string(), "none".to_string()]);
                 }
             }
             args.push("--lan-iface".to_string());
@@ -325,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn routed_lan_without_wan_ipv4_mode_is_rejected() {
+    fn routed_lan_without_wan_ipv4_mode_registers_the_wan_without_an_address() {
         let plan = NetworkPlan {
             mode: NetworkMode::RoutedLan {
                 wan: "ens3".into(),
@@ -337,7 +336,34 @@ mod tests {
             },
             selected_macs: selected(&["ens3", "ens4"]),
         };
-        assert!(config_subcommand_args(&credentials(), &plan).is_err());
+        assert_eq!(
+            config_subcommand_args(&credentials(), &plan).unwrap(),
+            vec![
+                "--admin-user",
+                "admin",
+                "--admin-pass",
+                "Secret123",
+                "--enable",
+                "firewall",
+                "--disable",
+                "nat",
+                "--wan-iface",
+                "ens3",
+                "--wan-mode",
+                "none",
+                "--lan-iface",
+                "br_lan",
+                "--lan-ip",
+                "192.168.10.1/24",
+                "--lan-member",
+                "ens4",
+                "--lan-dhcp-range",
+                "192.168.10.100-192.168.10.254",
+                "--lan-dhcp-lease",
+                "43200",
+                "--stdout",
+            ]
+        );
     }
 
     fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {

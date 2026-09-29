@@ -580,7 +580,7 @@ fn prefix_mask(prefix: u8) -> u32 {
     u32::MAX << (32 - prefix)
 }
 
-pub(crate) fn network_error(reason: impl Into<String>) -> InstallError {
+fn network_error(reason: impl Into<String>) -> InstallError {
     InstallError::ParameterUsage(format!(
         "invalid network takeover configuration: {}",
         reason.into()

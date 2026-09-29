@@ -25,6 +25,8 @@ const DEFAULT_LAN_IP: &str = "192.168.5.1/24";
 pub enum WanMode {
     Dhcp,
     Static,
+    /// 注册 WAN 接口但不配置地址。
+    None,
 }
 
 #[derive(Debug, Args)]
@@ -245,22 +247,9 @@ pub fn build_init_toml(args: &ConfigCliArgs, version: &str) -> Result<String> {
 
 fn build_init(args: &ConfigCliArgs, version: &str) -> Result<InitToml> {
     let now = now_f64();
+    // 拓扑仅由接口名是否出现决定;缺失一侧的 flag 静默忽略(与真实子命令一致)。
     let wan = args.wan_iface.clone();
     let lan = args.lan_iface.clone();
-    if wan.is_none() && lan.is_none() {
-        bail!("either --wan-iface or --lan-iface is required");
-    }
-    if lan.is_none() {
-        if !args.lan_member.is_empty() {
-            bail!("--lan-member requires --lan-iface");
-        }
-        if args.no_lan_dhcp || args.lan_dhcp_range.is_some() || args.lan_dhcp_lease.is_some() {
-            bail!("LAN flags require --lan-iface");
-        }
-    }
-    if !args.static_nat.is_empty() && wan.is_none() {
-        bail!("--static-nat requires a WAN interface");
-    }
 
     let enabled = resolve_enabled_services(args, lan.is_some())?;
 
@@ -339,6 +328,7 @@ fn build_init(args: &ConfigCliArgs, version: &str) -> Result<InitToml> {
                     update_at: now,
                 });
             }
+            WanMode::None => {}
         }
     }
 
@@ -369,49 +359,50 @@ fn build_init(args: &ConfigCliArgs, version: &str) -> Result<InitToml> {
     let mut nats = Vec::new();
     let mut firewalls = Vec::new();
     let mut route_wans = Vec::new();
-    let mut route_lans = Vec::new();
-    for service in enabled {
-        let wan = wan
-            .clone()
-            .context("WAN services require a WAN interface")?;
-        match service {
-            "nat" => nats.push(IfaceService {
-                iface_name: wan,
-                enable: true,
-                update_at: now,
-            }),
-            "firewall" => firewalls.push(IfaceService {
-                iface_name: wan,
-                enable: true,
-                update_at: now,
-            }),
-            "route-wan" => route_wans.push(IfaceService {
-                iface_name: wan,
-                enable: true,
-                update_at: now,
-            }),
-            "route-lan" => {
-                let lan = lan.clone().context("route-lan requires a LAN interface")?;
-                route_lans.push(LanRoute {
-                    iface_name: lan,
+    if let Some(wan) = &wan {
+        for service in &enabled {
+            match *service {
+                "nat" => nats.push(IfaceService {
+                    iface_name: wan.clone(),
                     enable: true,
-                    static_routes: None,
                     update_at: now,
-                });
+                }),
+                "firewall" => firewalls.push(IfaceService {
+                    iface_name: wan.clone(),
+                    enable: true,
+                    update_at: now,
+                }),
+                "route-wan" => route_wans.push(IfaceService {
+                    iface_name: wan.clone(),
+                    enable: true,
+                    update_at: now,
+                }),
+                _ => {}
             }
-            _ => bail!("service {service} is not implemented by the fixture"),
         }
+    }
+    let mut route_lans = Vec::new();
+    if let Some(lan) = lan.as_deref()
+        && enabled.contains(&"route-lan")
+    {
+        route_lans.push(LanRoute {
+            iface_name: lan.to_string(),
+            enable: true,
+            static_routes: None,
+            update_at: now,
+        });
     }
 
     let mut static_nat_mappings_v4 = Vec::new();
-    if !args.static_nat.is_empty() {
-        let wan = wan.context("checked above")?;
-        let mut pairs = Vec::new();
+    if let Some(wan) = wan.as_deref()
+        && !args.static_nat.is_empty()
+    {
+        let mut pairs: Vec<PortPair> = Vec::new();
         for raw in &args.static_nat {
             let (wan_port, lan_port) = raw.split_once(':').with_context(|| {
                 format!("invalid --static-nat {raw}: expected <wan_port>:<lan_port>")
             })?;
-            pairs.push(PortPair {
+            let pair = PortPair {
                 wan_port: wan_port
                     .trim()
                     .parse()
@@ -420,13 +411,25 @@ fn build_init(args: &ConfigCliArgs, version: &str) -> Result<InitToml> {
                     .trim()
                     .parse()
                     .with_context(|| format!("invalid --static-nat {raw}: bad LAN port"))?,
-            });
+            };
+            if pair.wan_port == 0 || pair.lan_port == 0 {
+                bail!("invalid --static-nat {raw}: ports must not be zero");
+            }
+            if pairs
+                .iter()
+                .any(|existing| existing.wan_port == pair.wan_port)
+            {
+                bail!(
+                    "invalid --static-nat {raw}: duplicate WAN port would conflict in DNAT rules"
+                );
+            }
+            pairs.push(pair);
         }
         static_nat_mappings_v4.push(StaticNat {
             id: "123e4567-e89b-12d3-a456-426614174000".into(),
             enable: true,
             remark: "generated by the lkit fixture".into(),
-            wan_iface_name: wan,
+            wan_iface_name: wan.to_string(),
             mapping_pair_ports: pairs,
             lan_target: NatTarget::Local,
             l4_protocols: vec![TCP_L4_PROTOCOL],
@@ -661,10 +664,60 @@ mod tests {
     }
 
     #[test]
-    fn lan_flags_without_lan_iface_are_rejected() {
+    fn wan_mode_none_with_iface_registers_the_wan_without_an_address() {
+        let mut args = base_args();
+        args.wan_mode = WanMode::None;
+        args.wan_ip = None;
+        args.wan_gateway = None;
+
+        let toml =
+            toml::from_str::<toml::Value>(&build_init_toml(&args, "1.2.3").unwrap()).unwrap();
+        assert!(toml.get("ipconfigs").is_none());
+        // WAN 接口照常注册,WAN 服务照常挂载(--disable nat,故只剩 firewall 与 route-wan)。
+        let ifaces = toml["ifaces"].as_array().unwrap();
+        assert!(
+            ifaces
+                .iter()
+                .any(|iface| iface["name"].as_str() == Some("ens3"))
+        );
+        assert_eq!(toml["firewalls"][0]["iface_name"].as_str(), Some("ens3"));
+        assert_eq!(toml["route_wans"][0]["iface_name"].as_str(), Some("ens3"));
+        assert_eq!(toml["route_lans"][0]["iface_name"].as_str(), Some("br_lan"));
+    }
+
+    #[test]
+    fn lan_flags_without_lan_iface_are_ignored() {
         let mut args = base_args();
         args.lan_iface = None;
         args.lan_member = vec!["ens4".into()];
+        args.lan_dhcp_range = Some("192.168.10.100-192.168.10.254".into());
+
+        let toml =
+            toml::from_str::<toml::Value>(&build_init_toml(&args, "1.2.3").unwrap()).unwrap();
+        assert!(toml.get("dhcpv4_services").is_none());
+        assert!(toml.get("route_lans").is_none());
+        assert_eq!(toml["ifaces"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn static_nat_without_wan_iface_is_ignored() {
+        let mut args = base_args();
+        args.wan_iface = None;
+        args.static_nat = vec!["22:22".into()];
+
+        let toml =
+            toml::from_str::<toml::Value>(&build_init_toml(&args, "1.2.3").unwrap()).unwrap();
+        assert!(toml.get("static_nat_mappings_v4").is_none());
+    }
+
+    #[test]
+    fn duplicate_static_nat_wan_ports_are_rejected() {
+        let mut args = base_args();
+        args.lan_iface = None;
+        args.lan_member = Vec::new();
+        args.lan_dhcp_range = None;
+        args.lan_dhcp_lease = None;
+        args.static_nat = vec!["22:22".into(), "22:8080".into()];
         assert!(build_init_toml(&args, "1.2.3").is_err());
     }
 
