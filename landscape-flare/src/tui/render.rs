@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
@@ -7,6 +7,15 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 use super::form::{Field, FormState};
 use super::{ClientForwardStatus, ConnectionState, DashFocus, DashState};
 use crate::client::LogLevel;
+
+/// TUI 可用的最小终端尺寸:表单骨架(标题/提示行 + 七个字段 + 连接按钮 +
+/// 错误行)需要 24 行,连接状态行与映射行在 60 列内完整显示。
+pub(super) const MIN_TERMINAL_WIDTH: u16 = 60;
+pub(super) const MIN_TERMINAL_HEIGHT: u16 = 24;
+
+pub(super) fn terminal_too_small(area: Rect) -> bool {
+    area.width < MIN_TERMINAL_WIDTH || area.height < MIN_TERMINAL_HEIGHT
+}
 
 pub(super) fn focused_style() -> Style {
     Style::default()
@@ -27,6 +36,19 @@ pub(super) fn selection_offset(total: usize, visible: usize, selection: usize) -
         return 0;
     }
     selection.saturating_sub(visible - 1).min(total - visible)
+}
+
+pub(super) fn render_too_small(f: &mut Frame) {
+    f.render_widget(
+        Paragraph::new(crate::tr!(
+            "tui.terminal_too_small",
+            width = MIN_TERMINAL_WIDTH,
+            height = MIN_TERMINAL_HEIGHT
+        ))
+        .alignment(Alignment::Center)
+        .block(Block::bordered().title("lflare")),
+        f.area(),
+    );
 }
 
 pub(super) fn text_field(frame: &mut Frame, area: Rect, label: &str, value: &str, focused: bool) {
@@ -53,24 +75,29 @@ pub(super) fn text_field(frame: &mut Frame, area: Rect, label: &str, value: &str
 pub(super) fn render_form(f: &mut Frame, form: &FormState) {
     let dev_opts = form.device_options();
     let device_picker_open = form.focus == Field::Device && form.device_selecting;
-    let dev_visible = if device_picker_open {
-        dev_opts.len().min(6)
+    let err_h = usize::from(form.error.is_some() || form.devices_err.is_some());
+    // 除设备区外的固定骨架:标题 + 提示行 + 五个 3 行字段 + 连接按钮 + 错误行。
+    // 展开的设备列表从剩余预算里取行数,保证溢出提示行不会被布局器挤掉。
+    let fixed_h = 2 + 3 * 5 + 3 + err_h;
+    let device_budget = (f.area().height as usize).saturating_sub(fixed_h);
+    let (dev_visible, device_h) = if device_picker_open {
+        let content_rows = device_budget.saturating_sub(2);
+        let mut visible = dev_opts.len().min(6);
+        let mut overflow = usize::from(dev_opts.len() > visible);
+        if visible + overflow > content_rows {
+            visible = content_rows.saturating_sub(1).min(visible);
+            overflow = usize::from(dev_opts.len() > visible);
+        }
+        let visible = visible.max(1);
+        (visible, 2 + visible + overflow)
     } else {
-        1
+        (1, 3)
     };
     let dev_offset = if device_picker_open {
         selection_offset(dev_opts.len(), dev_visible, form.device_index)
     } else {
         0
     };
-    // Bordered blocks need 2 rows for the borders plus one content row per
-    // list item (plus the "… 共 N 个" overflow hint row).
-    let device_h = if device_picker_open {
-        2 + dev_visible + usize::from(dev_opts.len() > dev_visible)
-    } else {
-        3
-    };
-    let err_h = usize::from(form.error.is_some() || form.devices_err.is_some());
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -403,13 +430,17 @@ pub(super) fn render_dash(f: &mut Frame, dash: &DashState) {
             Line::styled(format!("{marker}{s}"), Style::default().fg(color))
         })
         .collect();
-    let visible = (log.height as usize).saturating_sub(2).max(1);
+    let inner_rows = (log.height as usize).saturating_sub(2).max(1);
     let total = log_lines.len();
+    // 底部提示行占用一行:先从可见行数中预留,否则追加后恰好被裁掉
+    // (渲染窗口只认 inner_rows 行)。
+    let show_bottom = dash.focus == DashFocus::Logs && dash.scroll == 0 && total > inner_rows;
+    let visible = inner_rows - usize::from(show_bottom);
     let scroll = dash.scroll.min(total.saturating_sub(1));
     let end = total.saturating_sub(scroll);
     let start = end.saturating_sub(visible);
     let mut shown: Vec<Line> = log_lines.drain(start..end).collect();
-    if total > visible && scroll == 0 && dash.focus == DashFocus::Logs {
+    if show_bottom {
         shown.push(Line::styled(
             crate::tr!("tui.log_bottom"),
             Style::default().fg(Color::DarkGray),

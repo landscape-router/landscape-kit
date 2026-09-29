@@ -22,9 +22,12 @@ mod render;
 mod session;
 
 #[cfg(test)]
+mod snapshots;
+
+#[cfg(test)]
 use form::Field;
 use form::{FormAction, FormState, OwnedConfig};
-use render::{render_dash, render_form};
+use render::{render_dash, render_form, render_too_small, terminal_too_small};
 #[cfg(test)]
 use render::{selection_offset, status_line, visible_offset};
 
@@ -155,6 +158,38 @@ enum Phase {
     Done(Outcome),
 }
 
+/// 渲染一个相位:终端小于最小尺寸时画整屏提示,与 run_tui 使用同一路径,
+/// 快照测试因此同时钉住守卫屏本身。
+fn draw_form<B: ratatui::backend::Backend>(
+    terminal: &mut ratatui::Terminal<B>,
+    form: &FormState,
+) -> Result<(), B::Error> {
+    terminal
+        .draw(|f| {
+            if terminal_too_small(f.area()) {
+                render_too_small(f);
+            } else {
+                render_form(f, form);
+            }
+        })
+        .map(|_| ())
+}
+
+fn draw_dash<B: ratatui::backend::Backend>(
+    terminal: &mut ratatui::Terminal<B>,
+    dash: &DashState,
+) -> Result<(), B::Error> {
+    terminal
+        .draw(|f| {
+            if terminal_too_small(f.area()) {
+                render_too_small(f);
+            } else {
+                render_dash(f, dash);
+            }
+        })
+        .map(|_| ())
+}
+
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal =
         ratatui::try_init().map_err(|e| crate::tr!("tui.terminal_init_failed", error = e))?;
@@ -197,7 +232,7 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
         let mut quit = false;
         match &mut phase {
             Phase::Form(form) => {
-                terminal.draw(|f| render_form(f, form))?;
+                draw_form(terminal, form)?;
                 if let Some(Event::Key(k)) = ev {
                     match form::handle_key(form, k) {
                         FormAction::Connect => connect = Some(form.build()),
@@ -208,7 +243,7 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
             }
             Phase::Dash(dash) => {
                 dash.drain();
-                terminal.draw(|f| render_dash(f, dash))?;
+                draw_dash(terminal, dash)?;
                 if let Some(Event::Key(k)) = ev
                     && session::handle_key(dash, k)
                 {
@@ -309,25 +344,27 @@ fn pause_any_key() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::snapshots::LanguageGuard;
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn status_line_comes_from_structured_state() {
-        crate::i18n::configure(crate::i18n::Language::En);
-        assert_eq!(
-            status_line(&ConnectionState::Searching),
-            "Searching for server..."
-        );
-        assert_eq!(
-            status_line(&ConnectionState::Ready {
-                session_id: 42,
-                server_mac: "aa:bb:cc:dd:ee:ff".into(),
-            }),
-            "Connected · session 42 · aa:bb:cc:dd:ee:ff"
-        );
-
-        crate::i18n::configure(crate::i18n::Language::Zh);
+        {
+            let _language = LanguageGuard::set(crate::i18n::Language::En);
+            assert_eq!(
+                status_line(&ConnectionState::Searching),
+                "Searching for server..."
+            );
+            assert_eq!(
+                status_line(&ConnectionState::Ready {
+                    session_id: 42,
+                    server_mac: "aa:bb:cc:dd:ee:ff".into(),
+                }),
+                "Connected · session 42 · aa:bb:cc:dd:ee:ff"
+            );
+        }
+        let _language = LanguageGuard::set(crate::i18n::Language::Zh);
         assert_eq!(
             status_line(&ConnectionState::AuthRejected("lockout".into())),
             "认证被拒绝：lockout"
@@ -336,6 +373,8 @@ mod tests {
 
     #[test]
     fn form_build_validates() {
+        // 断言依赖英文错误文案(小写 "ethertype"),锁语言防并行测试翻转全局。
+        let _language = LanguageGuard::set(crate::i18n::Language::En);
         let mut form = FormState::from_devices(Vec::new(), None);
         form.psk = "test-psk-123456".into();
         let cfg = form.build().unwrap();
@@ -372,6 +411,8 @@ mod tests {
 
     #[test]
     fn device_picker_numbers_duplicate_descriptions() {
+        // 断言含翻译文本(Auto 行),锁语言防并行快照测试翻转全局。
+        let _language = LanguageGuard::set(crate::i18n::Language::En);
         let form = FormState::from_interface_devices(
             vec![
                 landscape_terrain_proto::transport::Interface {
@@ -418,7 +459,7 @@ mod tests {
 
     #[test]
     fn language_key_is_text_in_fields_and_toggle_on_connect() {
-        crate::i18n::configure(crate::i18n::Language::En);
+        let _language = LanguageGuard::set(crate::i18n::Language::En);
         let mut form = FormState::from_devices(Vec::new(), None);
         let language_key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
 
@@ -429,7 +470,6 @@ mod tests {
         form.focus = Field::Connect;
         form::handle_key(&mut form, language_key);
         assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
-        crate::i18n::configure(crate::i18n::Language::En);
     }
 
     #[test]

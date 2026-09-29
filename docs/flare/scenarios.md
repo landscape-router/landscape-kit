@@ -247,3 +247,33 @@
   [连接探针](../../scripts/flare/connection_probe.py)
 - 说明：16 条并发 HTTP keep-alive 连接各连续发送 8 个具有独立路径的请求，共 128 次
   请求；逐次校验状态码和包含请求路径的响应体，覆盖 HTTP 端口映射的多连接复用。
+
+## FLR-27
+
+**lflare TUI 整屏布局经 insta 快照固定**
+
+- 测试层：Rust 单元测试（Ratatui TestBackend、insta 快照）
+- 状态：`已覆盖`
+- 证据：[快照测试](../../landscape-flare/src/tui/snapshots.rs)、
+  [快照文件](../../landscape-flare/src/tui/snapshots/)
+- 说明：28 张整屏快照把连接表单（默认/填满/校验错误/设备枚举失败/PSK 显示、
+  设备选择器含溢出与高度预算收缩、60x24 边界）与会话仪表盘（Searching/
+  Authenticating/AuthRejected/LinkLost/PeerClosed/Ready、映射空/多行/溢出/
+  添加编辑器/拒绝错误、日志滚动/换行/底部提示、80x24 与 60x17 尺寸）在 en/zh
+  双语下逐字符固定在 `snapshots/*.snap`。屏幕状态由直接构造的 `FormState`/
+  `DashState` 经通道 + `drain()` 推进，不含时钟、接口探测或网络输入。有意变更
+  布局后以 `INSTA_UPDATE=always cargo test -p landscape-flare tui::snapshots`
+  更新并逐屏审阅；快照不含颜色（insta 对 TestBackend 的输出无样式）。
+
+## FLR-28
+
+**小于最小尺寸的终端渲染整屏提示而非挤压布局**
+
+- 测试层：Rust 单元测试（insta 快照）
+- 状态：`已覆盖`
+- 证据：[守卫实现](../../landscape-flare/src/tui/render.rs)（`MIN_TERMINAL_*`
+  常量与 `render_too_small`）、[守卫快照](../../landscape-flare/src/tui/snapshots/)
+  （`too-small-71x17-en/zh`、`dash-too-small-71x17-en`）
+- 说明：终端小于 60x24 时表单与会话页统一渲染「终端过小（至少需要 60x24）」
+  提示屏（经 `draw_form`/`draw_dash` 共享路径，与运行期一致）；该守卫由快照
+  钉住——此前 71x17 下表单字段会被布局器压成无边框内容行的退化形态。

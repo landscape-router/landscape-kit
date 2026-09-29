@@ -1,0 +1,28 @@
+---
+source: landscape-flare/src/tui/snapshots.rs
+expression: terminal.backend()
+---
+"                          lflare · Landscape L2 Session                         "
+"┌Connection────────────────────────────────────────────────────────────────────┐"
+"│Status: Connected · session 42 · aa:bb:cc:dd:ee:ff                            │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"┌Mappings (a add · d delete)───────────────────────────────────────────────────┐"
+"│  ✓ 127.0.0.1:8022 -> router 127.0.0.1:22                                     │"
+"│  … 127.0.0.1:8443 -> router 127.0.0.1:443                                    │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"┌Log───────────────────────────────────────────────────────────────────────────┐"
+"│listening for server advertisements on the wire                               │"
+"│server discovered, exchanging handshake keys                                  │"
+"│tunnel established, waiting for mappings                                      │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"Up focus mappings · PgUp PgDn scroll logs · a add mapping · l switch language · "
