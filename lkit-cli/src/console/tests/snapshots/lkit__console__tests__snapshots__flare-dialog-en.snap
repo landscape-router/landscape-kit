@@ -10,7 +10,7 @@ expression: terminal.backend()
 "│  Backup              ││Version       1.2.3                 │privileged operations (install,      │"
 "│  Update              ││Service       systemd               │update, reinit) delegated by this    │"
 "│  Mirror         ┌Flare recovery channel────────────────────────────────────────┐                 │"
-"│  Common software│Key for the flare rescue channel when networking breaks.      │                 │"
+"│  Common software│Key for the flare rescue channel when networking breaks.      │ON>              │"
 "│  Reinit         │                                                              │                 │"
 "│                 │Listen devices     any                                        │unning; deploy it│"
 "│                 │Ethertype          0x88b6                                     │all`             │"

@@ -251,7 +251,9 @@
 - 说明：18 张整屏快照（7 个面板、72×18 边界屏、71×17 too-small 屏、Overview
   窄屏堆叠回退、长中文通知底栏折行、退出确认层、预检弹窗，含英文与中文）把
   完整布局逐字符固定在 `snapshots/*.snap`；备份时间列在断言前规范化为
-  `<DATE>`，快照与运行环境时区无关。`console::tests::gallery`（env 门控，
+  `<DATE>`，快照与运行环境时区无关；Overview 显示的 lkit 版本号在渲染前固定
+  为 `<VERSION>`（版本长度会改变右栏折行，事后过滤无法覆盖），快照不随
+  release 版本提交漂移。`console::tests::gallery`（env 门控，
   `LKIT_CONSOLE_GALLERY` 指向输出目录才运行）把同一批屏的 Buffer 渲染成
   彩色 `gallery.html` 与逐屏 txt，供人工审阅实际视觉效果；由
   `scripts/console-layout-gallery.sh` 在 docker 内两阶段驱动（有网编译、断网
@@ -260,8 +262,7 @@
   {18, 24, 40} 全扫描下底栏提示逐行完整可见、长通知结尾词不被预留高度截断
   （048fa3b、c786c61 的 bug 类）；100×28 规范尺寸下 header 底边、侧栏 24 列、
   面板起点、底栏分隔线与语言指示右对齐的几何坐标。有意变更布局时用
-  `INSTA_UPDATE=always`（或 `cargo insta review`）更新快照并逐屏审阅；快照
-  内嵌 `CARGO_PKG_VERSION`，版本号变更会自然出现在 diff 中。
+  `INSTA_UPDATE=always`（或 `cargo insta review`）更新快照并逐屏审阅。
 - 缺口：快照不含颜色（insta 对 `TestBackend` 的 Display 不输出样式），色彩
   断言仍由既有的 cell 前景色测试承担。
 

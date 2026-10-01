@@ -495,12 +495,52 @@ fn overview_landscape_lines(app: &ConsoleApp) -> Vec<Line<'static>> {
     }
 }
 
+/// Overview 显示的 lkit 版本号。运行期恒为编译期版本;快照测试经
+/// `pin_test_version` 固定为占位串,release 版本提交不再牵动快照。
+fn lkit_version() -> String {
+    let pinned = VERSION_PIN
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    pinned
+        .clone()
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+}
+
+static VERSION_PIN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// 把 `lkit_version()` 固定为 `<VERSION>` 直到 guard 释放。真实版本号长度
+/// 会改变 Overview 右栏的词界折行(如带 prerelease 后缀时多出一行),占位串
+/// 让快照与版本解耦;持锁串行化与 territory 覆盖同一模式。
+#[cfg(test)]
+pub(crate) struct VersionPin {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+pub(crate) fn pin_test_version() -> VersionPin {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *VERSION_PIN
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some("<VERSION>".into());
+    VersionPin { _lock: lock }
+}
+
+#[cfg(test)]
+impl Drop for VersionPin {
+    fn drop(&mut self) {
+        *VERSION_PIN
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+}
+
 /// Overview 右栏:lkit 常驻服务。小节标题与动作行上方各带灰色简介,解释常驻
 /// 服务与急救恢复码是什么,避免只有状态没有语义。所有可能超宽的动态行(简介、
 /// 版本号、daemon 状态)均按 `wrap_width` 预折行(见 `wrap_to_width`),避免交给
 /// ratatui 词级换行后行数与预留高度不一致导致内容被截断。
 fn overview_lkit_lines(focused: bool, wrap_width: u16) -> Vec<Line<'static>> {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = lkit_version();
     let running = crate::daemon_worker::daemon_is_running();
     let muted = Style::default().fg(Color::DarkGray);
     let wrapped = |text: String, style: Style| -> Vec<Line<'static>> {

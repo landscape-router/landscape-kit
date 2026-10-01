@@ -10,7 +10,7 @@ expression: terminal.backend()
 "│  Backup              ││Version       1.2.3                 │privileged operations (install,      │"
 "│  Update              ││Service       systemd               │update, reinit) delegated by this    │"
 "│  Mirror              ││Initialization complete             │console.                             │"
-"│  Common software     ││Install root  /root/.lkit/landscape │lkit version  0.5.0                  │"
+"│  Common software     ││Install root  /root/.lkit/landscape │lkit version  <VERSION>              │"
 "│  Reinit              ││                                    │                                     │"
 "│                      ││                                    │lkit daemon: running                 │"
 "│                      ││                                    │Recovery key for the flare rescue    │"

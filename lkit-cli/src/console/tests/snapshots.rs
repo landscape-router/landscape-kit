@@ -6,13 +6,16 @@
 //! `INSTA_UPDATE=always cargo test -p lkit-cli --features test-support --bin lkit console::tests::snapshots`
 //! (或 `cargo insta review`)更新快照并逐屏审阅。备份列表的时间列(分)与
 //! takeover 屏的截止/当前时刻(秒+时区偏移)依赖运行时刻和本地时区,断言前
-//! 统一规范化为 `<DATE>`,快照因此与时刻、时区无关。
+//! 统一规范化为 `<DATE>`,快照因此与时刻、时区无关。Overview 等屏显示的
+//! lkit 版本号在渲染前固定为 `<VERSION>`(版本长度会改变右栏折行,事后过滤
+//! 无法覆盖),快照因此不随 release 版本提交漂移。
 
 use super::super::backup::{
     BackupCreateMessage, BackupListState, BackupVerifyState, MockBackupOps,
 };
 use super::super::daemon_panel::MockDeployOps;
 use super::super::mirror::{MirrorConfirm, MockMirrorOps};
+use super::super::render::pin_test_version;
 use super::super::software::{BasePackagesState, MockSoftwareOps, SoftwareInstallMessage};
 use super::super::update::MockUpdateOps;
 use super::super::*;
@@ -44,6 +47,9 @@ fn assert_screen_snapshot(
         r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?( [+-]\d{2}:\d{2})?",
         "<DATE>",
     );
+    // 版本号在渲染前固定为 <VERSION>:insta 过滤替换不了它——版本长度会先
+    // 改变 Overview 右栏的词界折行。
+    let _version = pin_test_version();
     settings.bind(|| {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut app = ConsoleApp::new();
