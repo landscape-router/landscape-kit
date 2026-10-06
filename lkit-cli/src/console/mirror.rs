@@ -148,6 +148,8 @@ impl MockMirrorOps {
             .expect("probe() must be called before grabbing the sender")
     }
 
+    /// 仅 test-support 测试使用(ops 的刷新流程测试);feature 关闭时不存在。
+    #[cfg(feature = "test-support")]
     pub(crate) fn refresh_sender(&self) -> mpsc::Sender<Result<(), String>> {
         self.refresh_tx
             .lock()

@@ -213,12 +213,20 @@ fn software_base_install_flow_through_mock_ops() {
 }
 
 /// 镜像探测与换源后的索引刷新:通道回传可用性映射/刷新结果。
+#[cfg(feature = "test-support")]
 #[test]
 fn mirror_probe_and_refresh_flow_through_mock_ops() {
     use crate::mirror::{MirrorName, MirrorStatus};
     use std::collections::HashMap;
     let _language = LanguageGuard::set(Language::En);
     let _territory = DaemonTerritory::new("ops-mirror", false);
+    // start_refresh 读取进程级 mirror::paths();apt/dnf 等测试的 TestPathsGuard
+    // 会临时覆盖它(含 skip_refresh: true),并发窗口内会让 refreshing 提前判空。
+    // 这里显式固定 skip_refresh: false 并持同一把 TEST_LOCK 串行化。
+    let _paths = crate::mirror::test_support::TestPathsGuard::set(crate::mirror::MirrorPaths {
+        skip_refresh: false,
+        ..crate::mirror::MirrorPaths::production()
+    });
     let mock = std::sync::Arc::new(super::super::mirror::MockMirrorOps::manual());
     let mut app = ConsoleApp::new();
     app.mirror.ops = mock.clone();
