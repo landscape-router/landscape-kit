@@ -13,6 +13,7 @@ mod interaction;
 mod keys;
 mod mirror;
 mod network;
+mod proxy;
 mod release;
 mod report;
 mod service;

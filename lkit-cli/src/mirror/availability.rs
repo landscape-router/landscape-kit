@@ -4,6 +4,7 @@
 //! 网络失败/超时/TLS 异常等无法确认的情况判定为未知（可选用，确认时警告）。
 //!
 //! 只读网络操作，不修改任何文件；探测结果按次缓存（面板会话内重复进入不重探）。
+//! 探测 client 的代理分流语义见 `docs/network/proxy.md`。
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -11,9 +12,11 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
+use url::Url;
 
 use super::apt::parse::{is_ports_arch, runtime_arch};
 use super::{Family, Host, MirrorName, mirror_host, paths};
+use crate::proxy::is_loopback_host;
 
 /// 单镜像的可用性状态。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +32,55 @@ pub(crate) enum MirrorStatus {
 /// 探测超时：每个 URL 最多等待 2 秒；并行探测所有镜像，总耗时接近单次超时。
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// 具名双通道客户端：按目标地址分流，代理语义互不影响。
+struct ProbeClientPair {
+    /// 代理通道：遵循 `http_proxy`/`https_proxy`/`all_proxy` 环境变量。
+    external: Client,
+    /// 回环直连通道：禁用全部代理。当前镜像清单全部为外部站点，
+    /// 该通道使探测与仓库下载的分流语义保持一致。
+    loopback: Client,
+}
+
+impl ProbeClientPair {
+    fn new() -> Option<Self> {
+        Some(Self {
+            external: build_client(false)?,
+            loopback: build_client(true)?,
+        })
+    }
+
+    fn pick(&self, url: &str) -> &Client {
+        let host = Url::parse(url)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::to_owned));
+        if is_loopback_host(host.as_deref()) {
+            &self.loopback
+        } else {
+            &self.external
+        }
+    }
+}
+
+fn build_client(direct: bool) -> Option<Client> {
+    let mut builder = Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .redirect(Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.stop();
+            }
+            // 与下载通道一致:重定向不跨回环边界(docs/network/proxy.md)。
+            if is_loopback_host(attempt.url().host_str()) != direct {
+                return attempt.stop();
+            }
+            attempt.follow()
+        }))
+        .user_agent(concat!("lkit/", env!("CARGO_PKG_VERSION")));
+    if direct {
+        builder = builder.no_proxy();
+    }
+    builder.build().ok()
+}
+
 /// 探测单个镜像对当前主机的可用性。`Official` 恒为可用（不探测）。
 pub(crate) fn probe(host: &Host, mirror: MirrorName) -> MirrorStatus {
     if mirror == MirrorName::Official {
@@ -38,18 +90,13 @@ pub(crate) fn probe(host: &Host, mirror: MirrorName) -> MirrorStatus {
         // 无法解析探测目标（缺 apt 代号/dnf VERSION_ID）→ 未知，不误伤。
         return MirrorStatus::Unknown;
     };
-    let Ok(client) = Client::builder()
-        .timeout(PROBE_TIMEOUT)
-        .redirect(Policy::limited(5))
-        .user_agent(concat!("lkit/", env!("CARGO_PKG_VERSION")))
-        .build()
-    else {
+    let Some(pair) = ProbeClientPair::new() else {
         return MirrorStatus::Unknown;
     };
     let mut any_available = false;
     let mut any_unknown = false;
     for url in &urls {
-        match check(&client, url) {
+        match check(pair.pick(url), url) {
             MirrorStatus::Available => any_available = true,
             MirrorStatus::Unavailable => {}
             MirrorStatus::Unknown => any_unknown = true,
@@ -333,5 +380,22 @@ mod tests {
     fn official_is_never_probed() {
         let host = host(Family::Debian, Some("trixie"));
         assert_eq!(probe(&host, MirrorName::Official), MirrorStatus::Available);
+    }
+
+    #[test]
+    fn routes_loopback_targets_to_the_direct_client() {
+        let pair = ProbeClientPair::new().expect("构建双通道客户端");
+        for url in [
+            "http://127.0.0.1:9000/debian/dists/trixie/Release",
+            "http://localhost:9000/Release",
+            "http://[::1]:9000/Release",
+        ] {
+            assert!(
+                std::ptr::eq(pair.pick(url), &pair.loopback),
+                "{url} 应走回环直连通道"
+            );
+        }
+        let external = "https://mirror.nju.edu.cn/debian/dists/trixie/Release";
+        assert!(std::ptr::eq(pair.pick(external), &pair.external));
     }
 }

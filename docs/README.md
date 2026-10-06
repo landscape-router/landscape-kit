@@ -39,6 +39,7 @@
 - [网络接管](network/takeover.md)
 - [宿主网络适配（hostnet）](network/hostnet.md)
 - [网络重配置(reinit)](network/reinit.md)
+- [网络出口与代理语义](network/proxy.md)：出站请求的代理遵循与回环直连规则。
 - [`.lkb` 备份与回滚](backup/lkb-and-rollback.md)
 - [发布仓库协议](repository.md)
 - [前端开发规范](frontend/developer.md)：自定义前端的打包、发布与集成协议。

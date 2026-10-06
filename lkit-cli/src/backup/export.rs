@@ -87,6 +87,9 @@ pub(crate) async fn export_config(
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .danger_accept_invalid_certs(true)
+        // 内部验证专用:目标恒为本机服务,禁用代理,避免用户的
+        // https_proxy 把 127.0.0.1 的导出请求也劫持进代理导致误报。
+        .no_proxy()
         .build()
         .map_err(|error| {
             InstallError::ExportFailed(format!("failed to build HTTP client: {error}"))

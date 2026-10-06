@@ -15,6 +15,7 @@ use super::AssetEncoding;
 pub(crate) use super::archive::{MAX_DECOMPRESSED_BYTES, decompress_zstd, extract_static_archive};
 use super::{Asset, RepositoryError};
 use crate::interaction::presentation::DownloadProgress;
+use crate::proxy::is_loopback_host;
 
 use self::body::{read_body_limited, write_asset_response};
 pub(crate) use self::retry::is_retryable_request_error;
@@ -28,37 +29,75 @@ pub(crate) const METADATA_BODY_LIMIT: u64 = 10 * 1024 * 1024;
 pub(crate) const MAX_ATTEMPTS: usize = 3;
 pub(crate) const MAX_REDIRECTS: usize = 5;
 
+/// 具名双通道客户端:按目标地址分流,代理语义互不影响。
+#[derive(Debug)]
+struct ClientPair {
+    /// 外部下载专用:遵循 `http_proxy`/`https_proxy`/`all_proxy` 环境变量。
+    external: Client,
+    /// 回环直连专用:禁用全部代理。目标是本机(`127.0.0.1`/`localhost`/`::1`,
+    /// 见 [`is_loopback_host`])时使用,否则用户 shell 里的代理变量会把本机
+    /// 请求也劫持进代理,本地 http 仓库与健康探测随之误报失败。
+    loopback: Client,
+}
+
+impl ClientPair {
+    fn new() -> Result<Self, RepositoryError> {
+        Ok(Self {
+            external: build_client(false)?,
+            loopback: build_client(true)?,
+        })
+    }
+
+    fn pick(&self, url: &Url) -> &Client {
+        if is_loopback_host(url.host_str()) {
+            &self.loopback
+        } else {
+            &self.external
+        }
+    }
+}
+
+fn build_client(direct: bool) -> Result<Client, RepositoryError> {
+    let mut builder = Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .redirect(Policy::custom(move |attempt| {
+            if attempt.previous().len() >= MAX_REDIRECTS {
+                return attempt.stop();
+            }
+            // 重定向只在本通道内跟随:URL 安全校验之外,跳转目标的回环性必须
+            // 与通道一致——外部通道不得借重定向进入回环,直连通道不得外发,
+            // 跨界跳转按 3xx 原样返回上层报错(见 docs/network/proxy.md)。
+            if validate_network_url(attempt.url()).is_err()
+                || is_loopback_host(attempt.url().host_str()) != direct
+            {
+                return attempt.stop();
+            }
+            attempt.follow()
+        }));
+    if direct {
+        builder = builder.no_proxy();
+    }
+    builder.build().map_err(RepositoryError::BuildClient)
+}
+
 #[derive(Debug)]
 pub(crate) struct DownloadClient {
-    client: Client,
+    clients: ClientPair,
     retry_delays: [Duration; 2],
     jitter_max: Duration,
 }
 
 impl DownloadClient {
     pub(crate) fn new() -> Result<Self, RepositoryError> {
-        let client = Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .redirect(Policy::custom(|attempt| {
-                if attempt.previous().len() >= MAX_REDIRECTS {
-                    return attempt.stop();
-                }
-                match validate_network_url(attempt.url()) {
-                    Ok(()) => attempt.follow(),
-                    Err(_) => attempt.stop(),
-                }
-            }))
-            .build()
-            .map_err(RepositoryError::BuildClient)?;
         Ok(Self {
-            client,
+            clients: ClientPair::new()?,
             retry_delays: [Duration::from_secs(1), Duration::from_secs(2)],
             jitter_max: Duration::from_millis(250),
         })
     }
 
     pub(crate) fn request(&self, url: Url) -> RequestBuilder {
-        self.client.get(url)
+        self.clients.pick(&url).get(url)
     }
 
     /// 元数据请求：总超时 60 秒、响应体上限 10 MiB、最多 3 次尝试。
@@ -193,7 +232,8 @@ impl DownloadClient {
         headers: HeaderMap,
         timeout: Duration,
     ) -> Result<Response, RepositoryError> {
-        self.client
+        self.clients
+            .pick(&url)
             .get(url)
             .headers(headers)
             .timeout(timeout)
@@ -245,10 +285,6 @@ pub(crate) fn validate_network_url(url: &Url) -> Result<(), RepositoryError> {
             "unsupported URL scheme {scheme}"
         ))),
     }
-}
-
-fn is_loopback_host(host: Option<&str>) -> bool {
-    matches!(host, Some("localhost" | "127.0.0.1" | "::1"))
 }
 
 #[cfg(test)]
@@ -313,6 +349,102 @@ mod tests {
                 [Duration::from_millis(10), Duration::from_millis(10)],
                 Duration::from_millis(1),
             )
+    }
+
+    #[test]
+    fn routes_loopback_targets_to_the_direct_client() {
+        let pair = ClientPair::new().expect("构建双通道客户端");
+        let loopback_urls = [
+            Url::parse("http://127.0.0.1:9000/repository/file.txt").unwrap(),
+            Url::parse("http://localhost:9000/file.txt").unwrap(),
+            Url::parse("http://[::1]:9000/file.txt").unwrap(),
+        ];
+        for url in &loopback_urls {
+            assert!(
+                std::ptr::eq(pair.pick(url), &pair.loopback),
+                "{url} 应走回环直连通道"
+            );
+        }
+        let external = Url::parse("https://github.com/ThisSeanZhang/landscape/releases")
+            .expect("解析外部 URL");
+        assert!(std::ptr::eq(pair.pick(&external), &pair.external));
+    }
+
+    #[tokio::test]
+    async fn follows_redirects_within_the_same_boundary() {
+        let (target, _) = start_server(|_| (head(200, "OK", 2), b"ok".to_vec()));
+        let (base, _) = start_server(move |_| {
+            (
+                head_with(302, "Found", 0, &format!("Location: {target}/file\r\n")),
+                Vec::new(),
+            )
+        });
+        let client = fast_client();
+        let url = Url::parse(&format!("{base}/start")).unwrap();
+        let Some((_, body)) = client
+            .get_metadata(url, HeaderMap::new(), false)
+            .await
+            .expect("同边界重定向应被跟随")
+        else {
+            panic!("元数据缺失");
+        };
+        assert_eq!(body, b"ok");
+    }
+
+    #[tokio::test]
+    async fn refuses_redirects_crossing_the_loopback_boundary() {
+        // 127.0.0.2 不在回环字面量集合内:若重定向被错误跟随,对它的连接会被
+        // 立刻拒绝,得到 Request 错误而非 UnexpectedStatus,断言得以区分。
+        let (base, requests) = start_server(|_| {
+            (
+                head_with(302, "Found", 0, "Location: http://127.0.0.2:1/file\r\n"),
+                Vec::new(),
+            )
+        });
+        let client = fast_client();
+        let url = Url::parse(&format!("{base}/start")).unwrap();
+        let error = client
+            .get_metadata(url, HeaderMap::new(), false)
+            .await
+            .expect_err("跨界重定向应被拒绝");
+        assert!(
+            matches!(error, RepositoryError::UnexpectedStatus(status) if status == StatusCode::FOUND),
+            "跨界重定向应按 3xx 原样返回,实际: {error:?}"
+        );
+        // 只有起始请求,重定向未被跟随。
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_redirect_loop_returns_the_redirect_response() {
+        let location = Arc::new(std::sync::Mutex::new(String::new()));
+        let next = location.clone();
+        let (base, requests) = start_server(move |_| {
+            let target = next.lock().expect("读取重定向目标").clone();
+            (
+                head_with(302, "Found", 0, &format!("Location: {target}/hop\r\n")),
+                Vec::new(),
+            )
+        });
+        location
+            .lock()
+            .expect("写入重定向目标")
+            .clone_from(&format!("{base}/hop"));
+        let client = fast_client();
+        let url = Url::parse(&format!("{base}/start")).unwrap();
+        let error = client
+            .get_metadata(url, HeaderMap::new(), false)
+            .await
+            .expect_err("重定向循环应有界结束");
+        assert!(
+            matches!(error, RepositoryError::UnexpectedStatus(status) if status == StatusCode::FOUND),
+            "达到上限后应返回 3xx,实际: {error:?}"
+        );
+        assert!(
+            requests.load(Ordering::SeqCst) <= MAX_REDIRECTS + 1,
+            "重定向请求数应不超过上限+1,实际: {}",
+            requests.load(Ordering::SeqCst)
+        );
     }
 
     #[tokio::test]

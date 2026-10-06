@@ -61,7 +61,8 @@ Authorization: Bearer <token>
 Accept: application/json
 ```
 
-允许自签名证书。HTTP 成功响应必须是 UTF-8 JSON，最小结构为：
+允许自签名证书。导出请求与部署健康检查一致，恒为直连、不经过代理
+（见[网络出口与代理语义](../network/proxy.md)）。HTTP 成功响应必须是 UTF-8 JSON，最小结构为：
 
 ```json
 {

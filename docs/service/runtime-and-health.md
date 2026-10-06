@@ -235,7 +235,8 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 - UDP `53` 正常监听；当前 Landscape 的普通 DNS listener 不监听 TCP `53`；
 - 监听套接字属于目标 Landscape PID；
 - `https://127.0.0.1:6443/api/docs` 返回 `2xx` 或 `3xx`；
-- HTTPS 检查允许 Landscape 自签名证书。
+- HTTPS 检查允许 Landscape 自签名证书；
+- 健康探测恒为直连，不读取任何代理环境变量（见[网络出口与代理语义](../network/proxy.md)）。
 
 `/api/docs` 是 v1 固定且稳定的健康检查路径。
 
