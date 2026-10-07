@@ -2,6 +2,10 @@
 name = "landscape-terrain-proto"
 version = "0.1.0"
 edition.workspace = true
+description = "Terrain L2 emergency-management protocol: wire format, crypto, handshake state machines, userspace TCP/IP stack and platform link layer"
+license = "AGPL-3.0"
+repository = "https://github.com/landscape-router/landscape-kit"
+readme = "README.md"
 
 [dependencies]
 chacha20poly1305 = { workspace = true }
