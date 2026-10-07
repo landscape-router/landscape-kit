@@ -2,7 +2,7 @@ use std::fmt;
 
 pub use crate::protocol::{
     MAGIC, TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE,
-    TYPE_RESP, TYPE_TEARDOWN, VERSION,
+    TYPE_RESP, TYPE_TEARDOWN, TYPE_VERSION_MISMATCH, VERSION,
 };
 
 /// 16-byte header: magic(4) version(1) type(1) session(4) len(2) seq(4).
@@ -37,6 +37,10 @@ impl std::error::Error for FrameError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame<'a> {
+    /// Protocol version carried in this frame's header. For ordinary frames
+    /// it always equals [`VERSION`]; only [`TYPE_VERSION_MISMATCH`] frames
+    /// may carry a different (the sender's) version.
+    pub version: u8,
     pub msg_type: u8,
     pub session_id: u32,
     /// Per-session sequence number (0 for handshake frames).
@@ -53,7 +57,12 @@ pub fn decode(data: &[u8]) -> Result<Frame<'_>, FrameError> {
     if u32::from_be_bytes([data[0], data[1], data[2], data[3]]) != MAGIC {
         return Err(FrameError::BadMagic);
     }
-    if data[4] != VERSION {
+    let version = data[4];
+    let msg_type = data[5];
+    // VERSION_MISMATCH is the one frame type accepted across versions: a
+    // peer speaking another version must be able to read the reply that
+    // tells it which version the sender speaks.
+    if version != VERSION && msg_type != TYPE_VERSION_MISMATCH {
         return Err(FrameError::BadVersion);
     }
     let len = u16::from_be_bytes([data[10], data[11]]) as usize;
@@ -61,7 +70,8 @@ pub fn decode(data: &[u8]) -> Result<Frame<'_>, FrameError> {
         return Err(FrameError::BadPayload);
     }
     Ok(Frame {
-        msg_type: data[5],
+        version,
+        msg_type,
         session_id: u32::from_be_bytes([data[6], data[7], data[8], data[9]]),
         seq: u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
         len: len as u16,
@@ -112,6 +122,7 @@ pub fn type_name(t: u8) -> &'static str {
         TYPE_KEEPALIVE => "KEEPALIVE",
         TYPE_DATA => "DATA",
         TYPE_TEARDOWN => "TEARDOWN",
+        TYPE_VERSION_MISMATCH => "VERSION_MISMATCH",
         _ => "UNKNOWN",
     }
 }
@@ -280,6 +291,15 @@ pub fn encode_auth_nack(reason: &str) -> Vec<u8> {
     encode(TYPE_AUTH_NACK, 0, 0, &p)
 }
 
+/// Plaintext VERSION_MISMATCH reply (empty payload; the header version
+/// carries the sender's protocol version). Sent by a server that decoded a
+/// well-formed TERR frame in a version it does not speak, so the peer can
+/// fail loudly instead of timing out. Never sealed: no key compatibility
+/// can be assumed across versions.
+pub fn encode_version_mismatch() -> Vec<u8> {
+    encode(TYPE_VERSION_MISMATCH, 0, 0, &[])
+}
+
 /// Plaintext NACK payload; used when sealing the NACK with the handshake
 /// keys (the client always tries to open it first).
 pub fn encode_auth_nack_payload(reason: &str) -> Vec<u8> {
@@ -319,6 +339,7 @@ mod tests {
                 &encode_resp_payload(9, "landscape-router", &[22, 6443]),
             ),
             encode_auth_nack("bad token"),
+            encode_version_mismatch(),
         ];
         for raw in frames {
             let f = decode(&raw).expect("decode");
@@ -381,6 +402,32 @@ mod tests {
     }
 
     #[test]
+    fn version_mismatch_decodes_across_versions() {
+        // The whole point of the type: a peer speaking another version must
+        // still be able to read it and learn the sender's version.
+        let mut raw = encode_version_mismatch();
+        assert_eq!(decode(&raw).unwrap().version, VERSION);
+        raw[4] = VERSION + 1; // pretend the sender speaks a newer protocol
+        let l = decode(&raw).expect("cross-version VERSION_MISMATCH decodes");
+        assert_eq!(l.msg_type, TYPE_VERSION_MISMATCH);
+        assert_eq!(l.version, VERSION + 1);
+        assert_eq!(l.payload, &[] as &[u8]);
+    }
+
+    #[test]
+    fn version_mismatch_type_field_is_not_a_version_bypass() {
+        // Spoofing the type byte on an otherwise-versioned frame must not
+        // slip past the version check: only a well-formed TERR frame whose
+        // type is genuinely VERSION_MISMATCH is exempt.
+        let mut raw = encode(TYPE_DATA, 0, 0, b"x");
+        raw[4] = 0x99;
+        raw[5] = TYPE_VERSION_MISMATCH;
+        let l = decode(&raw).unwrap();
+        assert_eq!(l.msg_type, TYPE_VERSION_MISMATCH);
+        assert_eq!(l.payload, b"x".as_slice());
+    }
+
+    #[test]
     fn rejects_truncated_payloads() {
         let p = encode_resp_payload(4, "router", &[]);
         assert!(decode_resp_payload(&p[..p.len() - 1]).is_err());
@@ -412,6 +459,7 @@ mod tests {
     fn type_names() {
         assert_eq!(type_name(TYPE_DISCOVER), "DISCOVER");
         assert_eq!(type_name(TYPE_TEARDOWN), "TEARDOWN");
+        assert_eq!(type_name(TYPE_VERSION_MISMATCH), "VERSION_MISMATCH");
         assert_eq!(type_name(0xEE), "UNKNOWN");
     }
 }

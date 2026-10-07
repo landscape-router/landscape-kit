@@ -9,7 +9,9 @@ use landscape_terrain_proto::protocol::frame;
 use landscape_terrain_proto::protocol::session::{
     ClientPhase, ClientSession, HANDSHAKE_TIMEOUT, MAX_RETRIES,
 };
-use landscape_terrain_proto::protocol::{TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_RESP};
+use landscape_terrain_proto::protocol::{
+    TYPE_AUTH_ACK, TYPE_AUTH_NACK, TYPE_DATA, TYPE_RESP, TYPE_VERSION_MISMATCH, VERSION,
+};
 use landscape_terrain_proto::transport::{Frame, Link, fmt_mac};
 use tokio::sync::mpsc;
 
@@ -470,6 +472,9 @@ fn warn_unadvertised_ports(cfg: &ClientConfig<'_>, advertised: &[u16]) {
 
 /// Block until a frame satisfying `pred` arrives, or the deadline passes.
 /// The predicate sees the full transport frame (src MAC + Terrain header).
+/// A VERSION_MISMATCH reply from a differently-versioned server is fatal:
+/// retrying cannot close a version gap, so it aborts the wait with an
+/// actionable error instead of running into the timeout.
 async fn recv_until(
     tx: &mut Link,
     ethertype: u16,
@@ -479,6 +484,17 @@ async fn recv_until(
     loop {
         match tokio::time::timeout_at(deadline, tx.recv(ethertype)).await {
             Ok(Ok(f)) => {
+                if let Ok(l) = frame::decode(&f.payload)
+                    && l.msg_type == TYPE_VERSION_MISMATCH
+                {
+                    return Err(format!(
+                        "server {} speaks Terrain protocol v{}, this client speaks v{} — upgrade lflare to match the server",
+                        fmt_mac(&f.src),
+                        l.version,
+                        VERSION
+                    )
+                    .into());
+                }
                 if pred(&f) {
                     return Ok(Some(f));
                 }

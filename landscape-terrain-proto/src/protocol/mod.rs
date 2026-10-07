@@ -21,3 +21,12 @@ pub const TYPE_AUTH_NACK: u8 = 0x05;
 pub const TYPE_KEEPALIVE: u8 = 0x06;
 pub const TYPE_DATA: u8 = 0x07;
 pub const TYPE_TEARDOWN: u8 = 0x08;
+/// Plaintext, unsealed error frame a server sends in reply to a frame whose
+/// magic matches but whose version byte it does not speak; the header's
+/// version field carries the sender's own protocol version. No key
+/// compatibility can be assumed across versions, so it cannot be sealed.
+/// Unlike every other type it decodes under any version byte — being
+/// readable by a differently-versioned peer is its whole purpose. Clients
+/// treat it as terminal (retrying cannot fix a version gap); older clients
+/// that predate the type still drop it and time out as before.
+pub const TYPE_VERSION_MISMATCH: u8 = 0x09;

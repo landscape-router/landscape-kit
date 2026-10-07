@@ -13,7 +13,7 @@ use landscape_terrain_proto::protocol::crypto::{
 use landscape_terrain_proto::protocol::frame;
 use landscape_terrain_proto::protocol::session::{self, ServerSession, VerifyResult};
 use landscape_terrain_proto::protocol::{
-    TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN,
+    TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN, VERSION,
 };
 use landscape_terrain_proto::transport::{Link, fmt_mac};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -273,8 +273,25 @@ pub async fn run(
             _ = &mut shutdown_rx => break,
             r = tx.recv_with_meta(cfg.ethertype) => {
                 let (f, ifindex) = r?;
-                let Ok(l) = frame::decode(&f.payload) else {
-                    continue;
+                let l = match frame::decode(&f.payload) {
+                    Ok(l) => l,
+                    // A well-formed TERR frame in a version we do not speak
+                    // gets a plaintext reply so the peer can report the gap
+                    // instead of timing out into silence; anything else
+                    // stays dropped. Bounded by the global bucket so a
+                    // spoofed flood cannot amplify into replies.
+                    Err(frame::FrameError::BadVersion) => {
+                        if global_rate.allow() {
+                            let reply = frame::encode_version_mismatch();
+                            let _ = tx.send_on(ifindex, &f.src, cfg.ethertype, &reply);
+                            println!(
+                                "frame from {} with an unsupported protocol version, sent VERSION_MISMATCH (v{VERSION})",
+                                fmt_mac(&f.src)
+                            );
+                        }
+                        continue;
+                    }
+                    Err(_) => continue,
                 };
                 let mac = f.src;
                 match l.msg_type {
