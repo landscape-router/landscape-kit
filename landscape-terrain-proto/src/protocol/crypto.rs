@@ -55,10 +55,9 @@ const DISCOVER_NONCE_LEN: usize = 12;
 
 /// scrypt cost parameters for the master-key derivation (run once per
 /// process at startup): 2^15 blocks, r=8, p=1 ≈ 32 MiB / ~100 ms on
-/// desktop hardware. Override the exponent with the `LANDSCAPE_TERRAIN_SCRYPT_LOG_N`
-/// environment variable (clamped to 10..=20) for constrained devices or
-/// fast test suites — both peers must agree on it, since the derived key
-/// depends on it.
+/// desktop hardware. The exponent can be overridden for constrained devices
+/// or fast test suites via [`scrypt_log_n_override`] — both peers must agree
+/// on it, since the derived key depends on it.
 pub const SCRYPT_LOG_N: u8 = 15;
 pub const SCRYPT_R: u32 = 8;
 pub const SCRYPT_P: u32 = 1;
@@ -69,6 +68,20 @@ fn parse_scrypt_log_n(raw: Option<&str>) -> u8 {
     raw.and_then(|v| v.parse::<u8>().ok())
         .filter(|n| (10..=20).contains(n))
         .unwrap_or(SCRYPT_LOG_N)
+}
+
+/// The `LANDSCAPE_TERRAIN_SCRYPT_LOG_N` environment override, clamped to
+/// 10..=20 with [`SCRYPT_LOG_N`] as the fallback. Binaries that honor the
+/// override call this once at startup and feed the result to
+/// [`MasterKey::derive_with_log_n`], keeping the derivation itself free of
+/// ambient environment state; both peers must resolve to the same exponent
+/// or their keys silently differ.
+pub fn scrypt_log_n_override() -> u8 {
+    parse_scrypt_log_n(
+        std::env::var("LANDSCAPE_TERRAIN_SCRYPT_LOG_N")
+            .ok()
+            .as_deref(),
+    )
 }
 
 /// 32-byte key stretched from the psk with scrypt at startup. Every other
@@ -82,11 +95,12 @@ impl MasterKey {
     /// Call once per process; the cost is paid by the peer once, and by an
     /// offline attacker once per psk guess.
     pub fn derive(psk: &[u8]) -> Self {
-        let log_n = parse_scrypt_log_n(
-            std::env::var("LANDSCAPE_TERRAIN_SCRYPT_LOG_N")
-                .ok()
-                .as_deref(),
-        );
+        Self::derive_with_log_n(psk, SCRYPT_LOG_N)
+    }
+
+    /// Same derivation with an explicit scrypt exponent (see
+    /// [`scrypt_log_n_override`]). Both peers must pass the same value.
+    pub fn derive_with_log_n(psk: &[u8], log_n: u8) -> Self {
         let params = Params::new(log_n, SCRYPT_R, SCRYPT_P, 32).expect("valid scrypt params");
         let mut out = [0u8; 32];
         scrypt(psk, b"terrain-v5-master", &params, &mut out)
@@ -541,6 +555,18 @@ mod tests {
         assert_eq!(parse_scrypt_log_n(Some("21")), SCRYPT_LOG_N);
         assert_eq!(parse_scrypt_log_n(Some("abc")), SCRYPT_LOG_N);
         assert_eq!(parse_scrypt_log_n(Some("")), SCRYPT_LOG_N);
+    }
+
+    #[test]
+    fn explicit_log_n_changes_the_master() {
+        // Peers with different exponents derive different masters: the
+        // mismatch looks like a wrong psk on the wire, so the exponent must
+        // be a deliberate, coordinated parameter.
+        let a = MasterKey::derive_with_log_n(b"landscape-secret", 12);
+        let b = MasterKey::derive_with_log_n(b"landscape-secret", 13);
+        assert_ne!(a, b);
+        assert_eq!(a, MasterKey::derive_with_log_n(b"landscape-secret", 12));
+        assert_ne!(MasterKey::derive_with_log_n(b"x", SCRYPT_LOG_N), a);
     }
 
     #[test]

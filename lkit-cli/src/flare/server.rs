@@ -6,7 +6,8 @@ use landscape_terrain_proto::ipstack::{
     INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg,
 };
 use landscape_terrain_proto::protocol::crypto::{
-    Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SessionCrypto,
+    Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SCRYPT_LOG_N, SessionCrypto,
+    scrypt_log_n_override,
 };
 use landscape_terrain_proto::protocol::frame;
 use landscape_terrain_proto::protocol::session::{self, ServerSession, VerifyResult};
@@ -228,8 +229,16 @@ pub async fn run(
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
     // The psk is stretched into a master key once at startup (scrypt); all
     // derivations below feed on it, so a weak psk costs an offline attacker
-    // ~32 MiB and ~100 ms per guess instead of a single sha256.
-    let master = MasterKey::derive(cfg.psk.as_bytes());
+    // ~32 MiB and ~100 ms per guess instead of a single sha256. The scrypt
+    // exponent override is resolved here, once, so a differing value on a
+    // client is visible in diagnostics instead of silently diverging keys.
+    let log_n = scrypt_log_n_override();
+    if log_n != SCRYPT_LOG_N {
+        println!(
+            "note: LANDSCAPE_TERRAIN_SCRYPT_LOG_N={log_n} override active — clients must be started with the same exponent"
+        );
+    }
+    let master = MasterKey::derive_with_log_n(cfg.psk.as_bytes(), log_n);
     let mut peers: HashMap<[u8; 6], Peer> = HashMap::new();
     let mut rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
     let mut fail_rate: HashMap<[u8; 6], RateBucket> = HashMap::new();

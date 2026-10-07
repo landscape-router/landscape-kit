@@ -28,7 +28,9 @@ Terrain 是 Landscape 路由器的 L2 旁路通信协议：当常规网络路径
 
 psk 从不直接使用：双方启动时用 scrypt 拉伸为 32 字节主密钥，离线攻击者每次 psk
 猜测需付出约 32 MiB / ~100 ms（`N=2^15, r=8, p=1`；`LANDSCAPE_TERRAIN_SCRYPT_LOG_N`
-可覆盖指数，夹取 10..=20，双方必须一致）。
+可覆盖指数，夹取 10..=20，双方必须一致——覆盖值由 `lflare` 与 `lkit flare` 在进程
+入口读取后显式传入派生，激活时两端都会打印提示；指数不一致的表现与 psk 错误相同，
+即服务端静默）。
 
 所有派生以 `h(label, key, server_nonce, client_nonce) = sha256(label ‖ key ‖ s ‖ c)`
 为基础：

@@ -2,7 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use landscape_terrain_proto::ipstack::{IpStack, SocketHandle};
-use landscape_terrain_proto::protocol::crypto::{MasterKey, SessionCrypto};
+use landscape_terrain_proto::protocol::crypto::{
+    MasterKey, SCRYPT_LOG_N, SessionCrypto, scrypt_log_n_override,
+};
 use landscape_terrain_proto::protocol::frame;
 use landscape_terrain_proto::protocol::session::{
     ClientPhase, ClientSession, HANDSHAKE_TIMEOUT, MAX_RETRIES,
@@ -175,8 +177,19 @@ pub async fn run(mut cfg: ClientConfig<'_>) -> Result<(), Box<dyn std::error::Er
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
     // The psk is stretched into a master key once at startup (scrypt); all
     // derivations below feed on it, so a weak psk costs an offline attacker
-    // ~32 MiB and ~100 ms per guess instead of a single sha256.
-    let master = MasterKey::derive(cfg.psk.as_bytes());
+    // ~32 MiB and ~100 ms per guess instead of a single sha256. The scrypt
+    // exponent override is resolved here, once, so a differing value on the
+    // server is visible in diagnostics instead of silently diverging keys.
+    let log_n = scrypt_log_n_override();
+    if log_n != SCRYPT_LOG_N {
+        cfg.log.emit(
+            LogLevel::Warn,
+            format!(
+                "note: LANDSCAPE_TERRAIN_SCRYPT_LOG_N={log_n} override active — the server must be started with the same exponent"
+            ),
+        );
+    }
+    let master = MasterKey::derive_with_log_n(cfg.psk.as_bytes(), log_n);
     cfg.log.emit(
         LogLevel::Info,
         format!(
@@ -433,7 +446,7 @@ async fn handshake(
     if !saw_resp {
         cfg.log.emit(
             LogLevel::Warn,
-            "  no server response at all — check that psk, token and ethertype match the server"
+            "  no server response at all — check that psk, token and ethertype match the server, and that any LANDSCAPE_TERRAIN_SCRYPT_LOG_N override is set on both sides"
                 .into(),
         );
     }
