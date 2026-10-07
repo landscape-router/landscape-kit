@@ -32,6 +32,36 @@ impl Default for NmAdapter {
     }
 }
 
+impl NmAdapter {
+    /// 反查当前 drop-in 声明的 unmanaged 接口集合;drop-in 缺失或不可读时返回
+    /// 空集。drop-in 是 NM 摘除现场的真值,reinit 的同集校验以此为准。
+    pub fn unmanaged_interfaces(sources: &FileSources) -> Vec<String> {
+        let Some(conf_d) = &sources.nm_conf_d else {
+            return Vec::new();
+        };
+        let Ok(content) = std::fs::read_to_string(conf_d.join(UNMANAGE_CONF)) else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        for line in content.lines() {
+            let Some(value) = line.trim().strip_prefix("unmanaged-devices=") else {
+                continue;
+            };
+            for entry in value.split(';') {
+                if let Some(name) = entry.trim().strip_prefix("interface-name:") {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+}
+
 impl HostNetworkAdapter for NmAdapter {
     fn collect(&self, sources: &FileSources) -> Result<FileSet, HostNetError> {
         collect::collect(sources)
@@ -128,6 +158,35 @@ mod tests {
         assert!(!conf_d.join(UNMANAGE_CONF).exists());
         // conf.d 目录与其他文件保留。
         assert!(conf_d.is_dir());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unmanaged_interfaces_reads_the_live_drop_in() {
+        let dir = nm_fixture("reverse");
+        let conf_d = dir.join("conf.d");
+        let sources = FileSources {
+            nm_conf_d: Some(conf_d.clone()),
+            ..Default::default()
+        };
+        assert!(
+            NmAdapter::unmanaged_interfaces(&sources).is_empty(),
+            "no drop-in means no standing unmanaged set"
+        );
+
+        NmAdapter::new()
+            .execute_unmanage(
+                &sources,
+                &["ens4".to_string(), "ens3".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            NmAdapter::unmanaged_interfaces(&sources),
+            vec!["ens3".to_string(), "ens4".to_string()]
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

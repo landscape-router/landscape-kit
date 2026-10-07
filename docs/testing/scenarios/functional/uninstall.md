@@ -87,13 +87,13 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 测试层：Rust workflow、CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
 - 证据：[`lkit uninstall`](../../../commands/uninstall.md#卸载前检查)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)
-- 说明：接管特征（宿主网络服务被 stop/disable/mask，或存在未恢复的 ifupdown 摘除
-  备份；交互模式以确认提示呈现）不阻断卸载；NetworkManager 等整体摘除的宿主服务
-  保持现状，由用户自行恢复，ifupdown 摘除按 UNI-14 恢复。
+- 说明：接管特征（systemd-resolved 被 stop/disable/mask，或存在未恢复的 hostnet
+  摘除备份——ifupdown/NM/firewalld 任一适配器；交互模式以确认提示呈现）不阻断卸载；
+  systemd-resolved 按事务快照恢复，接口摘除按 UNI-14/UNI-15 恢复。
 
 ## UNI-14
 
-**接管安装（ifupdown 摘除）卸载时按 `backups/hostnet` 的 manifest 逐字恢复宿主配置并重启 `networking.service`**
+**接管安装（ifupdown 摘除）卸载时按 `backups/hostnet/ifupdown` 的 manifest 逐字恢复宿主配置并重启 `networking.service`**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
@@ -102,6 +102,18 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 说明：卸载前断言摘除已生效（选中接口 `manual`、manifest 在地盘）；卸载恢复
   `interfaces` 文件逐字节一致、删除 hostnet 备份，并对 `networking.service` 执行
   restart 重新套用原配置。
+
+## UNI-15
+
+**接管安装（NM drop-in 与 firewalld zone 摘除）卸载时删除 drop-in、逐字恢复 zone 并 reload 运行中的守护进程**
+
+- 测试层：CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)、
+  [网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)
+- 说明：卸载删除接管创建的 `lkit-unmanage.conf`、逐字节恢复被改写的 zone XML，清理
+  `backups/hostnet/{nm,firewalld}` 备份，并对运行中的 NM/firewalld 再次 reload；
+  两个服务全程不被停止、不执行任何 systemctl 调用。
 
 ## UNI-09
 

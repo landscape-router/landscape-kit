@@ -30,6 +30,30 @@ impl Default for FirewalldAdapter {
     }
 }
 
+impl FirewalldAdapter {
+    /// 反查摘除的接口集合:manifest 快照中原本以可整行删除形态出现的名字,
+    /// 减去现场文件仍包含的名字。快照缺失或现场文件被删除时按现场不含处理。
+    pub fn unmanaged_interfaces(manifest: &Manifest) -> Vec<String> {
+        let mut removed: Vec<String> = Vec::new();
+        for file in &manifest.files {
+            let Ok(original) = std::fs::read_to_string(&file.backup) else {
+                continue;
+            };
+            let live = std::fs::read_to_string(&file.original).unwrap_or_default();
+            for name in original.lines().filter_map(interface_line_name) {
+                let still_present = live
+                    .lines()
+                    .any(|line| interface_line_name(line) == Some(name));
+                if !still_present && !removed.iter().any(|standing| standing == name) {
+                    removed.push(name.to_string());
+                }
+            }
+        }
+        removed.sort();
+        removed
+    }
+}
+
 impl HostNetworkAdapter for FirewalldAdapter {
     fn collect(&self, sources: &FileSources) -> Result<FileSet, HostNetError> {
         let Some(zones) = &sources.firewalld_zones else {
@@ -190,17 +214,22 @@ impl HostNetworkAdapter for FirewalldAdapter {
 
 /// 整行自闭合单属性形态:`<interface name="X"/>`,允许前后空白与 `/>` 前空白。
 fn is_removable_interface_line(line: &str, name: &str) -> bool {
+    interface_line_name(line) == Some(name)
+}
+
+/// 提取可整行删除形态(`<interface name="X"/>`,单属性、自闭合、两种引号)
+/// 中的接口名;其他形态返回 None。
+fn interface_line_name(line: &str) -> Option<&str> {
     let trimmed = line.trim();
-    let Some(tag) = trimmed.strip_prefix("<interface") else {
-        return false;
-    };
-    let Some(tag) = tag.strip_suffix("/>") else {
-        return false;
-    };
+    let tag = trimmed.strip_prefix("<interface")?.strip_suffix("/>")?;
     let tag = tag.trim_end();
-    let quoted = format!("name=\"{name}\"");
-    let single = format!("name='{name}'");
-    tag == quoted || tag == single || tag == format!(" {quoted}") || tag == format!(" {single}")
+    ['"', '\''].iter().find_map(|&quote| {
+        let open = format!(" name={quote}");
+        let close = quote.to_string();
+        tag.strip_prefix(&open)
+            .and_then(|value| value.strip_suffix(close.as_str()))
+            .filter(|value| !value.is_empty())
+    })
 }
 
 /// 内容中是否存在引用该接口的 `<interface` 元素(用于拒绝无法整行删除的形态)。
@@ -349,6 +378,54 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(zones.join("public.xml")).unwrap(),
             "<zone>\n  <interface name=\"ens3\" zone=\"public\"/>\n</zone>\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 反查摘除集合:快照中原有的整行接口名减去现场仍存在的;其他 zone 文件
+    /// 与未摘除名字不参与。
+    #[test]
+    fn unmanaged_interfaces_diffs_snapshots_against_live_zones() {
+        let dir = zones_fixture("reverse");
+        let zones = dir.join("zones");
+        std::fs::write(
+            zones.join("public.xml"),
+            "<?xml version=\"1.0\"?>\n<zone>\n  <interface name=\"ens3\"/>\n  <interface name=\"ens9\"/>\n</zone>\n",
+        )
+        .unwrap();
+        std::fs::write(
+            zones.join("internal.xml"),
+            "<zone>\n  <interface name='ens4'/>\n</zone>\n",
+        )
+        .unwrap();
+        let sources = sources(&dir);
+        let outcome = FirewalldAdapter::new()
+            .execute_unmanage(
+                &sources,
+                &["ens3".to_string(), "ens4".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
+            .unwrap();
+        let manifest = outcome.manifest.expect("zone edits applied");
+
+        assert_eq!(
+            FirewalldAdapter::unmanaged_interfaces(&manifest),
+            vec!["ens3".to_string(), "ens4".to_string()],
+            "removed names come from every zone snapshot"
+        );
+
+        // 现场恢复一行(如人工补回 ens3)后,反查集合随之缩小;未摘除的名字
+        // (ens9)必须仍留在现场,否则按漂移处理。
+        std::fs::write(
+            zones.join("public.xml"),
+            "<?xml version=\"1.0\"?>\n<zone>\n  <interface name=\"ens3\"/>\n  <interface name=\"ens9\"/>\n</zone>\n",
+        )
+        .unwrap();
+        assert_eq!(
+            FirewalldAdapter::unmanaged_interfaces(&manifest),
+            vec!["ens4".to_string()]
         );
 
         let _ = std::fs::remove_dir_all(&dir);

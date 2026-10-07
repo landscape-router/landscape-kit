@@ -8,3 +8,5 @@ takeover.no_takeover_awaiting_confirmation = "no takeover is awaiting confirmati
 takeover.confirmed_landscape_takeover = "confirmed Landscape network takeover"
 takeover.restored_host_network_services = "restored the pre-install host network services"
 takeover.networking_restart_failed = "failed to restart networking.service after restoring the host network config: %{error}"
+takeover.nm_reload_failed = "failed to make NetworkManager reload its configuration: %{error}"
+takeover.firewalld_reload_failed = "failed to make firewalld reload its zones: %{error}"

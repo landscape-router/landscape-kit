@@ -83,3 +83,40 @@
 - 说明：当前文件集合中 manual-bare、同时在 manifest 原始快照中非 manual-bare 的接口
   记为已摘除；宿主自声明的 manual-bare stanza、摘除后新增的 stanza 与宿主改回带配置
   的 stanza 都不算。lkit-cli 的 reinit 同接口集校验（REI-11）消费该结果。
+
+
+## HNET-10
+
+**NetworkManager 适配器写入 conf.d drop-in 并对称恢复**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[NM 适配器测试](../../../../crates/lkit-hostnet/src/nm/mod.rs)、
+  [hostnet 设计](../../../network/hostnet.md)
+- 说明：`unmanaged-devices=interface-name:<if>;...` 排序去重；新建 drop-in（0644、
+  属主继承 conf.d）恢复时删除，既有同名文件逐字备份后改写、恢复逐字还原；glob 元字符
+  选中名拒绝；guarded 恢复保留外部修改。运行时 reload 由 lkit-cli 负责（NET-14）。
+
+## HNET-11
+
+**firewalld 适配器删除 zone XML 中选中接口的整行并保守拒绝混合形态**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[firewalld 适配器测试](../../../../crates/lkit-hostnet/src/firewalld/mod.rs)、
+  [hostnet 设计](../../../network/hostnet.md)
+- 说明：仅删除自闭合单属性 `<interface name="..."/>` 整行，其余字节保留；选中接口仍以
+  其他形态出现在任何 `<interface>` 元素中时计划阶段整体拒绝、不改任何文件。运行时
+  reload 由 lkit-cli 负责（NET-14）。
+
+## HNET-12
+
+**NM 与 firewalld 适配器各自反查摘除现场**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[NM 反查测试](../../../../crates/lkit-hostnet/src/nm/mod.rs)、
+  [firewalld 反查测试](../../../../crates/lkit-hostnet/src/firewalld/mod.rs)
+- 说明：NM 读取现场 drop-in 的 `unmanaged-devices` 条目；firewalld 取
+  "manifest 快照整行接口名 − 现场仍存在名字"差集。lkit-cli 的 reinit 同接口集校验
+  （REI-11）消费两者与 ifupdown 反查（HNET-09）的并集。

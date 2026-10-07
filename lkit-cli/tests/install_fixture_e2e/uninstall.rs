@@ -223,7 +223,7 @@ iface ens4 inet dhcp\n";
     assert!(
         harness
             .backups_dir()
-            .join("hostnet/manifest.json")
+            .join("hostnet/ifupdown/manifest.json")
             .is_file(),
         "the standing hostnet backup must exist while the takeover is committed"
     );
@@ -252,5 +252,85 @@ iface ens4 inet dhcp\n";
     assert!(
         calls.contains("[\"restart\",\"networking.service\"]"),
         "uninstall must restart networking.service to re-apply the host config:\n{calls}"
+    );
+}
+
+/// UNI-15:接管安装(NM drop-in + firewalld zone 摘除)卸载时删除 drop-in、逐字
+/// 恢复 zone,并 reload 运行中的 NM/firewalld;两者全程不被停止。
+#[test]
+fn uninstall_restores_nm_and_firewalld_after_takeover() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("uninstall-nm-firewalld", "healthy", 10_000);
+    harness.seed_host_services();
+    assert_success(&harness.run_takeover());
+    assert_success(&harness.network_command(&["confirm"]));
+    let drop_in = harness.host.join("nm-conf.d/lkit-unmanage.conf");
+    assert!(
+        drop_in.is_file(),
+        "the takeover must have written the NM drop-in"
+    );
+    let zone = std::fs::read_to_string(harness.host.join("firewalld-zones/public.xml")).unwrap();
+    assert!(
+        !zone.contains("ens3"),
+        "the takeover must have removed ens3:\n{zone}"
+    );
+    assert!(
+        harness
+            .backups_dir()
+            .join("hostnet/nm/manifest.json")
+            .is_file()
+            && harness
+                .backups_dir()
+                .join("hostnet/firewalld/manifest.json")
+                .is_file(),
+        "per-adapter hostnet backups must exist while the takeover is committed"
+    );
+
+    let output = harness
+        .command()
+        .args(["uninstall", "--non-interactive", "--yes", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "uninstall after multi-adapter takeover failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !drop_in.exists(),
+        "uninstall must delete the NM drop-in it created"
+    );
+    assert_eq!(
+        std::fs::read_to_string(harness.host.join("firewalld-zones/public.xml")).unwrap(),
+        SEEDED_FIREWALLD_ZONE,
+        "uninstall must restore the zone byte for byte"
+    );
+    assert!(
+        !harness.backups_dir().join("hostnet").exists(),
+        "the hostnet backups must be removed after the restore"
+    );
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    assert!(
+        !calls.contains("stop\",\"NetworkManager.service"),
+        "NetworkManager must never be stopped:\n{calls}"
+    );
+    assert!(
+        !calls.contains("stop\",\"firewalld.service"),
+        "firewalld must never be stopped:\n{calls}"
+    );
+    let nmcli_calls = std::fs::read_to_string(harness.world.path("nmcli-calls.log")).unwrap();
+    assert!(
+        nmcli_calls.matches("general reload").count() >= 2,
+        "NM must be reloaded after unmanage and again after the restore:\n{nmcli_calls}"
+    );
+    let firewall_cmd_calls =
+        std::fs::read_to_string(harness.world.path("firewall-cmd-calls.log")).unwrap();
+    assert!(
+        firewall_cmd_calls.matches("--reload").count() >= 2,
+        "firewalld must be reloaded after unmanage and again after the restore:\n{firewall_cmd_calls}"
     );
 }

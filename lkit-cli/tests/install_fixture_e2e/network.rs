@@ -69,21 +69,38 @@ fn network_takeover_confirms_from_any_ssh_session() {
         init["dhcpv4_services"][0]["config"]["ip_range_end"].as_str(),
         Some("192.168.10.254")
     );
-    assert_host_services_masked(
-        &harness,
-        &[
-            "NetworkManager.service",
-            "firewalld.service",
-            "systemd-resolved.service",
-        ],
-    );
-
+    assert_host_services_masked(&harness, &["systemd-resolved.service"]);
+    // NM/firewalld 不再整体停止:通过 drop-in/zone 摘除,服务保持运行。
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
     let timer_start = calls.find("\"start\",\"lkit-network-").unwrap();
     let resolved_stop = calls.find("\"stop\",\"systemd-resolved.service\"").unwrap();
-    let network_manager_stop = calls.find("\"stop\",\"NetworkManager.service\"").unwrap();
     assert!(timer_start < resolved_stop);
-    assert!(resolved_stop < network_manager_stop);
+    assert!(
+        !calls.contains("NetworkManager.service"),
+        "NetworkManager must not receive any systemctl call:\n{calls}"
+    );
+    assert!(
+        !calls.contains("firewalld.service"),
+        "firewalld must not receive any systemctl call:\n{calls}"
+    );
+    let drop_in =
+        std::fs::read_to_string(harness.host.join("nm-conf.d/lkit-unmanage.conf")).unwrap();
+    assert!(drop_in.contains("interface-name:ens3;"));
+    assert!(drop_in.contains("interface-name:ens4"));
+    let zone = std::fs::read_to_string(harness.host.join("firewalld-zones/public.xml")).unwrap();
+    assert!(!zone.contains("ens3"), "ens3 must leave the zone:\n{zone}");
+    assert!(zone.contains("ens9"), "unselected interface stays:\n{zone}");
+    let nmcli_calls = std::fs::read_to_string(harness.world.path("nmcli-calls.log")).unwrap();
+    assert!(
+        nmcli_calls.contains("general reload"),
+        "the drop-in must be applied to the running NetworkManager:\n{nmcli_calls}"
+    );
+    let firewall_cmd_calls =
+        std::fs::read_to_string(harness.world.path("firewall-cmd-calls.log")).unwrap();
+    assert!(
+        firewall_cmd_calls.contains("--reload"),
+        "the zone edit must be applied to the running firewalld:\n{firewall_cmd_calls}"
+    );
 
     let confirm = harness.network_command(&["confirm"]);
     assert_success(&confirm);
@@ -208,15 +225,43 @@ fn automatic_network_rollback_restores_host_services() {
     assert!(!harness.install_root.join("data").exists());
     let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "rolled_back");
-    assert_host_services_restored(
-        &harness,
-        &[
-            "NetworkManager.service",
-            "firewalld.service",
-            "systemd-resolved.service",
-        ],
-    );
+    assert_host_services_restored(&harness, &["systemd-resolved.service"]);
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    assert!(
+        !calls.contains("\"stop\",\"NetworkManager.service\""),
+        "NetworkManager must never be stopped:\n{calls}"
+    );
+    assert!(
+        !calls.contains("\"stop\",\"firewalld.service\""),
+        "firewalld must never be stopped:\n{calls}"
+    );
+    // 摘除的文件被恢复:drop-in 删除,zone 逐字还原。
+    assert!(
+        !harness.host.join("nm-conf.d/lkit-unmanage.conf").exists(),
+        "rollback must delete the NM drop-in"
+    );
+    assert_eq!(
+        std::fs::read_to_string(harness.host.join("firewalld-zones/public.xml")).unwrap(),
+        SEEDED_FIREWALLD_ZONE,
+        "rollback must restore the zone byte for byte"
+    );
+    let nmcli_calls = std::fs::read_to_string(harness.world.path("nmcli-calls.log")).unwrap();
+    assert_eq!(
+        nmcli_calls.matches("general reload").count(),
+        2,
+        "NM must be reloaded after unmanage and after restore:\n{nmcli_calls}"
+    );
+    let firewall_cmd_calls =
+        std::fs::read_to_string(harness.world.path("firewall-cmd-calls.log")).unwrap();
+    assert_eq!(
+        firewall_cmd_calls.matches("--reload").count(),
+        2,
+        "firewalld must be reloaded after unmanage and after restore:\n{firewall_cmd_calls}"
+    );
+    assert!(
+        !harness.backups_dir().join("hostnet").exists(),
+        "rollback must clear the hostnet backups"
+    );
     for unit in recovery_units {
         assert!(
             !calls.contains(&format!("[\"stop\",\"{unit}\"]")),
@@ -298,11 +343,12 @@ iface ens5 inet static\n\
             .all(|service| service["unit"] != "networking.service"),
         "networking.service must not be recorded as a wholesale-stopped service"
     );
-    let network_manager = host_services
-        .iter()
-        .find(|service| service["unit"] == "NetworkManager.service")
-        .unwrap();
-    assert_eq!(network_manager["installed"], false);
+    assert!(
+        host_services
+            .iter()
+            .all(|service| service["unit"] != "NetworkManager.service"),
+        "NetworkManager is not a wholesale-stopped service anymore"
+    );
     assert!(
         !harness.host.join("units/NetworkManager.service").exists(),
         "NetworkManager was unexpectedly installed"
@@ -334,7 +380,7 @@ iface ens5 inet static\n\
     assert!(
         harness
             .backups_dir()
-            .join("hostnet/manifest.json")
+            .join("hostnet/ifupdown/manifest.json")
             .is_file(),
         "the verbatim ifupdown backup manifest is missing"
     );

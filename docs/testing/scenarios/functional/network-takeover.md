@@ -54,13 +54,15 @@
 
 ## NET-05
 
-**NetworkManager、firewalld、systemd-resolved 被停止、disable、mask，但软件包不卸载；`networking.service` 保持原状态**
+**systemd-resolved 被停止、disable、mask，但软件包不卸载；`networking.service`、NetworkManager 与 firewalld 保持运行**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
-- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
-- 说明：整体 stop/disable/mask 只作用于 NetworkManager、firewalld 与 systemd-resolved；
-  ifupdown 宿主的 `networking.service` 不在整体摘除之列，走 NET-13 的细粒度摘除。
+- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)
+- 说明：整体 stop/disable/mask 只作用于 systemd-resolved（DNS 是主机全局语义，没有按
+  接口摘除的文件边界）；NetworkManager 与 firewalld 走 NET-14 的 drop-in/zone 细粒度
+  摘除，ifupdown 宿主的 `networking.service` 走 NET-13。运行中的 NM/firewalld 配置目录
+  缺失时 preflight 拒绝接管。
 
 ## NET-13
 
@@ -71,10 +73,25 @@
 - 证据：[网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)、
   [完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)
 - 说明：接管把选中接口（WAN + 全部选中 LAN）的 stanza 改写为 `manual` 并删除选项与
-  自动选择项，未选接口逐字节保留；原文件逐字备份到 lkit 地盘 `backups/hostnet`；
+  自动选择项，未选接口逐字节保留；原文件逐字备份到 lkit 地盘
+  `backups/hostnet/ifupdown`；
   接管期间对 `networking.service` 零 systemctl 调用（保持 active/enabled/unmasked）；
   回滚按 manifest 逐字恢复、删除备份并在服务 active 时 restart。选中接口不由
   ifupdown 管理（无配置文件，如 NetworkManager 主机）时为 no-op。
+
+## NET-14
+
+**NetworkManager 与 firewalld 细粒度摘除：drop-in 与 zone 接口行，服务全程运行**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)、
+  [完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)
+- 说明：NM conf.d 存在时写入 `lkit-unmanage.conf` drop-in（NM 未运行也写，覆盖未来
+  启动），firewalld zones 存在时删除引用选中接口的 `<interface/>` 整行；适配器可组合，
+  备份落 `backups/hostnet/{nm,firewalld}`。文件改写后对运行中的 NM/firewalld reload
+  （`nmcli general reload`、`firewall-cmd --reload`），工具缺失或 reload 失败中止安装；
+  两个服务全程零 systemctl 调用。回滚/卸载删除 drop-in、逐字恢复 zone 并再次 reload。
 
 ## NET-06
 
@@ -98,8 +115,9 @@
 - 状态：`部分覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[QEMU 网络接管](../../qemu-network-takeover.md)
 - 说明：覆盖手工 rollback、10 分钟 timer rollback 和确认前重启的 boot rollback；三条入口
-  都必须恢复宿主网络（含按 `backups/hostnet` 的 manifest 逐字恢复 ifupdown 原文件并在
-  服务 active 时 restart `networking.service`）、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
+  都必须恢复宿主网络（含按 `backups/hostnet/<适配器>` 的 manifest 逐字恢复摘除——
+  ifupdown 原文件、firewalld zone、NM drop-in 删除——并在服务 active 时 restart
+  `networking.service`、reload 运行中的 NM/firewalld）、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
   `lkit install`。
 - 缺口：fixture 直接覆盖自动回滚入口和重装，QEMU 覆盖 boot rollback；真实 timer 到期和
   手工 systemd operation worker 尚未分别触发。

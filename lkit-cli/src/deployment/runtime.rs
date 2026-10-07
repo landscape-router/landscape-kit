@@ -33,13 +33,25 @@ pub(crate) fn host_manager() -> Box<dyn ServiceManager + Send + Sync> {
     Box::new(systemd)
 }
 
-/// `ifup` 在 Debian 上位于 `/usr/sbin` 或 `/sbin`;都不存在时返回 None,
-/// 摘除后的 dry-run 校验降级为 warning(见 lkit-hostnet 的 Validation)。
-fn production_ifup_command() -> Option<PathBuf> {
-    ["/usr/sbin/ifup", "/sbin/ifup"]
+/// 工具按 Debian 常见位置探测(`/{usr,}/sbin`、`/{usr,}/bin`);不存在时返回
+/// None,摘除后的 dry-run 校验降级为 warning(见 lkit-hostnet 的 Validation)。
+fn find_production_tool(candidates: [&str; 2]) -> Option<PathBuf> {
+    candidates
         .iter()
         .map(PathBuf::from)
         .find(|path| path.is_file())
+}
+
+fn production_ifup_command() -> Option<PathBuf> {
+    find_production_tool(["/usr/sbin/ifup", "/sbin/ifup"])
+}
+
+fn production_nmcli() -> Option<PathBuf> {
+    find_production_tool(["/usr/bin/nmcli", "/bin/nmcli"])
+}
+
+fn production_firewall_cmd() -> Option<PathBuf> {
+    find_production_tool(["/usr/bin/firewall-cmd", "/bin/firewall-cmd"])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +73,16 @@ pub(crate) struct InstallRuntime {
     pub interfaces_file: PathBuf,
     /// `ifup` dry-run 校验工具;缺失时摘除后的校验降级为 warning。
     pub ifup_command: Option<PathBuf>,
+    /// NetworkManager 的 conf.d 目录;存在即认为 NM 已安装,接管写入
+    /// `lkit-unmanage.conf` drop-in 摘除选中接口。
+    pub nm_conf_d: PathBuf,
+    /// firewalld 的 zone 定义目录;存在即认为 firewalld 已安装,接管从
+    /// zone XML 中摘除选中接口。
+    pub firewalld_zones: PathBuf,
+    /// `nmcli`,用于摘除/恢复后让运行中的 NM 重读配置。
+    pub nmcli: Option<PathBuf>,
+    /// `firewall-cmd`,用于摘除/恢复后让运行中的 firewalld 重读 zone。
+    pub firewall_cmd: Option<PathBuf>,
     pub network_confirm_timeout: Duration,
     pub test_runtime_path: Option<PathBuf>,
     pub service_manager: Box<dyn ServiceManager + Send + Sync>,
@@ -84,6 +106,10 @@ impl InstallRuntime {
             selinux_config_path: PathBuf::from("/etc/selinux/config"),
             interfaces_file: PathBuf::from("/etc/network/interfaces"),
             ifup_command: production_ifup_command(),
+            nm_conf_d: PathBuf::from("/etc/NetworkManager/conf.d"),
+            firewalld_zones: PathBuf::from("/etc/firewalld/zones"),
+            nmcli: production_nmcli(),
+            firewall_cmd: production_firewall_cmd(),
             network_confirm_timeout: Duration::from_secs(600),
             test_runtime_path: None,
             service_manager: host_manager(),
@@ -152,6 +178,14 @@ struct TestRuntimeConfig {
     interfaces_file: PathBuf,
     #[serde(default)]
     ifup_command: Option<PathBuf>,
+    #[serde(default = "default_nm_conf_d")]
+    nm_conf_d: PathBuf,
+    #[serde(default = "default_firewalld_zones")]
+    firewalld_zones: PathBuf,
+    #[serde(default)]
+    nmcli: Option<PathBuf>,
+    #[serde(default)]
+    firewall_cmd: Option<PathBuf>,
     #[serde(default = "default_network_confirm_timeout_ms")]
     network_confirm_timeout_ms: u64,
     #[serde(default)]
@@ -289,6 +323,10 @@ impl TestRuntimeConfig {
             selinux_config_path: self.selinux_config_path,
             interfaces_file: self.interfaces_file,
             ifup_command: self.ifup_command,
+            nm_conf_d: self.nm_conf_d,
+            firewalld_zones: self.firewalld_zones,
+            nmcli: self.nmcli,
+            firewall_cmd: self.firewall_cmd,
             network_confirm_timeout: Duration::from_millis(self.network_confirm_timeout_ms),
             test_runtime_path: Some(source_path.to_path_buf()),
             service_manager,
@@ -346,6 +384,16 @@ fn default_interfaces_file() -> PathBuf {
 #[cfg(feature = "test-support")]
 fn default_network_confirm_timeout_ms() -> u64 {
     600_000
+}
+
+#[cfg(feature = "test-support")]
+fn default_nm_conf_d() -> PathBuf {
+    PathBuf::from("/etc/NetworkManager/conf.d")
+}
+
+#[cfg(feature = "test-support")]
+fn default_firewalld_zones() -> PathBuf {
+    PathBuf::from("/etc/firewalld/zones")
 }
 
 #[cfg(feature = "test-support")]

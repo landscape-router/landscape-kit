@@ -330,7 +330,7 @@ esac
             "an active/enabled networking.service with no other host services is not a takeover signature"
         );
 
-        let backup = territory.join("backups/hostnet");
+        let backup = territory.join("backups/hostnet/ifupdown");
         std::fs::create_dir_all(&backup).unwrap();
         std::fs::write(backup.join("manifest.json"), b"{}").unwrap();
         assert!(
@@ -389,6 +389,8 @@ esac
     ) -> UninstallOptions<'a, FakeDocs> {
         UninstallOptions {
             export_base_url: server.base.clone(),
+            nmcli: None,
+            firewall_cmd: None,
             token: &TOKEN,
             confirm: &YES,
             health,

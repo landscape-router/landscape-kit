@@ -61,8 +61,8 @@ lkit 地盘(`/root/.lkit/`)原样保留:
 2. 读取 `install-state.json`;不存在时返回参数错误 `2` 并提示先执行 `lkit install`;
 3. 校验受管 unit 所有权与后端摘要(与 `switch` 相同的安全不变量,失败阻断);
 4. 交互确认卸载计划与数据损失范围(非交互模式以 `--yes` 代替);检测到网络接管特征
-   (NetworkManager、firewalld 或 systemd-resolved 被停止、disable 或 mask,或地盘存在
-   未恢复的 ifupdown 摘除备份)时追加醒目 warning。该警告可被确认,不阻断;
+   (systemd-resolved 被停止、disable 或 mask,或地盘存在未恢复的 hostnet 摘除备份
+   ——ifupdown/NM/firewalld 任一适配器)时追加醒目 warning。该警告可被确认,不阻断;
 5. 默认创建保护 `.lkb`(固定备注 `uninstall 前自动保护备份`,auto 标记为 true),失败
    默认阻断;`--allow-no-backup` 显式跳过,并明确表示不产生可移植的当前配置快照;
 6. 创建 `uninstall` 事务,记录 `systemd_before`、`previous_current`、`backup` 引用和
@@ -71,6 +71,11 @@ lkit 地盘(`/root/.lkit/`)原样保留:
 保护备份创建失败、所有权冲突或状态损坏时,保持当前服务和现场不变。
 通过 `/dev/tty` 确认外部实例已停止(非交互模式以 `--yes` 代替),`lkit` 不启动、不探测
 外部进程。
+
+检测到接管时,卸载在停止受管服务后按地盘 `backups/hostnet/<适配器>` 的 manifest 逐字
+恢复摘除(ifupdown 原文件、firewalld zone,NM drop-in 删除),并按各服务实况重放运行时
+(`networking.service` active 时 restart,运行中的 NM/firewalld reload,尽力而为)。
+NetworkManager 与 firewalld 全程不被停止。
 
 lkit 常驻 daemon(若已安装)继续运行,不参与卸载;卸载后的空闲恢复循环只扫描 lkit
 地盘,不存在未完成事务时无任何动作。需要移除 daemon 时另行执行 `lkit self remove`。

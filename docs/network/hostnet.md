@@ -3,8 +3,8 @@
 ## 职责
 
 `lkit-hostnet` 是独立于 lkit-cli 的纯库 crate，负责"把选中的网络接口从宿主网络管理器中
-摘除，并在回滚/卸载时恢复"。只实现 ifupdown 适配器；NetworkManager 和
-systemd-networkd 适配器尚未实现（见后续迭代）。
+摘除，并在回滚/卸载时恢复"。实现三个适配器：ifupdown、NetworkManager（conf.d
+drop-in）与 firewalld（zone XML 接口行）；systemd-networkd 适配器尚未实现。
 
 当前托管网络管理的整体行为见[网络接管](takeover.md)；本文档描述 `lkit-hostnet` 本身的
 设计与测试。
@@ -15,16 +15,17 @@ systemd-networkd 适配器尚未实现（见后续迭代）。
   路径全部注入，可脱离 CLI 独立测试；
 - lkit-cli 的接管流程只依赖本 crate 的 trait 接口（`execute_unmanage`/`restore`），
   适配器内部逻辑的演进不影响调用方；
-- 后续 NetworkManager（conf.d `unmanaged-devices`）、systemd-networkd（`.network`
-  文件移出）等适配器在同一 crate 内新增模块即可，调用方接口不变。
+- systemd-networkd（`.network` 文件移出）等适配器在同一 crate 内新增模块即可，调用方
+  接口不变。
 
 ## 设计边界
 
 - **只操作宿主网络配置文件**：ifupdown 的 `/etc/network/interfaces`（含 `source`
-  和 `source-directory` 引用的文件）。不直接操作接口、不调用
-  `systemctl`、不碰 `ip` 命令；
-- **摘除与恢复对称**：接管时备份原文件逐字副本，回滚/卸载时按 manifest 逐字覆盖
-  恢复，不依赖 diff 或补丁；
+  和 `source-directory` 引用的文件）、NetworkManager 的 conf.d drop-in、firewalld 的
+  zone XML。不直接操作接口、不调用 `systemctl`/`nmcli`/`firewall-cmd`、不碰 `ip`
+  命令；
+- **摘除与恢复对称**：接管时备份原文件逐字副本（新建的文件记录为 created，无逐字
+  副本），回滚/卸载时按 manifest 逐字覆盖恢复或删除，不依赖 diff 或补丁；
 - **保守解析**：只识别文档化的语法结构，遇到无法解析的内容报错而非猜测；
 - **校验交给系统工具**：crate 自身不做语义判断，通过注入的 `ifup --no-act --all`
   等工具路径做 dry-run 校验，工具缺失时返回 warning 性质结果，由调用方决定策略。
@@ -40,12 +41,14 @@ lkit-hostnet
 │   ├── edit.rs     改写计划与应用（原子写回）
 │   ├── backup.rs   逐字备份 + manifest.json
 │   └── validate.rs ifup dry-run 校验
-├── nm/             NetworkManager 适配器（后续迭代）
-└── networkd/       systemd-networkd 适配器（后续迭代）
+├── nm/             NetworkManager 适配器（conf.d drop-in）
+│   ├── collect.rs  conf.d 清单收集（drop-in 是否已存在）
+│   └── edit.rs     drop-in 内容生成与元数据
+└── firewalld/      firewalld 适配器（zone XML 接口行删除）
 ```
 
-适配器实现统一的 trait（目前只有 ifupdown 实现）。调用方应优先使用
-`execute_unmanage`；分步方法保留给适配器专项测试和后续适配器实现：
+适配器实现统一的 trait（ifupdown、nm、firewalld 均已实现）。调用方应优先使用
+`execute_unmanage`；分步方法保留给适配器专项测试：
 
 ```rust
 pub trait HostNetworkAdapter {
@@ -78,8 +81,9 @@ pub trait HostNetworkAdapter {
 backup 成功后的 apply 错误、validate 错误或 dry-run 非零退出都会自动执行
 `restore_if_unchanged`：仍处于本次编辑结果的文件才会恢复，仍是原始快照的文件跳过，
 检测到其他外部内容或元数据时保留外部修改并返回 `RecoveryFailed`。显式调用
-`restore` 仍按 manifest 无条件恢复。工具缺失返回 `Validation::Unavailable`，视为
-warning 性质的成功结果。`FileSet` 为空或计划为空时不创建备份目录。
+`restore` 仍按 manifest 无条件恢复（改写条目逐字还原、created 条目删除）。工具缺失
+返回 `Validation::Unavailable`，视为 warning 性质的成功结果。`FileSet` 为空或计划为空时
+不创建备份目录。备份与原子写等文件操作由 ifupdown 模块提供、三个适配器共用。
 
 `FileSources`、backup 目录和 manifest 中的路径必须是绝对路径。配置入口和 source 最终
 文件必须是普通非符号链接文件；符号链接会在任何写入前以 `PathSafety` 阻断。
@@ -124,11 +128,49 @@ warning 性质的成功结果。`FileSet` 为空或计划为空时不创建备�
 `bridge_ports`/`bond-slaves` 依赖选中接口时拒绝改写。改写与恢复均为独占临时文件 +
 rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
 
-### 备份与恢复格式
+### 反查
 
-`backup(plan, dest)` 要求 `dest` 是不存在的绝对路径，把每个待改写文件逐字复制到
-`dest/<序号>/<源文件名>`，并写 `manifest.json`（`backup` 字段为绝对路径）。清单还
-记录源文件的 mode、uid、gid；备份文件和 manifest 使用 `0600`：
+`IfupdownAdapter::unmanaged_interfaces(sources, manifest)` 反查当前摘除现场：现场文件
+中 method 为裸 `manual` 的选中态 stanza，加上 manifest 快照中非 manual-bare 的接口
+（即被本次摘除改写的）。
+
+## NetworkManager 适配器
+
+- **文件范围**：conf.d 目录（路径注入，生产环境 `/etc/NetworkManager/conf.d/`）中的
+  `lkit-unmanage.conf`；conf.d 目录本身是符号链接、或 drop-in 是符号链接时以
+  `PathSafety` 阻断。
+- **改写规则**：drop-in 内容为 `[device]` 段的
+  `unmanaged-devices=interface-name:<if>;...`（选中名排序去重），头部带说明注释。
+  选中名含 glob 元字符（`*?[]`）或不可用字符时拒绝。drop-in 不存在时新建（权限
+  0644、属主继承 conf.d 目录）；已存在（含宿主同名文件）时逐字备份后改写，恢复时
+  逐字还原。
+- **恢复**：新建的 drop-in 直接删除（conf.d 目录与其他文件不动）；改写的逐字还原。
+- **校验**：无 dry-run 工具，`validate` 返回 `Unavailable`；运行时效果由调用方
+  `nmcli general reload` 后自查。
+- **反查**：`NmAdapter::unmanaged_interfaces(sources)` 读取现场 drop-in 的
+  `unmanaged-devices` 条目；drop-in 缺失或不可读返回空集。
+
+## firewalld 适配器
+
+- **文件范围**：zones 目录（路径注入，生产环境 `/etc/firewalld/zones/`）中全部
+  `*.xml`（按文件名排序）；目录或 zone 文件是符号链接时以 `PathSafety` 阻断。
+- **改写规则**：删除引用选中接口的 `<interface name="..."/>` 整行——仅自闭合、单属性
+  形态（两种引号），其余内容逐字节保留。删除整行形态后，选中接口仍以其他形态出现在
+  任何 `<interface>` 元素中（多属性、跨行、或与整行形态混在同一文件）时保守拒绝
+  整个摘除（`UnsupportedSyntax`），计划阶段即失败、不改任何文件。
+- **恢复**：逐字还原改写过的 zone 文件。
+- **校验**：无 dry-run 工具，`validate` 返回 `Unavailable`；运行时效果由调用方
+  `firewall-cmd --reload` 重读 zone 生效。接口脱离显式 zone 后由 firewalld 默认 zone
+  兜底。
+- **反查**：`FirewalldAdapter::unmanaged_interfaces(manifest)` 取"manifest 快照中原有
+  的整行接口名 − 现场文件仍存在的名字"差集；快照或现场文件缺失按空集处理。
+
+## 备份与恢复格式
+
+`backup(plan, dest)` 要求 `dest` 是不存在的绝对路径。改写条目把源文件逐字复制到
+`dest/<序号>/<源文件名>`；新建条目只记录路径与元数据（无逐字副本）。manifest 写
+`dest/manifest.json`（`backup` 字段为绝对路径），记录源文件的 mode、uid、gid；备份
+文件和 manifest 使用 `0600`：
 
 ```json
 {
@@ -139,22 +181,29 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
       "backup": "/var/lib/.../backups/0/interfaces",
       "metadata": { "mode": 420, "uid": 0, "gid": 0 }
     }
+  ],
+  "created": [
+    {
+      "path": "/etc/NetworkManager/conf.d/lkit-unmanage.conf",
+      "metadata": { "mode": 420, "uid": 0, "gid": 0 }
+    }
   ]
 }
 ```
 
 `restore(manifest)` 先完整读取并验证所有备份，再按 `original` 路径逐字覆盖恢复每个
-文件，覆盖前不要求文件仍处于改写状态（幂等），用于显式回滚/卸载。事务失败使用
+改写文件、删除每个 created 文件（目标为符号链接时 `PathSafety` 阻断），覆盖前不要求
+文件仍处于改写状态（幂等），用于显式回滚/卸载。事务失败使用
 `restore_if_unchanged`，只恢复仍处于本次编辑结果的文件；外部漂移不会被覆盖。
-恢复后接口是否立即重新配置（如 `systemctl restart networking.service` 重新执行
-`ifup -a`）由调用方决定，本 crate 不执行。
+恢复后接口是否立即重新配置（如 `systemctl restart networking.service`、
+`nmcli general reload`）由调用方决定，本 crate 不执行。
 
 ### 原子写回
 
 改写与恢复均采用带进程 ID 和原子序号的独占临时文件（`create_new`），写入后精确
 设置权限/所有者，执行 `sync_all`、rename 和父目录 fsync；失败不跟随临时文件符号链接。
 
-### 校验
+### 校验（ifupdown）
 
 - `validate` 调用注入的 `ifup --no-act --interfaces=<主文件> --all` 对编辑后的文件集合
   做 dry-run；
@@ -188,35 +237,47 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
   - 改写：`static`/`dhcp`/`manual` 等 method 到 `manual`、删除自动选择项和选项物理
     行、注释与无关接口逐字节保留、已 manual 的幂等、`ppp`/mapping/rename/bridge/bond
     拒绝、内容漂移拒绝、mode/uid/gid 保留；
-  - 备份/恢复：逐字一致、私有备份、幂等恢复、guarded rollback 保留外部修改、manifest
-    元数据往返、schema/符号链接拒绝；
+  - NM：drop-in 新建/删除、既有 drop-in 逐字备份与还原、guarded 恢复保留外部修改、
+    确定性元数据、反查；
+  - firewalld：整行删除与逐字恢复、无关 zone 不动、混合形态拒绝（不改任何文件）、
+    反查差集；
+  - 备份/恢复：逐字一致、私有备份、幂等恢复、created 条目删除、guarded rollback
+    保留外部修改、manifest 元数据往返、schema/符号链接拒绝；
   - 原子写回：独占临时文件、旧临时符号链接不跟随、失败路径不留残留。
 - **集成测试**（crate `tests/`）：收集 → 备份 → 改写 → 校验 → 恢复 全流程；
   fixture 提供假 `ifup` 脚本验证校验分支（成功/失败/缺失三种）。
+- **风险测试隔离**：涉及真实 Debian ifupdown 工具的测试标记 `#[ignore]`，只在 CI 的
+  rust:bookworm 容器内以 `--ignored` 运行（`test-hostnet-ifupdown.yml`）；其余全部
+  在临时目录与注入路径/假工具上进行，不触碰宿主网络环境。
 
 ## 与 lkit-cli 的集成
 
 `crates/lkit-hostnet` 是 workspace member（不进 default-members），lkit-cli 通过
 `lkit-hostnet` 依赖接入接管流程：
 
-- runtime 注入 `interfaces_file`（生产环境 `/etc/network/interfaces`）与 `ifup_command`
-  工具路径；`networking.service` 不在 lkit-cli 的整体 stop/disable/mask 服务清单内，
-  ifupdown 宿主的摘除完全由本 crate 的文件改写承担。
-- 接管时经 `execute_unmanage` 备份并改写（摘除先于停止宿主服务执行，失败即中止整个
-  安装），备份固定落 lkit 地盘 `backups/hostnet`；回滚与卸载时按 manifest 逐字恢复
-  并按 `networking.service` 实况决定是否 restart。
+- runtime 注入各适配器入口与工具路径：`interfaces_file`/`ifup_command`（ifupdown）、
+  `nm_conf_d`（NM drop-in 落点）、`firewalld_zones`（zone 目录）、`nmcli` 与
+  `firewall_cmd`（运行时 reload 工具）。`networking.service`、NetworkManager 与
+  firewalld 都不在 lkit-cli 的整体 stop/disable/mask 服务清单内（清单只剩
+  systemd-resolved），相关宿主的摘除完全由本 crate 的文件改写承担。
+- 接管时按目录存在性选择适配器（ifupdown 主配置文件、NM conf.d、firewalld zones，
+  可组合），各自经 `execute_unmanage` 备份并改写，备份固定落 lkit 地盘
+  `backups/hostnet/<ifupdown|nm|firewalld>/`；摘除先于停止宿主服务执行，失败即中止
+  整个安装。文件改写后 lkit-cli 对运行中的 NM/firewalld 执行 reload（工具缺失或失败
+  即中止）。
+- 回滚与卸载时按各 manifest 逐字恢复（NM drop-in 删除），再按服务实况重放运行时：
+  `networking.service` active 时 restart、运行中的 NM/firewalld reload（尽力而为）。
 - 接管生效的判定（reinit 前置校验、卸载警告）除服务状态探测外，还把地盘未恢复的
-  hostnet 备份视为接管特征。
-- ifupdown 宿主上 reinit 必须维持与既有接管相同的接口集合（通过
-  `IfupdownAdapter::unmanaged_interfaces` 反查摘除现场比对），换选接口需先 uninstall
+  hostnet 备份（任一适配器）视为接管特征。
+- reinit 必须维持与既有接管相同的接口集合：现场集合取各适配器反查（ifupdown manual
+  stanza、NM drop-in 条目、firewalld 快照差集）的并集比对，换选接口需先 uninstall
   再重新接管。
 
 整体行为见[网络接管](takeover.md)。
 
 ## 后续迭代
 
-- NetworkManager 适配器：conf.d `[device] unmanaged-devices=` 覆盖文件；
 - systemd-networkd 适配器：移出匹配选中接口的 `.network` 文件；
-- `unmanaged_interfaces` 从 `IfupdownAdapter` 固有方法提升到 trait（每个适配器报告
-  自己摘除的接口集合），以及 ifupdown 主机上 reinit 换选接口的原地重放与谱系回滚；
+- `unmanaged_interfaces` 从各适配器固有方法提升到 trait，以及 ifupdown 主机上 reinit
+  换选接口的原地重放与谱系回滚；
 - 更复杂的 shell 风格 `source` 展开，以及 bridge/bond 的其他依赖声明形式。

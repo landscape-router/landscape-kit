@@ -141,10 +141,10 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 `resolv_conf_backup` 是 lkit 地盘相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 不修改运行状态时，该字段为 null。
 
 `network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
-接口与 MAC、Landscape 网络计划、NetworkManager/firewalld/systemd-resolved 的原始
+接口与 MAC、Landscape 网络计划、systemd-resolved 的原始
 installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制、待提交安装状态
-路径，以及 ifupdown 摘除备份的落点（`hostnet_backup`，地盘相对 `backups/hostnet`，
-未改写任何宿主文件时为 null）。
+路径，以及接口摘除备份的落点（`hostnet_backup`，地盘相对 `backups/hostnet`，内部按
+适配器 `ifupdown`/`nm`/`firewalld` 分目录，未改写任何宿主文件时为 null）。
 字段不得包含 PPPoE 凭据。接管事务在 `awaiting_network_confirmation` 或 `finalizing`
 期间不允许通用中断恢复猜测结果，只能执行 `lkit network confirm` 或
 `lkit network rollback`。

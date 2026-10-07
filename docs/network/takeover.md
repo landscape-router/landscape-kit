@@ -9,20 +9,33 @@ systemd 和交互终端。网卡始终由用户选择，lkit 不按默认路由�
 时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
-接管支持 NetworkManager 和 Debian ifupdown 宿主，两种宿主的摘除方式不同：
+接管按宿主上实际存在的网络组件分层摘除选中接口（WAN + 全部选中 LAN），组件之间可组合：
 
-- **NetworkManager、firewalld 与 systemd-resolved**：整体摘除。lkit 保存这些宿主服务的
-  原始状态，然后依次 stop、disable、mask；不存在的 unit 保持未安装状态且不执行服务
-  操作，回滚按原始 installed、enable 和 active 状态恢复。
 - **ifupdown**：`networking.service` 不做整体停止。lkit 通过 `lkit-hostnet` 把选中接口
-  （WAN + 全部选中 LAN）从 `/etc/network/interfaces`（含 `source`/`source-directory`
-  引用的文件）细粒度摘除：stanza 的 method 改写为 `manual`、删除 `inherits` 与选项行，
-  并从 `auto`/`allow-*` 等自动选择行中删除选中接口，避免 `networking.service` 或
-  ifupdown hook 再次处理它们；未选接口逐字节保持原样、继续由宿主管理。原文件逐字备份
-  到 lkit 地盘 `backups/hostnet`（同一主机只有一个 Landscape 安装，备份跨事务存活），
-  回滚与卸载按 manifest 逐字恢复，恢复后按 `networking.service` 实况状态决定是否
-  restart 重新套用原配置。选中接口不由 ifupdown 管理（配置文件缺失或不含其 stanza，
-  如 NetworkManager 主机）时该步骤是 no-op。
+  从 `/etc/network/interfaces`（含 `source`/`source-directory` 引用的文件）细粒度摘除：
+  stanza 的 method 改写为 `manual`、删除 `inherits` 与选项行，并从 `auto`/`allow-*` 等
+  自动选择行中删除选中接口，避免 `networking.service` 或 ifupdown hook 再次处理它们；
+  未选接口逐字节保持原样、继续由宿主管理。配置文件缺失或不含选中接口的 stanza（如
+  NetworkManager 主机）时该适配器是 no-op。
+- **NetworkManager**：保持运行。lkit 在 `/etc/NetworkManager/conf.d/` 写入
+  `lkit-unmanage.conf` drop-in，以 `[device] unmanaged-devices` 声明选中接口不受 NM
+  管理；NM 未运行也写入（覆盖未来启动）。conf.d 目录存在即视为 NM 已安装；宿主已有
+  同名 drop-in 时逐字备份后改写。
+- **firewalld**：保持运行。lkit 从 `/etc/firewalld/zones/*.xml` 中删除引用选中接口的
+  `<interface name="..."/>` 整行（仅自闭合单属性形态；其他形态保守拒绝整个摘除），未选
+  接口与其他规则逐字节保留。接口脱离显式 zone 后由 firewalld 默认 zone 兜底。zones
+  目录存在即视为 firewalld 已安装。
+- **systemd-resolved**：整体摘除。DNS 是主机全局语义（stub 监听 :53、
+  `/etc/resolv.conf` 归属），没有按接口摘除的文件边界，因此 lkit 保存其原始状态后
+  stop、disable、mask；不存在的 unit 保持未安装状态且不执行服务操作，回滚按原始
+  installed、enable 和 active 状态恢复。
+
+各适配器改写的原文件逐字备份到 lkit 地盘 `backups/hostnet/<适配器>/`（ifupdown、nm、
+firewalld 各一份 manifest；同一主机只有一个 Landscape 安装，备份跨事务存活）。文件改写
+后，运行中的 NM/firewalld 立即被要求重读配置（`nmcli general reload`、
+`firewall-cmd --reload`）；NM/firewalld 未运行时跳过（drop-in/zone 在下次启动生效），
+运行中但对应 CLI 工具缺失或 reload 失败则中止安装——运行时未生效的摘除不是有效接管。
+运行中的 NM/firewalld 配置目录缺失时同样在 preflight 拒绝。
 
 摘除在停止宿主服务之前执行：保守解析拒绝或 dry-run 校验失败时宿主现场与安装现场均
 未变动，安装直接中止。
@@ -77,21 +90,23 @@ zone type 为 `undefined`，只通过 controller（上游）关联到 `br_lan`�
 
 ## 确认与回滚
 
-ifupdown 摘除在事务持久化为 Prepared 之后、安装恢复机制之前执行（见上文）。停止宿主
+接口摘除在事务持久化为 Prepared 之后、安装恢复机制之前执行（见上文）。停止宿主
 网络服务前，lkit 将自身复制为 root-only 恢复二进制，并安装三个事务专属 unit：
 
 - 10 分钟确认期限的 persistent timer；
 - timer 调用的幂等 rollback service；
 - 未确认重启时在 Landscape 和 network-online 之前执行的 boot rollback service。
 
-恢复机制 arm 成功后才停止 systemd-resolved、firewalld 和 NetworkManager，其中
-NetworkManager 在两者都存在时最后停止；`networking.service` 不在停止之列（ifupdown
-宿主靠配置摘除，服务保持原状态运行）。Landscape 启动并通过健康
+恢复机制 arm 成功后才整体停止 systemd-resolved（唯一整体停止的宿主网络服务）；
+`networking.service`、NetworkManager 与 firewalld 不在停止之列（分别靠配置摘除、
+drop-in 与 zone 摘除，服务保持原状态运行）。Landscape 启动并通过健康
 检查后，安装状态仍不提交。用户可在任意可达主机的会话（推荐重新连接到管理地址，因为
 摘除选中接口会断开其上的旧会话）运行 `lkit network confirm`。确认会
 检查接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
 
-期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit；ifupdown
-摘除按 `backups/hostnet` 的 manifest 逐字恢复原文件，恢复成功且 `networking.service`
-处于 active 时 restart 它重新套用原配置（重启失败只提示，不阻断其余恢复）。恢复不
+期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit；接口摘除
+按 `backups/hostnet/<适配器>` 的 manifest 逐字恢复原文件（NM drop-in 恢复为删除、
+改写过的恢复为原字节），恢复成功后按各服务实况状态重放运行时：`networking.service`
+active 时 restart、运行中的 NM/firewalld reload（尽力而为，失败只提示，不阻断其余
+恢复；中断恢复路径只恢复文件与重启 networking，守护进程下次重启自然收敛）。恢复不
 依赖原安装进程或原 SSH 连接存活。

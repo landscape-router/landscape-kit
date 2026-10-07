@@ -39,6 +39,9 @@ pub(crate) struct UninstallArgs {
 /// uninstall 运行参数(测试可注入)。
 pub(crate) struct UninstallOptions<'a, P: DocsProbe> {
     pub export_base_url: String,
+    /// 卸载恢复接管摘除后,用于 reload 运行中 NM/firewalld 的工具路径。
+    pub nmcli: Option<std::path::PathBuf>,
+    pub firewall_cmd: Option<std::path::PathBuf>,
     pub token: &'a dyn Fn() -> Result<String, InstallError>,
     pub confirm: &'a dyn Fn(&str) -> Result<bool, InstallError>,
     pub health: &'a HealthOptions<P>,
@@ -116,11 +119,15 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             operation_progress(OperationPhase::Stopping, Some((2, steps)));
             deactivate(manager, root)?;
-            // Landscape 已停:把接管摘除的宿主 ifupdown 配置逐字恢复,并重启
-            // networking.service 重新套用原配置、归还选中接口。无接管备份时
-            // (普通安装或选中接口不由 ifupdown 管理)是 no-op。
+            // Landscape 已停:把接管摘除的宿主网络配置(ifupdown/NM/firewalld)
+            // 逐字恢复,并重放运行时(重启 networking.service、reload 运行中的
+            // NM/firewalld)。无接管备份时(普通安装或无宿主网络配置可改)是 no-op。
             if crate::network::takeover::restore_hostnet_backup()? {
-                crate::network::takeover::restart_networking_if_active(manager);
+                crate::network::takeover::reapply_host_network_after_restore(
+                    manager,
+                    options.nmcli.as_deref(),
+                    options.firewall_cmd.as_deref(),
+                );
             }
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
         {
@@ -472,6 +479,8 @@ esac
     ) -> UninstallOptions<'a, FakeDocs> {
         UninstallOptions {
             export_base_url: server.base.clone(),
+            nmcli: None,
+            firewall_cmd: None,
             token: &TOKEN,
             confirm: &YES,
             health,

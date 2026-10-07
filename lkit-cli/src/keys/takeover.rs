@@ -10,3 +10,5 @@ pub(crate) const TAKEOVER_CONFIRMED_LANDSCAPE_TAKEOVER: &str =
 pub(crate) const TAKEOVER_RESTORED_HOST_NETWORK_SERVICES: &str =
     "takeover.restored_host_network_services";
 pub(crate) const TAKEOVER_NETWORKING_RESTART_FAILED: &str = "takeover.networking_restart_failed";
+pub(crate) const TAKEOVER_NM_RELOAD_FAILED: &str = "takeover.nm_reload_failed";
+pub(crate) const TAKEOVER_FIREWALLD_RELOAD_FAILED: &str = "takeover.firewalld_reload_failed";
