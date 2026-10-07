@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use landscape_terrain_proto::ipstack::{
-    INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg,
+    CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES, POLL_INTERVAL,
+    SERVER_ADDR, SocketHandle, StackMsg,
 };
 use landscape_terrain_proto::protocol::crypto::{
     Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SCRYPT_LOG_N, SessionCrypto,
@@ -19,14 +20,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-// Keep ACK/data windows advancing during sustained forwarding. The stack is
-// in-memory, so a millisecond tick is inexpensive and avoids artificial
-// throughput limits from the relay loop.
-const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const STALE_AFTER: Duration = Duration::from_secs(45);
-const CONNECTION_CHANNEL_CAPACITY: usize = 16;
-const MAX_PENDING_TO_STACK_BYTES: usize = 32 * 1024 * 1024;
 /// smoltcp listeners do not have a kernel-style accept backlog: one listener
 /// can hold one SYN/connection. Keep a bounded pool so a burst of local
 /// connections does not reset all but the first SYN.

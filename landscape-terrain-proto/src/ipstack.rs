@@ -17,6 +17,7 @@
 //! queue pair.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
@@ -36,6 +37,19 @@ pub const SERVER_ADDR: Ipv4Address = Ipv4Address::from_octets([10, 13, 0, 2]);
 pub const MTU: usize = 1400;
 /// Per-socket buffer size (both directions, bounded memory per connection).
 pub const SOCKET_BUFFER: usize = 64 * 1024;
+
+/// Relay-loop tick for pumping the in-memory stack. The stacks live in
+/// userspace, so a millisecond tick is inexpensive and keeps ACK/data
+/// windows advancing during sustained forwarding (a coarser tick would
+/// cap relay throughput far below the e2e timeouts).
+pub const POLL_INTERVAL: Duration = Duration::from_millis(1);
+/// Capacity of the per-connection channel moving bytes between a kernel
+/// socket and its stack socket; bounds buffering per relayed connection.
+pub const CONNECTION_CHANNEL_CAPACITY: usize = 16;
+/// Server/client-wide cap on bytes buffered toward the stack from the
+/// kernel side, so slow links backpressure via the TCP window instead of
+/// growing memory without bound on long-running relays.
+pub const MAX_PENDING_TO_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 fn peer_eof_state(state: TcpState, can_recv: bool) -> bool {
     !can_recv

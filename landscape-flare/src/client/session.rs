@@ -1,7 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use landscape_terrain_proto::ipstack::{
-    CLIENT_ADDR, INTERNAL_PORT, IpStack, SERVER_ADDR, SocketHandle, StackMsg,
+    CLIENT_ADDR, CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES,
+    POLL_INTERVAL, SERVER_ADDR, SocketHandle, StackMsg,
 };
 use landscape_terrain_proto::protocol::crypto::{Dir, SessionCrypto, SessionKeys};
 use landscape_terrain_proto::protocol::frame;
@@ -14,12 +15,10 @@ use tokio::sync::{mpsc, oneshot};
 use super::forward::{Conn, ConnKey, bridge_task, close_connections, spawn_listener};
 use super::{
     ClientConfig, ClientEvent, FailBudget, Forward, ForwardCommand, ForwardRejection, LogLevel,
-    MAX_MISSED_KEEPALIVES, POLL_INTERVAL, emit_event, pump,
+    MAX_MISSED_KEEPALIVES, emit_event, pump,
 };
 
 const FIRST_LOCAL_PORT: u16 = 40000;
-const CONNECTION_CHANNEL_CAPACITY: usize = 16;
-const MAX_PENDING_TO_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 /// Allocate an internal source port without colliding with a live or
 /// TIME-WAIT socket. The old monotonic allocator eventually wrapped and
