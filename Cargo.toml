@@ -31,6 +31,7 @@ futures-util = "0.3"
 glob = "0.3.4"
 insta = "1"
 libc = "0.2"
+lkit-hostnet = { path = "crates/lkit-hostnet" }
 lkit-repository = { path = "crates/lkit-repository" }
 lkit-test-fixture = { path = "crates/lkit-test-fixture" }
 mac_address = "1.1.8"

@@ -2456,6 +2456,7 @@ dependencies = [
  "insta",
  "landscape-terrain-proto",
  "libc",
+ "lkit-hostnet",
  "lkit-repository",
  "lkit-test-fixture",
  "rand",

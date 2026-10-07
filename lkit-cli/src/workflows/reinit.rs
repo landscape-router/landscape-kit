@@ -77,6 +77,15 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
 
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
     confirm_reinit(options, args, state, network)?;
+    // ifupdown 主机上接口集合必须与首次接管的摘除现场一致,先于任何变更拒绝。
+    crate::network::takeover::ensure_reinit_selection_matches_takeover(
+        &network
+            .selected_macs
+            .iter()
+            .map(|selected| selected.name.clone())
+            .collect::<Vec<_>>(),
+        &runtime.interfaces_file,
+    )?;
 
     let mut transaction = super::transaction::TransactionFile::new_reinit(root, &version)?;
     super::transaction::begin(root, &transaction)?;

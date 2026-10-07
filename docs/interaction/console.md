@@ -206,9 +206,9 @@ hostapd 及其安装状态（已安装的包显示 `✓` 且不可取消勾选�
 （Enter 确认终止、Esc 继续等待），完成后结果写入底栏。
 非 root 或发行版检测失败时确认 Enter 不启动安装，底栏显示权限或检测错误。
 
-Reinit 面板只对已安装、`service.manager == systemd` 且宿主网络服务已被接管
-（NetworkManager、`networking.service`、firewalld、systemd-resolved 被 stop/disable/mask）
-的安装可用，其余情况面板显示不可用原因且菜单被导航跳过；CLI `lkit reinit` 与
+Reinit 面板只对已安装、`service.manager == systemd` 且宿主网络已被接管
+（NetworkManager、firewalld、systemd-resolved 被 stop/disable/mask，或地盘存在未恢复的
+ifupdown 摘除备份）的安装可用，其余情况面板显示不可用原因且菜单被导航跳过；CLI `lkit reinit` 与
 [`lkit install --takeover-network`](install.md) 的前置条件一致。面板顶部展示当前版本与
 服务摘要，并说明 reinit 会清空除新网络计划与新凭据外的全部配置（DNS 规则、已登记设备、
 证书、DDNS 任务等由 Landscape 重建数据库）。聚焦面板时“开始 reinit”动作行显示 `>`

@@ -156,6 +156,17 @@ async fn first_install_impl<P: DocsProbe>(
         }
         super::transaction::persist(root, &transaction)?;
         super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
+        if let Some(takeover) = transaction.network_takeover.as_mut() {
+            let runtime = runtime.ok_or_else(|| {
+                InstallError::CorruptedTransaction("network takeover runtime disappeared".into())
+            })?;
+            // 摘除先于停止宿主服务与 arm 恢复单元:ifupdown 保守解析或 dry-run
+            // 校验失败时宿主现场完全未动,无需回滚;备份指针立即落盘,之后任何
+            // 一步失败都能按 manifest 恢复原文件。
+            takeover.hostnet_backup =
+                crate::network::takeover::unmanage_selected_interfaces(&takeover.plan, runtime)?;
+            super::transaction::persist(root, &transaction)?;
+        }
         if let Some(takeover) = transaction.network_takeover.as_ref() {
             let runtime = runtime.ok_or_else(|| {
                 InstallError::CorruptedTransaction("network takeover runtime disappeared".into())

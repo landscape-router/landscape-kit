@@ -9,11 +9,26 @@ systemd 和交互终端。网卡始终由用户选择，lkit 不按默认路由�
 时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
-接管支持 NetworkManager 和 Debian ifupdown 的 `networking.service`；不存在的 unit 保持
-未安装状态且不会执行服务操作。接管不会卸载 NetworkManager、ifupdown、firewalld、
-systemd-resolved 或其他软件包，也不收集 PPPoE 用户名、密码或 MTU。它保存这些宿主服务
-的原始状态，然后依次 stop、disable、mask；回滚按原始 installed、enable 和 active 状态
-恢复。
+接管支持 NetworkManager 和 Debian ifupdown 宿主，两种宿主的摘除方式不同：
+
+- **NetworkManager、firewalld 与 systemd-resolved**：整体摘除。lkit 保存这些宿主服务的
+  原始状态，然后依次 stop、disable、mask；不存在的 unit 保持未安装状态且不执行服务
+  操作，回滚按原始 installed、enable 和 active 状态恢复。
+- **ifupdown**：`networking.service` 不做整体停止。lkit 通过 `lkit-hostnet` 把选中接口
+  （WAN + 全部选中 LAN）从 `/etc/network/interfaces`（含 `source`/`source-directory`
+  引用的文件）细粒度摘除：stanza 的 method 改写为 `manual`、删除 `inherits` 与选项行，
+  并从 `auto`/`allow-*` 等自动选择行中删除选中接口，避免 `networking.service` 或
+  ifupdown hook 再次处理它们；未选接口逐字节保持原样、继续由宿主管理。原文件逐字备份
+  到 lkit 地盘 `backups/hostnet`（同一主机只有一个 Landscape 安装，备份跨事务存活），
+  回滚与卸载按 manifest 逐字恢复，恢复后按 `networking.service` 实况状态决定是否
+  restart 重新套用原配置。选中接口不由 ifupdown 管理（配置文件缺失或不含其 stanza，
+  如 NetworkManager 主机）时该步骤是 no-op。
+
+摘除在停止宿主服务之前执行：保守解析拒绝或 dry-run 校验失败时宿主现场与安装现场均
+未变动，安装直接中止。
+
+接管、回滚与卸载都不会卸载 NetworkManager、ifupdown、firewalld、systemd-resolved 或
+其他软件包，也不收集 PPPoE 用户名、密码或 MTU。
 
 初始化配置的生成方式按目标 release 版本区分:≥ 0.25.1 时 lkit 调用目标 release 目录下
 `landscape-webserver config` 子命令生成(Landscape 的稳定部署接口,生成文件内嵌目标
@@ -53,7 +68,7 @@ zone type 为 `undefined`，只通过 controller（上游）关联到 `br_lan`�
 摘要并要求用户确认；摘要明确所选 LAN 会清理 IPv4/IPv6 地址，未选择接口不会接管或修改。
 网络计划中的接口列表只包含 WAN 和用户选中的 LAN，不自动接管其他物理接口。
 
-停止宿主网络服务后，lkit 只对用户选中的 LAN 物理接口执行 IPv4 和 IPv6 address flush，
+摘除宿主网络管理后，lkit 只对用户选中的 LAN 物理接口执行 IPv4 和 IPv6 address flush，
 再启动 Landscape；未选择接口不执行地址清理，也不写入 Landscape 初始化配置。
 
 等待确认期间由 Landscape 按计划维护 WAN 静态地址或 DHCP lease。只有确认命令通过接口、
@@ -62,17 +77,21 @@ zone type 为 `undefined`，只通过 controller（上游）关联到 `br_lan`�
 
 ## 确认与回滚
 
-停止宿主网络服务前，lkit 将自身复制为 root-only 恢复二进制，并安装三个事务专属 unit：
+ifupdown 摘除在事务持久化为 Prepared 之后、安装恢复机制之前执行（见上文）。停止宿主
+网络服务前，lkit 将自身复制为 root-only 恢复二进制，并安装三个事务专属 unit：
 
 - 10 分钟确认期限的 persistent timer；
 - timer 调用的幂等 rollback service；
 - 未确认重启时在 Landscape 和 network-online 之前执行的 boot rollback service。
 
-恢复机制 arm 成功后才停止 systemd-resolved、firewalld、`networking.service` 和
-NetworkManager，其中 NetworkManager 在两者都存在时最后停止。Landscape 启动并通过健康
+恢复机制 arm 成功后才停止 systemd-resolved、firewalld 和 NetworkManager，其中
+NetworkManager 在两者都存在时最后停止；`networking.service` 不在停止之列（ifupdown
+宿主靠配置摘除，服务保持原状态运行）。Landscape 启动并通过健康
 检查后，安装状态仍不提交。用户可在任意可达主机的会话（推荐重新连接到管理地址，因为
-停止宿主网络服务会断开旧会话）运行 `lkit network confirm`。确认会
+摘除选中接口会断开其上的旧会话）运行 `lkit network confirm`。确认会
 检查接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
 
-期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit。恢复不
+期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit；ifupdown
+摘除按 `backups/hostnet` 的 manifest 逐字恢复原文件，恢复成功且 `networking.service`
+处于 active 时 restart 它重新套用原配置（重启失败只提示，不阻断其余恢复）。恢复不
 依赖原安装进程或原 SSH 连接存活。

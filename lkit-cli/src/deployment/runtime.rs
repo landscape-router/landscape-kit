@@ -33,6 +33,15 @@ pub(crate) fn host_manager() -> Box<dyn ServiceManager + Send + Sync> {
     Box::new(systemd)
 }
 
+/// `ifup` 在 Debian 上位于 `/usr/sbin` 或 `/sbin`;都不存在时返回 None,
+/// 摘除后的 dry-run 校验降级为 warning(见 lkit-hostnet 的 Validation)。
+fn production_ifup_command() -> Option<PathBuf> {
+    ["/usr/sbin/ifup", "/sbin/ifup"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PreflightPolicy {
     Full,
@@ -48,6 +57,10 @@ pub(crate) struct InstallRuntime {
     pub ip_command: PathBuf,
     pub selinux_fs_path: PathBuf,
     pub selinux_config_path: PathBuf,
+    /// 宿主 ifupdown 主配置(`/etc/network/interfaces`),接管摘除的入口。
+    pub interfaces_file: PathBuf,
+    /// `ifup` dry-run 校验工具;缺失时摘除后的校验降级为 warning。
+    pub ifup_command: Option<PathBuf>,
     pub network_confirm_timeout: Duration,
     pub test_runtime_path: Option<PathBuf>,
     pub service_manager: Box<dyn ServiceManager + Send + Sync>,
@@ -69,6 +82,8 @@ impl InstallRuntime {
             ip_command: PathBuf::from("/usr/sbin/ip"),
             selinux_fs_path: PathBuf::from("/sys/fs/selinux"),
             selinux_config_path: PathBuf::from("/etc/selinux/config"),
+            interfaces_file: PathBuf::from("/etc/network/interfaces"),
+            ifup_command: production_ifup_command(),
             network_confirm_timeout: Duration::from_secs(600),
             test_runtime_path: None,
             service_manager: host_manager(),
@@ -133,6 +148,10 @@ struct TestRuntimeConfig {
     selinux_fs_path: PathBuf,
     #[serde(default = "default_selinux_config")]
     selinux_config_path: PathBuf,
+    #[serde(default = "default_interfaces_file")]
+    interfaces_file: PathBuf,
+    #[serde(default)]
+    ifup_command: Option<PathBuf>,
     #[serde(default = "default_network_confirm_timeout_ms")]
     network_confirm_timeout_ms: u64,
     #[serde(default)]
@@ -268,6 +287,8 @@ impl TestRuntimeConfig {
             ip_command: self.ip_command,
             selinux_fs_path: self.selinux_fs_path,
             selinux_config_path: self.selinux_config_path,
+            interfaces_file: self.interfaces_file,
+            ifup_command: self.ifup_command,
             network_confirm_timeout: Duration::from_millis(self.network_confirm_timeout_ms),
             test_runtime_path: Some(source_path.to_path_buf()),
             service_manager,
@@ -315,6 +336,11 @@ fn default_selinux_fs() -> PathBuf {
 #[cfg(feature = "test-support")]
 fn default_selinux_config() -> PathBuf {
     PathBuf::from("/etc/selinux/config")
+}
+
+#[cfg(feature = "test-support")]
+fn default_interfaces_file() -> PathBuf {
+    PathBuf::from("/etc/network/interfaces")
 }
 
 #[cfg(feature = "test-support")]

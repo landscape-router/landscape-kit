@@ -193,3 +193,64 @@ fn uninstall_rejects_corrupted_installation_state() {
         "the installation must be untouched"
     );
 }
+
+/// UNI-14:接管安装(ifupdown 摘除)卸载时按 backups/hostnet 的 manifest 逐字
+/// 恢复宿主 ifupdown 配置,重启 networking.service 重新套用原配置。
+#[test]
+fn uninstall_restores_ifupdown_host_config_after_takeover() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("uninstall-hostnet", "healthy", 10_000);
+    harness.seed_host_service("networking.service");
+    let interfaces = harness.world.path("network-interfaces");
+    let original = "auto ens3 ens4\n\
+iface ens3 inet static\n\
+    address 192.0.2.10/24\n\
+    gateway 192.0.2.1\n\
+\n\
+iface ens4 inet dhcp\n";
+    std::fs::write(&interfaces, original).unwrap();
+    assert_success(&harness.run_takeover());
+    assert_success(&harness.network_command(&["confirm"]));
+    assert!(
+        std::fs::read_to_string(&interfaces)
+            .unwrap()
+            .contains("iface ens3 inet manual"),
+        "the takeover must have rewritten the selected interfaces"
+    );
+    assert!(
+        harness
+            .backups_dir()
+            .join("hostnet/manifest.json")
+            .is_file(),
+        "the standing hostnet backup must exist while the takeover is committed"
+    );
+
+    let output = harness
+        .command()
+        .args(["uninstall", "--non-interactive", "--yes", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "uninstall after takeover failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&interfaces).unwrap(),
+        original,
+        "uninstall must restore the interfaces file byte for byte"
+    );
+    assert!(
+        !harness.backups_dir().join("hostnet").exists(),
+        "the hostnet backup must be removed after the restore"
+    );
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    assert!(
+        calls.contains("[\"restart\",\"networking.service\"]"),
+        "uninstall must restart networking.service to re-apply the host config:\n{calls}"
+    );
+}

@@ -117,10 +117,14 @@ fn remove_path_if_present(path: &Path) -> Result<(), InstallError> {
     }
 }
 
-/// 检测宿主网络服务是否呈现网络接管特征(被停止、disable 或 mask)。
-/// 只读探测,不修改系统状态;结果用于卸载前警告,不阻断。
-/// 探测失败时按无接管特征处理(警告是尽力而为,不应阻断卸载)。
+/// 检测网络接管是否仍在生效:地盘存在未恢复的 hostnet 备份(ifupdown 摘除),
+/// 或宿主网络服务被停止、disable、mask。只读探测,不修改系统状态;结果用于
+/// 卸载前警告与 reinit 前置校验。探测失败时按无接管特征处理(警告是尽力而为,
+/// 不应阻断卸载)。
 pub(crate) fn host_network_services_masked(manager: &dyn ServiceManager) -> bool {
+    if crate::network::takeover::hostnet_backup_stands() {
+        return true;
+    }
     let Ok(systemd) = systemd::downcast(manager) else {
         return false;
     };
@@ -283,6 +287,59 @@ esac
     }
 
     struct FakeDocs;
+
+    /// ifupdown 主机的假 systemd:networking.service 保持 active/enabled,其余
+    /// 宿主网络服务未安装——服务状态探测不到接管,只能靠 hostnet 备份识别。
+    fn fake_ifupdown_systemd(dir: &std::path::Path) -> Systemd {
+        std::fs::create_dir_all(dir).unwrap();
+        let script = dir.join("systemctl");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+case "$*" in
+  "show --property=LoadState --value networking.service") echo loaded;;
+  "is-active networking.service") echo active;;
+  "is-enabled networking.service") echo enabled;;
+  *) echo not-found;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(dir.join("run")).unwrap();
+        std::fs::create_dir_all(dir.join("units")).unwrap();
+        Systemd {
+            systemctl: script,
+            system_unit_dir: dir.join("units"),
+            run_systemd_dir: dir.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: dir.join("resolv.conf"),
+        }
+    }
+
+    #[test]
+    fn standing_hostnet_backup_counts_as_takeover_signature() {
+        let root = temp_root("hostnet-signature");
+        let systemd = fake_ifupdown_systemd(&root.join("systemd"));
+        let territory = root.join("territory");
+        std::fs::create_dir_all(&territory).unwrap();
+        let _guard = crate::deployment::layout::test_territory(&territory);
+
+        assert!(
+            !super::host_network_services_masked(&systemd),
+            "an active/enabled networking.service with no other host services is not a takeover signature"
+        );
+
+        let backup = territory.join("backups/hostnet");
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(backup.join("manifest.json"), b"{}").unwrap();
+        assert!(
+            super::host_network_services_masked(&systemd),
+            "the standing hostnet backup must mark the takeover as in effect"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     impl DocsProbe for FakeDocs {
         async fn docs_ok(&self) -> bool {

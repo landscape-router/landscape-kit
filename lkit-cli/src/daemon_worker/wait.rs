@@ -279,6 +279,7 @@ mod tests {
                     ],
                 },
                 host_services: Vec::new(),
+                hostnet_backup: None,
                 confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
                 rollback_service: format!("lkit-network-{id}-rollback.service"),
                 rollback_timer: format!("lkit-network-{id}-rollback.timer"),

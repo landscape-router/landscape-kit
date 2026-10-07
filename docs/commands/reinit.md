@@ -18,9 +18,12 @@ lkit [--non-interactive] reinit
   daemon worker 通过隐藏 `--network-plan-file` 提供计划,见 [daemon worker](../service/runtime-and-health.md));
 - 安装状态存在且已提交;lkit 地盘无有效状态时返回参数错误并提示先执行
   `lkit install`;
-- `service.manager == systemd`,且宿主网络服务已被接管(NetworkManager、
-  `networking.service`、firewalld、systemd-resolved 处于 stop/disable/mask 状态);
-  未接管的安装提示不支持,不回退、不隐式接管;
+- `service.manager == systemd`,且宿主网络已被接管(NetworkManager、firewalld、
+  systemd-resolved 处于 stop/disable/mask 状态,或地盘存在未恢复的 ifupdown 摘除
+  备份);未接管的安装提示不支持,不回退、不隐式接管;
+- ifupdown 宿主上接口集合必须与既有接管的摘除现场一致(角色、地址与 DHCP 可以变,
+  换接口不行);不一致时在创建事务前返回参数错误,提示先 `lkit uninstall` 再重新
+  `lkit install --takeover-network`;
 - 无未完成事务;存在待确认的网络接管事务时阻断并提示使用 `lkit network status`、
   `lkit network confirm` 或 `lkit network rollback`。
 

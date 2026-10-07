@@ -61,9 +61,8 @@ lkit 地盘(`/root/.lkit/`)原样保留:
 2. 读取 `install-state.json`;不存在时返回参数错误 `2` 并提示先执行 `lkit install`;
 3. 校验受管 unit 所有权与后端摘要(与 `switch` 相同的安全不变量,失败阻断);
 4. 交互确认卸载计划与数据损失范围(非交互模式以 `--yes` 代替);检测到网络接管特征
-   (NetworkManager、ifupdown 的 `networking.service`、firewalld 或 systemd-resolved 被
-   停止、disable 或 mask)时追加醒目 warning:卸载不会恢复宿主网络服务,需要用户自行
-   恢复。该警告可被确认,不阻断;
+   (NetworkManager、firewalld 或 systemd-resolved 被停止、disable 或 mask,或地盘存在
+   未恢复的 ifupdown 摘除备份)时追加醒目 warning。该警告可被确认,不阻断;
 5. 默认创建保护 `.lkb`(固定备注 `uninstall 前自动保护备份`,auto 标记为 true),失败
    默认阻断;`--allow-no-backup` 显式跳过,并明确表示不产生可移植的当前配置快照;
 6. 创建 `uninstall` 事务,记录 `systemd_before`、`previous_current`、`backup` 引用和

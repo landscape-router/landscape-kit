@@ -1,6 +1,7 @@
 reinit.requires_existing_installation = "reinit 需要一个已存在且状态有效的安装（install-state.json）"
 reinit.requires_systemd = "reinit 要求 systemd 服务管理器；该安装使用其他管理器"
-reinit.requires_network_takeover = "reinit 要求宿主网络服务已被 Landscape 接管（检测到 stop/disable/mask）；首次接管请使用 `lkit install --takeover-network`"
+reinit.requires_network_takeover = "reinit 要求宿主网络已由 Landscape 接管（宿主网络服务被 stop/disable/mask，或存在未恢复的 ifupdown 摘除备份）；首次接管请使用 `lkit install --takeover-network`"
+reinit.requires_same_interfaces = "宿主机使用 ifupdown，网络接管已接管的接口：%{unmanaged}；reinit 必须保持同一接口集合——需要换接口请先 `lkit uninstall` 再 `lkit install --takeover-network`"
 reinit.blocked_by_pending_takeover = "网络接管事务 %{transaction_id} 处于 %{phase}；请先运行 `lkit network status`、`lkit network confirm` 或 `lkit network rollback`"
 reinit.enter_admin_password = "请输入重新初始化后的新管理员密码"
 reinit.confirm_plan = "reinit 版本 %{version}：除新凭据与 WAN %{wan} / LAN %{lan} 网络计划外的全部配置将被清空，数据库将重建。是否继续？（输入 yes 继续）"

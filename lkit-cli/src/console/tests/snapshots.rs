@@ -144,6 +144,10 @@ fn snapshot_software_panel_en() {
 
 #[test]
 fn snapshot_reinit_panel_en() {
+    // 同 snapshot_reinit_confirm_en:与设置 `LKIT_TEST_REINIT_ELIGIBLE` 的测试串行。
+    let _eligible = super::reinit::ELIGIBLE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let _language = LanguageGuard::set(Language::En);
     let _territory = DaemonTerritory::new("reinit-en", false);
     assert_screen_snapshot("reinit-panel-en", 100, 28, |app| {
@@ -511,6 +515,11 @@ fn snapshot_base_packages_dialog_en() {
 
 #[test]
 fn snapshot_reinit_confirm_en() {
+    // `reinit_eligible` 读取 `LKIT_TEST_REINIT_ELIGIBLE`(进程级环境变量),
+    // 与设置该变量的 reinit 测试共用串行锁,渲染结果才由夹具唯一决定。
+    let _eligible = super::reinit::ELIGIBLE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let _language = LanguageGuard::set(Language::En);
     let _territory = DaemonTerritory::new("reinit-confirm", false);
     assert_screen_snapshot("reinit-confirm-en", 100, 28, |app| {

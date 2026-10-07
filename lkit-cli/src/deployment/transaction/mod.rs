@@ -136,6 +136,10 @@ pub(crate) struct LegacyUnitBefore {
 pub(crate) struct NetworkTakeoverTransaction {
     pub plan: crate::network::config::NetworkPlan,
     pub host_services: Vec<HostServiceBefore>,
+    /// 接管摘除写入的宿主 ifupdown 备份(`backups/hostnet`,地盘相对);
+    /// 选中接口不由 ifupdown 管理时为 None。回滚/卸载按它恢复原文件。
+    #[serde(default)]
+    pub hostnet_backup: Option<String>,
     pub confirmation_deadline: DateTime<Utc>,
     pub rollback_service: String,
     pub rollback_timer: String,

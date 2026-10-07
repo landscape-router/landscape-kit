@@ -582,6 +582,7 @@ mod tests {
                 }],
             },
             host_services: Vec::new(),
+            hostnet_backup: None,
             confirmation_deadline: Utc::now(),
             rollback_service: "lkit-network-tx-rollback.service".into(),
             rollback_timer: "lkit-network-tx-rollback.timer".into(),

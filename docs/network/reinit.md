@@ -5,11 +5,16 @@
 
 ## 使用边界
 
-- 只接受已提交、`service.manager == systemd` 且宿主网络服务已被接管的安装;未接管时
+- 只接受已提交、`service.manager == systemd` 且宿主网络已接管的安装（宿主网络服务被
+  stop/disable/mask，或存在未恢复的 ifupdown 摘除备份）;未接管时
   返回参数错误,reinit 不负责首次接管;
 - 网卡始终由用户重新选择,lkit 不按默认路由或接口名自动决定 WAN/LAN;无线、loopback
-  和虚拟接口不列入选择;
-- reinit 不停止、不重新 disable/mask 宿主网络服务(它们维持已接管状态),但仍会 arm
+  和虚拟接口不列入选择。ifupdown 宿主上接口集合必须与首次接管的摘除现场一致(角色、
+  地址与 DHCP 可以变,换接口不行):lkit 按地盘 hostnet 备份反查已摘除接口并与新选择
+  比对,不一致时在创建事务前拒绝,提示先 `lkit uninstall` 恢复宿主配置,再重新
+  `lkit install --takeover-network`;
+- reinit 不停止、不重新 disable/mask 宿主网络服务(它们维持已接管状态),也不重放
+  ifupdown 摘除(备份与改写现场保持首次接管的状态),但仍会 arm
   恢复二进制、确认 timer 与 boot rollback(确认窗口与首次接管一致);
 - 与首次接管相同,reinit 不收集 PPPoE 用户名、密码或 MTU,不卸载任何软件包。
 

@@ -26,7 +26,7 @@
 - 状态：`已覆盖`
 - 证据：[网络配置](../../../../lkit-cli/src/network/config.rs)、[网络发现](../../../../lkit-cli/src/network/discovery.rs)、[网络接管](../../../../lkit-cli/src/network/takeover.rs)
 - 说明：CLI 发现完整地址/网关时取所选 WAN 的第一个 IPv4 作为静态配置，否则使用 DHCP；
-  停止宿主网络服务后只清理所选 LAN 的 IPv4/IPv6 地址。
+  摘除宿主网络管理后只清理所选 LAN 的 IPv4/IPv6 地址。
 
 ## NET-02
 
@@ -54,12 +54,27 @@
 
 ## NET-05
 
-**NetworkManager 或 Debian ifupdown 的 `networking.service`、firewalld、systemd-resolved 被停止、disable、mask，但软件包不卸载**
+**NetworkManager、firewalld、systemd-resolved 被停止、disable、mask，但软件包不卸载；`networking.service` 保持原状态**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
-- 说明：覆盖 NetworkManager 缺失且 `networking.service` 处于 active/enabled 状态的接管与回滚。
+- 说明：整体 stop/disable/mask 只作用于 NetworkManager、firewalld 与 systemd-resolved；
+  ifupdown 宿主的 `networking.service` 不在整体摘除之列，走 NET-13 的细粒度摘除。
+
+## NET-13
+
+**ifupdown 宿主细粒度摘除：选中接口改写 manual、退出 auto/allow-*，未选接口与 `networking.service` 不动**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)、
+  [完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)
+- 说明：接管把选中接口（WAN + 全部选中 LAN）的 stanza 改写为 `manual` 并删除选项与
+  自动选择项，未选接口逐字节保留；原文件逐字备份到 lkit 地盘 `backups/hostnet`；
+  接管期间对 `networking.service` 零 systemctl 调用（保持 active/enabled/unmasked）；
+  回滚按 manifest 逐字恢复、删除备份并在服务 active 时 restart。选中接口不由
+  ifupdown 管理（无配置文件，如 NetworkManager 主机）时为 no-op。
 
 ## NET-06
 
@@ -83,7 +98,8 @@
 - 状态：`部分覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[QEMU 网络接管](../../qemu-network-takeover.md)
 - 说明：覆盖手工 rollback、10 分钟 timer rollback 和确认前重启的 boot rollback；三条入口
-  都必须恢复宿主网络、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
+  都必须恢复宿主网络（含按 `backups/hostnet` 的 manifest 逐字恢复 ifupdown 原文件并在
+  服务 active 时 restart `networking.service`）、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
   `lkit install`。
 - 缺口：fixture 直接覆盖自动回滚入口和重装，QEMU 覆盖 boot rollback；真实 timer 到期和
   手工 systemd operation worker 尚未分别触发。

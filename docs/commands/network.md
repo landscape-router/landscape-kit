@@ -12,8 +12,10 @@ lkit network rollback
 - `confirm` 不限制 SSH 会话来源，在任意可达主机的会话（包括本地控制台）中都能运行。
   它重新核对接口 MAC、目标地址、`br_lan` 成员、Landscape MainPID 和健康检查，再提交安装
   状态并移除恢复 unit。
-- `rollback` 清理未提交的首次安装并按事务快照恢复 NetworkManager、`networking.service`、
-  firewalld 和 systemd-resolved 的 enabled/active/masked 状态。手工 rollback 由 systemd
+- `rollback` 清理未提交的首次安装并按事务快照恢复 NetworkManager、firewalld 和
+  systemd-resolved 的 enabled/active/masked 状态;ifupdown 摘除按地盘 `backups/hostnet`
+  的 manifest 逐字恢复原文件,恢复成功且 `networking.service` 处于 active 时 restart 它。
+  手工 rollback 由 systemd
   operation worker 执行，恢复网络服务导致当前 SSH 断开也不会中止后续恢复。
 - 确认前主机重启、10 分钟确认 timer 到期和手工 `rollback` 都使用同一幂等回滚入口；重启
   不会继续保留确认窗口，而是按未确认处理。

@@ -1,6 +1,7 @@
 reinit.requires_existing_installation = "reinit requires an existing installation with a valid install-state.json"
 reinit.requires_systemd = "reinit requires the systemd service manager; this installation uses another manager"
-reinit.requires_network_takeover = "reinit requires host network services already handed over to Landscape (stop/disable/mask detected); use `lkit install --takeover-network` for a first takeover"
+reinit.requires_network_takeover = "reinit requires the host network already handed over to Landscape (host network services stopped/disabled/masked, or a standing ifupdown unmanage backup); use `lkit install --takeover-network` for a first takeover"
+reinit.requires_same_interfaces = "the host uses ifupdown and the network takeover handed over these interfaces: %{unmanaged}; reinit must keep the same set of interfaces - run `lkit uninstall` and `lkit install --takeover-network` to change them"
 reinit.blocked_by_pending_takeover = "network takeover %{transaction_id} is %{phase}; use `lkit network status`, `lkit network confirm`, or `lkit network rollback` first"
 reinit.enter_admin_password = "Enter the new admin password for the reinitialized Landscape"
 reinit.confirm_plan = "reinit version %{version}: wipe all configuration except the new credentials and the WAN %{wan} / LAN %{lan} plan; the database will be rebuilt. Continue? (yes to continue)"

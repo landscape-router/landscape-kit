@@ -71,3 +71,15 @@
 - 状态：`已覆盖`
 - 证据：[真实 ifupdown 测试](../../../../crates/lkit-hostnet/tests/ifupdown_real.rs)、[容器 workflow](../../../../.github/workflows/test-hostnet-ifupdown.yml)
 - 说明：容器不挂载宿主 `/etc`，ifup 始终通过 `--interfaces=<临时文件>` 读取 fixture。
+
+## HNET-09
+
+**按 manifest 反查上一次摘除实际移出的接口集合**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[unmanaged_interfaces 测试](../../../../crates/lkit-hostnet/src/ifupdown/mod.rs)、
+  [hostnet 设计](../../../network/hostnet.md)
+- 说明：当前文件集合中 manual-bare、同时在 manifest 原始快照中非 manual-bare 的接口
+  记为已摘除；宿主自声明的 manual-bare stanza、摘除后新增的 stanza 与宿主改回带配置
+  的 stanza 都不算。lkit-cli 的 reinit 同接口集校验（REI-11）消费该结果。

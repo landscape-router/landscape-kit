@@ -116,6 +116,12 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             operation_progress(OperationPhase::Stopping, Some((2, steps)));
             deactivate(manager, root)?;
+            // Landscape 已停:把接管摘除的宿主 ifupdown 配置逐字恢复,并重启
+            // networking.service 重新套用原配置、归还选中接口。无接管备份时
+            // (普通安装或选中接口不由 ifupdown 管理)是 no-op。
+            if crate::network::takeover::restore_hostnet_backup()? {
+                crate::network::takeover::restart_networking_if_active(manager);
+            }
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
         {
             // 非交互模式的「外部实例已停止」确认由 `--yes` 覆盖(见 confirm_uninstall)。

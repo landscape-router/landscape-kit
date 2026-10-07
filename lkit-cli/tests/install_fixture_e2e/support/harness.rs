@@ -88,6 +88,20 @@ esac
         .unwrap();
         std::fs::set_permissions(&ip_command, std::fs::Permissions::from_mode(0o755)).unwrap();
 
+        // 假 ifup:记录 dry-run 参数契约并成功退出。宿主 ifupdown 主配置默认
+        // 不存在(无摘除,no-op),需要场景的测试自行写入 network-interfaces。
+        let ifup_calls = world.path("ifup-calls.log");
+        let ifup_command = host.join("fake-ifup");
+        std::fs::write(
+            &ifup_command,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> '{}'\nexit 0\n",
+                ifup_calls.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&ifup_command, std::fs::Permissions::from_mode(0o755)).unwrap();
+
         let ports = TestPorts::reserve();
         let landscape_config = world.path("landscape.json");
         write_json(
@@ -133,6 +147,8 @@ esac
                 "ip_command": ip_command,
                 "selinux_fs_path": host.join("sys/fs/selinux"),
                 "selinux_config_path": host.join("selinux/config"),
+                "interfaces_file": host.join("network-interfaces"),
+                "ifup_command": ifup_command,
                 "network_confirm_timeout_ms": 30000,
                 "systemd": {
                     "systemctl": SYSTEMCTL_FIXTURE,

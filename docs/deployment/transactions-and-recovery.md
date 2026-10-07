@@ -141,9 +141,10 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 `resolv_conf_backup` 是 lkit 地盘相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 不修改运行状态时，该字段为 null。
 
 `network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
-接口与 MAC、Landscape 网络计划、NetworkManager/`networking.service`/firewalld/
-systemd-resolved 的原始 installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制
-和待提交安装状态路径。
+接口与 MAC、Landscape 网络计划、NetworkManager/firewalld/systemd-resolved 的原始
+installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制、待提交安装状态
+路径，以及 ifupdown 摘除备份的落点（`hostnet_backup`，地盘相对 `backups/hostnet`，
+未改写任何宿主文件时为 null）。
 字段不得包含 PPPoE 凭据。接管事务在 `awaiting_network_confirmation` 或 `finalizing`
 期间不允许通用中断恢复猜测结果，只能执行 `lkit network confirm` 或
 `lkit network rollback`。
@@ -354,7 +355,7 @@ SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只�
   对子进程组发送 SIGTERM，约 5 秒（25 轮 × 200ms）内未退出则 SIGKILL。前端返回
   `130` 并清理运行时文件；停止失败时输出 warning、保留现场并提示操作可能仍在运行；
 - 手工 `lkit network rollback` 与 `lkit network confirm` 都委托给 daemon，避免
-  NetworkManager/`networking.service` 恢复或 WAN 地址切换后当前 `br_lan` SSH 断开
+  宿主网络恢复或 WAN 地址切换后当前 `br_lan` SSH 断开
   而中止回滚/提交；timer/boot 自动回滚已经位于独立恢复路径，不再次委派；
 - 交互确认仍通过原终端完成，但 daemon 子进程不接管该终端；若终端在破坏性阶段前
   消失，确认读取失败并安全停止；

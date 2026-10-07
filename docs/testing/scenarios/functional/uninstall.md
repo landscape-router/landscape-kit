@@ -82,13 +82,26 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 
 ## UNI-08
 
-**网络接管特征（宿主网络服务被 stop/disable/mask）警告后仍可继续卸载**
+**网络接管特征警告后仍可继续卸载**
 
 - 测试层：Rust workflow、CLI fixture E2E、Docker E2E
 - 状态：`已覆盖`
 - 证据：[`lkit uninstall`](../../../commands/uninstall.md#卸载前检查)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)
-- 说明：检测接管特征（交互模式以确认提示呈现，确认后继续）不阻断；卸载后宿主网络
-  服务保持现状，由用户自行恢复。
+- 说明：接管特征（宿主网络服务被 stop/disable/mask，或存在未恢复的 ifupdown 摘除
+  备份；交互模式以确认提示呈现）不阻断卸载；NetworkManager 等整体摘除的宿主服务
+  保持现状，由用户自行恢复，ifupdown 摘除按 UNI-14 恢复。
+
+## UNI-14
+
+**接管安装（ifupdown 摘除）卸载时按 `backups/hostnet` 的 manifest 逐字恢复宿主配置并重启 `networking.service`**
+
+- 测试层：CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)、
+  [网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)
+- 说明：卸载前断言摘除已生效（选中接口 `manual`、manifest 在地盘）；卸载恢复
+  `interfaces` 文件逐字节一致、删除 hostnet 备份，并对 `networking.service` 执行
+  restart 重新套用原配置。
 
 ## UNI-09
 

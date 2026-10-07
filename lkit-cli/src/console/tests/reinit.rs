@@ -8,8 +8,9 @@ use crate::network::config::{NetworkMode, NetworkPlan};
 use ratatui::backend::TestBackend;
 use std::sync::Mutex;
 
-/// 串行化所有读写 `LKIT_TEST_REINIT_ELIGIBLE` 的测试,避免并行竞争。
-static ELIGIBLE_LOCK: Mutex<()> = Mutex::new(());
+/// 串行化所有读写 `LKIT_TEST_REINIT_ELIGIBLE` 的测试(含快照测试的
+/// `reinit_eligible` 渲染路径),避免并行竞争。
+pub(crate) static ELIGIBLE_LOCK: Mutex<()> = Mutex::new(());
 
 fn reinit_ready_app() -> ConsoleApp {
     let mut app = ConsoleApp::new();

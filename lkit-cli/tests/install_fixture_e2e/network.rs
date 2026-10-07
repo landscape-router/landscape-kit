@@ -268,6 +268,17 @@ fn network_takeover_supports_ifupdown_without_network_manager() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-ifupdown", "healthy", 10_000);
     harness.seed_host_service("networking.service");
+    let interfaces = harness.world.path("network-interfaces");
+    let original = "auto ens3 ens4 ens5\n\
+iface ens3 inet static\n\
+    address 192.0.2.10/24\n\
+    gateway 192.0.2.1\n\
+\n\
+iface ens4 inet dhcp\n\
+\n\
+iface ens5 inet static\n\
+    address 198.51.100.10/24\n";
+    std::fs::write(&interfaces, original).unwrap();
 
     let output = harness.run_takeover();
     assert!(
@@ -276,38 +287,109 @@ fn network_takeover_supports_ifupdown_without_network_manager() {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    // networking.service 不再整体 stop/disable/mask:摘除改为改写 ifupdown 配置。
     let pending = read_only_transaction(&harness.territory);
     let host_services = pending["network_takeover"]["host_services"]
         .as_array()
         .unwrap();
-    let networking = host_services
-        .iter()
-        .find(|service| service["unit"] == "networking.service")
-        .unwrap();
-    assert_eq!(networking["installed"], true);
-    assert_eq!(networking["active"], true);
-    assert_eq!(networking["enable_state"], "enabled");
+    assert!(
+        host_services
+            .iter()
+            .all(|service| service["unit"] != "networking.service"),
+        "networking.service must not be recorded as a wholesale-stopped service"
+    );
     let network_manager = host_services
         .iter()
         .find(|service| service["unit"] == "NetworkManager.service")
         .unwrap();
     assert_eq!(network_manager["installed"], false);
-    assert_host_services_masked(&harness, &["networking.service"]);
     assert!(
         !harness.host.join("units/NetworkManager.service").exists(),
         "NetworkManager was unexpectedly installed"
     );
 
-    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
-    assert!(calls.contains("[\"stop\",\"networking.service\"]"));
+    // 选中接口(ens3 WAN + ens4 LAN)改写为 manual 并从 auto 行摘除,
+    // 未选接口 ens5 原样保留;dry-run 契约走假 ifup。
+    let rewritten = std::fs::read_to_string(&interfaces).unwrap();
     assert!(
-        !calls.contains("[\"stop\",\"NetworkManager.service\"]"),
+        rewritten.contains("iface ens3 inet manual"),
+        "selected WAN must be manual:\n{rewritten}"
+    );
+    assert!(
+        rewritten.contains("iface ens4 inet manual"),
+        "selected LAN must be manual:\n{rewritten}"
+    );
+    assert!(
+        rewritten.contains("auto ens5"),
+        "unselected interface must stay in auto:\n{rewritten}"
+    );
+    assert!(
+        !rewritten.contains("ens3 inet static"),
+        "selected WAN options must be stripped:\n{rewritten}"
+    );
+    assert!(
+        rewritten.contains("address 198.51.100.10/24"),
+        "unselected interface stanza must be untouched:\n{rewritten}"
+    );
+    assert!(
+        harness
+            .backups_dir()
+            .join("hostnet/manifest.json")
+            .is_file(),
+        "the verbatim ifupdown backup manifest is missing"
+    );
+    let ifup_calls = std::fs::read_to_string(harness.world.path("ifup-calls.log")).unwrap();
+    assert!(
+        ifup_calls.contains("--no-act"),
+        "the unmanaged config must be dry-run validated: {ifup_calls}"
+    );
+
+    // networking.service 全程不动:不 stop、不掩蔽,保持 active/enabled。
+    let state = harness.host.join("systemd-state/units/networking.service");
+    assert!(
+        state.join("active").is_file(),
+        "networking.service must stay active"
+    );
+    assert!(
+        state.join("enabled").is_file(),
+        "networking.service must stay enabled"
+    );
+    assert!(
+        !state.join("masked").exists(),
+        "networking.service must not be masked"
+    );
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    assert!(
+        !calls.contains("networking.service"),
+        "networking.service must not receive any systemctl call during takeover:\n{calls}"
+    );
+    assert!(
+        !calls.contains("stop\",\"NetworkManager.service"),
         "the missing NetworkManager unit was stopped"
     );
 
+    // 回滚:原文件按 manifest 逐字恢复,备份清除,networking.service 重启
+    // (fake systemctl 记录 restart 调用并回到 active)。
     let rollback = harness.network_command(&["rollback", "--automatic"]);
     assert_success(&rollback);
-    assert_host_services_restored(&harness, &["networking.service"]);
+    assert_eq!(
+        std::fs::read_to_string(&interfaces).unwrap(),
+        original,
+        "rollback must restore the interfaces file byte for byte"
+    );
+    assert!(
+        !harness.backups_dir().join("hostnet").exists(),
+        "the hostnet backup must be removed after a successful restore"
+    );
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    assert!(
+        calls.contains("[\"restart\",\"networking.service\"]"),
+        "rollback must restart networking.service to re-apply the original config:\n{calls}"
+    );
+    assert!(
+        state.join("active").is_file(),
+        "networking.service must be active again"
+    );
 }
 
 #[test]

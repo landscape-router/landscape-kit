@@ -9,3 +9,4 @@ pub(crate) const TAKEOVER_CONFIRMED_LANDSCAPE_TAKEOVER: &str =
     "takeover.confirmed_landscape_takeover";
 pub(crate) const TAKEOVER_RESTORED_HOST_NETWORK_SERVICES: &str =
     "takeover.restored_host_network_services";
+pub(crate) const TAKEOVER_NETWORKING_RESTART_FAILED: &str = "takeover.networking_restart_failed";

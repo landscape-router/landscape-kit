@@ -7,8 +7,9 @@
 - 测试层：CLI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../lkit-cli/src/commands/reinit.rs)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)
-- 说明：无有效状态返回参数错误（退出码 `2`，不写任何文件）；宿主网络服务未接管
-  返回参数错误（退出码 `2`，不创建 reinit 事务、状态不动）。
+- 说明：无有效状态返回参数错误（退出码 `2`，不写任何文件）；宿主网络未接管
+  （服务 stop/disable/mask 或未恢复的 ifupdown 摘除备份均视为已接管）返回参数错误
+  （退出码 `2`，不创建 reinit 事务、状态不动）。
 - 缺口：非 systemd manager（退出码 `2`）拒绝分支无命令层测试。
 
 ## REI-02
@@ -108,3 +109,18 @@
 - 说明：覆盖面板可用性门禁、向导完成进入凭据步骤、凭据编辑与确认层、结构化
   `Reinit` 请求构建（`--console-confirmed`、`--yes`、密码与网络计划经委托通道传递）、
   Esc 取消。
+
+## REI-11
+
+**ifupdown 宿主上 reinit 必须维持与首次接管相同的接口集合**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)、
+  [unmanaged_interfaces 反查](../../../../crates/lkit-hostnet/src/ifupdown/mod.rs)、
+  [网络重配置·使用边界](../../../network/reinit.md)
+- 说明：lkit 按地盘 `backups/hostnet` 备份反查已摘除接口（当前 manual-bare 且原始
+  快照非 manual-bare，宿主自声明的 manual stanza 不算），与新选择的接口集合比对；
+  集合一致（顺序无关）通过，换选/多选/少选在创建事务前返回参数错误。无 hostnet 备份
+  （NetworkManager 宿主）不设限。
+- 缺口：CLI fixture E2E 层的 ifupdown reinit 场景（同集合通过、换集合拒绝）尚未建立。

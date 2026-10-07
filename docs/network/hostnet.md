@@ -3,8 +3,8 @@
 ## 职责
 
 `lkit-hostnet` 是独立于 lkit-cli 的纯库 crate，负责"把选中的网络接口从宿主网络管理器中
-摘除，并在回滚/卸载时恢复"。当前只实现 ifupdown 适配器；NetworkManager 和
-systemd-networkd 仍是后续阶段。
+摘除，并在回滚/卸载时恢复"。只实现 ifupdown 适配器；NetworkManager 和
+systemd-networkd 适配器尚未实现（见后续迭代）。
 
 当前托管网络管理的整体行为见[网络接管](takeover.md)；本文档描述 `lkit-hostnet` 本身的
 设计与测试。
@@ -13,8 +13,8 @@ systemd-networkd 仍是后续阶段。
 
 - 解析、改写与恢复是纯文件逻辑，零系统依赖（不依赖 lkit-cli、不调用 systemd），
   路径全部注入，可脱离 CLI 独立测试；
-- 阶段一先以独立 crate 交付全部逻辑与测试，测试通过后再接入 lkit-cli（阶段二），
-  降低对现有接管流程的改动风险；
+- lkit-cli 的接管流程只依赖本 crate 的 trait 接口（`execute_unmanage`/`restore`），
+  适配器内部逻辑的演进不影响调用方；
 - 后续 NetworkManager（conf.d `unmanaged-devices`）、systemd-networkd（`.network`
   文件移出）等适配器在同一 crate 内新增模块即可，调用方接口不变。
 
@@ -34,7 +34,7 @@ systemd-networkd 仍是后续阶段。
 ```text
 lkit-hostnet
 ├── lib.rs          crate 根、错误类型、公共 trait
-├── ifupdown/       ifupdown 适配器（阶段一实现）
+├── ifupdown/       ifupdown 适配器
 │   ├── collect.rs  文件清单收集（主文件 + source）
 │   ├── parse.rs    保守解析器（ifupdown(5) 语义）
 │   ├── edit.rs     改写计划与应用（原子写回）
@@ -44,7 +44,7 @@ lkit-hostnet
 └── networkd/       systemd-networkd 适配器（后续迭代）
 ```
 
-适配器实现统一的 trait（阶段一仅实现 ifupdown 分支）。调用方应优先使用
+适配器实现统一的 trait（目前只有 ifupdown 实现）。调用方应优先使用
 `execute_unmanage`；分步方法保留给适配器专项测试和后续适配器实现：
 
 ```rust
@@ -194,18 +194,29 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
 - **集成测试**（crate `tests/`）：收集 → 备份 → 改写 → 校验 → 恢复 全流程；
   fixture 提供假 `ifup` 脚本验证校验分支（成功/失败/缺失三种）。
 
-## 阶段划分
+## 与 lkit-cli 的集成
 
-- **阶段一（当前）**：`crates/lkit-hostnet` 独立交付，含 ifupdown 适配器逻辑、
-  事务入口、测试和独立 Debian ifupdown smoke；注册为 workspace member（不进
-  default-members）；不修改 lkit-cli。
-- **阶段二（测试通过后另行实施）**：lkit-cli 增加 `lkit-hostnet` 依赖并接入接管
-  流程——`networking.service` 从 `HOST_SERVICES` 移除、runtime 注入文件路径与
-  工具路径、接管时备份并改写、回滚与卸载时恢复并重启 `networking.service`、
-  更新 e2e 与场景文档。接入细则见[网络接管](takeover.md)。
+`crates/lkit-hostnet` 是 workspace member（不进 default-members），lkit-cli 通过
+`lkit-hostnet` 依赖接入接管流程：
+
+- runtime 注入 `interfaces_file`（生产环境 `/etc/network/interfaces`）与 `ifup_command`
+  工具路径；`networking.service` 不在 lkit-cli 的整体 stop/disable/mask 服务清单内，
+  ifupdown 宿主的摘除完全由本 crate 的文件改写承担。
+- 接管时经 `execute_unmanage` 备份并改写（摘除先于停止宿主服务执行，失败即中止整个
+  安装），备份固定落 lkit 地盘 `backups/hostnet`；回滚与卸载时按 manifest 逐字恢复
+  并按 `networking.service` 实况决定是否 restart。
+- 接管生效的判定（reinit 前置校验、卸载警告）除服务状态探测外，还把地盘未恢复的
+  hostnet 备份视为接管特征。
+- ifupdown 宿主上 reinit 必须维持与既有接管相同的接口集合（通过
+  `IfupdownAdapter::unmanaged_interfaces` 反查摘除现场比对），换选接口需先 uninstall
+  再重新接管。
+
+整体行为见[网络接管](takeover.md)。
 
 ## 后续迭代
 
 - NetworkManager 适配器：conf.d `[device] unmanaged-devices=` 覆盖文件；
 - systemd-networkd 适配器：移出匹配选中接口的 `.network` 文件；
+- `unmanaged_interfaces` 从 `IfupdownAdapter` 固有方法提升到 trait（每个适配器报告
+  自己摘除的接口集合），以及 ifupdown 主机上 reinit 换选接口的原地重放与谱系回滚；
 - 更复杂的 shell 风格 `source` 展开，以及 bridge/bond 的其他依赖声明形式。
