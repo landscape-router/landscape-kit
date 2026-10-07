@@ -41,14 +41,7 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_success(&harness.network_command(&["confirm"]));
-    assert_host_services_masked(
-        &harness,
-        &[
-            "NetworkManager.service",
-            "firewalld.service",
-            "systemd-resolved.service",
-        ],
-    );
+    assert_host_services_masked(&harness, &["systemd-resolved.service"]);
 
     let backups_before = std::fs::read_dir(harness.backups_dir()).unwrap().count();
     let new_password = harness.world.path("reinit-password");

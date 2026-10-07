@@ -121,13 +121,16 @@ fn uninstall_confirms_network_takeover_before_continuing() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_success(&harness.network_command(&["confirm"]));
-    assert_host_services_masked(
-        &harness,
-        &[
-            "NetworkManager.service",
-            "firewalld.service",
-            "systemd-resolved.service",
-        ],
+    assert_host_services_masked(&harness, &["systemd-resolved.service"]);
+    assert!(
+        harness.host.join("nm-conf.d/lkit-unmanage.conf").is_file(),
+        "the takeover must have written the NM drop-in"
+    );
+    assert!(
+        !std::fs::read_to_string(harness.host.join("firewalld-zones/public.xml"))
+            .unwrap()
+            .contains("ens3"),
+        "the takeover must have removed ens3 from the zone"
     );
 
     let mut pty = Pty::open();
@@ -140,11 +143,11 @@ fn uninstall_confirms_network_takeover_before_continuing() {
     pty.read_until("type yes to continue", std::time::Duration::from_secs(60));
     pty.master.write_all(b"yes\nyes\n").unwrap();
     let prompt = pty
-        .read_until("host network services", std::time::Duration::from_secs(60))
+        .read_until("network takeover", std::time::Duration::from_secs(60))
         .replace('\x1b', "");
     assert!(
-        prompt.contains("NetworkManager"),
-        "the confirmation must describe the masked host services:\n{prompt}"
+        prompt.contains("uninstall restores"),
+        "the confirmation must describe the takeover restore:\n{prompt}"
     );
     pty.master.write_all(b"yes\n").unwrap();
     let status = child.wait().unwrap();

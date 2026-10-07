@@ -75,14 +75,15 @@ fn network_takeover_confirms_from_any_ssh_session() {
     let timer_start = calls.find("\"start\",\"lkit-network-").unwrap();
     let resolved_stop = calls.find("\"stop\",\"systemd-resolved.service\"").unwrap();
     assert!(timer_start < resolved_stop);
-    assert!(
-        !calls.contains("NetworkManager.service"),
-        "NetworkManager must not receive any systemctl call:\n{calls}"
-    );
-    assert!(
-        !calls.contains("firewalld.service"),
-        "firewalld must not receive any systemctl call:\n{calls}"
-    );
+    // 只读探测(LoadState/is-active/is-enabled)允许;变更操作被禁止。
+    for unit in ["NetworkManager.service", "firewalld.service"] {
+        for verb in ["stop", "disable", "mask"] {
+            assert!(
+                !calls.contains(&format!("[\"{verb}\",\"{unit}\"]")),
+                "{unit} must not be {verb}ed:\n{calls}"
+            );
+        }
+    }
     let drop_in =
         std::fs::read_to_string(harness.host.join("nm-conf.d/lkit-unmanage.conf")).unwrap();
     assert!(drop_in.contains("interface-name:ens3;"));
