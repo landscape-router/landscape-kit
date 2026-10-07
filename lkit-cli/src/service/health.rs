@@ -50,17 +50,6 @@ impl HttpsDocsProbe {
     }
 }
 
-impl HealthOptions<HttpsDocsProbe> {
-    pub(crate) fn production() -> Result<Self, InstallError> {
-        Ok(Self {
-            docs: HttpsDocsProbe::new("https://127.0.0.1:6443")?,
-            ports: default_port_checks(),
-            startup_timeout: STARTUP_TIMEOUT,
-            stable_duration: STABLE_OBSERVATION,
-        })
-    }
-}
-
 impl DocsProbe for HttpsDocsProbe {
     async fn docs_ok(&self) -> bool {
         let Ok(response) = self.client.get(&self.url).send().await else {
@@ -222,14 +211,6 @@ mod tests {
     impl DocsProbe for AllOkDocs {
         async fn docs_ok(&self) -> bool {
             true
-        }
-    }
-
-    struct FailDocs;
-
-    impl DocsProbe for FailDocs {
-        async fn docs_ok(&self) -> bool {
-            false
         }
     }
 

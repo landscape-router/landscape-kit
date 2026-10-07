@@ -50,15 +50,6 @@ pub(crate) enum ManagedService {
     LkitDaemon,
 }
 
-impl ManagedService {
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            Self::LandscapeRouter => "landscape-router",
-            Self::LkitDaemon => "lkit",
-        }
-    }
-}
-
 /// 服务管理器可用性。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Availability {
@@ -252,18 +243,6 @@ pub(crate) fn pid_of_command(pattern: &str) -> Option<i64> {
         if text.contains(pattern) {
             return Some(pid);
         }
-    }
-    None
-}
-
-/// 轮询等待进程出现:服务启动是异步的,`spawn` 返回后子进程可能尚未完成
-/// exec,立即扫描 `/proc` 会错过。最多等待约 5 秒。
-pub(crate) fn wait_for_command_pid(pattern: &str) -> Option<i64> {
-    for _ in 0..50 {
-        if let Some(pid) = pid_of_command(pattern) {
-            return Some(pid);
-        }
-        std::thread::sleep(Duration::from_millis(100));
     }
     None
 }

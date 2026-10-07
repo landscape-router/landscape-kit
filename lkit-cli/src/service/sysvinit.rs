@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub(crate) use super::manager::{
-    Availability, ManagedService, Registration, RegistrationKind, ServiceBefore, ServiceManager,
+    Availability, ManagedService, RegistrationKind, ServiceBefore, ServiceManager,
     ServiceManagerKind, SystemRegistration,
 };
 use super::plan::InstallError;
