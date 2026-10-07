@@ -90,7 +90,10 @@ mod tests {
         let tool = dir.join("fake-ifup");
         std::fs::write(&tool, b"#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = ToolPaths { ifup: Some(tool), ..Default::default() };
+        let tools = ToolPaths {
+            ifup: Some(tool),
+            ..Default::default()
+        };
         let result = validate(&file_set(&path), &tools).unwrap();
         assert_eq!(result, Validation::Clean);
     }
@@ -103,7 +106,10 @@ mod tests {
         let tool = dir.join("fake-ifup");
         std::fs::write(&tool, b"#!/bin/sh\necho 'ifup: bad stanza' >&2\nexit 3\n").unwrap();
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = ToolPaths { ifup: Some(tool), ..Default::default() };
+        let tools = ToolPaths {
+            ifup: Some(tool),
+            ..Default::default()
+        };
         let result = validate(&file_set(&path), &tools).unwrap();
         assert_eq!(
             result,

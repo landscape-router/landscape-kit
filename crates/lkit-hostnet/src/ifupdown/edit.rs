@@ -161,8 +161,8 @@ pub(crate) fn apply(plan: &EditPlan) -> Result<EditOutcome, HostNetError> {
     for edit in &plan.edits {
         verify_edit(edit)?;
         // 新建文件没有"改写前快照"可比对(目标必须不存在),由 verify_edit 保证。
-        let expected = (!edit.created)
-            .then(|| (edit.original_content.as_slice(), &edit.metadata));
+        let expected =
+            (!edit.created).then_some((edit.original_content.as_slice(), &edit.metadata));
         write_atomic_checked(
             &edit.path,
             edit.content.as_bytes(),

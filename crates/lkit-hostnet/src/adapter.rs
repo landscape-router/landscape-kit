@@ -126,7 +126,7 @@ mod tests {
     impl HostNetworkAdapter for FakeAdapter {
         fn collect(&self, sources: &FileSources) -> Result<FileSet, HostNetError> {
             Ok(FileSet {
-            conf_d: None,
+                conf_d: None,
                 interfaces: sources.interfaces.clone(),
                 files: vec![sources.interfaces.clone()],
             })

@@ -12,9 +12,7 @@ use std::path::Path;
 
 use crate::adapter::HostNetworkAdapter;
 use crate::error::HostNetError;
-use crate::model::{
-    EditOutcome, EditPlan, FileSet, FileSources, Manifest, ToolPaths, Validation,
-};
+use crate::model::{EditOutcome, EditPlan, FileSet, FileSources, Manifest, ToolPaths, Validation};
 
 /// lkit 拥有的 drop-in 文件名;宿主同名文件视为外部冲突,计划阶段拒绝。
 pub const UNMANAGE_CONF: &str = "lkit-unmanage.conf";
@@ -69,7 +67,11 @@ impl HostNetworkAdapter for NmAdapter {
 
     /// NM 的 conf.d drop-in 没有 dry-run 工具;文件级正确性由计划/原子写保证,
     /// 运行时效果(unmanaged 状态)由调用方 reload 后自查。
-    fn validate(&self, _file_set: &FileSet, _tools: &ToolPaths) -> Result<Validation, HostNetError> {
+    fn validate(
+        &self,
+        _file_set: &FileSet,
+        _tools: &ToolPaths,
+    ) -> Result<Validation, HostNetError> {
         Ok(Validation::Unavailable)
     }
 }
@@ -79,7 +81,6 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-    use crate::adapter::HostNetworkAdapter as _;
 
     fn nm_fixture(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -137,7 +138,12 @@ mod tests {
         // 未提供 conf.d 入口:NM 不在宿主上。
         let sources = FileSources::new(dir.join("interfaces"));
         let outcome = NmAdapter::new()
-            .execute_unmanage(&sources, &["ens3".to_string()], &dir.join("backup"), &ToolPaths::default())
+            .execute_unmanage(
+                &sources,
+                &["ens3".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
             .unwrap();
         assert!(outcome.manifest.is_none());
         assert!(!dir.join("backup").exists());
@@ -162,14 +168,23 @@ mod tests {
         let dir = nm_fixture("existing");
         let conf_d = dir.join("conf.d");
         let drop_in = conf_d.join(UNMANAGE_CONF);
-        std::fs::write(&drop_in, "# foreign content\n[device]\nunmanaged-devices=interface-name:ens9\n").unwrap();
+        std::fs::write(
+            &drop_in,
+            "# foreign content\n[device]\nunmanaged-devices=interface-name:ens9\n",
+        )
+        .unwrap();
         let sources = FileSources {
             nm_conf_d: Some(conf_d.clone()),
             ..Default::default()
         };
 
         let outcome = NmAdapter::new()
-            .execute_unmanage(&sources, &["ens3".to_string()], &dir.join("backup"), &ToolPaths::default())
+            .execute_unmanage(
+                &sources,
+                &["ens3".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
             .unwrap();
         let manifest = outcome.manifest.expect("drop-in rewritten");
         assert!(manifest.created.is_empty());
@@ -210,9 +225,7 @@ mod tests {
             "[device]\nunmanaged-devices=interface-name:other0\n",
         )
         .unwrap();
-        let error = adapter
-            .restore_if_unchanged(&manifest, &plan)
-            .unwrap_err();
+        let error = adapter.restore_if_unchanged(&manifest, &plan).unwrap_err();
         assert!(matches!(error, HostNetError::ConcurrentModification { .. }));
         assert!(conf_d.join(UNMANAGE_CONF).is_file());
 
@@ -230,7 +243,12 @@ mod tests {
         };
         let adapter = NmAdapter::new();
         let outcome = adapter
-            .execute_unmanage(&sources, &["ens3".to_string()], &dir.join("backup"), &ToolPaths::default())
+            .execute_unmanage(
+                &sources,
+                &["ens3".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
             .unwrap();
         let manifest = outcome.manifest.unwrap();
         let mode = std::fs::metadata(conf_d.join(UNMANAGE_CONF))

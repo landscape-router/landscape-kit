@@ -203,6 +203,7 @@ fn unmanage_hostnet_files(
     let sources = FileSources::new(interfaces_file.to_path_buf());
     let tools = ToolPaths {
         ifup: ifup.map(Path::to_path_buf),
+        ..Default::default()
     };
     let adapter = IfupdownAdapter::new();
     match adapter.execute_unmanage(&sources, selected, &backup_dir, &tools) {

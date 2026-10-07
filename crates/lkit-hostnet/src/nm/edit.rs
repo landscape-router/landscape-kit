@@ -26,9 +26,9 @@ pub(super) fn plan_unmanage(
     }
     for name in selected {
         if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':'))
+            || !name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':')
+            })
             || name.chars().any(|char| GLOB_META_CHARS.contains(&char))
         {
             return Err(HostNetError::UnsupportedSyntax {

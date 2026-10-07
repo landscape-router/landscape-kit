@@ -66,7 +66,10 @@ fn real_ifupdown_accepts_original_edit_and_restore() {
             &FileSources::new(interfaces.clone()),
             &["lkit0".into(), "lkit1".into()],
             &dir.join("backup"),
-            &ToolPaths { ifup: Some(ifup), ..Default::default() },
+            &ToolPaths {
+                ifup: Some(ifup),
+                ..Default::default()
+            },
         )
         .unwrap();
     assert_eq!(outcome.validation, Validation::Clean);

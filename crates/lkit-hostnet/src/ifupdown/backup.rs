@@ -5,9 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::error::HostNetError;
-use crate::model::{
-    EditPlan, MANIFEST_SCHEMA_VERSION, Manifest, ManifestCreated, ManifestFile,
-};
+use crate::model::{EditPlan, MANIFEST_SCHEMA_VERSION, Manifest, ManifestCreated, ManifestFile};
 
 use super::edit;
 
@@ -192,7 +190,11 @@ pub(crate) fn restore_if_unchanged(
     let mut pending = Vec::new();
     let mut pending_created = Vec::new();
     let mut conflict = None;
-    for (file, bytes) in manifest.created.iter().zip(plan.edits.iter().filter(|edit| edit.created)) {
+    for (file, bytes) in manifest
+        .created
+        .iter()
+        .zip(plan.edits.iter().filter(|edit| edit.created))
+    {
         match std::fs::symlink_metadata(&file.path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(HostNetError::PathSafety {
@@ -202,12 +204,11 @@ pub(crate) fn restore_if_unchanged(
             }
             Ok(_) => {
                 let metadata = edit::capture_metadata(&file.path)?;
-                let current = std::fs::read(&file.path).map_err(|source| {
-                    HostNetError::UnreadableFile {
+                let current =
+                    std::fs::read(&file.path).map_err(|source| HostNetError::UnreadableFile {
                         path: file.path.clone(),
                         source,
-                    }
-                })?;
+                    })?;
                 if metadata == file.metadata && current == bytes.content.as_bytes() {
                     pending_created.push(file.path.clone());
                 } else if conflict.is_none() {
@@ -225,7 +226,7 @@ pub(crate) fn restore_if_unchanged(
             }
         }
     }
-    for ((file, original), edit) in restore_files.iter().zip(&planned_edits) {
+    for ((file, original), edit) in restore_files.iter().zip(planned_edits.iter().copied()) {
         let metadata = edit::capture_metadata(&edit.path)?;
         let current = std::fs::read(&edit.path).map_err(|source| HostNetError::UnreadableFile {
             path: edit.path.clone(),
@@ -252,10 +253,8 @@ pub(crate) fn restore_if_unchanged(
         )?;
     }
     for path in pending_created {
-        std::fs::remove_file(&path).map_err(|source| HostNetError::UnreadableFile {
-            path,
-            source,
-        })?;
+        std::fs::remove_file(&path)
+            .map_err(|source| HostNetError::UnreadableFile { path, source })?;
     }
 
     match conflict {
