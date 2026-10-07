@@ -142,6 +142,7 @@ pub(crate) fn plan_unmanage(
                 })
                 .collect();
             edits.push(FileEdit {
+                created: false,
                 path: path.clone(),
                 original_content: content.as_bytes().to_vec(),
                 content: render(&new_lines, parsed.ends_with_newline),
@@ -159,11 +160,14 @@ pub(crate) fn apply(plan: &EditPlan) -> Result<EditOutcome, HostNetError> {
     let mut edited = Vec::new();
     for edit in &plan.edits {
         verify_edit(edit)?;
+        // 新建文件没有"改写前快照"可比对(目标必须不存在),由 verify_edit 保证。
+        let expected = (!edit.created)
+            .then(|| (edit.original_content.as_slice(), &edit.metadata));
         write_atomic_checked(
             &edit.path,
             edit.content.as_bytes(),
             Some(&edit.metadata),
-            Some((&edit.original_content, &edit.metadata)),
+            expected,
         )?;
         edited.push(edit.path.clone());
     }
@@ -322,6 +326,15 @@ pub(crate) fn capture_metadata(path: &Path) -> Result<FileMetadata, HostNetError
 }
 
 pub(crate) fn verify_edit(edit: &FileEdit) -> Result<(), HostNetError> {
+    if edit.created {
+        // 新建文件在计划后必须仍然不存在(空快照),出现任何实体都视为并发修改。
+        return match std::fs::symlink_metadata(&edit.path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(HostNetError::ConcurrentModification {
+                path: edit.path.clone(),
+            }),
+        };
+    }
     verify_snapshot(&edit.path, &edit.original_content, &edit.metadata)
 }
 
@@ -485,6 +498,7 @@ mod tests {
 
     fn file_set_for(paths: &[PathBuf]) -> FileSet {
         FileSet {
+            conf_d: None,
             interfaces: paths[0].clone(),
             files: paths.to_vec(),
         }

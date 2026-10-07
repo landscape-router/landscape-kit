@@ -126,6 +126,7 @@ mod tests {
     impl HostNetworkAdapter for FakeAdapter {
         fn collect(&self, sources: &FileSources) -> Result<FileSet, HostNetError> {
             Ok(FileSet {
+            conf_d: None,
                 interfaces: sources.interfaces.clone(),
                 files: vec![sources.interfaces.clone()],
             })
@@ -139,6 +140,7 @@ mod tests {
             Ok(EditPlan {
                 edits: (!self.empty)
                     .then(|| FileEdit {
+                        created: false,
                         path: file_set.interfaces.clone(),
                         original_content: b"original\n".to_vec(),
                         content: "changed\n".into(),
@@ -167,6 +169,7 @@ mod tests {
             Ok(Manifest {
                 schema_version: crate::model::MANIFEST_SCHEMA_VERSION,
                 files: Vec::new(),
+                created: Vec::new(),
             })
         }
 

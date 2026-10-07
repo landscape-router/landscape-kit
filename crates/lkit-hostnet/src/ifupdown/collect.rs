@@ -19,6 +19,7 @@ pub(crate) fn collect(sources: &FileSources) -> Result<FileSet, HostNetError> {
         Ok(_) => validate_regular_file(main)?,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             return Ok(FileSet {
+            conf_d: None,
                 interfaces: main.clone(),
                 files: Vec::new(),
             });
@@ -66,6 +67,7 @@ pub(crate) fn collect(sources: &FileSources) -> Result<FileSet, HostNetError> {
     let mut all = vec![main.clone()];
     all.append(&mut rest);
     Ok(FileSet {
+            conf_d: None,
         interfaces: main.clone(),
         files: all,
     })

@@ -5,7 +5,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::error::HostNetError;
-use crate::model::{EditPlan, MANIFEST_SCHEMA_VERSION, Manifest, ManifestFile};
+use crate::model::{
+    EditPlan, MANIFEST_SCHEMA_VERSION, Manifest, ManifestCreated, ManifestFile,
+};
 
 use super::edit;
 
@@ -26,6 +28,7 @@ pub(crate) fn backup(plan: &EditPlan, dest: &Path) -> Result<Manifest, HostNetEr
         return Ok(Manifest {
             schema_version: MANIFEST_SCHEMA_VERSION,
             files: Vec::new(),
+            created: Vec::new(),
         });
     }
     for file_edit in &plan.edits {
@@ -59,7 +62,15 @@ pub(crate) fn backup(plan: &EditPlan, dest: &Path) -> Result<Manifest, HostNetEr
 
     let result = (|| {
         let mut files = Vec::new();
+        let mut created = Vec::new();
         for (index, file_edit) in plan.edits.iter().enumerate() {
+            if file_edit.created {
+                created.push(ManifestCreated {
+                    path: file_edit.path.clone(),
+                    metadata: file_edit.metadata.clone(),
+                });
+                continue;
+            }
             let original = &file_edit.path;
             let file_name = original
                 .file_name()
@@ -91,6 +102,7 @@ pub(crate) fn backup(plan: &EditPlan, dest: &Path) -> Result<Manifest, HostNetEr
         let manifest = Manifest {
             schema_version: MANIFEST_SCHEMA_VERSION,
             files,
+            created,
         };
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|source| {
             HostNetError::InvalidManifest {
@@ -112,7 +124,29 @@ pub(crate) fn restore(manifest: &Manifest) -> Result<(), HostNetError> {
     for (file, bytes) in restore_files {
         edit::write_atomic(&file.original, &bytes, Some(&file.metadata))?;
     }
+    for created in &manifest.created {
+        remove_created(&created.path)?;
+    }
     Ok(())
+}
+
+/// 删除摘除新建的文件:不存在视为已恢复(幂等),符号链接以 PathSafety 拒绝。
+fn remove_created(path: &Path) -> Result<(), HostNetError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(HostNetError::PathSafety {
+            path: path.to_path_buf(),
+            reason: "created file was replaced by a symlink".into(),
+        }),
+        Ok(_) => std::fs::remove_file(path).map_err(|source| HostNetError::UnreadableFile {
+            path: path.to_path_buf(),
+            source,
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(HostNetError::UnreadableFile {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// Roll back a failed transaction without overwriting an external edit.
@@ -125,10 +159,12 @@ pub(crate) fn restore_if_unchanged(
     plan: &EditPlan,
 ) -> Result<(), HostNetError> {
     let restore_files = read_backups(manifest)?;
-    if restore_files.len() != plan.edits.len()
+    let planned_edits: Vec<&crate::model::FileEdit> =
+        plan.edits.iter().filter(|edit| !edit.created).collect();
+    if restore_files.len() != planned_edits.len()
         || restore_files
             .iter()
-            .zip(&plan.edits)
+            .zip(&planned_edits)
             .any(|((file, bytes), edit)| {
                 file.original != edit.path
                     || file.metadata != edit.metadata
@@ -140,10 +176,56 @@ pub(crate) fn restore_if_unchanged(
             reason: "manifest does not match the edit plan".into(),
         });
     }
+    if manifest.created.len() != plan.edits.iter().filter(|edit| edit.created).count()
+        || manifest
+            .created
+            .iter()
+            .zip(plan.edits.iter().filter(|edit| edit.created))
+            .any(|(created, edit)| created.path != edit.path || created.metadata != edit.metadata)
+    {
+        return Err(HostNetError::InvalidManifest {
+            path: Path::new("<manifest>").to_path_buf(),
+            reason: "manifest does not match the edit plan".into(),
+        });
+    }
 
     let mut pending = Vec::new();
+    let mut pending_created = Vec::new();
     let mut conflict = None;
-    for ((file, original), edit) in restore_files.iter().zip(&plan.edits) {
+    for (file, bytes) in manifest.created.iter().zip(plan.edits.iter().filter(|edit| edit.created)) {
+        match std::fs::symlink_metadata(&file.path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(HostNetError::PathSafety {
+                    path: file.path.clone(),
+                    reason: "created file was replaced by a symlink".into(),
+                });
+            }
+            Ok(_) => {
+                let metadata = edit::capture_metadata(&file.path)?;
+                let current = std::fs::read(&file.path).map_err(|source| {
+                    HostNetError::UnreadableFile {
+                        path: file.path.clone(),
+                        source,
+                    }
+                })?;
+                if metadata == file.metadata && current == bytes.content.as_bytes() {
+                    pending_created.push(file.path.clone());
+                } else if conflict.is_none() {
+                    conflict = Some(HostNetError::ConcurrentModification {
+                        path: file.path.clone(),
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(HostNetError::UnreadableFile {
+                    path: file.path.clone(),
+                    source,
+                });
+            }
+        }
+    }
+    for ((file, original), edit) in restore_files.iter().zip(&planned_edits) {
         let metadata = edit::capture_metadata(&edit.path)?;
         let current = std::fs::read(&edit.path).map_err(|source| HostNetError::UnreadableFile {
             path: edit.path.clone(),
@@ -168,6 +250,12 @@ pub(crate) fn restore_if_unchanged(
             Some(&edit.metadata),
             Some((edit.content.as_bytes(), &edit.metadata)),
         )?;
+    }
+    for path in pending_created {
+        std::fs::remove_file(&path).map_err(|source| HostNetError::UnreadableFile {
+            path,
+            source,
+        })?;
     }
 
     match conflict {
@@ -232,6 +320,7 @@ mod tests {
     fn plan_for(original: &Path, content: &str) -> EditPlan {
         EditPlan {
             edits: vec![FileEdit {
+                created: false,
                 path: original.to_path_buf(),
                 original_content: std::fs::read(original).unwrap(),
                 content: content.into(),
@@ -289,6 +378,7 @@ mod tests {
         let manifest = Manifest {
             schema_version: 99,
             files: Vec::new(),
+            created: Vec::new(),
         };
         let error = restore(&manifest).unwrap_err();
         assert!(matches!(error, HostNetError::InvalidManifest { .. }));
@@ -298,6 +388,7 @@ mod tests {
     fn manifest_file_round_trips_through_serde() {
         let manifest = Manifest {
             schema_version: MANIFEST_SCHEMA_VERSION,
+            created: Vec::new(),
             files: vec![ManifestFile {
                 original: "/etc/network/interfaces".into(),
                 backup: "/tmp/backup/0/interfaces".into(),
@@ -354,6 +445,7 @@ mod tests {
         std::os::unix::fs::symlink(&backup_target, &backup_link).unwrap();
         let manifest = Manifest {
             schema_version: MANIFEST_SCHEMA_VERSION,
+            created: Vec::new(),
             files: vec![ManifestFile {
                 original: original.clone(),
                 backup: backup_link,

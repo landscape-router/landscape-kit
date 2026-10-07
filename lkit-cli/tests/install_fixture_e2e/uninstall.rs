@@ -204,7 +204,7 @@ fn uninstall_restores_ifupdown_host_config_after_takeover() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("uninstall-hostnet", "healthy", 10_000);
     harness.seed_host_service("networking.service");
-    let interfaces = harness.world.path("network-interfaces");
+    let interfaces = harness.host.join("network-interfaces");
     let original = "auto ens3 ens4\n\
 iface ens3 inet static\n\
     address 192.0.2.10/24\n\

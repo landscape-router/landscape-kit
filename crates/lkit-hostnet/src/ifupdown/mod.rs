@@ -8,6 +8,14 @@ mod edit;
 mod parse;
 mod validate;
 
+// 备份/恢复按 EditPlan 与 Manifest 工作,与具体适配器无关;nm/firewalld 适配器
+// 经这些别名复用同一实现。
+pub(crate) use backup::{
+    backup as plan_backup, restore as manifest_restore,
+    restore_if_unchanged as manifest_restore_if_unchanged,
+};
+pub(crate) use edit::{apply as apply_edits, capture_metadata};
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -40,6 +48,7 @@ impl IfupdownAdapter {
                 .iter()
                 .map(|file| file.backup.clone())
                 .collect(),
+            conf_d: None,
         };
         let original = manual_bare_map(&snapshots)?;
         Ok(current

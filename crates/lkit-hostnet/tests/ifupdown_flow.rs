@@ -136,6 +136,7 @@ fn full_flow_unmanages_and_restores_verbatim() {
 
     let tools = ToolPaths {
         ifup: Some(fake_ifup(&fs.dir, 0)),
+        ..Default::default()
     };
     assert_eq!(
         adapter.validate(&file_set, &tools).unwrap(),
@@ -161,6 +162,7 @@ fn validation_failure_then_restore_leaves_original_content() {
 
     let tools = ToolPaths {
         ifup: Some(fake_ifup(&fs.dir, 2)),
+        ..Default::default()
     };
     let validation = adapter.validate(&file_set, &tools).unwrap();
     assert!(matches!(
@@ -276,6 +278,7 @@ fn transactional_entry_restores_after_validation_failure() {
     let adapter = IfupdownAdapter::new();
     let tools = ToolPaths {
         ifup: Some(fake_ifup(&fs.dir, 2)),
+        ..Default::default()
     };
     let error = adapter
         .execute_unmanage(

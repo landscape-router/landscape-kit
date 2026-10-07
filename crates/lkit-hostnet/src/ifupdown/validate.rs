@@ -54,6 +54,7 @@ mod tests {
 
     fn file_set(path: &Path) -> FileSet {
         FileSet {
+            conf_d: None,
             interfaces: path.to_path_buf(),
             files: vec![path.to_path_buf()],
         }
@@ -75,6 +76,7 @@ mod tests {
         std::fs::write(&path, b"iface eth0 inet manual\n").unwrap();
         let tools = ToolPaths {
             ifup: Some(dir.join("does-not-exist")),
+            ..Default::default()
         };
         let result = validate(&file_set(&path), &tools).unwrap();
         assert_eq!(result, Validation::Unavailable);
@@ -88,7 +90,7 @@ mod tests {
         let tool = dir.join("fake-ifup");
         std::fs::write(&tool, b"#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = ToolPaths { ifup: Some(tool) };
+        let tools = ToolPaths { ifup: Some(tool), ..Default::default() };
         let result = validate(&file_set(&path), &tools).unwrap();
         assert_eq!(result, Validation::Clean);
     }
@@ -101,7 +103,7 @@ mod tests {
         let tool = dir.join("fake-ifup");
         std::fs::write(&tool, b"#!/bin/sh\necho 'ifup: bad stanza' >&2\nexit 3\n").unwrap();
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let tools = ToolPaths { ifup: Some(tool) };
+        let tools = ToolPaths { ifup: Some(tool), ..Default::default() };
         let result = validate(&file_set(&path), &tools).unwrap();
         assert_eq!(
             result,
@@ -118,6 +120,7 @@ mod tests {
         let path = dir.join("interfaces");
         let result = validate(
             &FileSet {
+                conf_d: None,
                 interfaces: path,
                 files: Vec::new(),
             },

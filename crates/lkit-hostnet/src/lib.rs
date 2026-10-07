@@ -7,10 +7,11 @@ pub mod adapter;
 pub mod error;
 pub mod ifupdown;
 pub mod model;
+pub mod nm;
 
 pub use adapter::HostNetworkAdapter;
 pub use error::HostNetError;
 pub use model::{
-    EditOutcome, EditPlan, FileEdit, FileMetadata, FileSet, FileSources, Manifest, ManifestFile,
-    ToolPaths, UnmanageOutcome, Validation,
+    EditOutcome, EditPlan, FileEdit, FileMetadata, FileSet, FileSources, Manifest, ManifestCreated,
+    ManifestFile, ToolPaths, UnmanageOutcome, Validation,
 };
