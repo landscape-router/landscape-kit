@@ -54,6 +54,10 @@ fn production_firewall_cmd() -> Option<PathBuf> {
     find_production_tool(["/usr/bin/firewall-cmd", "/bin/firewall-cmd"])
 }
 
+fn production_networkctl() -> Option<PathBuf> {
+    find_production_tool(["/usr/bin/networkctl", "/bin/networkctl"])
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PreflightPolicy {
     Full,
@@ -83,6 +87,11 @@ pub(crate) struct InstallRuntime {
     pub nmcli: Option<PathBuf>,
     /// `firewall-cmd`,用于摘除/恢复后让运行中的 firewalld 重读 zone。
     pub firewall_cmd: Option<PathBuf>,
+    /// systemd-networkd 的配置目录;存在即认为 networkd 已配置,接管移出引用
+    /// 选中接口的 `.network` 文件。
+    pub networkd_dir: PathBuf,
+    /// `networkctl`,用于摘除/恢复后让运行中的 networkd 重读配置。
+    pub networkctl: Option<PathBuf>,
     pub network_confirm_timeout: Duration,
     pub test_runtime_path: Option<PathBuf>,
     pub service_manager: Box<dyn ServiceManager + Send + Sync>,
@@ -110,6 +119,8 @@ impl InstallRuntime {
             firewalld_zones: PathBuf::from("/etc/firewalld/zones"),
             nmcli: production_nmcli(),
             firewall_cmd: production_firewall_cmd(),
+            networkd_dir: PathBuf::from("/etc/systemd/network"),
+            networkctl: production_networkctl(),
             network_confirm_timeout: Duration::from_secs(600),
             test_runtime_path: None,
             service_manager: host_manager(),
@@ -186,6 +197,10 @@ struct TestRuntimeConfig {
     nmcli: Option<PathBuf>,
     #[serde(default)]
     firewall_cmd: Option<PathBuf>,
+    #[serde(default = "default_networkd_dir")]
+    networkd_dir: PathBuf,
+    #[serde(default)]
+    networkctl: Option<PathBuf>,
     #[serde(default = "default_network_confirm_timeout_ms")]
     network_confirm_timeout_ms: u64,
     #[serde(default)]
@@ -327,6 +342,8 @@ impl TestRuntimeConfig {
             firewalld_zones: self.firewalld_zones,
             nmcli: self.nmcli,
             firewall_cmd: self.firewall_cmd,
+            networkd_dir: self.networkd_dir,
+            networkctl: self.networkctl,
             network_confirm_timeout: Duration::from_millis(self.network_confirm_timeout_ms),
             test_runtime_path: Some(source_path.to_path_buf()),
             service_manager,
@@ -394,6 +411,11 @@ fn default_nm_conf_d() -> PathBuf {
 #[cfg(feature = "test-support")]
 fn default_firewalld_zones() -> PathBuf {
     PathBuf::from("/etc/firewalld/zones")
+}
+
+#[cfg(feature = "test-support")]
+fn default_networkd_dir() -> PathBuf {
+    PathBuf::from("/etc/systemd/network")
 }
 
 #[cfg(feature = "test-support")]

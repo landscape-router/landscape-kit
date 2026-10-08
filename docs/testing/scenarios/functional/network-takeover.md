@@ -61,8 +61,9 @@
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)
 - 说明：整体 stop/disable/mask 只作用于 systemd-resolved（DNS 是主机全局语义，没有按
   接口摘除的文件边界）；NetworkManager 与 firewalld 走 NET-14 的 drop-in/zone 细粒度
-  摘除，ifupdown 宿主的 `networking.service` 走 NET-13。运行中的 NM/firewalld 配置目录
-  缺失时 preflight 拒绝接管。
+  摘除，systemd-networkd 走 NET-15 的 `.network` 移出，ifupdown 宿主的
+  `networking.service` 走 NET-13。运行中的 NM/firewalld/networkd 配置目录缺失时
+  preflight 拒绝接管。
 
 ## NET-13
 
@@ -93,6 +94,21 @@
   （`nmcli general reload`、`firewall-cmd --reload`），工具缺失或 reload 失败中止安装；
   两个服务全程零 systemctl 调用。回滚/卸载删除 drop-in、逐字恢复 zone 并再次 reload。
 
+## NET-15
+
+**systemd-networkd 细粒度摘除：移出引用选中接口的 `.network` 文件，服务全程运行**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)、
+  [完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、
+  [networkd 适配器测试](../../../../crates/lkit-hostnet/src/networkd/mod.rs)
+- 说明：配置目录存在时把 `[Match] Name=` 精确集 ⊆ 选中集的 `.network` 文件整体移出，
+  备份落 `backups/hostnet/networkd`；文件移出后对运行中的 networkd `networkctl reload`，
+  工具缺失或 reload 失败中止安装；服务全程零变更 systemctl 调用。回滚/卸载按 manifest
+  逐字重建移出文件并再次 reload。摘除现场与 NM/firewalld/ifupdown 可组合（NET-13、
+  NET-14），reinit 反查并入 `Name=` 精确集（REI-11）。
+
 ## NET-06
 
 **任意可达会话均可确认并提交安装，TUI 以待确认阻塞屏提示**
@@ -116,8 +132,9 @@
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[QEMU 网络接管](../../qemu-network-takeover.md)
 - 说明：覆盖手工 rollback、10 分钟 timer rollback 和确认前重启的 boot rollback；三条入口
   都必须恢复宿主网络（含按 `backups/hostnet/<适配器>` 的 manifest 逐字恢复摘除——
-  ifupdown 原文件、firewalld zone、NM drop-in 删除——并在服务 active 时 restart
-  `networking.service`、reload 运行中的 NM/firewalld）、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
+  ifupdown 原文件、firewalld zone、networkd 移出文件重建、NM drop-in 删除——并在服务
+  active 时 restart `networking.service`、reload 运行中的 NM/firewalld/networkd）、
+  删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
   `lkit install`。
 - 缺口：fixture 直接覆盖自动回滚入口和重装，QEMU 覆盖 boot rollback；真实 timer 到期和
   手工 systemd operation worker 尚未分别触发。
@@ -152,6 +169,7 @@
 - 测试层：CLI fixture E2E、Rust 单元
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[接口发现](../../../../lkit-cli/src/network/discovery.rs)
-- 说明：`networking.service` 是受支持的 Debian ifupdown 宿主服务，不属于本场景的未知
-  管理器。已有 `br_lan` 不阻断安装：install 与 reinit 都不检查桥接是否存在，桥接的
+- 说明：`networking.service` 与 systemd-networkd 都是受支持的摘除目标（NET-13、
+  NET-15），不属于未知管理器；未知的活动网络管理器只剩 wicked 与 connman。已有
+  `br_lan` 不阻断安装：install 与 reinit 都不检查桥接是否存在，桥接的
   创建、成员同步与清理由 Landscape 按新配置处理。

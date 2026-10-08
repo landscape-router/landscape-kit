@@ -12,6 +12,11 @@ use super::{
 /// seed_firewalld 写入的 zone 内容;测试用它做逐字节恢复断言。
 pub(crate) const SEEDED_FIREWALLD_ZONE: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<zone>\n  <short>Public</short>\n  <interface name=\"ens3\"/>\n  <interface name=\"ens9\"/>\n  <service name=\"ssh\"/>\n</zone>\n";
 
+/// seed_systemd_networkd 写入的 `.network` 文件名与内容;`Name=ens3` 精确集
+/// 落在接管选中集内,接管把它整个移出,测试用内容做逐字节恢复断言。
+pub(crate) const SEEDED_NETWORKD_FILE: &str = "10-wan.network";
+pub(crate) const SEEDED_NETWORKD_WAN: &str = "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n";
+
 pub(crate) struct InstallHarness {
     pub(crate) world: TestWorld,
     /// lkit 地盘:config/state/transactions/backups/logs/run 全部位于此处,
@@ -105,8 +110,8 @@ esac
         .unwrap();
         std::fs::set_permissions(&ifup_command, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        // 假 nmcli/firewall-cmd:记录调用参数并成功退出。NM conf.d 与
-        // firewalld zones 目录默认不创建,需要场景的测试自行 seed。
+        // 假 nmcli/firewall-cmd/networkctl:记录调用参数并成功退出。NM conf.d、
+        // firewalld zones 与 networkd 配置目录默认不创建,需要场景的测试自行 seed。
         let nmcli = host.join("fake-nmcli");
         std::fs::write(
             &nmcli,
@@ -127,6 +132,16 @@ esac
         )
         .unwrap();
         std::fs::set_permissions(&firewall_cmd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let networkctl = host.join("fake-networkctl");
+        std::fs::write(
+            &networkctl,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> '{}'\nexit 0\n",
+                world.path("networkctl-calls.log").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&networkctl, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let ports = TestPorts::reserve();
         let landscape_config = world.path("landscape.json");
@@ -177,8 +192,10 @@ esac
                 "ifup_command": ifup_command,
                 "nm_conf_d": host.join("nm-conf.d"),
                 "firewalld_zones": host.join("firewalld-zones"),
+                "networkd_dir": host.join("systemd-network"),
                 "nmcli": nmcli,
                 "firewall_cmd": firewall_cmd,
+                "networkctl": networkctl,
                 "network_confirm_timeout_ms": 30000,
                 "systemd": {
                     "systemctl": SYSTEMCTL_FIXTURE,
@@ -353,12 +370,13 @@ esac
     }
 
     /// 整体宿主现场:systemd-resolved 运行中(接管唯一整体停止的宿主服务),
-    /// NetworkManager 与 firewalld 已安装且运行(接管改为 drop-in/zone 摘除,
-    /// 两者保持运行)。
+    /// NetworkManager、firewalld 与 systemd-networkd 已安装且运行(接管改为
+    /// drop-in/zone 摘除与 `.network` 移出,三者保持运行)。
     pub(crate) fn seed_host_services(&self) {
         self.seed_host_service("systemd-resolved.service");
         self.seed_network_manager();
         self.seed_firewalld();
+        self.seed_systemd_networkd();
     }
 
     pub(crate) fn seed_host_service(&self, unit: &str) {
@@ -381,6 +399,15 @@ esac
         std::fs::create_dir_all(&zones).unwrap();
         std::fs::write(zones.join("public.xml"), SEEDED_FIREWALLD_ZONE).unwrap();
         self.seed_host_service("firewalld.service");
+    }
+
+    /// systemd-networkd 已安装且运行:配置目录与一个 `Name=ens3` 的 `.network`
+    /// 文件存在(接管将其移出,回滚逐字恢复)。
+    pub(crate) fn seed_systemd_networkd(&self) {
+        let networkd = self.host.join("systemd-network");
+        std::fs::create_dir_all(&networkd).unwrap();
+        std::fs::write(networkd.join(SEEDED_NETWORKD_FILE), SEEDED_NETWORKD_WAN).unwrap();
+        self.seed_host_service("systemd-networkd.service");
     }
 
     pub(crate) fn run_takeover(&self) -> Output {

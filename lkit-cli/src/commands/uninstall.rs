@@ -130,6 +130,7 @@ pub async fn run(args: &Uninstall) -> ExitCode {
         export_base_url: runtime.export_base_url.clone(),
         nmcli: runtime.nmcli.clone(),
         firewall_cmd: runtime.firewall_cmd.clone(),
+        networkctl: runtime.networkctl.clone(),
         token: &(|| {
             crate::backup::export::read_api_token(
                 &data_dir.join("landscape_api_token"),

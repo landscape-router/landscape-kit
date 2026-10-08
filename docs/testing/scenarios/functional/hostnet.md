@@ -120,3 +120,16 @@
 - 说明：NM 读取现场 drop-in 的 `unmanaged-devices` 条目；firewalld 取
   "manifest 快照整行接口名 − 现场仍存在名字"差集。lkit-cli 的 reinit 同接口集校验
   （REI-11）消费两者与 ifupdown 反查（HNET-09）的并集。
+
+## HNET-13
+
+**systemd-networkd 适配器移出可归因的 `.network` 文件并保守拒绝混合与 glob 引用**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[networkd 适配器测试](../../../../crates/lkit-hostnet/src/networkd/mod.rs)、
+  [hostnet 设计](../../../network/hostnet.md)
+- 说明：`[Match] Name=` 精确名集合 ⊆ 选中集合时文件整体移出（恢复按备份逐字重建）；
+  同一文件同时引用选中与未选精确名、或 glob 引用选中接口时计划阶段拒绝、不改任何
+  文件；无 `Name=` 的文件跳过；`.netdev` 不收集。反查取已消失移出文件的精确名并集，
+  被人工重建的文件不再计入。运行时 reload 由 lkit-cli 负责（NET-15）。

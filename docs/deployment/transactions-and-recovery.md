@@ -144,7 +144,7 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 接口与 MAC、Landscape 网络计划、systemd-resolved 的原始
 installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制、待提交安装状态
 路径，以及接口摘除备份的落点（`hostnet_backup`，地盘相对 `backups/hostnet`，内部按
-适配器 `ifupdown`/`nm`/`firewalld` 分目录，未改写任何宿主文件时为 null）。
+适配器 `ifupdown`/`nm`/`firewalld`/`networkd` 分目录，未改写任何宿主文件时为 null）。
 字段不得包含 PPPoE 凭据。接管事务在 `awaiting_network_confirmation` 或 `finalizing`
 期间不允许通用中断恢复猜测结果，只能执行 `lkit network confirm` 或
 `lkit network rollback`。

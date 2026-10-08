@@ -13,6 +13,7 @@ pub struct FileSources {
     pub interfaces: PathBuf,
     pub nm_conf_d: Option<PathBuf>,
     pub firewalld_zones: Option<PathBuf>,
+    pub networkd_dir: Option<PathBuf>,
 }
 
 impl FileSources {
@@ -60,9 +61,12 @@ pub struct FileMetadata {
 pub struct FileEdit {
     pub path: PathBuf,
     pub original_content: Vec<u8>,
+    /// `removed` 时本字段无意义(计划结果 = 文件不存在)。
     pub content: String,
     pub metadata: FileMetadata,
     pub created: bool,
+    /// 摘除 = 整文件删除(备份已持有逐字副本,恢复按 manifest 重建)。
+    pub removed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

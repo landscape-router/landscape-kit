@@ -176,6 +176,7 @@ impl HostNetworkAdapter for FirewalldAdapter {
                 content: rewritten,
                 metadata: capture_metadata(path)?,
                 created: false,
+                removed: false,
             });
         }
         Ok(EditPlan { edits })

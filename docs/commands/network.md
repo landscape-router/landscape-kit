@@ -14,9 +14,10 @@ lkit network rollback
   状态并移除恢复 unit。
 - `rollback` 清理未提交的首次安装并按事务快照恢复 systemd-resolved 的
   enabled/active/masked 状态;接口摘除按地盘 `backups/hostnet/<适配器>` 的 manifest
-  逐字恢复(ifupdown 原文件、firewalld zone,NM drop-in 删除),恢复成功后按各服务实况
-  重放运行时(`networking.service` active 时 restart,运行中的 NM/firewalld reload)。
-  NetworkManager 与 firewalld 全程不被停止。手工 rollback 由 systemd
+  逐字恢复(ifupdown 原文件、firewalld zone、networkd 移出的 `.network` 文件重建,
+  NM drop-in 删除),恢复成功后按各服务实况
+  重放运行时(`networking.service` active 时 restart,运行中的 NM/firewalld/networkd
+  reload)。NetworkManager、firewalld 与 systemd-networkd 全程不被停止。手工 rollback 由 systemd
   operation worker 执行，恢复网络服务导致当前 SSH 断开也不会中止后续恢复。
 - 确认前主机重启、10 分钟确认 timer 到期和手工 `rollback` 都使用同一幂等回滚入口；重启
   不会继续保留确认窗口，而是按未确认处理。

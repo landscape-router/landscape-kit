@@ -39,9 +39,10 @@ pub(crate) struct UninstallArgs {
 /// uninstall 运行参数(测试可注入)。
 pub(crate) struct UninstallOptions<'a, P: DocsProbe> {
     pub export_base_url: String,
-    /// 卸载恢复接管摘除后,用于 reload 运行中 NM/firewalld 的工具路径。
+    /// 卸载恢复接管摘除后,用于 reload 运行中 NM/firewalld/networkd 的工具路径。
     pub nmcli: Option<std::path::PathBuf>,
     pub firewall_cmd: Option<std::path::PathBuf>,
+    pub networkctl: Option<std::path::PathBuf>,
     pub token: &'a dyn Fn() -> Result<String, InstallError>,
     pub confirm: &'a dyn Fn(&str) -> Result<bool, InstallError>,
     pub health: &'a HealthOptions<P>,
@@ -127,6 +128,7 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
                     manager,
                     options.nmcli.as_deref(),
                     options.firewall_cmd.as_deref(),
+                    options.networkctl.as_deref(),
                 );
             }
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
@@ -481,6 +483,7 @@ esac
             export_base_url: server.base.clone(),
             nmcli: None,
             firewall_cmd: None,
+            networkctl: None,
             token: &TOKEN,
             confirm: &YES,
             health,

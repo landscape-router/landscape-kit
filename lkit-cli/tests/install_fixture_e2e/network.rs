@@ -70,13 +70,18 @@ fn network_takeover_confirms_from_any_ssh_session() {
         Some("192.168.10.254")
     );
     assert_host_services_masked(&harness, &["systemd-resolved.service"]);
-    // NM/firewalld 不再整体停止:通过 drop-in/zone 摘除,服务保持运行。
+    // NM/firewalld/systemd-networkd 不再整体停止:drop-in 摘除、zone 接口行
+    // 删除、`.network` 移出,服务保持运行。
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
     let timer_start = calls.find("\"start\",\"lkit-network-").unwrap();
     let resolved_stop = calls.find("\"stop\",\"systemd-resolved.service\"").unwrap();
     assert!(timer_start < resolved_stop);
     // 只读探测(LoadState/is-active/is-enabled)允许;变更操作被禁止。
-    for unit in ["NetworkManager.service", "firewalld.service"] {
+    for unit in [
+        "NetworkManager.service",
+        "firewalld.service",
+        "systemd-networkd.service",
+    ] {
         for verb in ["stop", "disable", "mask"] {
             assert!(
                 !calls.contains(&format!("[\"{verb}\",\"{unit}\"]")),
@@ -101,6 +106,19 @@ fn network_takeover_confirms_from_any_ssh_session() {
     assert!(
         firewall_cmd_calls.contains("--reload"),
         "the zone edit must be applied to the running firewalld:\n{firewall_cmd_calls}"
+    );
+    let wan_network = harness
+        .host
+        .join(format!("systemd-network/{SEEDED_NETWORKD_FILE}"));
+    assert!(
+        !wan_network.exists(),
+        "the .network file bound to the selected WAN must be removed"
+    );
+    let networkctl_calls =
+        std::fs::read_to_string(harness.world.path("networkctl-calls.log")).unwrap();
+    assert!(
+        networkctl_calls.contains("reload"),
+        "the removal must be applied to the running systemd-networkd:\n{networkctl_calls}"
     );
 
     let confirm = harness.network_command(&["confirm"]);
@@ -228,15 +246,17 @@ fn automatic_network_rollback_restores_host_services() {
     assert_eq!(transaction["phase"], "rolled_back");
     assert_host_services_restored(&harness, &["systemd-resolved.service"]);
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
-    assert!(
-        !calls.contains("\"stop\",\"NetworkManager.service\""),
-        "NetworkManager must never be stopped:\n{calls}"
-    );
-    assert!(
-        !calls.contains("\"stop\",\"firewalld.service\""),
-        "firewalld must never be stopped:\n{calls}"
-    );
-    // 摘除的文件被恢复:drop-in 删除,zone 逐字还原。
+    for unit in [
+        "NetworkManager.service",
+        "firewalld.service",
+        "systemd-networkd.service",
+    ] {
+        assert!(
+            !calls.contains(&format!("\"stop\",\"{unit}\"")),
+            "{unit} must never be stopped:\n{calls}"
+        );
+    }
+    // 摘除的文件被恢复:drop-in 删除,zone 逐字还原,`.network` 逐字重建。
     assert!(
         !harness.host.join("nm-conf.d/lkit-unmanage.conf").exists(),
         "rollback must delete the NM drop-in"
@@ -245,6 +265,16 @@ fn automatic_network_rollback_restores_host_services() {
         std::fs::read_to_string(harness.host.join("firewalld-zones/public.xml")).unwrap(),
         SEEDED_FIREWALLD_ZONE,
         "rollback must restore the zone byte for byte"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            harness
+                .host
+                .join(format!("systemd-network/{SEEDED_NETWORKD_FILE}"))
+        )
+        .unwrap(),
+        SEEDED_NETWORKD_WAN,
+        "rollback must restore the .network file byte for byte"
     );
     let nmcli_calls = std::fs::read_to_string(harness.world.path("nmcli-calls.log")).unwrap();
     assert_eq!(
@@ -258,6 +288,13 @@ fn automatic_network_rollback_restores_host_services() {
         firewall_cmd_calls.matches("--reload").count(),
         2,
         "firewalld must be reloaded after unmanage and after restore:\n{firewall_cmd_calls}"
+    );
+    let networkctl_calls =
+        std::fs::read_to_string(harness.world.path("networkctl-calls.log")).unwrap();
+    assert_eq!(
+        networkctl_calls.matches("reload").count(),
+        2,
+        "systemd-networkd must be reloaded after unmanage and after restore:\n{networkctl_calls}"
     );
     assert!(
         !harness.backups_dir().join("hostnet").exists(),
@@ -439,6 +476,8 @@ iface ens5 inet static\n\
     );
 }
 
+/// systemd-networkd 是受支持的摘除目标,专门场景覆盖;真正未知的活动网络
+/// 管理器(如 wicked)仍在 preflight 被整体拒绝。
 #[test]
 fn network_takeover_rejects_other_active_network_manager() {
     if !e2e_enabled() {
@@ -446,15 +485,86 @@ fn network_takeover_rejects_other_active_network_manager() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-unknown-manager", "healthy", 10_000);
-    harness.seed_host_service("systemd-networkd.service");
+    harness.seed_host_service("wicked.service");
 
     let output = harness.run_takeover();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains(
-        "preflight check failed: unknown network manager systemd-networkd.service is active"
-    ));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("preflight check failed: unknown network manager wicked.service is active")
+    );
     assert!(
         !harness.transactions_dir().exists(),
         "preflight created a transaction before rejecting an unknown manager"
+    );
+}
+
+/// NET-15:systemd-networkd 主机(无 NM/firewalld)的接管移出引用选中接口的
+/// `.network` 文件、reload 运行中的 networkd;回滚按备份逐字重建文件。
+/// 服务全程不被停止。
+#[test]
+fn network_takeover_supports_systemd_networkd_without_network_manager() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("network-networkd", "healthy", 10_000);
+    harness.seed_host_service("systemd-resolved.service");
+    harness.seed_systemd_networkd();
+    let wan_network = harness
+        .host
+        .join(format!("systemd-network/{SEEDED_NETWORKD_FILE}"));
+
+    let output = harness.run_takeover();
+    assert!(
+        output.status.success(),
+        "takeover with systemd-networkd failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Name=ens3 精确集 ⊆ 选中集(ens3+ens4):文件整个移出,备份持有逐字副本。
+    assert!(
+        !wan_network.exists(),
+        "the .network file bound to the selected WAN must be removed"
+    );
+    assert!(
+        harness
+            .backups_dir()
+            .join("hostnet/networkd/manifest.json")
+            .is_file(),
+        "the networkd backup manifest is missing"
+    );
+    let networkctl_calls =
+        std::fs::read_to_string(harness.world.path("networkctl-calls.log")).unwrap();
+    assert!(
+        networkctl_calls.contains("reload"),
+        "the removal must be applied to the running networkd:\n{networkctl_calls}"
+    );
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    for verb in ["stop", "disable", "mask"] {
+        assert!(
+            !calls.contains(&format!("[\"{verb}\",\"systemd-networkd.service\"]")),
+            "systemd-networkd must not be {verb}ed:\n{calls}"
+        );
+    }
+
+    // 回滚:文件按 manifest 逐字重建,networkd 再次 reload,备份清除。
+    let rollback = harness.network_command(&["rollback", "--automatic"]);
+    assert_success(&rollback);
+    assert_eq!(
+        std::fs::read_to_string(&wan_network).unwrap(),
+        SEEDED_NETWORKD_WAN,
+        "rollback must restore the .network file byte for byte"
+    );
+    assert!(
+        !harness.backups_dir().join("hostnet").exists(),
+        "the hostnet backups must be removed after the restore"
+    );
+    let networkctl_calls =
+        std::fs::read_to_string(harness.world.path("networkctl-calls.log")).unwrap();
+    assert_eq!(
+        networkctl_calls.matches("reload").count(),
+        2,
+        "networkd must be reloaded after unmanage and again after the restore:\n{networkctl_calls}"
     );
 }

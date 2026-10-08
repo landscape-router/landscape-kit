@@ -149,6 +149,7 @@ mod tests {
                             uid: 0,
                             gid: 0,
                         },
+                        removed: false,
                     })
                     .into_iter()
                     .collect(),

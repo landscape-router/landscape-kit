@@ -391,6 +391,7 @@ esac
             export_base_url: server.base.clone(),
             nmcli: None,
             firewall_cmd: None,
+            networkctl: None,
             token: &TOKEN,
             confirm: &YES,
             health,

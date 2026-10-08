@@ -10,3 +10,4 @@ takeover.restored_host_network_services = "restored the pre-install host network
 takeover.networking_restart_failed = "failed to restart networking.service after restoring the host network config: %{error}"
 takeover.nm_reload_failed = "failed to make NetworkManager reload its configuration: %{error}"
 takeover.firewalld_reload_failed = "failed to make firewalld reload its zones: %{error}"
+takeover.networkd_reload_failed = "failed to make systemd-networkd reload its configuration: %{error}"

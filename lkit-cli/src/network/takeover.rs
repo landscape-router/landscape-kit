@@ -8,6 +8,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use lkit_hostnet::HostNetworkAdapter;
 use lkit_hostnet::firewalld::FirewalldAdapter;
 use lkit_hostnet::ifupdown::IfupdownAdapter;
+use lkit_hostnet::networkd::NetworkdAdapter;
 use lkit_hostnet::nm::{NmAdapter, UNMANAGE_CONF};
 use lkit_hostnet::{FileSources, Manifest, ToolPaths};
 
@@ -25,17 +26,13 @@ use super::config::{NetworkMode, NetworkPlan};
 /// 接管对宿主网络组件的两级处理:
 /// - 整体 stop/disable/mask 的只有 `systemd-resolved.service`:DNS 是主机全局
 ///   (stub 监听 :53、resolv.conf 归属),没有按接口摘除的文件语义。
-/// - NetworkManager 与 firewalld 保持运行:NM 通过 conf.d drop-in、firewalld
-///   通过 zone XML 的接口行摘除选中接口(见 `unmanage_selected_interfaces`),
-///   未选接口继续由宿主管理;回滚/卸载按 `backups/hostnet/<kind>` 的 manifest
-///   逐字恢复并 reload 对应守护进程。ifupdown 同理摘除并重启
-///   `networking.service`。
+/// - NetworkManager、firewalld 与 systemd-networkd 保持运行:NM 通过 conf.d
+///   drop-in、firewalld 通过 zone XML 的接口行、networkd 通过移出 `.network`
+///   文件摘除选中接口(见 `unmanage_selected_interfaces`),未选接口继续由宿主
+///   管理;回滚/卸载按 `backups/hostnet/<kind>` 的 manifest 逐字恢复并 reload
+///   对应守护进程。ifupdown 同理摘除并重启 `networking.service`。
 const HOST_SERVICES: [&str; 1] = ["systemd-resolved.service"];
-const UNKNOWN_NETWORK_MANAGERS: [&str; 3] = [
-    "systemd-networkd.service",
-    "wicked.service",
-    "connman.service",
-];
+const UNKNOWN_NETWORK_MANAGERS: [&str; 2] = ["wicked.service", "connman.service"];
 /// 接管摘除的宿主网络配置备份固定落点(地盘相对):同一主机只有一个
 /// Landscape 安装,备份跨事务存活,回滚/卸载后删除。目录内按适配器分子目录
 /// (`ifupdown`/`nm`/`firewalld`),各自一份 manifest,任一存在即接管未恢复。
@@ -43,6 +40,7 @@ const HOSTNET_BACKUP_REL: &str = "backups/hostnet";
 const HOSTNET_KIND_IFUPDOWN: &str = "ifupdown";
 const HOSTNET_KIND_NM: &str = "nm";
 const HOSTNET_KIND_FIREWALLD: &str = "firewalld";
+const HOSTNET_KIND_NETWORKD: &str = "networkd";
 
 pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
     let manager = runtime.service_manager.as_ref();
@@ -72,6 +70,7 @@ pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
     for (unit, dir) in [
         ("NetworkManager.service", &runtime.nm_conf_d),
         ("firewalld.service", &runtime.firewalld_zones),
+        ("systemd-networkd.service", &runtime.networkd_dir),
     ] {
         if systemd::inspect_host_service(systemd, unit)?.active && !dir.is_dir() {
             return Err(InstallError::Preflight(format!(
@@ -211,6 +210,9 @@ pub(crate) fn unmanage_selected_interfaces(
     {
         applied = true;
     }
+    if runtime.networkd_dir.is_dir() && unmanage_networkd_files(&selected, &runtime.networkd_dir)? {
+        applied = true;
+    }
     if applied {
         reload_running_host_daemons(runtime)?;
         Ok(Some(HOSTNET_BACKUP_REL.to_string()))
@@ -303,11 +305,52 @@ fn unmanage_firewalld_files(selected: &[String], zones: &Path) -> Result<bool, I
     }
 }
 
-/// 文件摘除后让运行中的宿主守护进程立即重读配置。NM/firewalld 未运行时跳过
-/// (drop-in/zone 在下次启动时生效);运行中但工具缺失或 reload 失败时报错,
+/// networkd 摘除:配置目录存在即移出 `[Match]` 只引用选中接口的 `.network`
+/// 文件。备份仍在但所有被移出文件已被人工重建时是现场漂移,明确拒绝。
+fn unmanage_networkd_files(selected: &[String], dir: &Path) -> Result<bool, InstallError> {
+    let backup_dir = hostnet_backup_dir(HOSTNET_KIND_NETWORKD);
+    if let Some(manifest) = read_hostnet_manifest(HOSTNET_KIND_NETWORKD)? {
+        let recreated = manifest.files.iter().any(|file| file.original.exists());
+        if recreated {
+            return Err(InstallError::Preflight(format!(
+                "the hostnet networkd backup exists but removed .network files were recreated; restore them or remove {} before takeover",
+                backup_dir.display()
+            )));
+        }
+        return Ok(true);
+    }
+    let sources = FileSources {
+        networkd_dir: Some(dir.to_path_buf()),
+        ..Default::default()
+    };
+    match NetworkdAdapter::new().execute_unmanage(
+        &sources,
+        selected,
+        &backup_dir,
+        &ToolPaths::default(),
+    ) {
+        Ok(outcome) => Ok(outcome.manifest.is_some()),
+        Err(error) => Err(InstallError::Preflight(format!(
+            "cannot unmanage host network interfaces [{}] from systemd-networkd: {error}",
+            selected.join(", ")
+        ))),
+    }
+}
+
+/// 文件摘除后让运行中的宿主守护进程立即重读配置。NM/firewalld/networkd 未
+/// 运行时跳过(文件改写在下次启动时生效);运行中但工具缺失或 reload 失败时报错,
 /// 运行时未生效的摘除不是有效接管,事务按失败清理恢复文件。
 fn reload_running_host_daemons(runtime: &InstallRuntime) -> Result<(), InstallError> {
     let manager = runtime.service_manager.as_ref();
+    if host_service_active(manager, "systemd-networkd.service") {
+        let networkctl = runtime.networkctl.as_deref().ok_or_else(|| {
+            InstallError::Preflight(
+                "systemd-networkd is active but networkctl was not found; install it or stop systemd-networkd before network takeover"
+                    .into(),
+            )
+        })?;
+        run_host_daemon_reload(networkctl, &["reload"], "systemd-networkd")?;
+    }
     if host_service_active(manager, "NetworkManager.service") {
         let nmcli = runtime.nmcli.as_deref().ok_or_else(|| {
             InstallError::Preflight(
@@ -359,6 +402,7 @@ pub(crate) fn hostnet_backup_stands() -> bool {
         HOSTNET_KIND_IFUPDOWN,
         HOSTNET_KIND_NM,
         HOSTNET_KIND_FIREWALLD,
+        HOSTNET_KIND_NETWORKD,
     ]
     .iter()
     .any(|kind| hostnet_kind_backup_stands(kind))
@@ -387,8 +431,8 @@ fn read_hostnet_manifest(kind: &str) -> Result<Option<Manifest>, InstallError> {
 
 /// 按 `backups/hostnet/<kind>` 的 manifest 逐字恢复每个适配器改写的宿主文件并
 /// 删除备份。无备份(接管未改写任何文件)时返回 false。文件恢复失败向上报错;
-/// 恢复后的运行时重载(`networking.service` 重启、NM/firewalld reload)由
-/// 调用方按各守护进程实况状态决定。
+/// 恢复后的运行时重载(`networking.service` 重启、NM/firewalld/networkd
+/// reload)由调用方按各守护进程实况状态决定。
 pub(crate) fn restore_hostnet_backup() -> Result<bool, InstallError> {
     let backup_root = layout::territory_relative(HOSTNET_BACKUP_REL);
     let mut restored = false;
@@ -396,6 +440,7 @@ pub(crate) fn restore_hostnet_backup() -> Result<bool, InstallError> {
         HOSTNET_KIND_IFUPDOWN,
         HOSTNET_KIND_NM,
         HOSTNET_KIND_FIREWALLD,
+        HOSTNET_KIND_NETWORKD,
     ] {
         let Some(manifest) = read_hostnet_manifest(kind)? else {
             continue;
@@ -410,7 +455,10 @@ pub(crate) fn restore_hostnet_backup() -> Result<bool, InstallError> {
             HOSTNET_KIND_NM => NmAdapter::new()
                 .restore(&manifest)
                 .map_err(adapter_restore)?,
-            _ => FirewalldAdapter::new()
+            HOSTNET_KIND_FIREWALLD => FirewalldAdapter::new()
+                .restore(&manifest)
+                .map_err(adapter_restore)?,
+            _ => NetworkdAdapter::new()
                 .restore(&manifest)
                 .map_err(adapter_restore)?,
         }
@@ -424,7 +472,8 @@ pub(crate) fn restore_hostnet_backup() -> Result<bool, InstallError> {
 
 /// reinit 前置校验:地盘 hostnet 备份仍在时,新的接口选择必须与摘除现场一致。
 /// 现场集合取各适配器反查结果的并集——ifupdown 的 manual stanza、NM drop-in 的
-/// `unmanaged-devices`、firewalld 快照与现场的差集。换选接口的重放需要完整的
+/// `unmanaged-devices`、firewalld 快照与现场的差集、networkd 被移出文件的
+/// `Name=` 精确集。换选接口的重放需要完整的
 /// 谱系回滚,不在当前范围;不一致时明确拒绝,引导用户走 uninstall + 重新接管。
 /// 无任何备份不设限。
 pub(crate) fn ensure_reinit_selection_matches_takeover(
@@ -463,6 +512,9 @@ fn ensure_reinit_selection_matches_files(
     if let Some(manifest) = read_hostnet_manifest(HOSTNET_KIND_FIREWALLD)? {
         unmanaged.extend(FirewalldAdapter::unmanaged_interfaces(&manifest));
     }
+    if let Some(manifest) = read_hostnet_manifest(HOSTNET_KIND_NETWORKD)? {
+        unmanaged.extend(NetworkdAdapter::unmanaged_interfaces(&manifest));
+    }
     if unmanaged.is_empty() {
         return Ok(());
     }
@@ -480,12 +532,13 @@ fn ensure_reinit_selection_matches_files(
 }
 
 /// 恢复宿主网络文件后的运行时重放:重启 active 的 `networking.service` 让
-/// `ifup -a` 重新套用原配置,reload 运行中的 NM/firewalld 重读 drop-in/zone。
+/// `ifup -a` 重新套用原配置,reload 运行中的 NM/firewalld/networkd 重读配置。
 /// 全部尽力而为——文件已是原样,失败只提示,守护进程下次重启自然收敛。
 pub(crate) fn reapply_host_network_after_restore(
     manager: &dyn ServiceManager,
     nmcli: Option<&Path>,
     firewall_cmd: Option<&Path>,
+    networkctl: Option<&Path>,
 ) {
     restart_networking_if_active(manager);
     if host_service_active(manager, "NetworkManager.service")
@@ -510,6 +563,18 @@ pub(crate) fn reapply_host_network_after_restore(
                 .map(|output| output.status.success()),
             firewall_cmd,
             crate::keys::TAKEOVER_FIREWALLD_RELOAD_FAILED,
+        );
+    }
+    if host_service_active(manager, "systemd-networkd.service")
+        && let Some(networkctl) = networkctl
+    {
+        report_reload_failure(
+            Command::new(networkctl)
+                .args(["reload"])
+                .output()
+                .map(|output| output.status.success()),
+            networkctl,
+            crate::keys::TAKEOVER_NETWORKD_RELOAD_FAILED,
         );
     }
 }
@@ -832,6 +897,7 @@ async fn rollback(
                         runtime.service_manager.as_ref(),
                         runtime.nmcli.as_deref(),
                         runtime.firewall_cmd.as_deref(),
+                        runtime.networkctl.as_deref(),
                     );
                 }
                 remove_recovery_units(root, &network, systemd, automatic)?;
@@ -1061,12 +1127,15 @@ mod tests {
         assert!(clear_selected_lan_addresses(&plan, Path::new("/bin/false")).is_ok());
     }
 
-    /// 临时地盘 + 临时宿主目录(interfaces 文件、NM conf.d、firewalld zones),
-    /// 返回 (地盘目录, interfaces 路径, conf.d 路径, zones 路径)。
+    /// 临时地盘 + 临时宿主目录(interfaces 文件、NM conf.d、firewalld zones、
+    /// networkd 配置目录),返回 (地盘目录, interfaces 路径, conf.d 路径,
+    /// zones 路径, networkd 路径)。
+    #[allow(clippy::type_complexity)]
     fn hostnet_fixture(
         tag: &str,
         interfaces: &str,
     ) -> (
+        std::path::PathBuf,
         std::path::PathBuf,
         std::path::PathBuf,
         std::path::PathBuf,
@@ -1085,7 +1154,9 @@ mod tests {
         std::fs::create_dir_all(&conf_d).unwrap();
         let zones = dir.join("firewalld/zones");
         std::fs::create_dir_all(&zones).unwrap();
-        (territory, interfaces_path, conf_d, zones)
+        let networkd = dir.join("systemd/network");
+        std::fs::create_dir_all(&networkd).unwrap();
+        (territory, interfaces_path, conf_d, zones, networkd)
     }
 
     const INTERFACES: &str = "\
@@ -1102,7 +1173,7 @@ iface ens5 inet static
 
     #[test]
     fn unmanage_rewrites_selected_and_backs_up_original() {
-        let (territory, interfaces, _, _) = hostnet_fixture("unmanage", INTERFACES);
+        let (territory, interfaces, _, _, _) = hostnet_fixture("unmanage", INTERFACES);
         let _guard = layout::test_territory(&territory);
 
         assert!(
@@ -1131,7 +1202,7 @@ iface ens5 inet static
 
     #[test]
     fn unmanage_without_ifupdown_or_stanzas_is_a_noop() {
-        let (territory, interfaces, _, _) = hostnet_fixture("noop", INTERFACES);
+        let (territory, interfaces, _, _, _) = hostnet_fixture("noop", INTERFACES);
         let _guard = layout::test_territory(&territory);
 
         // 选中接口不在 ifupdown 配置中:不改任何文件、不建备份。
@@ -1151,19 +1222,23 @@ iface ens5 inet static
         let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
-    /// 三个适配器同时摘除:各建各的备份,恢复一次调用全部逐字还原。
+    /// 四个适配器同时摘除:各建各的备份,恢复一次调用全部逐字还原。
     #[test]
     fn multi_adapter_unmanage_and_restore_round_trip() {
-        let (territory, interfaces, conf_d, zones) = hostnet_fixture("multi", INTERFACES);
+        let (territory, interfaces, conf_d, zones, networkd) = hostnet_fixture("multi", INTERFACES);
         let _guard = layout::test_territory(&territory);
         let zone = zones.join("public.xml");
         let zone_original = "<?xml version=\"1.0\"?>\n<zone>\n  <short>Public</short>\n  <interface name=\"ens3\"/>\n  <interface name=\"ens9\"/>\n</zone>\n";
         std::fs::write(&zone, zone_original).unwrap();
+        let wan_network = networkd.join("10-wan.network");
+        let wan_original = "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n";
+        std::fs::write(&wan_network, wan_original).unwrap();
         let selected = vec!["ens3".to_string(), "ens4".to_string()];
 
         assert!(unmanage_ifupdown_files(&selected, &interfaces, None).unwrap());
         assert!(unmanage_nm_files(&selected, &conf_d).unwrap());
         assert!(unmanage_firewalld_files(&selected, &zones).unwrap());
+        assert!(unmanage_networkd_files(&selected, &networkd).unwrap());
         assert!(hostnet_backup_stands());
 
         let drop_in = std::fs::read_to_string(conf_d.join(UNMANAGE_CONF)).unwrap();
@@ -1172,11 +1247,16 @@ iface ens5 inet static
         let zone_current = std::fs::read_to_string(&zone).unwrap();
         assert!(!zone_current.contains("ens3"));
         assert!(zone_current.contains("ens9"));
+        assert!(
+            !wan_network.exists(),
+            "the selected .network file must be removed"
+        );
 
         assert!(restore_hostnet_backup().unwrap());
         assert_eq!(std::fs::read_to_string(&interfaces).unwrap(), INTERFACES);
         assert!(!conf_d.join(UNMANAGE_CONF).exists());
         assert_eq!(std::fs::read_to_string(&zone).unwrap(), zone_original);
+        assert_eq!(std::fs::read_to_string(&wan_network).unwrap(), wan_original);
         assert!(
             !territory.join(HOSTNET_BACKUP_REL).exists(),
             "the hostnet backup root must be removed after a full restore"
@@ -1191,7 +1271,7 @@ iface ens5 inet static
     /// 接管继续。
     #[test]
     fn stale_nm_backup_without_drop_in_is_rejected() {
-        let (territory, _, conf_d, _) = hostnet_fixture("stale-nm", INTERFACES);
+        let (territory, _, conf_d, _, _) = hostnet_fixture("stale-nm", INTERFACES);
         let _guard = layout::test_territory(&territory);
         assert!(
             unmanage_nm_files(&["ens3".into()], &conf_d).unwrap(),
@@ -1210,10 +1290,16 @@ iface ens5 inet static
 
     #[test]
     fn reinit_gate_matches_the_standing_unmanaged_set() {
-        let (territory, interfaces, conf_d, zones) = hostnet_fixture("reinit-gate", INTERFACES);
+        let (territory, interfaces, conf_d, zones, networkd) =
+            hostnet_fixture("reinit-gate", INTERFACES);
         let _guard = layout::test_territory(&territory);
         let zone = zones.join("public.xml");
         std::fs::write(&zone, "<zone>\n  <interface name=\"ens3\"/>\n</zone>\n").unwrap();
+        std::fs::write(
+            networkd.join("10-wan.network"),
+            "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n",
+        )
+        .unwrap();
         let gate = |selected: &[String]| {
             ensure_reinit_selection_matches_files(selected, &interfaces, &conf_d)
         };
@@ -1252,6 +1338,30 @@ iface ens5 inet static
         gate(&["ens3".to_string()]).expect_err("the NM drop-in pins ens4");
         gate(&["ens4".to_string()]).expect_err("the firewalld backup still pins ens3");
         gate(&["ens3".to_string(), "ens4".to_string()]).unwrap();
+
+        // networkd 被移出文件的 Name= 精确集并入:先模拟 firewalld 备份恢复,
+        // 现场只剩 NM{ens4};networkd 移出 ens3 后全集重新变回 {ens3, ens4}。
+        std::fs::remove_dir_all(territory.join(HOSTNET_BACKUP_REL).join("firewalld")).unwrap();
+        gate(&["ens4".to_string()]).unwrap();
+        assert!(unmanage_networkd_files(&["ens3".into()], &networkd).unwrap());
+        gate(&["ens4".to_string()]).expect_err("the removed .network file still pins ens3");
+        gate(&["ens3".to_string(), "ens4".to_string()]).unwrap();
+
+        // 备份仍在而文件被人工重建:再次摘除被明确拒绝,反查不再计入被重建
+        // 文件的名字。
+        std::fs::write(
+            networkd.join("10-wan.network"),
+            "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n",
+        )
+        .unwrap();
+        let error = unmanage_networkd_files(&["ens3".into()], &networkd)
+            .expect_err("a recreated .network file with a standing backup must be rejected");
+        assert!(
+            matches!(error, InstallError::Preflight(ref message) if message.contains("recreated")),
+            "unexpected error: {error:?}"
+        );
+        gate(&["ens4".to_string()]).unwrap();
+        gate(&["ens3".to_string()]).expect_err("the NM drop-in still pins ens4");
 
         let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }

@@ -118,10 +118,12 @@
 - 状态：`已覆盖`
 - 证据：[网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)、
   [unmanaged_interfaces 反查](../../../../crates/lkit-hostnet/src/ifupdown/mod.rs)、
-  [NM/firewalld 反查](../../../../crates/lkit-hostnet/src/nm/mod.rs)、
+  [NM 反查](../../../../crates/lkit-hostnet/src/nm/mod.rs)、
+  [networkd 反查](../../../../crates/lkit-hostnet/src/networkd/mod.rs)、
   [网络重配置·使用边界](../../../network/reinit.md)
 - 说明：lkit 反查各适配器的摘除现场——ifupdown（当前 manual-bare 且原始快照非
   manual-bare，宿主自声明的 manual stanza 不算）、NM drop-in 的 `unmanaged-devices`
-  条目、firewalld 快照与现场的差集——取并集与新选择的接口集合比对；集合一致（顺序
+  条目、firewalld 快照与现场的差集、networkd 被移出文件的 `Name=` 精确集（文件被人工
+  重建则不再计入）——取并集与新选择的接口集合比对；集合一致（顺序
   无关）通过，换选/多选/少选在创建事务前返回参数错误。无任何 hostnet 备份不设限。
 - 缺口：CLI fixture E2E 层的 ifupdown reinit 场景（同集合通过、换集合拒绝）尚未建立。

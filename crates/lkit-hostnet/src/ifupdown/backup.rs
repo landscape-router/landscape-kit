@@ -226,7 +226,45 @@ pub(crate) fn restore_if_unchanged(
             }
         }
     }
+    let mut pending_removed = Vec::new();
     for ((file, original), edit) in restore_files.iter().zip(planned_edits.iter().copied()) {
+        if edit.removed {
+            // 摘除编辑的计划结果 = 文件不存在:仍为原始快照则跳过(尚未应用),
+            // 已消失则从备份重建,其他内容是外部修改,保留并上报。
+            match std::fs::symlink_metadata(&edit.path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    pending_removed.push((
+                        file.original.clone(),
+                        original.clone(),
+                        file.metadata.clone(),
+                    ));
+                }
+                Ok(_) => {
+                    let metadata = edit::capture_metadata(&edit.path)?;
+                    let current = std::fs::read(&edit.path).map_err(|source| {
+                        HostNetError::UnreadableFile {
+                            path: edit.path.clone(),
+                            source,
+                        }
+                    })?;
+                    if metadata == edit.metadata && current == edit.original_content {
+                        continue;
+                    }
+                    if conflict.is_none() {
+                        conflict = Some(HostNetError::ConcurrentModification {
+                            path: edit.path.clone(),
+                        });
+                    }
+                }
+                Err(source) => {
+                    return Err(HostNetError::UnreadableFile {
+                        path: edit.path.clone(),
+                        source,
+                    });
+                }
+            }
+            continue;
+        }
         let metadata = edit::capture_metadata(&edit.path)?;
         let current = std::fs::read(&edit.path).map_err(|source| HostNetError::UnreadableFile {
             path: edit.path.clone(),
@@ -251,6 +289,9 @@ pub(crate) fn restore_if_unchanged(
             Some(&edit.metadata),
             Some((edit.content.as_bytes(), &edit.metadata)),
         )?;
+    }
+    for (path, original, metadata) in pending_removed {
+        edit::write_atomic_checked(&path, &original, Some(&metadata), None)?;
     }
     for path in pending_created {
         std::fs::remove_file(&path)
@@ -320,6 +361,7 @@ mod tests {
         EditPlan {
             edits: vec![FileEdit {
                 created: false,
+                removed: false,
                 path: original.to_path_buf(),
                 original_content: std::fs::read(original).unwrap(),
                 content: content.into(),

@@ -93,6 +93,7 @@ pub(super) fn plan_unmanage(
             content,
             metadata,
             created,
+            removed: false,
         }],
     })
 }

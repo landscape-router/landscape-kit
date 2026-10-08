@@ -258,8 +258,9 @@ iface ens4 inet dhcp\n";
     );
 }
 
-/// UNI-15:接管安装(NM drop-in + firewalld zone 摘除)卸载时删除 drop-in、逐字
-/// 恢复 zone,并 reload 运行中的 NM/firewalld;两者全程不被停止。
+/// UNI-15:接管安装(NM drop-in + firewalld zone 摘除 + networkd `.network`
+/// 移出)卸载时删除 drop-in、逐字恢复 zone 与 `.network`,并 reload 运行中的
+/// NM/firewalld/networkd;三者全程不被停止。
 #[test]
 fn uninstall_restores_nm_and_firewalld_after_takeover() {
     if !e2e_enabled() {
@@ -279,6 +280,13 @@ fn uninstall_restores_nm_and_firewalld_after_takeover() {
     assert!(
         !zone.contains("ens3"),
         "the takeover must have removed ens3:\n{zone}"
+    );
+    let wan_network = harness
+        .host
+        .join(format!("systemd-network/{SEEDED_NETWORKD_FILE}"));
+    assert!(
+        !wan_network.exists(),
+        "the takeover must have removed the .network file bound to ens3"
     );
     assert!(
         harness
@@ -312,6 +320,11 @@ fn uninstall_restores_nm_and_firewalld_after_takeover() {
         SEEDED_FIREWALLD_ZONE,
         "uninstall must restore the zone byte for byte"
     );
+    assert_eq!(
+        std::fs::read_to_string(&wan_network).unwrap(),
+        SEEDED_NETWORKD_WAN,
+        "uninstall must restore the .network file byte for byte"
+    );
     assert!(
         !harness.backups_dir().join("hostnet").exists(),
         "the hostnet backups must be removed after the restore"
@@ -325,6 +338,10 @@ fn uninstall_restores_nm_and_firewalld_after_takeover() {
         !calls.contains("stop\",\"firewalld.service"),
         "firewalld must never be stopped:\n{calls}"
     );
+    assert!(
+        !calls.contains("stop\",\"systemd-networkd.service"),
+        "systemd-networkd must never be stopped:\n{calls}"
+    );
     let nmcli_calls = std::fs::read_to_string(harness.world.path("nmcli-calls.log")).unwrap();
     assert!(
         nmcli_calls.matches("general reload").count() >= 2,
@@ -335,5 +352,11 @@ fn uninstall_restores_nm_and_firewalld_after_takeover() {
     assert!(
         firewall_cmd_calls.matches("--reload").count() >= 2,
         "firewalld must be reloaded after unmanage and again after the restore:\n{firewall_cmd_calls}"
+    );
+    let networkctl_calls =
+        std::fs::read_to_string(harness.world.path("networkctl-calls.log")).unwrap();
+    assert!(
+        networkctl_calls.matches("reload").count() >= 2,
+        "systemd-networkd must be reloaded after unmanage and again after the restore:\n{networkctl_calls}"
     );
 }

@@ -143,6 +143,7 @@ pub(crate) fn plan_unmanage(
                 .collect();
             edits.push(FileEdit {
                 created: false,
+                removed: false,
                 path: path.clone(),
                 original_content: content.as_bytes().to_vec(),
                 content: render(&new_lines, parsed.ends_with_newline),
@@ -160,6 +161,12 @@ pub(crate) fn apply(plan: &EditPlan) -> Result<EditOutcome, HostNetError> {
     let mut edited = Vec::new();
     for edit in &plan.edits {
         verify_edit(edit)?;
+        if edit.removed {
+            // 摘除 = 删除整个文件;verify_edit 已确认它仍与计划时的快照一致。
+            remove_regular_file(&edit.path)?;
+            edited.push(edit.path.clone());
+            continue;
+        }
         // 新建文件没有"改写前快照"可比对(目标必须不存在),由 verify_edit 保证。
         let expected =
             (!edit.created).then_some((edit.original_content.as_slice(), &edit.metadata));
@@ -322,6 +329,25 @@ pub(crate) fn capture_metadata(path: &Path) -> Result<FileMetadata, HostNetError
         mode: metadata.mode() & 0o7777,
         uid: metadata.uid(),
         gid: metadata.gid(),
+    })
+}
+
+/// 删除一个已确认存在的普通文件;符号链接与其他类型拒绝。
+fn remove_regular_file(path: &Path) -> Result<(), HostNetError> {
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|source| HostNetError::UnreadableFile {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(HostNetError::PathSafety {
+            path: path.to_path_buf(),
+            reason: "refusing to remove a non-regular file".into(),
+        });
+    }
+    std::fs::remove_file(path).map_err(|source| HostNetError::UnreadableFile {
+        path: path.to_path_buf(),
+        source,
     })
 }
 

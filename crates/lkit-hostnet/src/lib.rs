@@ -8,6 +8,7 @@ pub mod error;
 pub mod firewalld;
 pub mod ifupdown;
 pub mod model;
+pub mod networkd;
 pub mod nm;
 
 pub use adapter::HostNetworkAdapter;

@@ -88,7 +88,8 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 状态：`已覆盖`
 - 证据：[`lkit uninstall`](../../../commands/uninstall.md#卸载前检查)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)
 - 说明：接管特征（systemd-resolved 被 stop/disable/mask，或存在未恢复的 hostnet
-  摘除备份——ifupdown/NM/firewalld 任一适配器；交互模式以确认提示呈现）不阻断卸载；
+  摘除备份——ifupdown/NM/firewalld/networkd 任一适配器；交互模式以确认提示呈现）
+  不阻断卸载；
   systemd-resolved 按事务快照恢复，接口摘除按 UNI-14/UNI-15 恢复。
 
 ## UNI-14
@@ -105,15 +106,16 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 
 ## UNI-15
 
-**接管安装（NM drop-in 与 firewalld zone 摘除）卸载时删除 drop-in、逐字恢复 zone 并 reload 运行中的守护进程**
+**接管安装（NM drop-in、firewalld zone 与 networkd `.network` 摘除）卸载时删除 drop-in、逐字恢复 zone 与移出文件并 reload 运行中的守护进程**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)、
   [网络接管摘除实现](../../../../lkit-cli/src/network/takeover.rs)
-- 说明：卸载删除接管创建的 `lkit-unmanage.conf`、逐字节恢复被改写的 zone XML，清理
-  `backups/hostnet/{nm,firewalld}` 备份，并对运行中的 NM/firewalld 再次 reload；
-  两个服务全程不被停止、不执行任何 systemctl 调用。
+- 说明：卸载删除接管创建的 `lkit-unmanage.conf`、逐字节恢复被改写的 zone XML、逐字
+  重建被移出的 `.network` 文件，清理 `backups/hostnet/{nm,firewalld,networkd}` 备份，
+  并对运行中的 NM/firewalld/networkd 再次 reload；
+  三个服务全程不被停止、不执行任何 systemctl 调用。
 
 ## UNI-09
 

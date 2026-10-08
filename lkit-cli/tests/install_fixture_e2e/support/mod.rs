@@ -9,7 +9,10 @@ mod repo;
 mod transactions;
 pub(crate) mod world;
 
-pub(crate) use self::harness::{InstallHarness, SEEDED_FIREWALLD_ZONE, write_valid_state_at};
+pub(crate) use self::harness::{
+    InstallHarness, SEEDED_FIREWALLD_ZONE, SEEDED_NETWORKD_FILE, SEEDED_NETWORKD_WAN,
+    write_valid_state_at,
+};
 pub(crate) use self::pty::{Pty, attach_pty};
 pub(crate) use self::repo::{
     RepositoryServer, SelfUpgradeFixture, frontend_files_for, repository_files,

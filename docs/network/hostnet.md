@@ -3,8 +3,8 @@
 ## 职责
 
 `lkit-hostnet` 是独立于 lkit-cli 的纯库 crate，负责"把选中的网络接口从宿主网络管理器中
-摘除，并在回滚/卸载时恢复"。实现三个适配器：ifupdown、NetworkManager（conf.d
-drop-in）与 firewalld（zone XML 接口行）；systemd-networkd 适配器尚未实现。
+摘除，并在回滚/卸载时恢复"。实现四个适配器：ifupdown、NetworkManager（conf.d
+drop-in）、firewalld（zone XML 接口行）与 systemd-networkd（`.network` 文件移出）。
 
 当前托管网络管理的整体行为见[网络接管](takeover.md)；本文档描述 `lkit-hostnet` 本身的
 设计与测试。
@@ -15,15 +15,15 @@ drop-in）与 firewalld（zone XML 接口行）；systemd-networkd 适配器尚�
   路径全部注入，可脱离 CLI 独立测试；
 - lkit-cli 的接管流程只依赖本 crate 的 trait 接口（`execute_unmanage`/`restore`），
   适配器内部逻辑的演进不影响调用方；
-- systemd-networkd（`.network` 文件移出）等适配器在同一 crate 内新增模块即可，调用方
+- systemd-networkd（`.network` 文件移出）即按此路径在同一 crate 内新增模块，调用方
   接口不变。
 
 ## 设计边界
 
 - **只操作宿主网络配置文件**：ifupdown 的 `/etc/network/interfaces`（含 `source`
   和 `source-directory` 引用的文件）、NetworkManager 的 conf.d drop-in、firewalld 的
-  zone XML。不直接操作接口、不调用 `systemctl`/`nmcli`/`firewall-cmd`、不碰 `ip`
-  命令；
+  zone XML、systemd-networkd 的 `.network` 文件。不直接操作接口、不调用
+  `systemctl`/`nmcli`/`firewall-cmd`/`networkctl`、不碰 `ip` 命令；
 - **摘除与恢复对称**：接管时备份原文件逐字副本（新建的文件记录为 created，无逐字
   副本），回滚/卸载时按 manifest 逐字覆盖恢复或删除，不依赖 diff 或补丁；
 - **保守解析**：只识别文档化的语法结构，遇到无法解析的内容报错而非猜测；
@@ -44,10 +44,11 @@ lkit-hostnet
 ├── nm/             NetworkManager 适配器（conf.d drop-in）
 │   ├── collect.rs  conf.d 清单收集（drop-in 是否已存在）
 │   └── edit.rs     drop-in 内容生成与元数据
-└── firewalld/      firewalld 适配器（zone XML 接口行删除）
+├── firewalld/      firewalld 适配器（zone XML 接口行删除）
+└── networkd/       systemd-networkd 适配器（.network 文件移出）
 ```
 
-适配器实现统一的 trait（ifupdown、nm、firewalld 均已实现）。调用方应优先使用
+适配器实现统一的 trait（ifupdown、nm、firewalld、networkd 均已实现）。调用方应优先使用
 `execute_unmanage`；分步方法保留给适配器专项测试：
 
 ```rust
@@ -83,7 +84,7 @@ backup 成功后的 apply 错误、validate 错误或 dry-run 非零退出都会
 检测到其他外部内容或元数据时保留外部修改并返回 `RecoveryFailed`。显式调用
 `restore` 仍按 manifest 无条件恢复（改写条目逐字还原、created 条目删除）。工具缺失
 返回 `Validation::Unavailable`，视为 warning 性质的成功结果。`FileSet` 为空或计划为空时
-不创建备份目录。备份与原子写等文件操作由 ifupdown 模块提供、三个适配器共用。
+不创建备份目录。备份与原子写等文件操作由 ifupdown 模块提供、四个适配器共用。
 
 `FileSources`、backup 目录和 manifest 中的路径必须是绝对路径。配置入口和 source 最终
 文件必须是普通非符号链接文件；符号链接会在任何写入前以 `PathSafety` 阻断。
@@ -165,12 +166,29 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
 - **反查**：`FirewalldAdapter::unmanaged_interfaces(manifest)` 取"manifest 快照中原有
   的整行接口名 − 现场文件仍存在的名字"差集；快照或现场文件缺失按空集处理。
 
+## systemd-networkd 适配器
+
+- **文件范围**：配置目录（路径注入，生产环境 `/etc/systemd/network/`）中全部
+  `*.network`（按文件名排序）。`.netdev` 定义虚拟设备，选中接口均为物理接口，不收集；
+  目录缺失时为 no-op；目录或文件是符号链接时以 `PathSafety` 阻断。
+- **改写规则**：`[Match]` 段 `Name=` 的精确名集合 ⊆ 选中集合时把文件整体移出——
+  networkd 的 `[Match]` 同键条目 OR、异键 AND，`Name=` 精确集即匹配集上界，整文件移出
+  不会波及未选接口。`Name=` 以 glob 引用选中接口（无法归因完整匹配集）、或同一文件
+  同时引用选中与未选精确名时保守拒绝（`UnsupportedSyntax`），计划阶段即失败、不改
+  任何文件；无 `Name=`（按 MAC/Driver 等匹配）的文件不按名字归因，原样跳过。
+- **恢复**：移出的文件按备份逐字副本重建（恢复 mode/uid/gid）；guarded 恢复中删除后
+  被外部重建的文件保留并上报 `ConcurrentModification`。
+- **校验**：无 dry-run 工具，`validate` 返回 `Unavailable`；运行时效果由调用方
+  `networkctl reload` 重读生效。
+- **反查**：`NetworkdAdapter::unmanaged_interfaces(manifest)` 取"manifest 中 original
+  路径已消失的移出文件"的 `Name=` 精确名并集；文件被人工重建则不再计入。
+
 ## 备份与恢复格式
 
-`backup(plan, dest)` 要求 `dest` 是不存在的绝对路径。改写条目把源文件逐字复制到
-`dest/<序号>/<源文件名>`；新建条目只记录路径与元数据（无逐字副本）。manifest 写
-`dest/manifest.json`（`backup` 字段为绝对路径），记录源文件的 mode、uid、gid；备份
-文件和 manifest 使用 `0600`：
+`backup(plan, dest)` 要求 `dest` 是不存在的绝对路径。改写与移出条目（`FileEdit.removed`，
+整文件删除）把源文件逐字复制到 `dest/<序号>/<源文件名>`；新建条目只记录路径与元数据
+（无逐字副本）。manifest 写 `dest/manifest.json`（`backup` 字段为绝对路径），记录源文件
+的 mode、uid、gid；备份文件和 manifest 使用 `0600`：
 
 ```json
 {
@@ -192,8 +210,8 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
 ```
 
 `restore(manifest)` 先完整读取并验证所有备份，再按 `original` 路径逐字覆盖恢复每个
-改写文件、删除每个 created 文件（目标为符号链接时 `PathSafety` 阻断），覆盖前不要求
-文件仍处于改写状态（幂等），用于显式回滚/卸载。事务失败使用
+改写文件、逐字重建每个移出文件、删除每个 created 文件（目标为符号链接时 `PathSafety`
+阻断），覆盖前不要求文件仍处于改写状态（幂等），用于显式回滚/卸载。事务失败使用
 `restore_if_unchanged`，只恢复仍处于本次编辑结果的文件；外部漂移不会被覆盖。
 恢复后接口是否立即重新配置（如 `systemctl restart networking.service`、
 `nmcli general reload`）由调用方决定，本 crate 不执行。
@@ -241,6 +259,8 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
     确定性元数据、反查；
   - firewalld：整行删除与逐字恢复、无关 zone 不动、混合形态拒绝（不改任何文件）、
     反查差集；
+  - networkd：可归因文件移出与逐字重建、混合精确名拒绝、glob 引用选中接口拒绝、
+    无 `Name=` 文件跳过、反查排除被重建文件、guarded 恢复保留外部重建；
   - 备份/恢复：逐字一致、私有备份、幂等恢复、created 条目删除、guarded rollback
     保留外部修改、manifest 元数据往返、schema/符号链接拒绝；
   - 原子写回：独占临时文件、旧临时符号链接不跟随、失败路径不留残留。
@@ -256,28 +276,29 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
 `lkit-hostnet` 依赖接入接管流程：
 
 - runtime 注入各适配器入口与工具路径：`interfaces_file`/`ifup_command`（ifupdown）、
-  `nm_conf_d`（NM drop-in 落点）、`firewalld_zones`（zone 目录）、`nmcli` 与
-  `firewall_cmd`（运行时 reload 工具）。`networking.service`、NetworkManager 与
-  firewalld 都不在 lkit-cli 的整体 stop/disable/mask 服务清单内（清单只剩
-  systemd-resolved），相关宿主的摘除完全由本 crate 的文件改写承担。
-- 接管时按目录存在性选择适配器（ifupdown 主配置文件、NM conf.d、firewalld zones，
-  可组合），各自经 `execute_unmanage` 备份并改写，备份固定落 lkit 地盘
-  `backups/hostnet/<ifupdown|nm|firewalld>/`；摘除先于停止宿主服务执行，失败即中止
-  整个安装。文件改写后 lkit-cli 对运行中的 NM/firewalld 执行 reload（工具缺失或失败
-  即中止）。
-- 回滚与卸载时按各 manifest 逐字恢复（NM drop-in 删除），再按服务实况重放运行时：
-  `networking.service` active 时 restart、运行中的 NM/firewalld reload（尽力而为）。
+  `nm_conf_d`（NM drop-in 落点）、`firewalld_zones`（zone 目录）、`networkd_dir`
+  （`.network` 目录）、`nmcli`/`firewall_cmd`/`networkctl`（运行时 reload 工具）。
+  `networking.service`、NetworkManager、firewalld 与 systemd-networkd 都不在 lkit-cli
+  的整体 stop/disable/mask 服务清单内（清单只剩 systemd-resolved），相关宿主的摘除
+  完全由本 crate 的文件改写承担。
+- 接管时按目录存在性选择适配器（ifupdown 主配置文件、NM conf.d、firewalld zones、
+  networkd 配置目录，可组合），各自经 `execute_unmanage` 备份并改写，备份固定落 lkit
+  地盘 `backups/hostnet/<ifupdown|nm|firewalld|networkd>/`；摘除先于停止宿主服务执行，
+  失败即中止整个安装。文件改写后 lkit-cli 对运行中的 NM/firewalld/networkd 执行
+  reload（工具缺失或失败即中止）。
+- 回滚与卸载时按各 manifest 逐字恢复（NM drop-in 删除、networkd 移出文件重建），再按
+  服务实况重放运行时：`networking.service` active 时 restart、运行中的
+  NM/firewalld/networkd reload（尽力而为）。
 - 接管生效的判定（reinit 前置校验、卸载警告）除服务状态探测外，还把地盘未恢复的
   hostnet 备份（任一适配器）视为接管特征。
 - reinit 必须维持与既有接管相同的接口集合：现场集合取各适配器反查（ifupdown manual
-  stanza、NM drop-in 条目、firewalld 快照差集）的并集比对，换选接口需先 uninstall
-  再重新接管。
+  stanza、NM drop-in 条目、firewalld 快照差集、networkd 移出文件 Name= 精确集）的
+  并集比对，换选接口需先 uninstall 再重新接管。
 
 整体行为见[网络接管](takeover.md)。
 
 ## 后续迭代
 
-- systemd-networkd 适配器：移出匹配选中接口的 `.network` 文件；
 - `unmanaged_interfaces` 从各适配器固有方法提升到 trait，以及 ifupdown 主机上 reinit
   换选接口的原地重放与谱系回滚；
 - 更复杂的 shell 风格 `source` 展开，以及 bridge/bond 的其他依赖声明形式。
