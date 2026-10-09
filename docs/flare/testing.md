@@ -20,7 +20,7 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 | `scripts/flare/e2e-daemon.sh` | daemon 托管形态（`lkit daemon` + config.toml `[flare]` 段托管 flare 服务端，lflare 客户端建立会话，不执行隧道转发） |
 | `scripts/flare/Dockerfile` | Debian 13 slim 镜像，双模式运行时依赖：有 `packages/*.deb` 时离线 dpkg 安装（本地，`docker build` 无需网络），无 `.deb` 时（CI）apt 在线安装 `iproute2 netcat-openbsd python3`；内置测试服务与协议/连接探针 |
 | `scripts/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `scripts/flare/packages/`（gitignored，仅保留 `.gitkeep`），供本地离线镜像构建使用 |
-| `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发，`cargo build --locked --workspace` 后依次运行 7 个场景脚本 |
+| `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发；prepare 任务预热 Cargo 缓存后，每个场景任务在恢复的缓存上对当前 checkout 重新 `cargo build --locked --workspace`（缓存键只含 Cargo.lock，源码变更不会换键，不重建就会测到旧二进制）再各跑一个场景脚本 |
 
 ## 场景拓扑
 

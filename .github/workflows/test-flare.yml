@@ -84,6 +84,14 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-flare-e2e-${{ hashFiles('**/Cargo.lock') }}
+      # Rebuild on top of the restored cache: the cache key only tracks
+      # Cargo.lock, so on a key hit the cache holds binaries built from an
+      # older source tree, and the prepare job's fresh build never reaches
+      # this job (a cache hit is never re-saved). Building here (a quick
+      # incremental pass) is what makes the scripts under test match this
+      # checkout instead of whatever the cache froze.
+      - name: Rebuild the checkout under test
+        run: cargo build --locked --workspace
       - name: Run ${{ matrix.scenario }} e2e
         # The e2e image installs runtime dependencies via apt inside the
         # Dockerfile (no .deb files are present in CI); locally the scripts
