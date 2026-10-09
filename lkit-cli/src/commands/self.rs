@@ -78,6 +78,7 @@ pub enum SelfAction {
     /// 注册全局常驻 daemon 并启动
     Install(InstallSelfArgs),
     /// 升级 /usr/local/bin/lkit 与常驻 daemon
+    #[command(visible_alias = "update")]
     Upgrade(UpgradeArgs),
     /// 停止、注销并删除常驻 daemon(幂等)
     Remove(SelfArgs),
@@ -777,6 +778,12 @@ mod tests {
         match upgrade.action {
             SelfAction::Upgrade(args) => assert!(args.version.is_none()),
             _ => panic!("expected upgrade"),
+        }
+        // `update` 是 `upgrade` 的可见别名,两种写法都指向同一动作。
+        let aliased = parse(&["self", "update", "--version", "v0.2.0"]).unwrap();
+        match aliased.action {
+            SelfAction::Upgrade(args) => assert_eq!(args.version.as_deref(), Some("v0.2.0")),
+            _ => panic!("expected upgrade via the update alias"),
         }
         let upgrade = parse(&["self", "upgrade", "--version", "v0.2.0-rc.1"]).unwrap();
         match upgrade.action {

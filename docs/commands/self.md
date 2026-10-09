@@ -13,6 +13,9 @@ lkit self upgrade [--version <TAG>]
 lkit self remove
 ```
 
+`upgrade` 的别名是 `update`(`lkit self update` 等价于 `lkit self upgrade`);
+顶层 `lkit update` 更新的是 landscape 托管安装,与这里的自身升级无关。
+
 `self` 命令都不接收 `--install-dir`。
 
 daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
