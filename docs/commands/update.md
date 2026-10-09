@@ -8,6 +8,7 @@
 ```text
 lkit update [--version <VERSION>] [--repository [<BASE_URL>]]
             [--accept-service-change] [--allow-no-backup]
+            [--accept-custom-backend]
 ```
 
 landscape 根从 `install-state.json` 发现，命令不接收 `--install-dir`。
@@ -26,7 +27,9 @@ landscape 根从 `install-state.json` 发现，命令不接收 `--install-dir`�
    - 更低：返回参数使用错误（退出码 `2`），不创建切换事务（沿用 switch 的降级规则）；
    - 更高：展示 `当前 <X> → 目标 <Y>` 并要求输入完整 `yes` 确认。拒绝这次升级确认时返回
      退出码 `1`，不创建事务、不下载、零副作用；后续仍按 switch 规则
-     询问用户是否已停止外部 Landscape。
+     询问用户是否已停止外部 Landscape。当前后端为 `custom` 或 `drifted` 时，
+     在升级确认之后追加 switch 的后端替换确认（非交互委托路径由
+     `--accept-custom-backend` 表示，见[升级合法性门槛](switch.md#升级合法性门槛)）；
 4. **执行**：确认后复用 `lkit switch --version <Y> [--repository ...]` 的流水线。备份、
    回滚、systemd worker、退出码 `0/1/2/5/6` 语义全部与
    switch 一致，见 [`lkit switch`](switch.md)。

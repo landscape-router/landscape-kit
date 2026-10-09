@@ -101,3 +101,15 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
   不可信或残缺目录仍以 `ReleaseExists` 阻断且不修改。复用规则与首次安装
   [INS-11](install.md#ins-11) 相同，switch 复用用例见 [SW-11](switch.md#sw-11)。
 - 缺口：控制台 Update 面板分发入口的复用路径未单独做 E2E 断言（面板与命令共享同一 switch 流水线）。
+
+## UP-10
+
+**后端非合法状态时追加替换确认，拒绝或非交互缺参则零副作用**
+
+- 测试层：CLI/伪终端、Rust workflow
+- 状态：`待补充`
+- 证据：[升级合法性门槛](../../../commands/switch.md#升级合法性门槛)、[后端合法性与主线对照](../../../deployment/backend-legality.md)
+- 说明：当前后端为 `custom` 或 `drifted` 时，升级确认之后追加后端替换确认（说明
+  当前后端不是主线构建、升级将替换它、保护备份如实记录）；输入完整 `yes` 继续，
+  拒绝返回 `1` 且不创建事务；非交互/委托路径需要 `--accept-custom-backend`。
+  确认后的升级提交 `official` 状态，门槛只生效一次。

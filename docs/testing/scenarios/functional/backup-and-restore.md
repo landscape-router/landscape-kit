@@ -246,3 +246,28 @@
 - 说明：`backup delete` 只接受格式合法的备份 ID；目标必须是 root 所有、权限不宽于 `0600` 的普通文件（符号链接与权限不安全条目拒绝删除，不跟随链接）；交互模式要求输入 `yes` 确认、`--yes` 跳过、非交互缺 `--yes` 返回参数错误 `2`，删除前持安装锁。控制台列表/详情按 D 打开删除确认层（展示 ID、版本与永久删除提示），Enter 在控制台内同步删除并刷新列表，Esc 取消且不改动现场。
 - 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的 pty 路径未覆盖（仓库无 pty 测试设施）；删除仍被未完成事务引用的备份未做专门断言。
 
+## BKP-13
+
+**漂移或非主线状态下照常创建备份并标注身份**
+
+- 测试层：Rust workflow、Rust 单元
+- 状态：`待补充`
+- 证据：[`backup create`](../../../commands/backup.md#backup-create)、[BackupMetadata Schema v1](../../../backup/lkb-and-rollback.md#backupmetadata-schema-v1)、[与备份的联动](../../../deployment/backend-legality.md#与备份的联动)
+- 说明：后端为 `drifted` 或 `custom` 时备份如实快照磁盘实际二进制，不阻断创建；
+  metadata `backend` 对象记录 `binary_sha256`、`official_sha256`（可 `null`）与
+  `drifted`；`backup list` 与控制台展示 `official / custom / drifted`，不含
+  `backend` 对象的旧备份显示 `legacy` 且照常 verify。
+
+## RST-15
+
+**恢复后完整性与合法性继承备份 metadata**
+
+- 测试层：Rust workflow
+- 状态：`待补充`
+- 证据：[激活与提交](../../../commands/restore.md#激活与提交)、[与备份的联动](../../../deployment/backend-legality.md#与备份的联动)
+- 说明：恢复提交的 `sha256` 从解包二进制现场计算并与
+  `backend.binary_sha256` 交叉校验；`official_sha256` 继承备份 metadata——
+  `official` 备份恢复出合法状态（升级不被阻断），`custom` 备份恢复出非主线状态
+  （升级门槛生效）；旧备份无 `backend` 对象时 `official_sha256` 按落盘二进制身份
+  记录。
+

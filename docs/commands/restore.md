@@ -39,7 +39,10 @@ landscape 根从 `install-state.json` 发现，命令不接收 `--install-dir`�
    目录，解包目录与文件分别保持 `0700`/`0600`。
 
 目标备份损坏、架构不匹配、归档缺少必要内容或保护备份创建失败时，保持当前服务和现场
-不变。保护备份带固定备注（`restore 前自动保护备份`，auto 标记为 true）。
+不变。保护备份带固定备注（`restore 前自动保护备份`，auto 标记为 true）。保护备份按
+**如实快照**语义创建：当前后端为 `drifted` 或 `custom` 不阻断恢复——正是这两种状态
+需要 restore 回到主线，保护备份在 metadata 中标注实际身份（见
+[后端合法性与主线对照](../deployment/backend-legality.md)）。
 `--allow-no-backup` 只允许在保护备份无法创建时继续，明确表示不产生可移植的当前
 配置快照；它不跳过目标备份校验或用户确认。
 
@@ -88,9 +91,15 @@ systemd 模式自动回滚的顺序固定为：停止目标服务 → 恢复 uni
 
 恢复不得伪造成功，也不得在没有必要事实时猜测 service manager 或 `current`。
 恢复提交的 state 中：`active_version` 取备份 metadata；`webserver` 身份从解包二进制
-现场计算；`static_archive` 身份从备份内 `static.zip` 现场计算——该身份不要求与任何
+现场计算，并与备份 metadata `backend.binary_sha256`（存在时）交叉校验；
+`official_sha256` 继承备份 metadata `backend.official_sha256`——恢复后的合法性与
+备份时刻一致（`official` 备份恢复出合法状态，`custom` 备份恢复出非主线状态；旧备份
+无 `backend` 对象时按落盘二进制身份记录，等同旧机制的可信快照）；
+`static_archive` 身份从备份内 `static.zip`
+现场计算——该身份不要求与任何
 仓库 manifest 一致（备份内的 `static.zip` 是备份时从 `current/static/` 现场打包的），
 恢复内容即备份快照（含自定义前端页面）。恢复后如需回到仓库身份，运行
-`repair static`（自定义前端源激活时按激活源意图恢复）。restore 不下载仓库资产，
+`repair static`（自定义前端源激活时按激活源意图恢复）；后端回到主线使用
+`lkit repair binary`。restore 不下载仓库资产，
 不读取也不改写 `config.toml`。
 

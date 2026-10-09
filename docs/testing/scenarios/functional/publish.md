@@ -65,3 +65,15 @@
 - 测试层：生产 smoke
 - 状态：`待补充`
 - 说明：[公网 Smoke Test 边界](../../../repository.md#公网-smoke-test)
+
+## PUB-09
+
+**发布产物 manifest 携带合法 `sha256_decompressed`，消费方缺失字段时回退**
+
+- 测试层：RustFS 发布集成、Rust 单元
+- 状态：`待补充`
+- 证据：[资产结构](../../../repository.md#资产结构)、[后端压缩格式](../../../repository.md#后端压缩格式)
+- 说明：发布器把官方原始后端哈希写入 webserver 资产的 `sha256_decompressed`，值与
+  解压产物一致；安装器在该字段存在时把落盘二进制哈希与之交叉校验，缺失时按既有
+  行为（仅压缩物校验）处理。对照消费语义见
+  [后端合法性与主线对照](../../../deployment/backend-legality.md#主线与对照方式)。

@@ -192,6 +192,24 @@ Schema v1：
 
 JSON 数值必须能无损转换为 `u64` 正整数。实际下载大小或 SHA-256 不一致时立即失败。
 
+`webserver` 资产对象可以额外携带一个可选字段：
+
+| 字段 | 类型 | 规则 |
+| --- | --- | --- |
+| `sha256_decompressed` | string | 可选，64 个小写十六进制字符，必须等于解压后（落盘形态）二进制的真实 SHA-256 |
+
+规则：
+
+- 该字段是解压产物（最终进入 `releases/<version>/landscape-webserver` 的字节）的
+  哈希；`sha256` 描述压缩物，两者语义不同，不得混用；
+- 发布工具在压缩前从官方 `SHASUM256sum.txt` 取得原始后端哈希并写入该字段；
+- 出现时即参与校验：下载解压后的二进制哈希必须与之一致，不一致视为资产损坏；
+- `static` 资产是原样落盘的 ZIP，其 `sha256` 本身即落盘形态哈希，不使用该字段；
+- 字段缺失是合法的：消费方按"下载解压后计算"回退获取落盘形态哈希（用途见
+  [后端合法性与主线对照](deployment/backend-legality.md)）；
+- 兼容性双向成立：旧安装器按"未知字段允许并忽略"跳过该字段；新安装器读取缺失该
+  字段的既有仓库时使用回退路径。
+
 ### URL 解析与安全
 
 - manifest 中的相对 URL 以该 manifest 所在版本目录为基准；
@@ -253,7 +271,8 @@ Release 资产使用元数据中的 `browser_download_url` 下载。`SHASUM256su
 - `x86_64` 原始资产使用 `landscape-webserver-x86_64`；
 - `aarch64` 原始资产使用 `landscape-webserver-aarch64`；
 - 共享静态资产使用 `static.zip`；
-- SHA-256 从 `SHASUM256sum.txt` 读取；
+- SHA-256 从 `SHASUM256sum.txt` 读取；GitHub 资产是未压缩的原始形态，清单值同时
+  充当落盘形态哈希，语义等同 HTTP manifest 的 `sha256_decompressed`；
 - v1 glibc Linux 安装不选择 `-musl` 或实验架构资产。
 
 ## 后端压缩格式
@@ -265,9 +284,12 @@ landscape-webserver-x86_64.zst
 landscape-webserver-aarch64.zst
 ```
 
-manifest 中的 `size` 和 `sha256` 描述压缩后的 `.zst` 对象。
+manifest 中的 `size` 和 `sha256` 描述压缩后的 `.zst` 对象；可选的
+`sha256_decompressed` 描述解压后的落盘形态（见
+[资产结构](#资产结构)）。
 
-发布流程必须先按官方 `SHASUM256sum.txt` 校验原始后端，再使用 `zstd --ultra -19` 生成压缩资产。安装器按以下顺序处理：
+发布流程必须先按官方 `SHASUM256sum.txt` 校验原始后端（该校验值即
+`sha256_decompressed`），再使用 `zstd --ultra -19` 生成压缩资产。安装器按以下顺序处理：
 
 1. 流式下载 `.zst` 到事务临时文件；
 2. 校验压缩文件的声明大小和 SHA-256；
@@ -352,7 +374,8 @@ ZIP 的所有有效条目必须位于 `static/` 前缀下。去掉该前缀后�
 发布顺序固定为：
 
 1. 校验稳定 SemVer、两个 `.zst` 后端和 `static.zip`；
-2. 计算每个资产的大小与 SHA-256；
+2. 计算每个资产的大小与 SHA-256，并把官方原始后端哈希作为 `sha256_decompressed`
+   一并写入 manifest；
 3. 校验或以条件写入初始化不可变的 `repository.json`；
 4. 确认目标版本的 manifest 不存在；
 5. 以条件写入上传两个 `.zst` 后端和 `static.zip`；
@@ -459,5 +482,7 @@ scripts/test-publish-http-repository.sh
 - 发布首个版本时创建根描述、manifest 和 stable 指针。
 - 发布更高版本时推进 stable，发布较低版本时 stable 不降级。
 - 重复发布不覆盖 manifest 或资产。
+- 发布产物 manifest 的 `webserver` 资产携带合法的 `sha256_decompressed`，且与解压
+  产物一致。
 - 资产上传或校验失败不会创建 manifest 或更新 stable。
 - `.zst` 后端和 `static.zip` 均在修改当前运行状态前完成下载和完整性校验。

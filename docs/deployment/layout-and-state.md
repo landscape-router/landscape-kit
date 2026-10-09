@@ -237,7 +237,8 @@ rename 更新,不得先删除旧链接。
     "webserver": {
       "architecture": "x86_64",
       "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "size": 12345678
+      "size": 12345678,
+      "official_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     },
     "static_archive": {
       "sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
@@ -269,7 +270,13 @@ rename 更新,不得先删除旧链接。
 - `install_root` / `canonical_install_root` 记录 landscape 安装根目录(不再是 lkit
   地盘);`canonical_install_root` 与当前真实目录不一致时状态损坏;
 - `active_version` 是规范化 SemVer;
-- `assets.webserver` 记录实际落盘后端的架构、大小和可信摘要;
+- `assets.webserver` 记录实际落盘后端的架构、大小和可信摘要（完整性锚点）;
+- `assets.webserver.official_sha256` 是主线对照身份,可为 `null`(无法对照时)。
+  来源规则:主线部署(install、update、switch、repair binary 替换路径)提交时记录为
+  本次部署产物的哈希;`lkit custom` 按对照结果记录(一致记主线哈希,不一致记主线
+  哈希并构成非主线状态,对照失败记 `null`);restore 继承备份 metadata;repair
+  binary 转正时一致化两个身份。完整性与合法性的判定规则见
+  [后端合法性与主线对照](backend-legality.md);
 - `assets.static_archive` 只记录安装来源,不用于验证当前静态目录;安装时记录官方
   `static.zip` 身份，restore 后记录备份内打包 `static.zip` 的身份（不要求与仓库
   manifest 一致），`repair static` 官方路径可恢复为仓库身份;
@@ -300,14 +307,18 @@ rename 更新,不得先删除旧链接。
 - SemVer、时间戳、架构或摘要格式非法;
 - `canonical_install_root` 与当前真实目录不一致;
 - `current` 指向安装根目录之外,或其目标不是 `releases/<active_version>`;
-- 状态记录的后端可信摘要、大小或架构字段本身非法;
+- 状态记录的后端可信摘要、大小或架构字段本身非法(非空的 `official_sha256` 同样
+  必须是 64 位小写十六进制);
 - `initialization.status: pending` 但 `lock_present != false` 或 `initialized_at != null`;
 - `initialization.status: complete` 但 `lock_present != true` 或 `initialized_at` 不是合法 UTC RFC 3339;
 - `service.manager: systemd` 但 `registered`、`enabled`、`definition_path` 或 `definition_sha256` 的组合不符合 systemd 状态规则;
 - 其他服务字段与 manager 类型或初始化字段与 status 的组合矛盾。
 
-状态文件可解析但后端文件缺失或实际摘要不一致时,属于"受管资产漂移",不是状态 Schema
-损坏,应按 `lkit repair binary` 规则处理。`current` 仍位于安装根目录且仅与
+状态文件可解析但后端文件缺失或实际摘要与 `sha256` 不一致时,属于**完整性漂移**
+(`drifted`),不是状态 Schema 损坏;`sha256` 与 `official_sha256` 不一致(或后者为
+`null`)属于**非主线状态**(`custom`),同样不是损坏。两种状态的判定、各命令的门槛与
+转正路径见[后端合法性与主线对照](backend-legality.md);完整性漂移的标准恢复入口是
+`lkit repair binary`。`current` 仍位于安装根目录且仅与
 `active_version` 不一致时属于"激活状态漂移",应阻断并结合事务记录诊断,不得自行选择
 任一版本。
 

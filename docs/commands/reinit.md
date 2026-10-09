@@ -69,7 +69,9 @@ reinit 是配置级重建,与 [restore](restore.md) 的数据库重建语义一�
    [`--takeover-network`](install.md),见[网络重配置](../network/reinit.md));
 3. 显示破坏性计划摘要并确认(非交互模式由 `--yes` 代替);
 4. 创建保护 `.lkb`(`auto: true`,备注 `reinit 前自动备份`),必须完整落盘并自校验后才能
-   停止服务;`--allow-no-backup` 才允许跳过并记录 `no_backup: true`;
+   停止服务;保护备份按如实快照语义创建,后端漂移或非主线状态不阻断(见
+   [后端合法性与主线对照](../deployment/backend-legality.md));`--allow-no-backup`
+   才允许跳过并记录 `no_backup: true`;
 5. 创建 `preparing` 事务并记录 `systemd_before`、`/etc/resolv.conf` 备份与状态快照;
 6. 更新为 `stopping` 后停止服务并确认进程退出;
 7. 更新为 `activating`:旧 `data/` 原子移动至事务目录 → 创建新空 `data/` → 写入新

@@ -106,3 +106,16 @@
   `static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致）后直接复用并跳过下载；
   不可信或残缺目录仍以 `ReleaseExists` 阻断且不修改。复用规则与首次安装
   [INS-11](install.md#ins-11) 相同，update 入口场景见 [UP-09](update.md#up-09)。
+
+## SW-12
+
+**非合法后端默认阻断升级，显式确认后继续并回到合法状态**
+
+- 测试层：Rust workflow、CLI
+- 状态：`待补充`
+- 证据：[升级合法性门槛](../../../commands/switch.md#升级合法性门槛)、[后端合法性与主线对照](../../../deployment/backend-legality.md)
+- 说明：`custom`（非主线）或 `drifted`（完整性漂移）状态下默认拒绝升级（退出码
+  `1`，不创建事务、不下载资产）；交互模式后端替换确认输入完整 `yes`、非交互携带
+  `--accept-custom-backend` 后继续；保护 `.lkb` 如实快照升级前内容并标注；提交后
+  `sha256 == official_sha256`（状态 `official`），后续升级不再需要确认。update 入口
+  的对应场景见 [UP-10](update.md#up-10)。

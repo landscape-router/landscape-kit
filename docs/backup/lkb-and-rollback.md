@@ -139,7 +139,8 @@ v1 只允许 `scope: "minimal"`，不定义或接受 `full`。
 
 内容来源：
 
-- `landscape-webserver`：当前实际运行且通过状态摘要验证的二进制；
+- `landscape-webserver`：当前实际运行的二进制（如实快照：完整性漂移或非主线状态
+  不阻断创建，实际身份写入 metadata 的 `backend` 对象）；
 - `landscape_init.toml`：通过导出 API 获得的完整当前运行态配置；
 - `static.zip`：备份时从 `current/static/` 现场打包的当前静态页面压缩包
   （含自校验），与 `static/` 树同源同刻；目录含非法条目时备份失败；
@@ -211,6 +212,11 @@ Header：
     "init_config": true,
     "geo_cache": true
   },
+  "backend": {
+    "binary_sha256": "ab12cd34ef567890ab12cd34ef567890ab12cd34ef567890ab12cd34ef567890",
+    "official_sha256": "ab12cd34ef567890ab12cd34ef567890ab12cd34ef567890ab12cd34ef567890",
+    "drifted": false
+  },
   "checksum": "sha256:ab12cd34ef567890ab12cd34ef567890ab12cd34ef567890ab12cd34ef567890"
 }
 ```
@@ -230,6 +236,13 @@ Header：
 - 归档中的 `static.zip` 条目必须是普通文件（目录或符号链接条目拒绝），解包校验时与
   `contents.static_archive: true` 一并确认；
 - `checksum` 为 `sha256:` 加 64 位小写十六进制字符，校验偏移 1 MiB 到 EOF 的完整 tar.gz 字节；
+- `backend` 是可空对象，记录备份时刻的后端身份（判定与用途见
+  [后端合法性与主线对照](../deployment/backend-legality.md#与备份的联动)）：
+  - `binary_sha256` 必填，为归档内 `landscape-webserver` 条目的 SHA-256；
+  - `official_sha256` 必填，为备份时 state 的主线对照身份，可为 `null`；
+  - `drifted` 必填，表示备份时磁盘身份与 state 完整性锚点是否一致；
+  - 对象缺失（旧备份）时读取器按 `legacy` 展示，restore 按旧机制处理（见
+    [手工 restore](#手工-restore)）；
 - 未知字段允许忽略；必填字段缺失或非法时拒绝。
 
 `checksum` 用于发现损坏，不是数字签名，不能证明来源可信。
@@ -294,8 +307,12 @@ release。恢复必须启动并通过完整健康检查后提交。
 同版本 restore 回滚时会把被替换的原 release 从事务目录移回，保证 release 内容与
 回滚前一致。恢复阶段沿用现有 systemd operation worker 和 phase 恢复规则，不能猜测
 缺失的 state、`current` 或 service manager。恢复提交的 state 中：
-`active_version` 取备份 metadata，`webserver` 身份从解包二进制现场计算，
-`static_archive` 身份从备份内 `static.zip` 现场计算；`config.toml` 中的仓库
+`active_version` 取备份 metadata，`webserver` 身份从解包二进制现场计算，并与
+metadata `backend.binary_sha256`（存在时）交叉校验；`official_sha256` 继承
+metadata `backend.official_sha256`，恢复后的合法性与备份时刻一致；旧备份不含
+`backend` 对象时 `official_sha256` 按落盘二进制身份记录（旧机制下备份只能产生于
+完整性受验证的现场，内容视为可信）。`static_archive` 身份从备份内 `static.zip`
+现场计算；`config.toml` 中的仓库
 来源记录不修改、不猜测。
 
 ## 无备份切换的失败恢复

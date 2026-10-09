@@ -16,6 +16,7 @@
 - [`migrate`](commands/migrate.md)：把手工部署（非 lkit 安装格式）迁移为受管安装。
 - [`update`](commands/update.md)：交互式更新到最新或指定 stable 版本。
 - [`switch`](commands/switch.md)：切换到指定 stable 版本。
+- [`custom`](commands/custom.md)：从本地目录部署自定义构建（升级或全新安装）。
 - [`backup`](commands/backup.md)：创建、查看和验证 `.lkb` minimal 备份。
 - [`restore`](commands/restore.md)：在现有安装内从 `.lkb` 恢复版本和配置。
 - [`uninstall`](commands/uninstall.md)：卸载已安装的 Landscape 并清理其安装根（lkit 地盘保留）。
@@ -32,6 +33,7 @@
 
 - [lkit 自发布与安装入口](release/lkit.md)
 - [安装布局与状态](deployment/layout-and-state.md)
+- [后端合法性与主线对照](deployment/backend-legality.md)
 - [配置文件（`config.toml`）](deployment/config.md)
 - [事务与中断恢复](deployment/transactions-and-recovery.md)
 - [初始化与凭据](interaction/initialization-and-credentials.md)

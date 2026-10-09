@@ -59,7 +59,9 @@ lkit 地盘(`/root/.lkit/`)原样保留:
 
 1. 解析 lkit 地盘与 landscape 根目录,获取安装锁,恢复未完成事务(见[中断恢复](#中断恢复));
 2. 读取 `install-state.json`;不存在时返回参数错误 `2` 并提示先执行 `lkit install`;
-3. 校验受管 unit 所有权与后端摘要(与 `switch` 相同的安全不变量,失败阻断);
+3. 校验受管 unit 所有权(失败阻断);后端不做摘要阻断——漂移或非主线状态不阻止卸载,
+   保护 `.lkb` 按如实快照语义记录实际内容并在 metadata 标注(见
+   [后端合法性与主线对照](../deployment/backend-legality.md));
 4. 交互确认卸载计划与数据损失范围(非交互模式以 `--yes` 代替);检测到网络接管特征
    (NetworkManager、ifupdown 的 `networking.service`、firewalld 或 systemd-resolved 被
    停止、disable 或 mask)时追加醒目 warning:卸载不会恢复宿主网络服务,需要用户自行

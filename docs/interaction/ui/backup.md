@@ -12,21 +12,27 @@
 
 - 顶部"创建备份"动作行:选中 `FOCUS_SELECTED` 反色 + `> ` 标记;
   未选中 `ACTION_HINT` 绿字 + 加粗;
-- 表头(灰字):创建时间 / 大小 / 备份 ID / Landscape 版本 / 备注,列宽与
+- 表头(灰字):创建时间 / 大小 / 备份 ID / Landscape 版本 / 后端 / 备注,列宽与
   数据取较大者,表头与各行逐列对齐;
 - 条目列依次为 **创建时间(本地时间 `%Y-%m-%d %H:%M`)、文件大小(人类可读
-  单位,如 `1.5 MiB`)、ID 随机后缀(完整 ID 进详情页)、Landscape 版本、备注**:
+  单位,如 `1.5 MiB`)、ID 随机后缀(完整 ID 进详情页)、Landscape 版本、后端状态、
+  备注**:
   - 选中 `FOCUS_SELECTED` + `> ` 标记;未选中默认色;
   - **单行展示:备注恒排最后,为空时留空白、不影响其他列对齐,超宽按剩余
     长度截断为省略号(不换行)**,完整备注进详情页;
   - invalid 条目红字 + invalid 徽标;
+  - 后端状态列取 metadata `backend` 对象,取值与 CLI `backup list` 一致:
+    `official`(默认色)/ `custom`(黄字)/ `drifted`(红字)/ `legacy`(灰字);
+    判定规则见[后端合法性与主线对照](../../deployment/backend-legality.md#与备份的联动);
 - 加载中灰字、失败红字、无备份灰字。
 
 ## 详情页(Enter 打开)
 
 - 标题加粗 + panel_block 焦点边框,Up/Down 滚动,可换行;
 - 字段顺序:**备注第一**,其后 backup_id / 创建时间 / 文件大小(人类可读
-  单位)/ Landscape 版本 / lkit 版本 / 架构 / 主机名 / 是否自动 / scope / contents;
+  单位)/ Landscape 版本 / lkit 版本 / 架构 / 主机名 / 是否自动 / scope / contents /
+  后端状态(含 `backend.binary_sha256` 与 `official_sha256`,`legacy` 备份显示
+  "无记录");
 - 底部灰字恢复提示行(R 恢复、V 校验);
 - 校验行为:
   - 进入详情即**自动**在后台执行完整校验(读文件 + `verify_lkb` + 解包),

@@ -55,3 +55,25 @@
 - 测试层：Rust workflow
 - 状态：`已覆盖`
 - 证据：[Repair 阶段](../../../workflows/lifecycle.md#4-repair-阶段转换)
+
+## REP-07
+
+**binary repair 对照一致时纯元数据转正**
+
+- 测试层：Rust workflow
+- 状态：`待补充`
+- 证据：[`lkit repair`](../../../commands/repair.md)、[转正与逃生路径](../../../deployment/backend-legality.md#转正与逃生路径)
+- 说明：本地二进制与主线落盘形态哈希一致（含可复现构建与离线 custom 安装后联网
+  补对照）时，repair 只更新 state（锚点与对照身份一致化），不下载替换产物、
+  不停止服务、不创建 `.lkb`；转正后升级门槛解除。
+
+## REP-08
+
+**binary repair 对照不一致时下载主线产物替换并恢复合法**
+
+- 测试层：Rust workflow
+- 状态：`待补充`
+- 证据：[`lkit repair`](../../../commands/repair.md)、[转正与逃生路径](../../../deployment/backend-legality.md#转正与逃生路径)
+- 说明：对照基准是主线声明哈希而不是 state 记录；不一致时下载校验解压替换（保护
+  `.lkb` 如实快照修复前二进制并标注 backend 身份），提交后状态 `official`。活动
+  版本不在主线时报错并提示出路。

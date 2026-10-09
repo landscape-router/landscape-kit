@@ -77,7 +77,9 @@ rollback 和手工
 
 1. 按 SemVer 比较当前活动版本和目标版本。目标版本更低时，在创建切换事务和下载目标
    二进制、静态资产前拒绝；目标版本相同时转入同版本安装校验，只有更高版本可以继续；
-2. 验证当前后端摘要和 systemd 服务状态；
+2. 验证当前后端状态（完整性与合法性，见
+   [后端合法性与主线对照](../deployment/backend-legality.md)）和 systemd 服务状态；
+   非 `official` 状态默认阻断，交互确认或显式 `--accept-custom-backend` 后继续；
 3. 服务正在运行时，调用配置导出 API，创建包含当前二进制、静态页面、导出配置和
    `geo_tmp` 的 `.lkb`，并完整自校验；即使指定 `--allow-no-backup` 也不得跳过；
 4. systemd 服务已停止时，默认在创建事务前拒绝。仅显式 `--allow-no-backup` 时跳过导出

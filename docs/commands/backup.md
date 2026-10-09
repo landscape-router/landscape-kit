@@ -36,6 +36,11 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 - 当前运行二进制、`static/` 和 `geo_tmp/` 能按 `.lkb` v1 规则读取；
 - 当前架构为 `x86_64` 或 `aarch64`。
 
+后端按**如实快照**语义打包：完整性漂移（`drifted`）或非主线（`custom`）状态不阻断
+创建，归档记录磁盘上的实际二进制，其身份与状态写入 metadata 的 `backend` 对象
+（见 [`.lkb` 规格](../backup/lkb-and-rollback.md#backupmetadata-schema-v1)），备份
+列表据此标注。
+
 备份从运行中的受管服务导出配置。
 无法导出配置、token 不安全、配置版本不一致或归档自校验失败时，不生成最终备份文件。
 
@@ -71,7 +76,10 @@ worker 执行）。面板在未安装或非 root 时明确提示不可用。
 
 只枚举 lkit 地盘(`/root/.lkit/backups/`)下的普通 `.lkb` 文件，按 `created_at` 从新到旧
 排列。输出至少包含备份
-ID、创建时间、Landscape 版本、架构、`auto`、scope、remark 和 metadata 状态。除内容校验
+ID、创建时间、Landscape 版本、架构、`auto`、scope、remark、metadata 状态和后端状态。
+后端状态取自 metadata 的 `backend` 对象，取值 `official / custom / drifted / legacy`
+（`legacy` 为不含该对象的旧备份；判定规则见
+[后端合法性与主线对照](../deployment/backend-legality.md#与备份的联动)）。除内容校验
 外，每个条目还执行与 `show`/`verify` 相同的安全校验：必须为 root 所有、权限不宽于
 `0600` 的普通文件。损坏、权限或所有者不安全以及符号链接条目显示为 invalid 并使命令
 返回普通失败；符号链接不会被跟随。
