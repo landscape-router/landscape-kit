@@ -34,6 +34,7 @@ on:
           - all
           - connections
           - docker
+          - double-capture
           - same-segment
           - multiclient
           - ratelimit
@@ -71,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.scenario != 'all' && format('["{0}"]', inputs.scenario) || '["connections","docker","same-segment","multiclient","ratelimit","daemon"]') }}
+        scenario: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.scenario != 'all' && format('["{0}"]', inputs.scenario) || '["connections","docker","double-capture","same-segment","multiclient","ratelimit","daemon"]') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

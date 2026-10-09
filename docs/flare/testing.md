@@ -13,13 +13,14 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 | --- | --- |
 | `scripts/flare/e2e-docker.sh` | 单网段全功能场景（握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启） |
 | `scripts/flare/e2e-connections.sh` | 单映射连接生命周期（TCP/HTTP 并发、正常与 RST 回收、慢读背压、已建立连接空闲保活） |
+| `scripts/flare/e2e-double-capture.sh` | 桥双重捕获场景（服务端容器内 eth0 挂入 br0，`--dev any` 双捕同一广播，握手与传输仍须完成） |
 | `scripts/flare/e2e-same-segment.sh` | 同段多客户端场景（并发/优雅重启/硬杀恢复/20 MiB） |
 | `scripts/flare/e2e-multiclient.sh` | 双网段多客户端场景（teardown 隔离/空闲保活） |
 | `scripts/flare/e2e-ratelimit.sh` | 限速与锁死场景（洪泛/伪造失败不冻结） |
 | `scripts/flare/e2e-daemon.sh` | daemon 托管形态（`lkit daemon` + config.toml `[flare]` 段托管 flare 服务端，lflare 客户端建立会话，不执行隧道转发） |
 | `scripts/flare/Dockerfile` | Debian 13 slim 镜像，双模式运行时依赖：有 `packages/*.deb` 时离线 dpkg 安装（本地，`docker build` 无需网络），无 `.deb` 时（CI）apt 在线安装 `iproute2 netcat-openbsd python3`；内置测试服务与协议/连接探针 |
 | `scripts/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `scripts/flare/packages/`（gitignored，仅保留 `.gitkeep`），供本地离线镜像构建使用 |
-| `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发，`cargo build --locked --workspace` 后依次运行 6 个场景脚本 |
+| `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发，`cargo build --locked --workspace` 后依次运行 7 个场景脚本 |
 
 ## 场景拓扑
 
@@ -35,6 +36,7 @@ server 容器 (lkit flare serve --dev any, fake service on 127.0.0.1:6443)
 脚本通过容器日志断言协议行为，改动下列输出时必须同步更新场景断言：
 
 - 客户端 `session … established`（会话建立，`wait_session`/`wait_sessions`）
+- 服务端 `discover … from`（每捕获路径一行；双重捕获场景据此断言同一广播被处理两次）
 - 服务端 `discover … ignored (cannot open)`（错误 psk 静默拒绝）
 - 服务端 `token mismatch`（发现令牌不匹配）
 - 服务端 `sent teardown`（优雅断开）
