@@ -138,9 +138,10 @@
 
 **netplan 配置存在时接管在 preflight 拒绝**
 
-- 测试层：Rust 单元
+- 测试层：Rust 单元、fixture e2e
 - 状态：`已覆盖`
 - 证据：[takeover preflight](../../../../lkit-cli/src/network/takeover.rs)、
+  [接管 e2e](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、
   [接管文档](../../../network/takeover.md)
 - 说明：`/etc/netplan/` 下存在任何 `*.yaml` 即认为宿主由 netplan 管理网络，
   preflight 报错并引导迁移宿主网络配置——netplan 渲染进 networkd/NM 搜索路径的

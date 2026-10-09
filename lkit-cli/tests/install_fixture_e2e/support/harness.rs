@@ -16,6 +16,7 @@ pub(crate) const SEEDED_FIREWALLD_ZONE: &str = "<?xml version=\"1.0\" encoding=\
 /// 落在接管选中集内,接管把它整个移出,测试用内容做逐字节恢复断言。
 pub(crate) const SEEDED_NETWORKD_FILE: &str = "10-wan.network";
 pub(crate) const SEEDED_NETWORKD_WAN: &str = "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n";
+pub(crate) const SEEDED_NETPLAN_YAML: &str = "network:\n  version: 2\n";
 
 pub(crate) struct InstallHarness {
     pub(crate) world: TestWorld,
@@ -192,8 +193,10 @@ esac
                 "ifup_command": ifup_command,
                 "nm_conf_d": host.join("nm-conf.d"),
                 "firewalld_zones": host.join("firewalld-zones"),
-                // fixture 只暴露自己的 networkd 目录,不带 /run、/usr/lib 真实路径。
+                // fixture 只暴露自己的 networkd 目录,不带 /run、/usr/lib 真实路径;
+                // netplan 目录同样指向沙盒(runner 宿主本身是 netplan 管理的 Ubuntu)。
                 "networkd_dirs": [host.join("systemd-network")],
+                "netplan_dir": host.join("netplan"),
                 "nmcli": nmcli,
                 "firewall_cmd": firewall_cmd,
                 "networkctl": networkctl,
@@ -409,6 +412,13 @@ esac
         std::fs::create_dir_all(&networkd).unwrap();
         std::fs::write(networkd.join(SEEDED_NETWORKD_FILE), SEEDED_NETWORKD_WAN).unwrap();
         self.seed_host_service("systemd-networkd.service");
+    }
+
+    /// netplan 管理的宿主:配置目录存在 yaml(接管 preflight 必须拒绝)。
+    pub(crate) fn seed_netplan(&self) {
+        let netplan = self.host.join("netplan");
+        std::fs::create_dir_all(&netplan).unwrap();
+        std::fs::write(netplan.join("10-config.yaml"), SEEDED_NETPLAN_YAML).unwrap();
     }
 
     pub(crate) fn run_takeover(&self) -> Output {

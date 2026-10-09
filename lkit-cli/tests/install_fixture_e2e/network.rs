@@ -499,6 +499,39 @@ fn network_takeover_rejects_other_active_network_manager() {
     );
 }
 
+/// HNET-14:netplan 管理的宿主(`/etc/netplan/*.yaml` 存在)接管在 preflight
+/// 拒绝——netplan 渲染进搜索路径的配置会被重新生成,文件摘除无法保持稳定;
+/// 拒绝发生在触碰任何宿主配置之前。
+#[test]
+fn network_takeover_rejects_netplan_configured_hosts() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("network-netplan", "healthy", 10_000);
+    harness.seed_netplan();
+    let netplan_yaml = harness.host.join("netplan/10-config.yaml");
+
+    let output = harness.run_takeover();
+    assert!(
+        !output.status.success(),
+        "a netplan-configured host must be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("netplan configuration is present"),
+        "unexpected rejection reason:\n{stderr}"
+    );
+    assert!(
+        netplan_yaml.is_file(),
+        "the rejection must not touch the netplan config"
+    );
+    assert!(
+        !harness.backups_dir().join("hostnet").exists(),
+        "no hostnet backup may be created"
+    );
+}
+
 /// NET-15:systemd-networkd 主机(无 NM/firewalld)的接管移出引用选中接口的
 /// `.network` 文件、reload 运行中的 networkd;回滚按备份逐字重建文件。
 /// 服务全程不被停止。
