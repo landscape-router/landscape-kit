@@ -231,12 +231,20 @@ pub enum ServerPhase {
     Session { session_id: u32 },
 }
 
+/// In-flight DISCOVER→AUTH_REQ handshake: the server nonce plus the
+/// discover_id it was minted for.
+#[derive(Clone, Copy)]
+struct PendingHandshake {
+    discover_id: u64,
+    server_nonce: u64,
+}
+
 pub struct ServerSession {
     pub phase: ServerPhase,
     /// Server nonce of the in-flight DISCOVER->AUTH_REQ handshake. A pending
     /// handshake never disturbs an active session: only a successfully
     /// verified AUTH_REQ replaces it.
-    pending: Option<u64>,
+    pending: Option<PendingHandshake>,
     next_session_id: u32,
 }
 
@@ -253,6 +261,13 @@ impl ServerSession {
     /// and answer with the sealed RESP frame (echoing the client's
     /// discover_id, advertising the forwardable ports). The DISCOVER frame
     /// itself is opened by the stateless `open_discover` helper.
+    ///
+    /// Idempotent per discover_id: the same DISCOVER captured on several
+    /// interfaces (a bridge and its slave, for example) or retransmitted by
+    /// the link re-sends the RESP sealed with the *standing* nonce instead
+    /// of minting a new one — a client that already committed to the
+    /// earlier RESP must still be able to finish the handshake. A different
+    /// discover_id is a new attempt and gets a fresh nonce.
     pub fn begin_discover(
         &mut self,
         discover_id: u64,
@@ -260,8 +275,17 @@ impl ServerSession {
         ports: &[u16],
         master: &MasterKey,
     ) -> Vec<u8> {
-        let server_nonce: u64 = rand::random();
-        self.pending = Some(server_nonce);
+        let server_nonce = match self.pending {
+            Some(pending) if pending.discover_id == discover_id => pending.server_nonce,
+            _ => {
+                let server_nonce: u64 = rand::random();
+                self.pending = Some(PendingHandshake {
+                    discover_id,
+                    server_nonce,
+                });
+                server_nonce
+            }
+        };
         let hkey = HandshakeKeys::derive(master, server_nonce);
         let payload = frame::encode_resp_payload(discover_id, device_name, ports);
         hkey.seal_prefixed(
@@ -281,14 +305,14 @@ impl ServerSession {
     /// reused with a different plaintext (later lockout NACKs fall back to
     /// plaintext).
     pub fn take_server_nonce(&mut self) -> Option<u64> {
-        self.pending.take()
+        self.pending.take().map(|pending| pending.server_nonce)
     }
 
     /// Verify a sealed AUTH_REQ frame against the pending nonce and the
     /// shared psk: open it with the handshake keys, then check the proof.
     pub fn verify_auth(&mut self, frame: &Frame<'_>, master: &MasterKey) -> VerifyResult {
         match self.pending {
-            Some(server_nonce) => {
+            Some(PendingHandshake { server_nonce, .. }) => {
                 let hkey = HandshakeKeys::derive(master, server_nonce);
                 // A frame that cannot be opened is not an auth attempt at
                 // all: keep the pending nonce, so a spoofed garbage frame
@@ -659,5 +683,53 @@ mod tests {
             VerifyResult::Unauthentic(_)
         ));
         assert_eq!(server.session_id(), Some(1));
+    }
+
+    /// The same DISCOVER captured on several interfaces (a bridge and its
+    /// slave, for example) is the same attempt, not a new one: the standing
+    /// nonce is reused, so the AUTH_REQ sealed against the first RESP still
+    /// verifies. The re-sent RESP is byte-identical (deterministic AEAD,
+    /// fixed counters), so no (key, nonce) pair is ever reused with a
+    /// different plaintext.
+    #[test]
+    fn duplicate_discover_reuses_the_standing_nonce() {
+        let mut server = ServerSession::new();
+        let (s_nonce, resp1) = server_resp(&mut server, 7, master());
+        let (s_nonce2, resp2) = server_resp(&mut server, 7, master());
+        assert_eq!(s_nonce, s_nonce2, "a duplicate DISCOVER must not remint");
+        assert_eq!(resp1, resp2, "the re-sent RESP must be identical");
+
+        // The client committed to the first RESP; its AUTH_REQ must verify
+        // even though the duplicate arrived in between.
+        let auth_raw = sealed_auth_req("admin", master(), s_nonce, 42);
+        let l = frame::decode(&auth_raw).unwrap();
+        assert!(matches!(
+            server.verify_auth(&l, master()),
+            VerifyResult::Accepted { .. }
+        ));
+    }
+
+    /// A different discover_id is a new attempt: fresh nonce, and the AUTH
+    /// sealed against the previous RESP no longer opens.
+    #[test]
+    fn rediscover_with_a_new_id_replaces_the_nonce() {
+        let mut server = ServerSession::new();
+        let (s_nonce, _) = server_resp(&mut server, 7, master());
+        let (s_nonce2, _) = server_resp(&mut server, 8, master());
+        assert_ne!(s_nonce, s_nonce2);
+
+        let stale_raw = sealed_auth_req("admin", master(), s_nonce, 42);
+        let stale = frame::decode(&stale_raw).unwrap();
+        assert!(matches!(
+            server.verify_auth(&stale, master()),
+            VerifyResult::Unauthentic(_)
+        ));
+        // The fresh pending nonce is intact and still usable.
+        let fresh_raw = sealed_auth_req("admin", master(), s_nonce2, 43);
+        let fresh = frame::decode(&fresh_raw).unwrap();
+        assert!(matches!(
+            server.verify_auth(&fresh, master()),
+            VerifyResult::Accepted { .. }
+        ));
     }
 }

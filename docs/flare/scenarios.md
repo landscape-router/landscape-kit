@@ -335,3 +335,19 @@
   拒绝时 `handshake` 立即返回错误：cli 模式报错退出，TUI 回到表单并显示原因
   （复用 `resume_form` 机制）。服务端静默/超时（未启动、psk/token 不匹配、
   锁定冻结期间被忽略）仍由外层循环按固定间隔照常重试，不受影响。
+
+## FLR-32
+
+**同一 DISCOVER 被多接口重复捕获时握手仍能完成**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[幂等 begin_discover 测试](../../landscape-terrain-proto/src/protocol/session.rs)
+  （`duplicate_discover_reuses_the_standing_nonce`、
+  `rediscover_with_a_new_id_replaces_the_nonce`）、[协议规范·握手流程](protocol.md)
+- 说明：daemon 托管的 flare 默认 `--dev any`，路由器上 Landscape 的 `br_lan` 桥
+  会让同一广播被物理口与桥各捕获一次。服务端按 `discover_id` 幂等处理重复捕获：
+  重发以同一服务端 nonce 密封的 RESP（字节相同，无 nonce 重用风险），不换 nonce——
+  客户端已采纳先前 RESP 的 AUTH_REQ 仍可验证。修复前表现为 discover 永远成功、
+  AUTH 永远超时的死循环（服务端日志 `unauthentic auth frame ... bad handshake
+  frame`）。不同 `discover_id` 仍换新 nonce。
