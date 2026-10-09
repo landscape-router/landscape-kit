@@ -4,6 +4,12 @@
 //! `[Match]` 不含 `Name=` 的文件(按 MAC/Driver 等匹配)不按名字归因,原样
 //! 跳过。`.netdev` 定义虚拟设备,选中接口均为物理接口,不参与。
 //!
+//! 搜索路径是多个目录(`networkd_dirs`,优先级从高到低,如
+//! `/etc/systemd/network` → `/run/systemd/network` → `/usr/lib/systemd/network`):
+//! 同名文件只有最高优先级者生效。移出某文件会让被它遮蔽的低优先级同名文件
+//! 生效——同引选中接口的遮蔽文件级联移出;引用未选接口或无法归因的遮蔽
+//! 文件保守拒绝,不猜生效后的行为。
+//!
 //! 运行时套用(`networkctl reload` 让 networkd 丢弃已移除的配置)与恢复后的
 //! reload 由调用方执行,本 crate 只做文件与清单。
 
@@ -56,45 +62,9 @@ impl NetworkdAdapter {
 
 impl HostNetworkAdapter for NetworkdAdapter {
     fn collect(&self, sources: &FileSources) -> Result<FileSet, HostNetError> {
-        let Some(dir) = &sources.networkd_dir else {
-            return Ok(FileSet::default());
-        };
-        let metadata = match std::fs::symlink_metadata(dir) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(FileSet::default());
-            }
-            Err(source) => {
-                return Err(HostNetError::UnreadableFile {
-                    path: dir.clone(),
-                    source,
-                });
-            }
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(HostNetError::PathSafety {
-                path: dir.clone(),
-                reason: "networkd directory is a symlink".into(),
-            });
-        }
         let mut files = Vec::new();
-        for entry in sorted_dir_entries(dir)? {
-            let path = dir.join(&entry);
-            let metadata = std::fs::symlink_metadata(&path).map_err(|source| {
-                HostNetError::UnreadableFile {
-                    path: path.clone(),
-                    source,
-                }
-            })?;
-            if metadata.file_type().is_symlink() {
-                return Err(HostNetError::PathSafety {
-                    path,
-                    reason: "networkd config is a symlink".into(),
-                });
-            }
-            if metadata.is_file() && entry.ends_with(".network") {
-                files.push(path);
-            }
+        for dir in &sources.networkd_dirs {
+            files.extend(collect_dir(dir)?);
         }
         Ok(FileSet {
             interfaces: sources.interfaces.clone(),
@@ -111,53 +81,27 @@ impl HostNetworkAdapter for NetworkdAdapter {
         if selected.is_empty() {
             return Ok(EditPlan { edits: Vec::new() });
         }
-        let mut edits = Vec::new();
+        // 先把每个文件归因成三类:选中(可移出)、混合(拒绝)、glob(命中即拒绝)。
+        let mut removable: Vec<PathBuf> = Vec::new();
         for path in &file_set.files {
             let content =
                 std::fs::read_to_string(path).map_err(|source| HostNetError::UnreadableFile {
                     path: path.clone(),
                     source,
                 })?;
-            let names = match_names(&content);
-            let mut selected_refs = Vec::new();
-            let mut unselected_refs = Vec::new();
-            for name in &names {
-                if name.chars().any(|c| GLOB_META_CHARS.contains(&c)) {
-                    // glob 无法归因完整匹配集,可能同时匹配未选接口。
-                    if let Some(hit) = selected
-                        .iter()
-                        .find(|candidate| glob_matches(name, candidate))
-                    {
-                        return Err(HostNetError::UnsupportedSyntax {
-                            path: path.clone(),
-                            line: 0,
-                            reason: format!(
-                                "Name={name} uses a glob that matches selected interface {hit}"
-                            ),
-                        });
-                    }
-                    continue;
-                }
-                if selected.iter().any(|candidate| candidate == name) {
-                    selected_refs.push(name.clone());
-                } else {
-                    unselected_refs.push(name.clone());
-                }
+            if classifies_for_removal(&content, path, selected)? {
+                removable.push(path.clone());
             }
-            if selected_refs.is_empty() {
-                continue;
-            }
-            if !unselected_refs.is_empty() {
-                return Err(HostNetError::UnsupportedSyntax {
-                    path: path.clone(),
-                    line: 0,
-                    reason: format!(
-                        "matches selected [{}] and unselected [{}] interfaces in one file",
-                        selected_refs.join(", "),
-                        unselected_refs.join(", ")
-                    ),
-                });
-            }
+        }
+        // 遮蔽级联:移出一个文件会让低优先级目录的同名文件生效,先确认它们
+        // 同样可以归因(都在 removable 中),否则保守拒绝。
+        ensure_shadowed_cascade_is_safe(&removable, &file_set.files)?;
+        let mut edits = Vec::new();
+        for path in file_set
+            .files
+            .iter()
+            .filter(|path| removable.contains(path))
+        {
             let original = std::fs::read(path).map_err(|source| HostNetError::UnreadableFile {
                 path: path.clone(),
                 source,
@@ -207,6 +151,128 @@ impl HostNetworkAdapter for NetworkdAdapter {
 
 /// fnmatch 风格的 glob 元字符。
 const GLOB_META_CHARS: [char; 3] = ['*', '?', '['];
+
+/// 收集单个目录下的 `.network` 文件(目录缺失是 no-op,符号链接拒绝),
+/// 返回按文件名排序的路径。调用方按目录优先级顺序拼接,保持 `files` 的
+/// 优先级序(同名文件靠前者生效)。
+fn collect_dir(dir: &Path) -> Result<Vec<PathBuf>, HostNetError> {
+    let metadata = match std::fs::symlink_metadata(dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(source) => {
+            return Err(HostNetError::UnreadableFile {
+                path: dir.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(HostNetError::PathSafety {
+            path: dir.to_path_buf(),
+            reason: "networkd directory is a symlink".into(),
+        });
+    }
+    let mut files = Vec::new();
+    for entry in sorted_dir_entries(dir)? {
+        let path = dir.join(&entry);
+        let metadata =
+            std::fs::symlink_metadata(&path).map_err(|source| HostNetError::UnreadableFile {
+                path: path.clone(),
+                source,
+            })?;
+        if metadata.file_type().is_symlink() {
+            return Err(HostNetError::PathSafety {
+                path,
+                reason: "networkd config is a symlink".into(),
+            });
+        }
+        if metadata.is_file() && entry.ends_with(".network") {
+            files.push(path);
+        }
+    }
+    Ok(files)
+}
+
+/// 判定文件是否可整体移出:`[Match] Name=` 引用了选中接口且没有未选接口。
+/// 混合引用与命中选中接口的 glob(完整匹配集无法归因,移出会连带未选接口)
+/// 直接以 UnsupportedSyntax 拒绝;只含未命中 glob 或不含 Name= 的文件返回
+/// false,原样跳过。
+fn classifies_for_removal(
+    content: &str,
+    path: &Path,
+    selected: &[String],
+) -> Result<bool, HostNetError> {
+    let names = match_names(content);
+    let mut selected_refs = Vec::new();
+    let mut unselected_refs = Vec::new();
+    for name in &names {
+        if name.chars().any(|c| GLOB_META_CHARS.contains(&c)) {
+            if let Some(hit) = selected
+                .iter()
+                .find(|candidate| glob_matches(name, candidate))
+            {
+                return Err(HostNetError::UnsupportedSyntax {
+                    path: path.to_path_buf(),
+                    line: 0,
+                    reason: format!(
+                        "Name={name} uses a glob that matches selected interface {hit}"
+                    ),
+                });
+            }
+            continue;
+        }
+        if selected.iter().any(|candidate| candidate == name) {
+            selected_refs.push(name.clone());
+        } else {
+            unselected_refs.push(name.clone());
+        }
+    }
+    if selected_refs.is_empty() {
+        return Ok(false);
+    }
+    if !unselected_refs.is_empty() {
+        return Err(HostNetError::UnsupportedSyntax {
+            path: path.to_path_buf(),
+            line: 0,
+            reason: format!(
+                "matches selected [{}] and unselected [{}] interfaces in one file",
+                selected_refs.join(", "),
+                unselected_refs.join(", ")
+            ),
+        });
+    }
+    Ok(true)
+}
+
+/// 遮蔽安全性:`files` 按目录优先级从高到低排列,移出高优先级文件会让低
+/// 优先级的同名文件生效。生效的遮蔽文件必须同样在 `removable` 中(同引
+/// 选中接口,一并移出),否则其生效后的匹配集无法归因,保守拒绝。
+fn ensure_shadowed_cascade_is_safe(
+    removable: &[PathBuf],
+    files: &[PathBuf],
+) -> Result<(), HostNetError> {
+    for (position, path) in files.iter().enumerate() {
+        if !removable.contains(path) {
+            continue;
+        }
+        let basename = path.file_name();
+        for shadowed in files.iter().skip(position + 1) {
+            if shadowed.file_name() == basename && !removable.contains(shadowed) {
+                return Err(HostNetError::UnsupportedSyntax {
+                    path: shadowed.clone(),
+                    line: 0,
+                    reason: format!(
+                        "removing {} would activate this shadowed file, whose match set cannot be attributed",
+                        path.display()
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
 
 fn sorted_dir_entries(dir: &Path) -> Result<Vec<String>, HostNetError> {
     let mut entries: Vec<String> = std::fs::read_dir(dir)
@@ -281,7 +347,7 @@ mod tests {
 
     fn sources(dir: &Path) -> FileSources {
         FileSources {
-            networkd_dir: Some(dir.join("network")),
+            networkd_dirs: vec![dir.join("network")],
             ..Default::default()
         }
     }
@@ -411,7 +477,7 @@ mod tests {
         assert!(mac.is_file());
 
         let missing = FileSources {
-            networkd_dir: Some(dir.join("missing")),
+            networkd_dirs: vec![dir.join("missing")],
             ..Default::default()
         };
         let outcome = NetworkdAdapter::new()
@@ -423,6 +489,105 @@ mod tests {
             )
             .unwrap();
         assert!(outcome.manifest.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 多目录搜索(优先级从高到低):各目录中引用选中接口的文件都被移出;
+    /// 高优先级同名文件移出后,同引选中接口的低优先级遮蔽文件级联移出。
+    #[test]
+    fn cascades_shadowed_same_name_files_across_dirs() {
+        let dir = networkd_fixture("cascade");
+        let etc = dir.join("etc");
+        let run = dir.join("run");
+        let usr = dir.join("usr");
+        for dir in [&etc, &run, &usr] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        // /usr/lib 的同名文件被 /run 的遮蔽;两者都只引 ens3。
+        std::fs::write(
+            run.join("10-wan.network"),
+            "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n",
+        )
+        .unwrap();
+        std::fs::write(
+            usr.join("10-wan.network"),
+            "[Match]\nName=ens3\n\n[Network]\nAddress=192.0.2.9/24\n",
+        )
+        .unwrap();
+        // 不同名、引用另一个选中接口的文件独立移出。
+        std::fs::write(
+            etc.join("20-lan.network"),
+            "[Match]\nName=ens4\n\n[Network]\nDHCP=yes\n",
+        )
+        .unwrap();
+        let sources = FileSources {
+            networkd_dirs: vec![etc.clone(), run.clone(), usr.clone()],
+            ..Default::default()
+        };
+
+        let outcome = NetworkdAdapter::new()
+            .execute_unmanage(
+                &sources,
+                &["ens3".to_string(), "ens4".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
+            .unwrap();
+        assert!(
+            !run.join("10-wan.network").exists() && !usr.join("10-wan.network").exists(),
+            "the shadowed same-name files must be removed together"
+        );
+        assert!(!etc.join("20-lan.network").exists());
+
+        NetworkdAdapter::new()
+            .restore(outcome.manifest.as_ref().unwrap())
+            .unwrap();
+        assert!(run.join("10-wan.network").is_file());
+        assert!(usr.join("10-wan.network").is_file());
+        assert!(etc.join("20-lan.network").is_file());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 遮蔽文件引用未选接口:移出高优先级文件会让它生效,无法归因,拒绝。
+    #[test]
+    fn unattributable_shadowed_file_rejects_the_removal() {
+        let dir = networkd_fixture("shadow-reject");
+        let etc = dir.join("etc");
+        let usr = dir.join("usr");
+        for dir in [&etc, &usr] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(
+            etc.join("10-wan.network"),
+            "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n",
+        )
+        .unwrap();
+        std::fs::write(
+            usr.join("10-wan.network"),
+            "[Match]\nName=ens3 ens9\n\n[Network]\nDHCP=yes\n",
+        )
+        .unwrap();
+        let sources = FileSources {
+            networkd_dirs: vec![etc.clone(), usr.clone()],
+            ..Default::default()
+        };
+
+        let error = NetworkdAdapter::new()
+            .execute_unmanage(
+                &sources,
+                &["ens3".to_string()],
+                &dir.join("backup"),
+                &ToolPaths::default(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, HostNetError::UnsupportedSyntax { ref path, .. }
+                if path == &usr.join("10-wan.network")),
+            "unexpected error: {error:?}"
+        );
+        assert!(etc.join("10-wan.network").is_file(), "现场不动");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

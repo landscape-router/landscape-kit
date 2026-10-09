@@ -133,3 +133,29 @@
   同一文件同时引用选中与未选精确名、或 glob 引用选中接口时计划阶段拒绝、不改任何
   文件；无 `Name=` 的文件跳过；`.netdev` 不收集。反查取已消失移出文件的精确名并集，
   被人工重建的文件不再计入。运行时 reload 由 lkit-cli 负责（NET-15）。
+
+## HNET-14
+
+**netplan 配置存在时接管在 preflight 拒绝**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[takeover preflight](../../../../lkit-cli/src/network/takeover.rs)、
+  [接管文档](../../../network/takeover.md)
+- 说明：`/etc/netplan/` 下存在任何 `*.yaml` 即认为宿主由 netplan 管理网络，
+  preflight 报错并引导迁移宿主网络配置——netplan 渲染进 networkd/NM 搜索路径的
+  配置会被 `netplan apply` 或重启重新生成，文件摘除无法保持稳定。目录缺失或
+  为空不视为 netplan 管理。
+
+## HNET-15
+
+**networkd 多目录搜索与同名遮蔽级联**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[networkd 适配器测试](../../../../crates/lkit-hostnet/src/networkd/mod.rs)、
+  [hostnet 设计](../../../network/hostnet.md)
+- 说明：搜索路径覆盖 `/etc/systemd/network`、`/run/systemd/network`、
+  `/usr/lib/systemd/network`（优先级从高到低）。各目录中引用选中接口的文件分别移出；
+  移出高优先级文件后，同引选中接口的低优先级同名遮蔽文件级联移出（一并备份与恢复），
+  引用未选接口或无法归因的遮蔽文件保守拒绝、现场不动。

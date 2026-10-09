@@ -30,7 +30,9 @@ use super::config::{NetworkMode, NetworkPlan};
 ///   drop-in、firewalld 通过 zone XML 的接口行、networkd 通过移出 `.network`
 ///   文件摘除选中接口(见 `unmanage_selected_interfaces`),未选接口继续由宿主
 ///   管理;回滚/卸载按 `backups/hostnet/<kind>` 的 manifest 逐字恢复并 reload
-///   对应守护进程。ifupdown 同理摘除并重启 `networking.service`。
+///   对应守护进程。ifupdown 同理摘除并重启 `networking.service`。netplan
+///   管理的宿主在 preflight 拒绝:netplan 渲染进搜索路径的配置会被重新生成,
+///   摘除无法保持稳定。
 const HOST_SERVICES: [&str; 1] = ["systemd-resolved.service"];
 const UNKNOWN_NETWORK_MANAGERS: [&str; 2] = ["wicked.service", "connman.service"];
 /// 接管摘除的宿主网络配置备份固定落点(地盘相对):同一主机只有一个
@@ -66,11 +68,16 @@ pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
             )));
         }
     }
+    if netplan_config_present(&runtime.netplan_dir)? {
+        return Err(InstallError::Preflight(format!(
+            "netplan configuration is present in {}; network takeover cannot unmanage a netplan-configured host (netplan renders network config that would defeat the takeover and regenerate removed files); migrate the host network configuration before takeover",
+            runtime.netplan_dir.display()
+        )));
+    }
     // 运行中的 NM/firewalld 必须能通过其配置目录摘除,否则接管无法生效。
     for (unit, dir) in [
         ("NetworkManager.service", &runtime.nm_conf_d),
         ("firewalld.service", &runtime.firewalld_zones),
-        ("systemd-networkd.service", &runtime.networkd_dir),
     ] {
         if systemd::inspect_host_service(systemd, unit)?.active && !dir.is_dir() {
             return Err(InstallError::Preflight(format!(
@@ -79,7 +86,45 @@ pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
             )));
         }
     }
+    // networkd 同理,检查整条搜索路径(/etc、/run、/usr/lib)——一个目录都没有
+    // 时运行中的 networkd 的配置无处可摘。
+    if systemd::inspect_host_service(systemd, "systemd-networkd.service")?.active
+        && !runtime.networkd_dirs.iter().any(|dir| dir.is_dir())
+    {
+        return Err(InstallError::Preflight(format!(
+            "systemd-networkd.service is active but none of {} exists; create one or stop the service before network takeover",
+            runtime
+                .networkd_dirs
+                .iter()
+                .map(|dir| dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
     Ok(())
+}
+
+/// netplan 管理信号:配置目录存在任何 `*.yaml`。netplan 把 YAML 渲染进
+/// networkd/NM 的搜索路径(/run/systemd/network 等),摘除渲染产物会被
+/// `netplan apply` 或重启重新生成,接管无法保持稳定,preflight 直接拒绝。
+fn netplan_config_present(dir: &Path) -> Result<bool, InstallError> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(InstallError::Io)?;
+        if entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+            && entry.file_name().to_string_lossy().ends_with(".yaml")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn prepare_transaction(
@@ -210,7 +255,9 @@ pub(crate) fn unmanage_selected_interfaces(
     {
         applied = true;
     }
-    if runtime.networkd_dir.is_dir() && unmanage_networkd_files(&selected, &runtime.networkd_dir)? {
+    if runtime.networkd_dirs.iter().any(|dir| dir.is_dir())
+        && unmanage_networkd_files(&selected, &runtime.networkd_dirs)?
+    {
         applied = true;
     }
     if applied {
@@ -305,9 +352,13 @@ fn unmanage_firewalld_files(selected: &[String], zones: &Path) -> Result<bool, I
     }
 }
 
-/// networkd 摘除:配置目录存在即移出 `[Match]` 只引用选中接口的 `.network`
-/// 文件。备份仍在但所有被移出文件已被人工重建时是现场漂移,明确拒绝。
-fn unmanage_networkd_files(selected: &[String], dir: &Path) -> Result<bool, InstallError> {
+/// networkd 摘除:搜索路径上任一目录存在即移出 `[Match]` 只引用选中接口的
+/// `.network` 文件(同名遮蔽按归因级联或拒绝)。备份仍在但所有被移出文件已被
+/// 人工重建时是现场漂移,明确拒绝。
+fn unmanage_networkd_files(
+    selected: &[String],
+    dirs: &[std::path::PathBuf],
+) -> Result<bool, InstallError> {
     let backup_dir = hostnet_backup_dir(HOSTNET_KIND_NETWORKD);
     if let Some(manifest) = read_hostnet_manifest(HOSTNET_KIND_NETWORKD)? {
         let recreated = manifest.files.iter().any(|file| file.original.exists());
@@ -320,7 +371,7 @@ fn unmanage_networkd_files(selected: &[String], dir: &Path) -> Result<bool, Inst
         return Ok(true);
     }
     let sources = FileSources {
-        networkd_dir: Some(dir.to_path_buf()),
+        networkd_dirs: dirs.to_vec(),
         ..Default::default()
     };
     match NetworkdAdapter::new().execute_unmanage(
@@ -1070,6 +1121,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn netplan_config_is_detected_by_yaml_files() {
+        let dir = std::env::temp_dir().join(format!("lkit-netplan-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(
+            !netplan_config_present(&dir).unwrap(),
+            "an empty dir is not netplan-managed"
+        );
+        std::fs::write(dir.join("10-config.yaml"), "network:\n  version: 2\n").unwrap();
+        std::fs::write(dir.join("notes.txt"), "not netplan").unwrap();
+        assert!(netplan_config_present(&dir).unwrap());
+        assert!(
+            !netplan_config_present(&dir.join("missing")).unwrap(),
+            "a missing dir is not netplan-managed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn detects_selinux_config_even_when_not_mounted() {
         let dir = std::env::temp_dir().join(format!("lkit-selinux-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1238,7 +1308,7 @@ iface ens5 inet static
         assert!(unmanage_ifupdown_files(&selected, &interfaces, None).unwrap());
         assert!(unmanage_nm_files(&selected, &conf_d).unwrap());
         assert!(unmanage_firewalld_files(&selected, &zones).unwrap());
-        assert!(unmanage_networkd_files(&selected, &networkd).unwrap());
+        assert!(unmanage_networkd_files(&selected, std::slice::from_ref(&networkd)).unwrap());
         assert!(hostnet_backup_stands());
 
         let drop_in = std::fs::read_to_string(conf_d.join(UNMANAGE_CONF)).unwrap();
@@ -1343,7 +1413,9 @@ iface ens5 inet static
         // 现场只剩 NM{ens4};networkd 移出 ens3 后全集重新变回 {ens3, ens4}。
         std::fs::remove_dir_all(territory.join(HOSTNET_BACKUP_REL).join("firewalld")).unwrap();
         gate(&["ens4".to_string()]).unwrap();
-        assert!(unmanage_networkd_files(&["ens3".into()], &networkd).unwrap());
+        assert!(
+            unmanage_networkd_files(&["ens3".into()], std::slice::from_ref(&networkd)).unwrap()
+        );
         gate(&["ens4".to_string()]).expect_err("the removed .network file still pins ens3");
         gate(&["ens3".to_string(), "ens4".to_string()]).unwrap();
 
@@ -1354,7 +1426,7 @@ iface ens5 inet static
             "[Match]\nName=ens3\n\n[Network]\nDHCP=yes\n",
         )
         .unwrap();
-        let error = unmanage_networkd_files(&["ens3".into()], &networkd)
+        let error = unmanage_networkd_files(&["ens3".into()], std::slice::from_ref(&networkd))
             .expect_err("a recreated .network file with a standing backup must be rejected");
         assert!(
             matches!(error, InstallError::Preflight(ref message) if message.contains("recreated")),

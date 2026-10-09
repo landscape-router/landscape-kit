@@ -192,7 +192,8 @@ esac
                 "ifup_command": ifup_command,
                 "nm_conf_d": host.join("nm-conf.d"),
                 "firewalld_zones": host.join("firewalld-zones"),
-                "networkd_dir": host.join("systemd-network"),
+                // fixture 只暴露自己的 networkd 目录,不带 /run、/usr/lib 真实路径。
+                "networkd_dirs": [host.join("systemd-network")],
                 "nmcli": nmcli,
                 "firewall_cmd": firewall_cmd,
                 "networkctl": networkctl,

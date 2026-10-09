@@ -5,8 +5,10 @@
 `lkit install --takeover-network` 是首次安装的显式破坏性模式，要求 root、真实可通信的
 systemd 和交互终端。网卡始终由用户选择，lkit 不按默认路由或接口名自动决定 WAN/LAN。
 无线、loopback 和虚拟接口不列入选择。不受支持的活动网络管理器（wicked 或
-connman），或 SELinux 已加载/配置为 enabled/permissive
-时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
+connman）、netplan 配置存在（`/etc/netplan/*.yaml`——netplan 会把配置渲染进
+networkd/NM 搜索路径并在 `netplan apply` 或重启时重新生成，文件摘除无法保持稳定，
+需先把宿主网络配置迁出 netplan），或 SELinux 已加载/配置为 enabled/permissive，
+在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
 接管按宿主上实际存在的网络组件分层摘除选中接口（WAN + 全部选中 LAN），组件之间可组合：
@@ -25,10 +27,14 @@ lkit 不检查桥接是否存在。
   `<interface name="..."/>` 整行（仅自闭合单属性形态；其他形态保守拒绝整个摘除），未选
   接口与其他规则逐字节保留。接口脱离显式 zone 后由 firewalld 默认 zone 兜底。zones
   目录存在即视为 firewalld 已安装。
-- **systemd-networkd**：保持运行。lkit 把 `[Match]` 段 `Name=` 精确名集合完全落在选中
-  集内的 `.network` 文件整体移出（备份持有逐字副本，回滚重建）；`Name=` 以 glob 引用
-  选中接口、或同一文件同时引用选中与未选接口时保守拒绝整个接管，无 `Name=` 的文件
-  （按 MAC/Driver 匹配）不按名字归因、原样跳过。配置目录存在即视为 networkd 已配置。
+- **systemd-networkd**：保持运行。搜索路径为 networkd 的全部配置目录（优先级从高到低
+  `/etc/systemd/network`、`/run/systemd/network`、`/usr/lib/systemd/network`，同名文件
+  只有最高优先级者生效）。lkit 把 `[Match]` 段 `Name=` 精确名集合完全落在选中集内的
+  `.network` 文件整体移出（备份持有逐字副本，回滚重建）；`Name=` 以 glob 引用选中
+  接口、或同一文件同时引用选中与未选接口时保守拒绝整个接管，无 `Name=` 的文件
+  （按 MAC/Driver 匹配）不按名字归因、原样跳过。移出一个文件会让低优先级目录的同名
+  遮蔽文件生效：同引选中接口的遮蔽文件级联移出，引用未选接口或无法归因的保守拒绝。
+  任一搜索目录存在即视为 networkd 已配置。
 - **systemd-resolved**：整体摘除。DNS 是主机全局语义（stub 监听 :53、
   `/etc/resolv.conf` 归属），没有按接口摘除的文件边界，因此 lkit 保存其原始状态后
   stop、disable、mask；不存在的 unit 保持未安装状态且不执行服务操作，回滚按原始

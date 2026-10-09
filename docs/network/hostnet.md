@@ -168,14 +168,18 @@ rename 原子写回，恢复 mode/uid/gid；ACL/xattr 不在当前范围。
 
 ## systemd-networkd 适配器
 
-- **文件范围**：配置目录（路径注入，生产环境 `/etc/systemd/network/`）中全部
-  `*.network`（按文件名排序）。`.netdev` 定义虚拟设备，选中接口均为物理接口，不收集；
-  目录缺失时为 no-op；目录或文件是符号链接时以 `PathSafety` 阻断。
+- **文件范围**：配置搜索路径（路径注入，生产环境按优先级从高到低为
+  `/etc/systemd/network/`、`/run/systemd/network/`、`/usr/lib/systemd/network/`）中全部
+  `*.network`（各目录内按文件名排序，目录间保持优先级序）。networkd 同名文件只有最高
+  优先级者生效。`.netdev` 定义虚拟设备，选中接口均为物理接口，不收集；目录缺失时为
+  no-op；目录或文件是符号链接时以 `PathSafety` 阻断。
 - **改写规则**：`[Match]` 段 `Name=` 的精确名集合 ⊆ 选中集合时把文件整体移出——
   networkd 的 `[Match]` 同键条目 OR、异键 AND，`Name=` 精确集即匹配集上界，整文件移出
   不会波及未选接口。`Name=` 以 glob 引用选中接口（无法归因完整匹配集）、或同一文件
   同时引用选中与未选精确名时保守拒绝（`UnsupportedSyntax`），计划阶段即失败、不改
-  任何文件；无 `Name=`（按 MAC/Driver 等匹配）的文件不按名字归因，原样跳过。
+  任何文件；无 `Name=`（按 MAC/Driver 等匹配）的文件不按名字归因，原样跳过。移出高
+  优先级文件会让低优先级目录的同名遮蔽文件生效：遮蔽文件同引选中接口时级联移出，
+  引用未选接口或无法归因（glob、无 `Name=`）时保守拒绝——不猜生效后的匹配集。
 - **恢复**：移出的文件按备份逐字副本重建（恢复 mode/uid/gid）；guarded 恢复中删除后
   被外部重建的文件保留并上报 `ConcurrentModification`。
 - **校验**：无 dry-run 工具，`validate` 返回 `Unavailable`；运行时效果由调用方

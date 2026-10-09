@@ -7,13 +7,15 @@ pub const MANIFEST_SCHEMA_VERSION: u64 = 1;
 /// 宿主网络配置文件的入口。ifupdown 适配器读 `interfaces` 主文件;
 /// NetworkManager 适配器读 `nm_conf_d` drop-in 目录,firewalld 适配器读
 /// `firewalld_zones` zone 目录——各适配器只消费自己的字段,未提供的入口
-/// 视为该管理器不在宿主上,摘除为 no-op。
+/// 视为该管理器不在宿主上,摘除为 no-op。networkd 适配器读 `networkd_dirs`,
+/// 按优先级从高到低排列(同名文件高优先级者生效,低优先级者被遮蔽),空列表
+/// 表示 networkd 不在宿主上。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FileSources {
     pub interfaces: PathBuf,
     pub nm_conf_d: Option<PathBuf>,
     pub firewalld_zones: Option<PathBuf>,
-    pub networkd_dir: Option<PathBuf>,
+    pub networkd_dirs: Vec<PathBuf>,
 }
 
 impl FileSources {
