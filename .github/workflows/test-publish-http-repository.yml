@@ -33,11 +33,11 @@ jobs:
       RUSTFS_TEST_REQUIRE: "1"
     steps:
       - name: Check out landscape-kit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Cache RustFS test image
         id: image-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /tmp/rustfs-image.tar
           key: rustfs-1.0.0-beta.11-84ce557a0245a06a

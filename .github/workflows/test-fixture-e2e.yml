@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -62,7 +62,7 @@ jobs:
             "$test_binary" \
             lkit lkit-landscape-fixture lkit-test-systemctl lkit-test-init
       - name: Upload compiled fixture e2e binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fixture-e2e-binaries
           path: ci-artifacts/fixture-e2e-binaries.tar.gz
@@ -104,9 +104,9 @@ jobs:
           - domain: update
             filter: "update::"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download compiled fixture e2e binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: fixture-e2e-binaries
           path: ci-artifacts

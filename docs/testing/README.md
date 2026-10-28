@@ -16,6 +16,14 @@ systemd 只承担协议与进程托管的薄集成验证。
 | QEMU 网络接管 | `scripts/test-qemu-network-takeover.sh` | GitHub-hosted x86_64 KVM、双 virtio 网卡 | 相关 PR、main、每周、手动 | 真实宿主网络服务、br_lan SSH 确认、未确认重启回滚 |
 | 真实 ifupdown 兼容 | `cargo test -p lkit-hostnet --test ifupdown_real` | Debian ifupdown 容器 | 相关 PR、`dev`/`main`、手动 | ifup/ifquery 脚本生成、备份恢复、命令失败回滚 |
 
+## Actions 运行时
+
+workflow 使用原生 Node.js 24 的 Actions：`actions/checkout@v7`、
+`actions/upload-artifact@v7`、`actions/download-artifact@v8`、`actions/cache@v6`
+（含 `restore`）及 `Swatinem/rust-cache@v2`。GitHub-hosted runner 提供所需运行时，
+无需设置强制切换 Node.js 版本的兼容环境变量。产物维持默认 ZIP 归档格式，
+下载沿用摘要校验，校验失败会阻断任务。
+
 ## 脚本与 CI 结构
 
 每个测试域（domain）三处命名一致：

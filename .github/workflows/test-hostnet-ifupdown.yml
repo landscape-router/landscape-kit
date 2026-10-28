@@ -36,7 +36,7 @@ jobs:
       image: rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa
     steps:
       - name: Check out landscape-kit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install ifupdown
         run: |

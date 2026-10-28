@@ -53,7 +53,7 @@ jobs:
 
     steps:
       - name: Check out landscape-kit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify Docker
         run: |
