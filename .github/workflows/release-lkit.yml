@@ -72,6 +72,11 @@ jobs:
           scripts/test-install-lkit.sh
           bash scripts/test-build-musl-static.sh
 
+  test-musl:
+    name: Test musl architectures
+    needs: verify
+    uses: ./.github/workflows/test-musl.yml
+
   build:
     name: Build static Linux (${{ matrix.arch }})
     needs: verify
@@ -175,7 +180,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [verify, build, build-flare-windows]
+    needs: [verify, test-musl, build, build-flare-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

@@ -33,6 +33,13 @@ git push origin v0.7.0-rc1
 `.github/workflows/release-lkit.yml` 会重新校验 tag、Cargo 版本和测试结果。任一架构构建
 失败时不创建 Release；已存在的 Release 不允许由重跑覆盖。
 
+发布 workflow 通过可复用的 [`test-musl.yml`](../../.github/workflows/test-musl.yml)
+运行四架构轻量功能测试，成功后才允许发布。该 workflow 也在 `main`、`dev`、
+`build/musl-static` 的相关文件 push、PR 和手动触发时独立运行。
+测试覆盖协议与加密、配置解析、归档处理、备份读写，使用原生执行或 QEMU user-mode；
+不启动真实服务或修改网络，不能代替目标架构内核与 systemd 的系统级兼容性测试。
+详细范围见[跨架构测试场景](../testing/scenarios/functional/musl.md)。
+
 `build/musl-static` 分支的 push 和手动触发会执行验证、四架构 Linux 静态构建及
 Windows 客户端构建，并上传 Actions 产物；这两种入口不创建 GitHub Release。
 只有推送 `v*` tag 才进入发布任务。分支构建使用 Cargo 包版本做二进制版本校验，

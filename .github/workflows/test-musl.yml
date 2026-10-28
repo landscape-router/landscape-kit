@@ -1,0 +1,81 @@
+name: Test musl architectures
+
+on:
+  push:
+    branches: [main, dev, build/musl-static]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/**
+      - lkit-cli/**
+      - landscape-terrain-proto/**
+      - crates/lkit-repository/**
+      - scripts/test-musl.sh
+      - .github/workflows/test-musl.yml
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/**
+      - lkit-cli/**
+      - landscape-terrain-proto/**
+      - crates/lkit-repository/**
+      - scripts/test-musl.sh
+      - .github/workflows/test-musl.yml
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: musl-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Functional tests (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+          - arch: riscv64
+            target: riscv64gc-unknown-linux-musl
+          - arch: loongarch64
+            target: loongarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl-functional-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Install cross-compilation and emulation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user shellcheck
+          python3 -m pip install --user --break-system-packages ziglang==0.16.0
+          cargo install --locked cargo-zigbuild --version 0.23.4
+      - name: Check test script
+        run: |
+          bash -n scripts/test-musl.sh
+          shellcheck scripts/test-musl.sh
+      - name: Run musl functional tests
+        env:
+          MUSL_TEST_RESULTS_DIR: ${{ runner.temp }}/musl-results
+        run: bash scripts/test-musl.sh '${{ matrix.target }}'
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: musl-functional-${{ matrix.arch }}
+          path: ${{ runner.temp }}/musl-results/*.log
+          if-no-files-found: warn
+          retention-days: 7
