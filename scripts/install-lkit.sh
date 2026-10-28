@@ -34,21 +34,18 @@ fi
 [ "$(id -u)" -eq 0 ] || die "run this installer as root, for example through sudo"
 [ "$(uname -s)" = Linux ] || die "only Linux is supported"
 
-if command -v ldd >/dev/null 2>&1; then
-    libc_description=$(ldd --version 2>&1 || :)
-    case "$libc_description" in
-        *musl*)
-            die "musl-based distributions (including Alpine) are not supported by the current glibc release binaries"
-            ;;
-    esac
-fi
-
 case "$(uname -m)" in
     x86_64 | amd64)
         asset_name=lkit-x86_64
         ;;
     aarch64 | arm64)
         asset_name=lkit-aarch64
+        ;;
+    riscv64)
+        asset_name=lkit-riscv64
+        ;;
+    loongarch64)
+        asset_name=lkit-loongarch64
         ;;
     *)
         die "unsupported architecture: $(uname -m)"

@@ -55,6 +55,8 @@ pub(crate) struct BackupMetadata {
 pub(crate) enum BackupArchitecture {
     X86_64,
     Aarch64,
+    Riscv64,
+    Loongarch64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

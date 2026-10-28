@@ -2,8 +2,11 @@ name: Release lkit and lflare
 
 on:
   push:
+    branches:
+      - build/musl-static
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,14 +30,18 @@ jobs:
       - name: Validate release version
         id: version
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
+          package_version=$(cargo metadata --locked --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "lkit-cli"))')
+          if [[ -z "$TAG" ]]; then
+            echo "version=$package_version" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "release tag must be a SemVer in vX.Y.Z form, optionally with a prerelease suffix such as -rc.1" >&2
             exit 1
           fi
-          package_version=$(cargo metadata --locked --no-deps --format-version 1 \
-            | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "lkit-cli"))')
           version=${TAG#v}
           if [[ $package_version != "$version" ]]; then
             echo "tag version $version does not match lkit-cli package version $package_version" >&2
@@ -61,93 +68,65 @@ jobs:
 
       - name: Check installer scripts
         run: |
-          shellcheck scripts/install-lkit.sh scripts/test-install-lkit.sh
+          shellcheck scripts/install-lkit.sh scripts/test-install-lkit.sh scripts/build-musl-static.sh scripts/test-build-musl-static.sh
           scripts/test-install-lkit.sh
+          bash scripts/test-build-musl-static.sh
 
   build:
-    name: Build lkit (${{ matrix.architecture }})
+    name: Build static Linux (${{ matrix.arch }})
     needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - architecture: x86_64
-            runner: ubuntu-24.04
-            elf_machine: Advanced Micro Devices X86-64
-          - architecture: aarch64
-            runner: ubuntu-24.04-arm
-            elf_machine: AArch64
-    runs-on: ${{ matrix.runner }}
-    container:
-      image: rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa
-    timeout-minutes: 45
-
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+            emulator: ""
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+            emulator: qemu-aarch64
+          - arch: riscv64
+            target: riscv64gc-unknown-linux-musl
+            emulator: qemu-riscv64
+          - arch: loongarch64
+            target: loongarch64-unknown-linux-musl
+            emulator: qemu-loongarch64
     steps:
-      - name: Check out landscape-kit
-        uses: actions/checkout@v4
-
-      - name: Cache Rust distribution build
-        uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
         with:
+          key: release-musl-${{ matrix.target }}
           cache-on-failure: true
-          key: release-dist-${{ matrix.architecture }}
-
-      - name: Build distribution binary
-        run: cargo build --locked --profile dist -p lkit-cli --bin lkit
-
-      - name: Build flare distribution binary
-        run: cargo build --locked --profile dist -p landscape-flare --bin lflare
-
-      - name: Stage and verify binary
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user binutils
+          python3 -m pip install --user --break-system-packages ziglang==0.16.0
+          cargo install --locked cargo-zigbuild --version 0.23.4
+      - name: Build static binaries
+        run: bash scripts/build-musl-static.sh '${{ matrix.target }}'
+      - name: Smoke test static binaries
         env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-          ELF_MACHINE: ${{ matrix.elf_machine }}
+          EMULATOR: ${{ matrix.emulator }}
+          ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          mkdir -p dist
-          install -m 0755 target/dist/lkit "dist/lkit-$ARCHITECTURE"
-          binary="dist/lkit-$ARCHITECTURE"
-          file "$binary" | grep -F "stripped"
-          readelf -h "$binary" | grep -F "Machine:" | grep -F "$ELF_MACHINE"
-          ldd "$binary" >/dev/null
-          actual_version=$("$binary" --version)
-          if [ "$actual_version" != "lkit $VERSION" ]; then
-            echo "$binary reported unexpected version: $actual_version" >&2
-            exit 1
-          fi
-          size=$(stat -c '%s' "$binary")
-          printf '### %s\n\n- Size: %s bytes\n' \
-            "$ARCHITECTURE" "$size" >>"$GITHUB_STEP_SUMMARY"
-
-      - name: Stage and verify flare binary
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-          ELF_MACHINE: ${{ matrix.elf_machine }}
-        run: |
-          mkdir -p dist
-          install -m 0755 target/dist/lflare "dist/lflare-linux-$ARCHITECTURE"
-          binary="dist/lflare-linux-$ARCHITECTURE"
-          file "$binary" | grep -F "stripped"
-          readelf -h "$binary" | grep -F "Machine:" | grep -F "$ELF_MACHINE"
-          ldd "$binary" >/dev/null
-          "$binary" --help >/dev/null
-          size=$(stat -c '%s' "$binary")
-          printf '### lflare %s\n\n- Size: %s bytes\n' \
-            "$ARCHITECTURE" "$size" >>"$GITHUB_STEP_SUMMARY"
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
+          actual=$($EMULATOR "dist/lkit-$ARCH" --version)
+          test "$actual" = "lkit $VERSION"
+          $EMULATOR "dist/lflare-linux-$ARCH" --help >/dev/null
+          for binary in dist/lkit-* dist/lflare-linux-*; do
+            file "$binary" | grep stripped
+            size=$(stat -c '%s' "$binary")
+            printf -- '- %s: %s bytes\n' "${binary##*/}" "$size" >>"$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@v4
         with:
-          name: lkit-${{ matrix.architecture }}
-          path: dist/lkit-${{ matrix.architecture }}
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload flare binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: lflare-linux-${{ matrix.architecture }}
-          path: dist/lflare-linux-${{ matrix.architecture }}
+          name: lkit-musl-${{ matrix.arch }}
+          path: |
+            dist/lkit-*
+            dist/lflare-linux-*
           if-no-files-found: error
           retention-days: 1
 
@@ -195,6 +174,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [verify, build, build-flare-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -208,7 +188,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: lkit-*
+          pattern: lkit-musl-*
           path: dist
           merge-multiple: true
 
@@ -226,7 +206,7 @@ jobs:
           install -m 0755 scripts/install-lkit.sh dist/install.sh
           sed -i "s|releases/latest/download$|releases/download/${TAG}|" dist/install.sh
           cd dist
-          sha256sum lkit-aarch64 lkit-x86_64 lflare-linux-aarch64 lflare-linux-x86_64 lflare-windows-x86_64.exe install.sh >SHA256SUMS
+          sha256sum lkit-* lflare-linux-* lflare-windows-x86_64.exe install.sh >SHA256SUMS
 
       - name: Create GitHub Release
         env:
@@ -242,10 +222,8 @@ jobs:
             prerelease+=(--prerelease)
           fi
           gh release create "$TAG" \
-            dist/lkit-x86_64 \
-            dist/lkit-aarch64 \
-            dist/lflare-linux-x86_64 \
-            dist/lflare-linux-aarch64 \
+            dist/lkit-* \
+            dist/lflare-linux-* \
             dist/lflare-windows-x86_64.exe \
             dist/SHA256SUMS \
             dist/install.sh \

@@ -87,6 +87,8 @@ pub(super) fn check_architecture(
     let backup_arch = match metadata.architecture {
         BackupArchitecture::X86_64 => "x86_64",
         BackupArchitecture::Aarch64 => "aarch64",
+        BackupArchitecture::Riscv64 => "riscv64",
+        BackupArchitecture::Loongarch64 => "loongarch64",
     };
     if host_arch != backup_arch {
         return Err(InstallError::InvalidBackup(format!(
@@ -96,6 +98,8 @@ pub(super) fn check_architecture(
     let state_arch = match state.assets.webserver.architecture {
         StateArchitecture::X86_64 => "x86_64",
         StateArchitecture::Aarch64 => "aarch64",
+        StateArchitecture::Riscv64 => "riscv64",
+        StateArchitecture::Loongarch64 => "loongarch64",
     };
     if state_arch != backup_arch {
         return Err(InstallError::InvalidBackup(format!(

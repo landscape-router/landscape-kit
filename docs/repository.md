@@ -176,7 +176,7 @@ Schema v1：
 
 ### 资产结构
 
-`assets.webserver` 是架构名到资产对象的映射。v1 识别 `x86_64` 和 `aarch64`；未知架构字段忽略。
+`assets.webserver` 是架构名到资产对象的映射。v1 识别 `x86_64`、`aarch64`、`riscv64` 和 `loongarch64`；未知架构字段忽略。
 
 一个版本可以只提供其中一个架构。缺少当前主机架构资产不算 manifest 损坏，但该版本不能安装到当前主机。
 
@@ -254,7 +254,7 @@ Release 资产使用元数据中的 `browser_download_url` 下载。`SHASUM256su
 - `aarch64` 原始资产使用 `landscape-webserver-aarch64`；
 - 共享静态资产使用 `static.zip`；
 - SHA-256 从 `SHASUM256sum.txt` 读取；
-- v1 glibc Linux 安装不选择 `-musl` 或实验架构资产。
+- x86_64/aarch64 选择既有 glibc 资产；riscv64/loongarch64 选择 `landscape-webserver-<arch>-static` 全静态资产。
 
 ## 后端压缩格式
 

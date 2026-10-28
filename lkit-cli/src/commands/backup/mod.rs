@@ -118,6 +118,8 @@ pub(crate) fn architecture_key(
     match architecture {
         crate::backup::lkb::BackupArchitecture::X86_64 => "x86_64",
         crate::backup::lkb::BackupArchitecture::Aarch64 => "aarch64",
+        crate::backup::lkb::BackupArchitecture::Riscv64 => "riscv64",
+        crate::backup::lkb::BackupArchitecture::Loongarch64 => "loongarch64",
     }
 }
 

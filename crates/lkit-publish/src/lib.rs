@@ -71,6 +71,8 @@ pub async fn publish(config: PublishConfig) -> Result<(), PublishError> {
             webserver: WebserverAssets {
                 x86_64: Some(assets.webserver_x86_64.repository_asset()),
                 aarch64: Some(assets.webserver_aarch64.repository_asset()),
+                riscv64: None,
+                loongarch64: None,
             },
             static_archive: assets.static_archive.repository_asset(),
         },

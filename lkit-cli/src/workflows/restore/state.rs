@@ -37,6 +37,8 @@ pub(super) async fn create_protection_backup<P: DocsProbe>(
     let architecture = match state.assets.webserver.architecture {
         StateArchitecture::X86_64 => "x86_64",
         StateArchitecture::Aarch64 => "aarch64",
+        StateArchitecture::Riscv64 => "riscv64",
+        StateArchitecture::Loongarch64 => "loongarch64",
     };
     let version = pipeline::parse_stable_version(&state.active_version).map_err(|error| {
         InstallError::CorruptedState(format!("invalid active version: {error}"))
@@ -81,6 +83,8 @@ pub(super) fn build_restore_state(
     let architecture = match metadata.architecture {
         BackupArchitecture::X86_64 => StateArchitecture::X86_64,
         BackupArchitecture::Aarch64 => StateArchitecture::Aarch64,
+        BackupArchitecture::Riscv64 => StateArchitecture::Riscv64,
+        BackupArchitecture::Loongarch64 => StateArchitecture::Loongarch64,
     };
     let initialization = InitializationState {
         status: InitStatus::Complete,

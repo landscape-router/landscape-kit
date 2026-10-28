@@ -69,7 +69,7 @@ worker 继续完成提交或自动回滚。worker 或主机重启导致事务中
 - `install` 不迁移 `/root/.landscape-router` 等旧手工部署；迁移使用 `lkit migrate`
   （备份 → 确认 → 停止旧实例 → 重建 → 接管），见 [`lkit migrate`](migrate.md)。
 - 当前发布产物不支持 Alpine 等 musl 发行版。
-- 不支持 `x86_64` 和 `aarch64` 以外架构。
+- 不支持 `x86_64`、`aarch64`、`riscv64` 和 `loongarch64` 以外架构。
 - 不允许安装 prerelease。
 - 不实现 AWS S3 profile、region 或 access key 鉴权。
 - 不自动删除旧版本、事务或 `.lkb`；`uninstall` 是唯一显式清理入口，删除 landscape 根

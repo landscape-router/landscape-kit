@@ -161,6 +161,8 @@ pub(crate) fn build_switched_state(
                 architecture: match architecture {
                     Architecture::X86_64 => StateArchitecture::X86_64,
                     Architecture::Aarch64 => StateArchitecture::Aarch64,
+                    Architecture::Riscv64 => StateArchitecture::Riscv64,
+                    Architecture::Loongarch64 => StateArchitecture::Loongarch64,
                 },
                 sha256: built.webserver_sha256.clone(),
                 size: built.webserver_size,
@@ -185,6 +187,8 @@ pub(crate) fn architecture_from_state(state: &InstallState) -> Architecture {
     match state.assets.webserver.architecture {
         StateArchitecture::X86_64 => Architecture::X86_64,
         StateArchitecture::Aarch64 => Architecture::Aarch64,
+        StateArchitecture::Riscv64 => Architecture::Riscv64,
+        StateArchitecture::Loongarch64 => Architecture::Loongarch64,
     }
 }
 
@@ -198,6 +202,8 @@ pub(super) fn build_state(
     let architecture = match architecture {
         Architecture::X86_64 => StateArchitecture::X86_64,
         Architecture::Aarch64 => StateArchitecture::Aarch64,
+        Architecture::Riscv64 => StateArchitecture::Riscv64,
+        Architecture::Loongarch64 => StateArchitecture::Loongarch64,
     };
     InstallState {
         schema_version: STATE_SCHEMA_VERSION,

@@ -431,6 +431,8 @@ fn architecture_from_state(state: &InstallState) -> Architecture {
     match state.assets.webserver.architecture {
         StateArchitecture::X86_64 => Architecture::X86_64,
         StateArchitecture::Aarch64 => Architecture::Aarch64,
+        StateArchitecture::Riscv64 => Architecture::Riscv64,
+        StateArchitecture::Loongarch64 => Architecture::Loongarch64,
     }
 }
 

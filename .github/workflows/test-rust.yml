@@ -9,7 +9,7 @@ on:
       - lkit-cli/**
       - .github/workflows/test-rust.yml
   push:
-    branches: [dev, main]
+    branches: [dev, main, build/musl-static]
     paths:
       - Cargo.lock
       - Cargo.toml

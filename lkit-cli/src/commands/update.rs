@@ -149,6 +149,12 @@ pub(crate) async fn resolve_update_target(
         crate::deployment::state::StateArchitecture::Aarch64 => {
             crate::release::repository::Architecture::Aarch64
         }
+        crate::deployment::state::StateArchitecture::Riscv64 => {
+            crate::release::repository::Architecture::Riscv64
+        }
+        crate::deployment::state::StateArchitecture::Loongarch64 => {
+            crate::release::repository::Architecture::Loongarch64
+        }
     };
     let release = match target {
         TargetVersion::Latest => provider

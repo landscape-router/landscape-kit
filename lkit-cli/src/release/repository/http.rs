@@ -160,6 +160,8 @@ impl HttpRepository {
         let webserver = match architecture {
             Architecture::X86_64 => manifest.assets.webserver.x86_64.as_ref(),
             Architecture::Aarch64 => manifest.assets.webserver.aarch64.as_ref(),
+            Architecture::Riscv64 => manifest.assets.webserver.riscv64.as_ref(),
+            Architecture::Loongarch64 => manifest.assets.webserver.loongarch64.as_ref(),
         }
         .ok_or_else(|| RepositoryError::MissingArchitecture {
             version: version.clone(),
@@ -624,6 +626,8 @@ mod tests {
         let webserver = match architecture {
             Architecture::X86_64 => manifest.assets.webserver.x86_64.as_ref(),
             Architecture::Aarch64 => manifest.assets.webserver.aarch64.as_ref(),
+            Architecture::Riscv64 => manifest.assets.webserver.riscv64.as_ref(),
+            Architecture::Loongarch64 => manifest.assets.webserver.loongarch64.as_ref(),
         }
         .ok_or_else(|| RepositoryError::MissingArchitecture {
             version: requested_version.clone(),
@@ -702,6 +706,28 @@ mod tests {
             release.assets.static_archive.encoding,
             AssetEncoding::Identity
         );
+    }
+
+    #[test]
+    fn parses_extended_architectures_without_cross_architecture_fallback() {
+        for architecture in [Architecture::Riscv64, Architecture::Loongarch64] {
+            let original = manifest("landscape-webserver-x86_64.zst", "1.2.3", true);
+            assert!(matches!(
+                parse_manifest(&original, "1.2.3", architecture),
+                Err(RepositoryError::MissingArchitecture { .. })
+            ));
+            let key = architecture.key();
+            let body = String::from_utf8(original).unwrap().replace("x86_64", key);
+            let release = parse_manifest(body.as_bytes(), "1.2.3", architecture).unwrap();
+            assert!(
+                release
+                    .assets
+                    .webserver
+                    .url
+                    .path()
+                    .ends_with(&format!("landscape-webserver-{key}.zst"))
+            );
+        }
     }
 
     #[test]

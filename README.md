@@ -6,7 +6,7 @@ The workspace also includes `lflare`, a separate client for the Landscape Terrai
 
 ## Quick Start
 
-The current release binaries support glibc-based Linux on `x86_64` and `aarch64`. musl-based distributions such as Alpine are not supported. The installer needs `curl` or `wget`, plus `sudo` access:
+Linux releases are fully static musl binaries for `x86_64`, `aarch64`, `riscv64`, and `loongarch64`, named `lkit-<arch>` without a libc suffix. They run on glibc and musl hosts; Landscape services and optional software retain their own platform requirements. The installer needs `curl` or `wget`, plus `sudo` access:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
@@ -63,7 +63,7 @@ Terrain is an encrypted Layer 2 recovery path between a host and a Landscape rou
 lflare cli --psk '<recovery-secret>' --dev eth0 --forward 2222:22
 ```
 
-Linux clients require a supported glibc target. Windows clients require Npcap. Read the [Terrain documentation](docs/flare/README.md) for protocol details, configuration, and end-to-end scenarios.
+Linux clients use fully static musl builds on the four supported architectures. Windows clients require Npcap. Read the [Terrain documentation](docs/flare/README.md) for protocol details, configuration, and end-to-end scenarios.
 
 ## Workspace
 
@@ -79,11 +79,17 @@ Linux clients require a supported glibc target. Windows clients require Npcap. R
 
 ## Building and Testing
 
-Build the complete workspace:
+Build the Linux distribution binaries (defaults to the host architecture, musl static linking):
 
 ```sh
-cargo build --locked --workspace
+python3 -m pip install --user ziglang==0.16.0
+cargo install --locked cargo-zigbuild --version 0.23.4
+bash scripts/build-musl-static.sh
 ```
+
+Artifacts are `dist/lkit-<arch>` and `dist/lflare-linux-<arch>`, with `dist/SHA256SUMS`.
+See the [release guide](docs/release/lkit.md) for cross-compilation targets.
+For development only, `cargo build --locked --workspace` uses the host toolchain.
 
 For a focused local check, run formatting, Clippy, and the unit tests for the module you changed:
 

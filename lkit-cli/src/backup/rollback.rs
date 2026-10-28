@@ -332,6 +332,10 @@ fn build_restored_state(
                 architecture: match architecture {
                     backup::BackupArchitecture::X86_64 => state::StateArchitecture::X86_64,
                     backup::BackupArchitecture::Aarch64 => state::StateArchitecture::Aarch64,
+                    backup::BackupArchitecture::Riscv64 => state::StateArchitecture::Riscv64,
+                    backup::BackupArchitecture::Loongarch64 => {
+                        state::StateArchitecture::Loongarch64
+                    }
                 },
                 sha256: webserver_sha256,
                 size: webserver_size,

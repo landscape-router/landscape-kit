@@ -6,7 +6,7 @@ Landscape Kit 提供用于安装和运维 [Landscape](https://github.com/ThisSea
 
 ## 快速开始
 
-当前发布二进制支持使用 glibc 的 Linux `x86_64` 和 `aarch64`。不支持 Alpine 等基于 musl 的发行版。安装器需要主机提供 `curl` 或 `wget`，并具备 `sudo` 权限：
+Linux 发布统一使用 musl 全静态二进制，支持 `x86_64`、`aarch64`、`riscv64` 和 `loongarch64`，文件名为 `lkit-<arch>`，不带 libc 后缀。二进制可在 glibc 和 musl 主机运行；Landscape 服务及可选软件仍有各自的平台要求。安装器需要主机提供 `curl` 或 `wget`，并具备 `sudo` 权限：
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
@@ -65,7 +65,7 @@ Terrain 是主机与 Landscape 路由器之间的加密二层应急通道。`lki
 lflare cli --psk '<恢复密钥>' --dev eth0 --forward 2222:22
 ```
 
-Linux 客户端需要受支持的 glibc 目标；Windows 客户端需要安装 Npcap。协议细节、配置方式和端到端场景见 [Terrain 文档](docs/flare/README.md)。
+Linux 客户端使用上述四种架构的 musl 全静态产物；Windows 客户端需要安装 Npcap。协议细节、配置方式和端到端场景见 [Terrain 文档](docs/flare/README.md)。
 
 ## Workspace
 
@@ -81,11 +81,17 @@ Linux 客户端需要受支持的 glibc 目标；Windows 客户端需要安装 N
 
 ## 构建与测试
 
-构建完整 workspace：
+构建 Linux 分发二进制（默认按宿主架构选择 musl 目标，全静态链接）：
 
 ```sh
-cargo build --locked --workspace
+python3 -m pip install --user ziglang==0.16.0
+cargo install --locked cargo-zigbuild --version 0.23.4
+bash scripts/build-musl-static.sh
 ```
+
+产物为 `dist/lkit-<arch>`、`dist/lflare-linux-<arch>` 及 `dist/SHA256SUMS`。
+交叉编译目标见[发布指南](docs/release/lkit.md)。
+仅用于开发的 `cargo build --locked --workspace` 仍使用宿主工具链。
 
 本地聚焦检查时，对改动模块运行格式化、Clippy 和单元测试：
 

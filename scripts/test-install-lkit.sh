@@ -155,7 +155,13 @@ cp "$fake_bin/id" "$fake_bin/uname" "$fake_bin/ldd" "$wget_bin"
 cp "$fake_bin/id" "$fake_bin/uname" "$fake_bin/ldd" "$plain_bin"
 (
   cd "$fixture_directory"
-  sha256sum lkit-aarch64 lkit-x86_64 >SHA256SUMS
+  for arch in riscv64 loongarch64; do
+    # The generated fixture, not this test driver, expands $1.
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\ncase "$1" in\n--version) echo "lkit 0.1.0" ;;\n--fixture-architecture) echo "%s" ;;\nesac\n' "$arch" >"lkit-$arch"
+    chmod +x "lkit-$arch"
+  done
+  sha256sum lkit-* >SHA256SUMS
 )
 
 run_installer() {
@@ -196,17 +202,19 @@ FAKE_UNAME_M=aarch64 run_installer >/dev/null
 [[ $($destination --fixture-architecture) == aarch64 ]] \
   || fail "aarch64 selected the wrong asset"
 
-if FAKE_UNAME_M=riscv64 run_installer >/dev/null 2>&1; then
+for arch in x86_64 aarch64 riscv64 loongarch64; do
+  for libc in glibc musl; do
+    FAKE_UNAME_M=$arch FAKE_LDD_FLAVOR=$libc run_installer >/dev/null
+    [[ $($destination --fixture-architecture) == "$arch" ]] \
+      || fail "$libc/$arch selected the wrong static asset"
+  done
+done
+if FAKE_UNAME_M=s390x run_installer >/dev/null 2>&1; then
   fail "unsupported architecture was accepted"
 fi
 if FAKE_UNAME_S=Darwin run_installer >/dev/null 2>&1; then
   fail "non-Linux platform was accepted"
 fi
-if musl_output=$(FAKE_LDD_FLAVOR=musl run_installer 2>&1); then
-  fail "musl platform was accepted"
-fi
-[[ $musl_output == *"musl-based distributions"* ]] \
-  || fail "musl rejection did not explain the glibc binary requirement"
 if FAKE_ID_U=1000 run_installer >/dev/null 2>&1; then
   fail "non-root installation was accepted"
 fi

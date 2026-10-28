@@ -116,6 +116,12 @@ async fn run_installed_inner(
         crate::deployment::state::StateArchitecture::Aarch64 => {
             crate::release::repository::Architecture::Aarch64
         }
+        crate::deployment::state::StateArchitecture::Riscv64 => {
+            crate::release::repository::Architecture::Riscv64
+        }
+        crate::deployment::state::StateArchitecture::Loongarch64 => {
+            crate::release::repository::Architecture::Loongarch64
+        }
     };
     // 只有需要解析版本时才读取配置来源;显式 `--repository` 完全绕过配置。
     let version_request = args
@@ -342,6 +348,12 @@ async fn same_version_install(
             }
             crate::deployment::state::StateArchitecture::Aarch64 => {
                 crate::release::repository::Architecture::Aarch64
+            }
+            crate::deployment::state::StateArchitecture::Riscv64 => {
+                crate::release::repository::Architecture::Riscv64
+            }
+            crate::deployment::state::StateArchitecture::Loongarch64 => {
+                crate::release::repository::Architecture::Loongarch64
             }
         };
         let active = plan::TargetVersion::parse(&state.active_version)?;

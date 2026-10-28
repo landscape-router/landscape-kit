@@ -56,6 +56,8 @@ pub(crate) struct ArchiveAsset {
 pub(crate) enum StateArchitecture {
     X86_64,
     Aarch64,
+    Riscv64,
+    Loongarch64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -340,6 +342,15 @@ fn is_sha256(value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::deployment::layout;
+
+    #[test]
+    fn extended_architectures_round_trip() {
+        for key in ["riscv64", "loongarch64"] {
+            let json = format!("\"{key}\"");
+            let architecture: StateArchitecture = serde_json::from_str(&json).unwrap();
+            assert_eq!(serde_json::to_string(&architecture).unwrap(), json);
+        }
+    }
 
     /// 建立隔离测试现场:lkit 地盘与 landscape 根位于同一临时目录树下,
     /// 地盘由 `test_territory` 指向,返回 (守卫, 地盘, landscape 根)。

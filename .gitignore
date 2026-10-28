@@ -3,6 +3,9 @@
 debug
 target
 
+# Distribution binaries
+/dist/
+
 # Offline .deb packages for the flare e2e image (fetched by fetch-packages.sh)
 scripts/flare/packages/*
 !scripts/flare/packages/.gitkeep

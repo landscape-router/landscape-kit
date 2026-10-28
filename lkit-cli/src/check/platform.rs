@@ -100,7 +100,7 @@ fn platform_architecture() -> CheckResult {
     let arch = std::env::consts::ARCH;
     result.value = arch.to_string();
     match arch {
-        "x86_64" | "aarch64" => result.set(
+        "x86_64" | "aarch64" | "riscv64" | "loongarch64" => result.set(
             Status::Pass,
             arch,
             crate::tr!(crate::keys::PLATFORM_ARCHITECTURE_SUPPORTED_BY_ARTIFACTS),

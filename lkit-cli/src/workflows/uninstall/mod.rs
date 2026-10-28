@@ -249,6 +249,8 @@ async fn create_protection_backup<P: DocsProbe>(
     let architecture = match state.assets.webserver.architecture {
         StateArchitecture::X86_64 => "x86_64",
         StateArchitecture::Aarch64 => "aarch64",
+        StateArchitecture::Riscv64 => "riscv64",
+        StateArchitecture::Loongarch64 => "loongarch64",
     };
     let version = pipeline::parse_stable_version(&state.active_version).map_err(|error| {
         InstallError::CorruptedState(format!("invalid active version: {error}"))

@@ -13,6 +13,8 @@ use url::Url;
 pub(crate) enum Architecture {
     X86_64,
     Aarch64,
+    Riscv64,
+    Loongarch64,
 }
 
 impl Architecture {
@@ -20,6 +22,8 @@ impl Architecture {
         match self {
             Self::X86_64 => "x86_64",
             Self::Aarch64 => "aarch64",
+            Self::Riscv64 => "riscv64",
+            Self::Loongarch64 => "loongarch64",
         }
     }
 
@@ -27,6 +31,8 @@ impl Architecture {
         match key {
             "x86_64" => Some(Self::X86_64),
             "aarch64" => Some(Self::Aarch64),
+            "riscv64" => Some(Self::Riscv64),
+            "loongarch64" => Some(Self::Loongarch64),
             _ => None,
         }
     }
@@ -245,5 +251,19 @@ impl RepositoryError {
             Self::Timeout(_) => true,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Architecture;
+
+    #[test]
+    fn supported_architectures_round_trip() {
+        for key in ["x86_64", "aarch64", "riscv64", "loongarch64"] {
+            assert_eq!(Architecture::from_key(key).unwrap().key(), key);
+        }
+        assert_eq!(Architecture::from_key("s390x"), None);
+        assert_eq!(Architecture::from_key("riscv32"), None);
     }
 }

@@ -832,6 +832,8 @@ fn build_migrate_state(
     let architecture = match metadata.architecture {
         lkb::BackupArchitecture::X86_64 => StateArchitecture::X86_64,
         lkb::BackupArchitecture::Aarch64 => StateArchitecture::Aarch64,
+        lkb::BackupArchitecture::Riscv64 => StateArchitecture::Riscv64,
+        lkb::BackupArchitecture::Loongarch64 => StateArchitecture::Loongarch64,
     };
     let version = transaction.target_version.clone().ok_or_else(|| {
         InstallError::CorruptedTransaction("migrate transaction is missing target_version".into())

@@ -218,6 +218,8 @@ impl GithubRepository {
         let asset_name = match architecture {
             Architecture::X86_64 => "landscape-webserver-x86_64",
             Architecture::Aarch64 => "landscape-webserver-aarch64",
+            Architecture::Riscv64 => "landscape-webserver-riscv64-static",
+            Architecture::Loongarch64 => "landscape-webserver-loongarch64-static",
         };
         let webserver = unique_asset(&release.assets, asset_name, version)?.ok_or_else(|| {
             RepositoryError::MissingArchitecture {

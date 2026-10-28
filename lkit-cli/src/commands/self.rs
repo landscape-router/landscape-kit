@@ -327,10 +327,19 @@ fn remove(runtime: &InstallRuntime) -> Result<String, InstallError> {
     Ok(crate::tr!(crate::keys::SELF_REMOVED))
 }
 
+fn upgrade_asset_name(architecture: Architecture) -> &'static str {
+    match architecture {
+        Architecture::X86_64 => "lkit-x86_64",
+        Architecture::Aarch64 => "lkit-aarch64",
+        Architecture::Riscv64 => "lkit-riscv64",
+        Architecture::Loongarch64 => "lkit-loongarch64",
+    }
+}
+
 async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), InstallError> {
     let architecture = Architecture::host().ok_or_else(|| {
         InstallError::UnsupportedPlatform(format!(
-            "lkit self upgrade only supports x86_64 and aarch64, not {}",
+            "lkit self upgrade does not support architecture {}",
             std::env::consts::ARCH
         ))
     })?;
@@ -363,10 +372,7 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         );
         return Ok(());
     }
-    let asset_name = match architecture {
-        Architecture::X86_64 => "lkit-x86_64",
-        Architecture::Aarch64 => "lkit-aarch64",
-    };
+    let asset_name = upgrade_asset_name(architecture);
     let asset = unique_asset(&release.assets, asset_name).ok_or_else(|| {
         InstallError::Repository(RepositoryError::InvalidRelease(format!(
             "release {} is missing the {asset_name} asset",
@@ -1109,6 +1115,16 @@ mod tests {
             "failed replacement must preserve the target"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upgrade_selects_static_assets_for_all_supported_architectures() {
+        for key in ["x86_64", "aarch64", "riscv64", "loongarch64"] {
+            assert_eq!(
+                upgrade_asset_name(Architecture::from_key(key).unwrap()),
+                format!("lkit-{key}")
+            );
+        }
     }
 
     #[test]

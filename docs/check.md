@@ -10,7 +10,7 @@
 
 ## 适用范围
 
-- 支持使用 glibc 的 Linux 主机；当前发布产物不支持 Alpine 等 musl 发行版。
+- `lkit` 静态发布产物可在 glibc 或 musl Linux 主机运行；Landscape 服务及可选软件的发行版兼容性仍取决于对应资产和系统后端。
 - 内核版本要求为 `6.9` 或更高版本。
 - 命令必须以 `root` 身份运行。
 - 检查过程只读，不修改主机状态。
@@ -55,7 +55,7 @@
 | `platform.distribution` | 记录 `/etc/os-release` 的发行版 ID，供诊断使用 | `pass` 或 `warning` |
 | `platform.architecture` | 记录当前 CPU 架构，供后续安装包选择和诊断使用 | `pass` 或 `warning` |
 
-首版已知发布产物优先支持 `x86_64` 和 `aarch64`。检测到这两个架构时报告 `pass`；其他架构不直接判定为无法运行，但报告 `warning`，提示安装包或 eBPF 产物可能不可用。无法读取架构时报告 `unknown`。
+发布产物支持 `x86_64`、`aarch64`、`riscv64` 和 `loongarch64`。检测到这四种架构时报告 `pass`；其他架构不直接判定为无法运行，但报告 `warning`，提示安装包或 eBPF 产物可能不可用。无法读取架构时报告 `unknown`。
 
 发行版及其版本不使用白名单。兼容性由 Linux、架构、内核版本和后续运行能力检查决定；
 `/etc/os-release` 无法读取时只报告 `warning`。发布安装脚本在能够识别 musl 时提前拒绝，

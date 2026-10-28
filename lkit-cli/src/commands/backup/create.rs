@@ -168,6 +168,8 @@ pub(crate) async fn create_manual_backup(
     let architecture = match installed.assets.webserver.architecture {
         crate::deployment::state::StateArchitecture::X86_64 => "x86_64",
         crate::deployment::state::StateArchitecture::Aarch64 => "aarch64",
+        crate::deployment::state::StateArchitecture::Riscv64 => "riscv64",
+        crate::deployment::state::StateArchitecture::Loongarch64 => "loongarch64",
     };
     let webserver = root
         .canonical

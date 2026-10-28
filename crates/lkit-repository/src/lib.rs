@@ -81,6 +81,10 @@ pub struct WebserverAssets {
     pub x86_64: Option<RepositoryAsset>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aarch64: Option<RepositoryAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub riscv64: Option<RepositoryAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loongarch64: Option<RepositoryAsset>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

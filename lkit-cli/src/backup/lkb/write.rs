@@ -351,6 +351,8 @@ fn parse_architecture(value: &str) -> Result<BackupArchitecture, InstallError> {
     match value {
         "x86_64" => Ok(BackupArchitecture::X86_64),
         "aarch64" => Ok(BackupArchitecture::Aarch64),
+        "riscv64" => Ok(BackupArchitecture::Riscv64),
+        "loongarch64" => Ok(BackupArchitecture::Loongarch64),
         _ => Err(invalid_backup(format!("unsupported architecture {value}"))),
     }
 }
@@ -435,6 +437,19 @@ fn hostname() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_architectures_round_trip() {
+        for key in ["riscv64", "loongarch64"] {
+            let architecture = parse_architecture(key).unwrap();
+            let json = serde_json::to_string(&architecture).unwrap();
+            assert_eq!(json, format!("\"{key}\""));
+            assert_eq!(
+                serde_json::from_str::<BackupArchitecture>(&json).unwrap(),
+                architecture
+            );
+        }
+    }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let root =

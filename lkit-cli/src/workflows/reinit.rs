@@ -335,6 +335,8 @@ async fn create_protection_backup<P: DocsProbe>(
     let architecture = match state.assets.webserver.architecture {
         state::StateArchitecture::X86_64 => "x86_64",
         state::StateArchitecture::Aarch64 => "aarch64",
+        state::StateArchitecture::Riscv64 => "riscv64",
+        state::StateArchitecture::Loongarch64 => "loongarch64",
     };
     let webserver = root
         .canonical
