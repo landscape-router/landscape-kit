@@ -607,17 +607,16 @@ fn parse_upgrade_version(value: &str) -> Result<Version, InstallError> {
             "lkit version must be a canonical semver like 0.2.0 or v0.2.0-rc.1, got {value:?}"
         )));
     }
-    // 候选版必须带数字发布段(v0.2.0-rc.1 这类 tag 约定);裸 `-rc` 虽是合法
-    // SemVer,但不属于可解析的发布 tag。
+    // 候选版以发布序号结尾，兼容 rc.1 和 rc1；裸 -rc 不属于发布 tag。
     if !version.pre.is_empty()
         && version
             .pre
-            .split('.')
-            .next_back()
-            .is_none_or(|segment| !segment.bytes().all(|byte| byte.is_ascii_digit()))
+            .as_bytes()
+            .last()
+            .is_none_or(|byte| !byte.is_ascii_digit())
     {
         return Err(InstallError::ParameterUsage(format!(
-            "lkit prerelease versions must carry a numeric segment like v0.2.0-rc.1, got {value:?}"
+            "lkit prerelease versions must end with a release number like v0.7.0-rc1 or v0.7.0-rc.1, got {value:?}"
         )));
     }
     Ok(version)
@@ -986,7 +985,20 @@ mod tests {
             parse_upgrade_version("v0.2.0-rc.1").unwrap(),
             Version::parse("0.2.0-rc.1").unwrap()
         );
-        for invalid in ["latest", "", "0.19", "release-0.19.2", "v0.2.0-rc"] {
+        for value in ["0.7.0-rc1", "v0.7.0-rc1", "v0.7.0-rc.1"] {
+            assert_eq!(
+                parse_upgrade_version(value).unwrap(),
+                Version::parse(value.trim_start_matches('v')).unwrap()
+            );
+        }
+        for invalid in [
+            "latest",
+            "",
+            "0.19",
+            "release-0.19.2",
+            "v0.2.0-rc",
+            "v0.7.0-rc1extra",
+        ] {
             assert!(parse_upgrade_version(invalid).is_err(), "{invalid}");
         }
     }

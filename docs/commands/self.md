@@ -49,7 +49,8 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 
 1. 获取安装锁;
 2. 解析目标版本:默认 GitHub `releases/latest` 的 stable;`--version <TAG>` 指定
-   版本(候选版必须用带 tag 的版本,例如 `v0.2.0-rc.1`);
+   版本（候选版显式指定，例如 `--version v0.7.0-rc1`；支持 `rc1` 和 `rc.1`，
+   prerelease 必须以数字发布序号结尾）；
 3. 下载对应架构静态二进制（`lkit-<arch>`，arch 为 `x86_64`、`aarch64`、`riscv64` 或 `loongarch64`）与 `SHA256SUMS`,校验 SHA-256,
    与 `install.sh` 同源同校验规则(见[自发布](../release/lkit.md));
 4. 版本对比:当前版本与目标版本相同 → 输出提示并返回 `0`,不修改任何文件;
