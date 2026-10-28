@@ -68,14 +68,16 @@ docker run -d --name "$CLI" --network "$NET" \
   -v "$PWD/target/debug:/opt/bin:ro" \
   "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
 
+# Consume the complete log stream: grep -q can give docker logs a broken pipe
+# after a successful match, which pipefail would incorrectly treat as failure.
 echo "== wait for the daemon to host the flare server =="
-for i in $(seq 1 30); do
-  if docker logs "$SRV" 2>&1 | grep -q "server .* ready"; then
+for _ in $(seq 1 30); do
+  if docker logs "$SRV" 2>&1 | grep "server .* ready" >/dev/null; then
     break
   fi
   sleep 1
 done
-if ! docker logs "$SRV" 2>&1 | grep -q "server .* ready"; then
+if ! docker logs "$SRV" 2>&1 | grep "server .* ready" >/dev/null; then
   echo "FAIL: the daemon never reported the flare server ready"
   docker logs "$SRV" 2>&1 | tail -20
   exit 1
@@ -83,13 +85,13 @@ fi
 echo "daemon-hosted flare server ready"
 
 echo "== wait for the client session =="
-for i in $(seq 1 30); do
-  if docker logs "$CLI" 2>&1 | grep -q "session .* established"; then
+for _ in $(seq 1 30); do
+  if docker logs "$CLI" 2>&1 | grep "session .* established" >/dev/null; then
     break
   fi
   sleep 1
 done
-if ! docker logs "$CLI" 2>&1 | grep -q "session .* established"; then
+if ! docker logs "$CLI" 2>&1 | grep "session .* established" >/dev/null; then
   echo "FAIL: the client never established a session through the daemon-hosted server"
   docker logs "$CLI" 2>&1 | tail -20
   docker logs "$SRV" 2>&1 | tail -20
@@ -98,7 +100,7 @@ fi
 echo "client session established through the daemon-hosted server"
 
 echo "== the server must have authenticated the client =="
-if ! docker logs "$SRV" 2>&1 | grep -q "authenticated, session"; then
+if ! docker logs "$SRV" 2>&1 | grep "authenticated, session" >/dev/null; then
   echo "FAIL: the daemon-hosted server never authenticated the client"
   docker logs "$SRV" 2>&1 | tail -20
   exit 1
@@ -107,7 +109,7 @@ echo "authentication confirmed on the daemon side"
 
 echo "== keepalives must keep the session alive =="
 sleep 6
-if ! docker logs "$CLI" 2>&1 | grep -q "keepalive"; then
+if ! docker logs "$CLI" 2>&1 | grep "keepalive" >/dev/null; then
   # lflare logs keepalives; the authoritative liveness check is the server
   # not tearing the peer down within the stale window.
   :

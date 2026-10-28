@@ -165,7 +165,8 @@
 - 说明：服务端容器运行 `lkit daemon`（`LKIT_TERRITORY` + config.toml `[flare]` 段），
   由 daemon 托管 flare 服务端；`lflare` 客户端完成 DISCOVER→RESP→AUTH_REQ→AUTH_ACK
   并建立会话、保持 keepalive 即通过。本场景只验证"daemon 托管方式下能连上"，
-   不做端口转发与隧道数据传输。
+   不做端口转发与隧道数据传输。日志检查完整消费 `docker logs` 输出，在 `pipefail`
+   模式下不因匹配后提前关闭管道而把成功会话误判为失败。
 
 ## FLR-20
 
