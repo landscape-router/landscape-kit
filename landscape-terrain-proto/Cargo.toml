@@ -13,10 +13,11 @@ rand = { workspace = true }
 scrypt = { workspace = true }
 sha2 = { workspace = true }
 smoltcp = { workspace = true }
-tokio = { workspace = true, features = ["sync", "rt"] }
+tokio = { workspace = true, features = ["sync", "rt", "time"] }
 
 [dev-dependencies]
 tracing = "0.1"
+tokio = { workspace = true, features = ["macros", "test-util"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true }

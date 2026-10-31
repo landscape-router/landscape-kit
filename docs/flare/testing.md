@@ -22,6 +22,19 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 | `scripts/flare/fetch-packages.sh` | 在宿主用 apt 下载 `.deb` 到 `scripts/flare/packages/`（gitignored，仅保留 `.gitkeep`），供本地离线镜像构建使用 |
 | `.github/workflows/test-flare.yml` | CI：PR/push（dev、main）按 paths 过滤 + 手动触发；prepare 任务预热 Cargo 缓存后，每个场景任务在恢复的缓存上对当前 checkout 重新 `cargo build --locked --workspace`（缓存键只含 Cargo.lock，源码变更不会换键，不重建就会测到旧二进制）再各跑一个场景脚本 |
 
+## 协议栈调度单测
+
+[调度场景](../testing/scenarios/functional/flare.md)使用内存协议栈、模拟时间和有界 channel，
+覆盖空闲无定时轮询、SYN 重传、延迟 ACK、FIN/TIME-WAIT、窗口恢复、通知合并与取消安全。
+本地只运行对应模块；真实链路吞吐、慢读与丢包回归由 CI 的上述 e2e 入口验证。
+
+```sh
+cargo test -p landscape-terrain-proto --lib ipstack::tests
+cargo test -p landscape-terrain-proto --lib relay::tests
+cargo test -p lkit-cli --features test-support --bin lkit flare::server::tests
+cargo test -p landscape-flare --bin lflare client::session::tests
+```
+
 ## 场景拓扑
 
 ```

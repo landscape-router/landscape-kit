@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use landscape_terrain_proto::ipstack::{
-    CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES, POLL_INTERVAL,
-    SERVER_ADDR, SocketHandle, StackMsg,
+    CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES, SERVER_ADDR,
+    SocketHandle, StackMsg,
 };
 use landscape_terrain_proto::protocol::crypto::{
     Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SCRYPT_LOG_N, SessionCrypto,
@@ -15,6 +15,7 @@ use landscape_terrain_proto::protocol::session::{self, ServerSession, VerifyResu
 use landscape_terrain_proto::protocol::{
     TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN, VERSION,
 };
+use landscape_terrain_proto::relay::{RelayReceiver, RelayWake, wait_for_poll};
 use landscape_terrain_proto::transport::{Link, fmt_mac};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -85,6 +86,7 @@ struct Peer {
     /// leaves with one identity instead of following the last capture.
     handshake_ifindex: i32,
     stack: Option<IpStack>,
+    poll_at: Option<tokio::time::Instant>,
     listeners: Vec<SocketHandle>,
     crypto: Option<SessionCrypto>,
     conns: HashMap<SocketHandle, ServerConn>,
@@ -260,7 +262,7 @@ pub async fn run(
             .join(",")
     );
 
-    let mut poll_timer = tokio::time::interval(POLL_INTERVAL);
+    let relay_wake = RelayWake::<ServerConnKey>::default();
     let mut sweep_timer = tokio::time::interval(SWEEP_INTERVAL);
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
     let sig = match shutdown {
@@ -280,6 +282,7 @@ pub async fn run(
         ),
     };
     loop {
+        let deadline = peers.values().filter_map(|peer| peer.poll_at).min();
         tokio::select! {
             _ = &mut shutdown_rx => break,
             r = tx.recv_with_meta(cfg.ethertype) => {
@@ -426,6 +429,7 @@ pub async fn run(
                                     .map(|_| stack.add_listener(INTERNAL_PORT))
                                     .collect();
                                 peer.stack = Some(stack);
+                                peer.poll_at = Some(tokio::time::Instant::now());
                                 peer.listeners = listeners;
                                 peer.crypto = Some(SessionCrypto::new(keys, Dir::S2C));
                                 // Continue the session on the interface that
@@ -545,6 +549,7 @@ pub async fn run(
                                 cfg.ethertype,
                                 l.session_id,
                                 &mut pending_tx_bytes,
+                                &relay_wake,
                             )?;
                         }
                     }
@@ -594,15 +599,28 @@ pub async fn run(
                                 }
                             }
                         }
+                        if let Some(sid) = peer.sess.session_id() {
+                            pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes, &relay_wake)?;
+                        }
                     }
             }
-            _ = poll_timer.tick() => {
-                let macs: Vec<[u8; 6]> = peers.keys().copied().collect();
-                for mac in macs {
+            keys = relay_wake.recv() => {
+                let ready = ready_peers(&peers, keys);
+                for mac in ready {
                     if let Some(peer) = peers.get_mut(&mac)
                         && let Some(sid) = peer.sess.session_id() {
-                            pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes)?;
-                        }
+                        pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes, &relay_wake)?;
+                    }
+                }
+            }
+            _ = wait_for_poll(deadline) => {
+                let now = tokio::time::Instant::now();
+                let due = due_peers(&peers, now);
+                for mac in due {
+                    if let Some(peer) = peers.get_mut(&mac)
+                        && let Some(sid) = peer.sess.session_id() {
+                        pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes, &relay_wake)?;
+                    }
                 }
             }
             _ = sweep_timer.tick() => {
@@ -664,6 +682,29 @@ async fn wait_for_shutdown() {
     }
 }
 
+fn ready_peers(
+    peers: &HashMap<[u8; 6], Peer>,
+    keys: Vec<ServerConnKey>,
+) -> std::collections::HashSet<[u8; 6]> {
+    keys.into_iter()
+        .filter_map(|(mac, h, generation)| {
+            peers
+                .get(&mac)?
+                .conns
+                .get(&h)
+                .is_some_and(|conn| conn.generation == generation)
+                .then_some(mac)
+        })
+        .collect()
+}
+
+fn due_peers(peers: &HashMap<[u8; 6], Peer>, now: tokio::time::Instant) -> Vec<[u8; 6]> {
+    peers
+        .iter()
+        .filter_map(|(mac, peer)| peer.poll_at.filter(|at| *at <= now).map(|_| *mac))
+        .collect()
+}
+
 /// A DISCOVER starts a new handshake attempt when there is no pending
 /// handshake or it carries a different discover_id. Duplicate captures of one
 /// attempt must keep the interface that answered first.
@@ -690,6 +731,7 @@ fn new_peer(to_tx: mpsc::Sender<ServerStackMsg>, allowed: Arc<[u16]>) -> Peer {
         ifindex: 0,
         handshake_ifindex: 0,
         stack: None,
+        poll_at: None,
         listeners: Vec::new(),
         crypto: None,
         conns: HashMap::new(),
@@ -712,6 +754,7 @@ fn teardown_peer(peer: &mut Peer, pending_tx_bytes: &mut usize) {
         .sum::<usize>();
     *pending_tx_bytes = pending_tx_bytes.saturating_sub(dropped);
     peer.stack = None;
+    peer.poll_at = None;
     peer.listeners.clear();
     peer.crypto = None;
     peer.conns.clear();
@@ -728,6 +771,7 @@ fn pump_peer(
     ethertype: u16,
     sid: u32,
     pending_tx_bytes: &mut usize,
+    relay_wake: &RelayWake<ServerConnKey>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(stack) = peer.stack.as_mut() else {
         return Ok(());
@@ -735,6 +779,12 @@ fn pump_peer(
     let Some(crypto) = peer.crypto.as_mut() else {
         return Ok(());
     };
+
+    // Process ingress before accepting sockets or draining their buffers.
+    for pkt in stack.poll() {
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        tx.send_on(peer.ifindex, peer_mac, ethertype, &raw)?;
+    }
 
     for listener in &mut peer.listeners {
         if let Some((h, new_listener)) = stack.accept(*listener, INTERNAL_PORT) {
@@ -758,16 +808,11 @@ fn pump_peer(
                     h,
                     generation,
                     peer.to_tx.clone(),
-                    from_rx,
+                    relay_wake.watch((*peer_mac, h, generation), from_rx),
                     peer.allowed.clone(),
                 ),
             );
         }
-    }
-
-    for pkt in stack.poll() {
-        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
-        tx.send_on(peer.ifindex, peer_mac, ethertype, &raw)?;
     }
 
     let handles: Vec<SocketHandle> = peer.conns.keys().copied().collect();
@@ -826,6 +871,15 @@ fn pump_peer(
         }
         peer.conns.remove(&h);
     }
+    // Flush writes, FINs and receive-window updates in this turn, rather
+    // than relying on a later periodic tick to advance the stack.
+    for pkt in stack.poll() {
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        tx.send_on(peer.ifindex, peer_mac, ethertype, &raw)?;
+    }
+    peer.poll_at = stack
+        .poll_delay()
+        .map(|delay| tokio::time::Instant::now() + delay);
     Ok(())
 }
 
@@ -836,7 +890,7 @@ async fn server_conn_task(
     handle: SocketHandle,
     generation: u64,
     to_tx: mpsc::Sender<ServerStackMsg>,
-    mut from_rx: mpsc::Receiver<RelayMsg>,
+    mut from_rx: RelayReceiver<RelayMsg, ServerConnKey>,
     allowed: Arc<[u16]>,
 ) {
     let mut header = Vec::new();
@@ -909,7 +963,7 @@ async fn server_conn_task(
 }
 
 async fn relay_remote_writer(
-    mut from_rx: mpsc::Receiver<RelayMsg>,
+    mut from_rx: RelayReceiver<RelayMsg, ServerConnKey>,
     mut remote_write: tokio::net::tcp::OwnedWriteHalf,
 ) -> Result<(), ()> {
     while let Some(message) = from_rx.recv().await {
@@ -946,6 +1000,50 @@ fn devs_display(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deadlines_select_only_due_peers_and_teardown_clears_them() {
+        let (tx, _) = mpsc::channel(1);
+        let mut peers = HashMap::new();
+        let now = tokio::time::Instant::now();
+        for (mac, deadline) in [
+            (1, None),
+            (2, Some(now)),
+            (3, Some(now + Duration::from_secs(30))),
+        ] {
+            let mut peer = new_peer(tx.clone(), Arc::from([]));
+            peer.poll_at = deadline;
+            peers.insert([mac; 6], peer);
+        }
+        assert_eq!(due_peers(&peers, now), vec![[2; 6]]);
+        let mut pending_bytes = 0;
+        teardown_peer(peers.get_mut(&[2; 6]).unwrap(), &mut pending_bytes);
+        assert!(due_peers(&peers, now).is_empty());
+    }
+
+    #[test]
+    fn capacity_wakes_ignore_stale_connections_and_coalesce_peers() {
+        let (tx, _) = mpsc::channel(1);
+        let mut peer = new_peer(tx, Arc::from([]));
+        let mut stack = IpStack::new(SERVER_ADDR);
+        let h = stack.add_listener(INTERNAL_PORT);
+        let (from_tx, _) = mpsc::channel(1);
+        peer.conns.insert(
+            h,
+            ServerConn {
+                from_tx,
+                generation: 2,
+                close_after_flush: false,
+                peer_eof_sent: false,
+            },
+        );
+        let peers = HashMap::from([([1; 6], peer)]);
+        assert!(ready_peers(&peers, vec![([1; 6], h, 1), ([2; 6], h, 2)]).is_empty());
+        assert_eq!(
+            ready_peers(&peers, vec![([1; 6], h, 2), ([1; 6], h, 2)]),
+            std::collections::HashSet::from([[1; 6]])
+        );
+    }
 
     #[test]
     fn duplicate_discover_keeps_the_same_reply_interface() {

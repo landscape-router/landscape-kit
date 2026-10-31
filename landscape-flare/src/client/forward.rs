@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use landscape_terrain_proto::ipstack::{IpStack, SocketHandle, StackMsg};
+use landscape_terrain_proto::relay::RelayReceiver;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -72,7 +73,7 @@ pub(super) async fn bridge_task(
     mut stream: TcpStream,
     key: ConnKey,
     to_tx: mpsc::Sender<(ConnKey, StackMsg)>,
-    mut from_rx: mpsc::Receiver<BridgeMsg>,
+    mut from_rx: RelayReceiver<BridgeMsg, ConnKey>,
     mut close_rx: oneshot::Receiver<()>,
 ) {
     let mut buf = vec![0u8; 8192];

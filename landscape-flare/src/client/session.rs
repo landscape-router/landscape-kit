@@ -2,12 +2,13 @@ use std::collections::{HashMap, VecDeque};
 
 use landscape_terrain_proto::ipstack::{
     CLIENT_ADDR, CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES,
-    POLL_INTERVAL, SERVER_ADDR, SocketHandle, StackMsg,
+    SERVER_ADDR, SocketHandle, StackMsg,
 };
 use landscape_terrain_proto::protocol::crypto::{Dir, SessionCrypto, SessionKeys};
 use landscape_terrain_proto::protocol::frame;
 use landscape_terrain_proto::protocol::session::KEEPALIVE_INTERVAL;
 use landscape_terrain_proto::protocol::{TYPE_DATA, TYPE_KEEPALIVE, TYPE_TEARDOWN};
+use landscape_terrain_proto::relay::{RelayWake, wait_for_poll};
 use landscape_terrain_proto::transport::Link;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
@@ -85,7 +86,7 @@ pub(super) async fn session_loop(
         );
     }
 
-    let mut poll_timer = tokio::time::interval(POLL_INTERVAL);
+    let relay_wake = RelayWake::<ConnKey>::default();
     let mut last_keepalive = tokio::time::Instant::now();
     let mut missed = 0u32;
     let mut next_local_port = FIRST_LOCAL_PORT;
@@ -93,6 +94,9 @@ pub(super) async fn session_loop(
     let mut fail_budget = FailBudget::default();
 
     let result: Result<SessionEnd, Box<dyn std::error::Error>> = 'session: loop {
+        let deadline = stack
+            .poll_delay()
+            .map(|delay| tokio::time::Instant::now() + delay);
         tokio::select! {
             r = tx.recv(cfg.ethertype) => {
                 let f = match r {
@@ -126,9 +130,6 @@ pub(super) async fn session_loop(
                             missed = 0;
                             if l.msg_type == TYPE_DATA {
                                 stack.push_packet(&plain);
-                                if let Err(error) = pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_tx_bytes) {
-                                    break 'session Err(error);
-                                }
                             }
                         }
                         _ => {}
@@ -168,7 +169,7 @@ pub(super) async fn session_loop(
                     stream,
                     (h, generation),
                     to_tx.clone(),
-                    from_rx,
+                    relay_wake.watch((h, generation), from_rx),
                     close_rx,
                 ));
                 pending_tx
@@ -247,11 +248,8 @@ pub(super) async fn session_loop(
                     None => *forward_control = None,
                 }
             }
-            _ = poll_timer.tick() => {
-                if let Err(error) = pump(&mut stack, tx, server_mac, sid, &mut crypto, cfg.ethertype, &mut conns, &mut pending_tx, &mut pending_tx_bytes) {
-                    break 'session Err(error);
-                }
-            }
+            _ = relay_wake.recv() => {}
+            _ = wait_for_poll(deadline) => {}
             _ = tokio::time::sleep_until(last_keepalive + KEEPALIVE_INTERVAL) => {
                 let raw = crypto.seal(TYPE_KEEPALIVE, sid, &[]);
                 if let Err(error) = tx.send(server_mac, cfg.ethertype, &raw) {
@@ -271,6 +269,19 @@ pub(super) async fn session_loop(
                 cfg.log.emit(LogLevel::Info, "  shutdown requested, sending teardown".into());
                 break 'session Ok(SessionEnd::Shutdown);
             }
+        }
+        if let Err(error) = pump(
+            &mut stack,
+            tx,
+            server_mac,
+            sid,
+            &mut crypto,
+            cfg.ethertype,
+            &mut conns,
+            &mut pending_tx,
+            &mut pending_tx_bytes,
+        ) {
+            break 'session Err(error);
         }
     };
 

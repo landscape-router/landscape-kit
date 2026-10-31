@@ -11,5 +11,6 @@ pub mod cli;
 pub mod concurrency;
 pub mod ipstack;
 pub mod protocol;
+pub mod relay;
 mod task_names;
 pub mod transport;

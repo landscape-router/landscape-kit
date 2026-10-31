@@ -601,6 +601,12 @@ fn pump(
         }
         conns.remove(&h);
     }
+    // Socket writes, FINs and receive-window updates must be flushed before
+    // sleeping; there is no periodic tick to finish this work for us.
+    for pkt in stack.poll() {
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        tx.send(server_mac, ethertype, &raw)?;
+    }
     Ok(())
 }
 

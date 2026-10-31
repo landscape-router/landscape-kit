@@ -21,10 +21,11 @@ of the wire share one implementation:
 | `protocol::frame` | 16-byte header wire format (`TERR` magic, version, type, session, len, seq), typed payload codecs |
 | `protocol::crypto` | scrypt master-key stretch, per-phase/per-direction key schedule, ChaCha20-Poly1305 sealing, replay window |
 | `protocol::session` | Client/server handshake as pure state machines (frames in, frames out; no I/O) |
-| `ipstack` | Userspace TCP/IP stack (smoltcp) bridged over Terrain DATA frames, plus the relay tuning constants |
+| `ipstack` | Userspace TCP/IP stack (smoltcp) bridged over Terrain DATA frames, with monotonic TCP deadlines |
 | `transport` | Platform `Link` (AF_PACKET on Linux, libpcap elsewhere), ethernet/VLAN parsing |
 | `cli` | Shared argument parsers used by both binaries |
 | `concurrency` | Named Tokio tasks, OS threads and runtime workers shared by both binaries |
+| `relay` | Deadline-driven waits and coalesced relay-channel capacity/closure notifications |
 
 ## Security model in one paragraph
 

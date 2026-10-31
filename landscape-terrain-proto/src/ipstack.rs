@@ -17,7 +17,7 @@
 //! queue pair.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
@@ -38,11 +38,6 @@ pub const MTU: usize = 1400;
 /// Per-socket buffer size (both directions, bounded memory per connection).
 pub const SOCKET_BUFFER: usize = 64 * 1024;
 
-/// Relay-loop tick for pumping the in-memory stack. The stacks live in
-/// userspace, so a millisecond tick is inexpensive and keeps ACK/data
-/// windows advancing during sustained forwarding (a coarser tick would
-/// cap relay throughput far below the e2e timeouts).
-pub const POLL_INTERVAL: Duration = Duration::from_millis(1);
 /// Capacity of the per-connection channel moving bytes between a kernel
 /// socket and its stack socket; bounds buffering per relayed connection.
 pub const CONNECTION_CHANNEL_CAPACITY: usize = 16;
@@ -149,6 +144,8 @@ impl<'a> TxToken for TxTokenImpl<'a> {
 
 /// A smoltcp stack with an in-memory device and owned (heap) socket buffers.
 pub struct IpStack {
+    /// Protocol timers use elapsed monotonic time, not the host wall clock.
+    clock: Instant,
     iface: Interface,
     device: LndpDevice,
     sockets: SocketSet<'static>,
@@ -160,11 +157,13 @@ impl IpStack {
         config.random_seed = rand::random();
         let mut device = LndpDevice::new();
         let sockets = SocketSet::new(Vec::new());
-        let mut iface = Interface::new(config, &mut device, SmolInstant::now());
+        let clock = Instant::now();
+        let mut iface = Interface::new(config, &mut device, SmolInstant::from_micros(0));
         iface.update_ip_addrs(|addrs| {
             let _ = addrs.push(IpCidr::Ipv4(Ipv4Cidr::new(local, 31)));
         });
         Self {
+            clock,
             iface,
             device,
             sockets,
@@ -179,10 +178,31 @@ impl IpStack {
     /// Run the stack (timers, TCP state machines, ingress/egress) and return
     /// the outbound IP packets that must be sent over the Terrain link.
     pub fn poll(&mut self) -> Vec<Vec<u8>> {
-        let _ = self
-            .iface
-            .poll(SmolInstant::now(), &mut self.device, &mut self.sockets);
+        self.poll_at(self.now())
+    }
+
+    fn now(&self) -> SmolInstant {
+        SmolInstant::from_micros(self.clock.elapsed().as_micros() as i64)
+    }
+
+    fn poll_at(&mut self, now: SmolInstant) -> Vec<Vec<u8>> {
+        let _ = self.iface.poll(now, &mut self.device, &mut self.sockets);
         self.device.tx_queue.drain(..).collect()
+    }
+
+    /// Next TCP deadline, or `None` when only an external event can make
+    /// progress. Call again after each poll or socket/buffer mutation.
+    pub fn poll_delay(&mut self) -> Option<Duration> {
+        self.poll_delay_at(self.now())
+    }
+
+    fn poll_delay_at(&mut self, now: SmolInstant) -> Option<Duration> {
+        if !self.device.rx_queue.is_empty() || !self.device.tx_queue.is_empty() {
+            return Some(Duration::ZERO);
+        }
+        self.iface
+            .poll_delay(now, &self.sockets)
+            .map(|delay| Duration::from_micros(delay.total_micros()))
     }
 
     /// Start listening on `port`.
@@ -292,6 +312,164 @@ impl IpStack {
 mod tests {
     use super::*;
 
+    /// Deliver only queued ingress or work due at `now`; never fixed ticks.
+    /// The bound also catches a persistent zero-delay busy loop.
+    fn exchange_due(client: &mut IpStack, server: &mut IpStack, now: SmolInstant) {
+        for _ in 0..128 {
+            let client_due = client.poll_delay_at(now) == Some(Duration::ZERO);
+            let server_due = server.poll_delay_at(now) == Some(Duration::ZERO);
+            if !client_due && !server_due {
+                return;
+            }
+            if client_due {
+                for packet in client.poll_at(now) {
+                    server.push_packet(&packet);
+                }
+            }
+            if server.poll_delay_at(now) == Some(Duration::ZERO) {
+                for packet in server.poll_at(now) {
+                    client.push_packet(&packet);
+                }
+            }
+        }
+        panic!("protocol did not quiesce at {now:?}");
+    }
+
+    fn connected_pair() -> (IpStack, IpStack, SocketHandle, SocketHandle) {
+        let mut client = IpStack::new(CLIENT_ADDR);
+        let mut server = IpStack::new(SERVER_ADDR);
+        let listener = server.add_listener(INTERNAL_PORT);
+        let client_handle = client.connect(SERVER_ADDR, INTERNAL_PORT, 40000);
+        exchange_due(&mut client, &mut server, SmolInstant::from_micros(0));
+        let (server_handle, _) = server.accept(listener, INTERNAL_PORT).unwrap();
+        (client, server, client_handle, server_handle)
+    }
+
+    #[test]
+    fn idle_and_listening_stacks_have_no_deadline() {
+        let mut stack = IpStack::new(SERVER_ADDR);
+        assert_eq!(stack.poll_delay(), None);
+        for _ in 0..64 {
+            stack.add_listener(INTERNAL_PORT);
+        }
+        assert!(stack.poll().is_empty());
+        assert_eq!(stack.poll_delay(), None);
+
+        let (mut client, mut server, _, _) = connected_pair();
+        let now = SmolInstant::from_micros(0);
+        assert_eq!(client.poll_delay_at(now), None);
+        assert_eq!(server.poll_delay_at(now), None);
+    }
+
+    #[test]
+    fn lost_syn_retransmits_at_deadline_without_ingress() {
+        let mut client = IpStack::new(CLIENT_ADDR);
+        client.connect(SERVER_ADDR, INTERNAL_PORT, 40000);
+        let now = SmolInstant::from_micros(0);
+        assert_eq!(client.poll_delay_at(now), Some(Duration::ZERO));
+        assert!(!client.poll_at(now).is_empty()); // Drop the SYN.
+        let delay = client.poll_delay_at(now).unwrap();
+        assert!(delay > Duration::ZERO);
+        let deadline = now + smoltcp::time::Duration::from_micros(delay.as_micros() as u64);
+        assert!(
+            client
+                .poll_at(deadline - smoltcp::time::Duration::from_micros(1))
+                .is_empty()
+        );
+        assert!(!client.poll_at(deadline).is_empty());
+        assert!(client.poll_delay_at(deadline).unwrap() > Duration::ZERO);
+    }
+
+    #[test]
+    fn data_delayed_ack_and_fin_advance_using_only_deadlines() {
+        let (mut client, mut server, client_handle, server_handle) = connected_pair();
+        let mut now = SmolInstant::from_micros(0);
+        assert_eq!(client.send_bytes(client_handle, b"hello"), 5);
+        assert_eq!(client.poll_delay_at(now), Some(Duration::ZERO));
+        exchange_due(&mut client, &mut server, now);
+        let mut bytes = [0; 16];
+        assert_eq!(server.recv_bytes(server_handle, &mut bytes), 5);
+        assert_eq!(&bytes[..5], b"hello");
+
+        // A delayed ACK must fire even if neither application sends again.
+        let ack_delay = server.poll_delay_at(now).unwrap();
+        now += smoltcp::time::Duration::from_micros(ack_delay.as_micros() as u64);
+        exchange_due(&mut client, &mut server, now);
+        assert_eq!(client.socket(client_handle).send_queue(), 0);
+        assert_eq!(client.poll_delay_at(now), None);
+        assert_eq!(server.poll_delay_at(now), None);
+
+        client.close_socket(client_handle);
+        assert_eq!(client.poll_delay_at(now), Some(Duration::ZERO));
+        exchange_due(&mut client, &mut server, now);
+        assert!(server.peer_eof(server_handle));
+        server.close_socket(server_handle);
+        exchange_due(&mut client, &mut server, now);
+        // TIME-WAIT must expire on a timer, without incoming packets.
+        let delay = client.poll_delay_at(now).unwrap();
+        assert!(delay > Duration::ZERO);
+        now += smoltcp::time::Duration::from_micros(delay.as_micros() as u64);
+        exchange_due(&mut client, &mut server, now);
+        assert!(client.socket_closed(client_handle));
+        assert!(server.socket_closed(server_handle));
+        assert_eq!(client.poll_delay_at(now), None);
+    }
+
+    #[test]
+    fn slow_reader_reopens_tcp_window_without_periodic_ticks() {
+        let (mut client, mut server, client_handle, server_handle) = connected_pair();
+        let mut now = SmolInstant::from_micros(0);
+        assert_eq!(
+            client.send_bytes(client_handle, &vec![1; SOCKET_BUFFER]),
+            SOCKET_BUFFER
+        );
+        for _ in 0..100 {
+            exchange_due(&mut client, &mut server, now);
+            if server.socket(server_handle).recv_queue() == SOCKET_BUFFER
+                && client.socket(client_handle).send_queue() == 0
+            {
+                break;
+            }
+            let delay = [client.poll_delay_at(now), server.poll_delay_at(now)]
+                .into_iter()
+                .flatten()
+                .min()
+                .expect("TCP must have pending ACK/retransmit work");
+            now += smoltcp::time::Duration::from_micros(delay.as_micros() as u64);
+        }
+        assert_eq!(server.socket(server_handle).recv_queue(), SOCKET_BUFFER);
+        assert_eq!(client.socket(client_handle).send_queue(), 0);
+
+        // No receiver capacity: bytes queue behind a zero TCP window.
+        assert_eq!(client.send_bytes(client_handle, &[2; 4096]), 4096);
+        exchange_due(&mut client, &mut server, now);
+        assert_eq!(server.socket(server_handle).recv_queue(), SOCKET_BUFFER);
+
+        // A consumer-capacity event lets the relay read, which must advertise
+        // the reopened window immediately rather than waiting for a tick.
+        let mut bytes = [0; 8192];
+        assert_eq!(server.recv_bytes(server_handle, &mut bytes), bytes.len());
+        assert_eq!(server.poll_delay_at(now), Some(Duration::ZERO));
+        exchange_due(&mut client, &mut server, now);
+        assert!(server.socket(server_handle).recv_queue() > SOCKET_BUFFER - 8192);
+        for _ in 0..100 {
+            if server.socket(server_handle).recv_queue() == SOCKET_BUFFER - 8192 + 4096 {
+                break;
+            }
+            let delay = [client.poll_delay_at(now), server.poll_delay_at(now)]
+                .into_iter()
+                .flatten()
+                .min()
+                .expect("remaining data must have a TCP deadline");
+            now += smoltcp::time::Duration::from_micros(delay.as_micros() as u64);
+            exchange_due(&mut client, &mut server, now);
+        }
+        assert_eq!(
+            server.socket(server_handle).recv_queue(),
+            SOCKET_BUFFER - 8192 + 4096
+        );
+    }
+
     #[test]
     fn concurrent_syns_can_be_distributed_across_listeners() {
         const CONNECTIONS: usize = 32;
@@ -363,6 +541,7 @@ mod tests {
         let mut echoed = VecDeque::new();
         let mut received = Vec::with_capacity(SIZE);
         let mut server_closed = false;
+        let mut now = SmolInstant::from_micros(0);
 
         for _ in 0..200_000 {
             if sent < SIZE {
@@ -374,7 +553,7 @@ mod tests {
                 }
             }
 
-            for packet in client.poll() {
+            for packet in client.poll_at(now) {
                 server.push_packet(&packet);
             }
             if server_handle.is_none()
@@ -407,7 +586,7 @@ mod tests {
                     server_closed = true;
                 }
             }
-            for packet in server.poll() {
+            for packet in server.poll_at(now) {
                 client.push_packet(&packet);
             }
             let mut buf = [0u8; CHUNK];
@@ -421,6 +600,20 @@ mod tests {
             if received.len() == SIZE && client.peer_eof(client_handle) {
                 break;
             }
+            // Application work is an immediate event. Otherwise advance only
+            // to the earliest protocol deadline, never by a fixed tick.
+            if (sent < SIZE && client.socket(client_handle).can_send())
+                || (server_handle
+                    .is_some_and(|h| !echoed.is_empty() && server.socket(h).can_send()))
+            {
+                continue;
+            }
+            let delay = [client.poll_delay_at(now), server.poll_delay_at(now)]
+                .into_iter()
+                .flatten()
+                .min()
+                .expect("transfer stalled without a deadline");
+            now += smoltcp::time::Duration::from_micros(delay.as_micros() as u64);
         }
 
         assert_eq!(sent, SIZE);
