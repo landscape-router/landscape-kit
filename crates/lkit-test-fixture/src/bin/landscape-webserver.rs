@@ -15,6 +15,7 @@ use clap::Parser;
 use lkit_test_fixture::contract::{
     API_TOKEN, DATABASE, DOCS_PATH, EXPORT_PATH, INIT_CONFIG, INIT_LOCK, LANDSCAPE_CONFIG,
 };
+use lkit_test_fixture::task_names;
 use lkit_test_fixture::{
     FIXTURE_BUILD_VERSION, FIXTURE_CONFIG_ENV, FIXTURE_CONFIG_FILE, LandscapeApiResponse,
     LandscapeFixtureConfig, Scenario, config_cli, export_response_with_content,
@@ -46,9 +47,20 @@ struct AppState {
     config_dir: PathBuf,
 }
 
-#[tokio::main]
-pub async fn main() -> ExitCode {
-    match run().await {
+pub fn main() -> ExitCode {
+    let sequence = std::sync::atomic::AtomicUsize::new(0);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name_fn(move || {
+            format!(
+                "{}-{}",
+                task_names::RUNTIME,
+                sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )
+        })
+        .build()
+        .expect("build fixture runtime");
+    match runtime.block_on(run()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("landscape fixture: {error:#}");
@@ -111,32 +123,47 @@ async fn run() -> Result<()> {
     let https_address = SocketAddr::new(config.listen_address, config.https_port);
     let https_handle = axum_server::Handle::new();
 
-    let http_task = tokio::spawn({
-        let router = router.clone();
-        async move {
-            axum::serve(http, router)
-                .await
-                .context("serve fixture HTTP endpoint")
-        }
-    });
-    let https_task = tokio::spawn({
-        let handle = https_handle.clone();
-        async move {
-            axum_server::bind_rustls(https_address, tls)
-                .handle(handle)
-                .serve(router.into_make_service())
-                .await
-                .context("serve fixture HTTPS endpoint")
-        }
-    });
-    let dns_tcp_task = tokio::spawn(hold_tcp_listener(dns_tcp));
-    let dns_udp_task = tokio::spawn(hold_udp_socket(dns_udp));
+    let http_task = tokio::task::Builder::new()
+        .name(task_names::HTTP)
+        .spawn({
+            let router = router.clone();
+            async move {
+                axum::serve(http, router)
+                    .await
+                    .context("serve fixture HTTP endpoint")
+            }
+        })
+        .context("spawn fixture HTTP task")?;
+    let https_task = tokio::task::Builder::new()
+        .name(task_names::HTTPS)
+        .spawn({
+            let handle = https_handle.clone();
+            async move {
+                axum_server::bind_rustls(https_address, tls)
+                    .handle(handle)
+                    .serve(router.into_make_service())
+                    .await
+                    .context("serve fixture HTTPS endpoint")
+            }
+        })
+        .context("spawn fixture HTTPS task")?;
+    let dns_tcp_task = tokio::task::Builder::new()
+        .name(task_names::DNS_TCP)
+        .spawn(hold_tcp_listener(dns_tcp))
+        .context("spawn fixture DNS TCP task")?;
+    let dns_udp_task = tokio::task::Builder::new()
+        .name(task_names::DNS_UDP)
+        .spawn(hold_udp_socket(dns_udp))
+        .context("spawn fixture DNS UDP task")?;
 
     if config.scenario == Scenario::ExitDuringStability {
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(config.exit_after_ms)).await;
-            std::process::exit(1);
-        });
+        tokio::task::Builder::new()
+            .name(task_names::EXIT_TIMER)
+            .spawn(async move {
+                tokio::time::sleep(Duration::from_millis(config.exit_after_ms)).await;
+                std::process::exit(1);
+            })
+            .context("spawn fixture exit timer")?;
     }
 
     tokio::select! {

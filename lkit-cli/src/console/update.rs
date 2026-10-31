@@ -33,6 +33,11 @@ fn resolve_update_from_console(
     let target = plan::TargetVersion::parse(version).map_err(|error| error.to_string())?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .thread_name_fn(
+            landscape_terrain_proto::concurrency::runtime_thread_name_fn(
+                crate::task_names::UPDATE_RUNTIME,
+            ),
+        )
         .build()
         .map_err(|error| format!("build update resolve runtime: {error}"))?;
     runtime
@@ -161,12 +166,15 @@ impl UpdateOps for RealUpdateOps {
     ) -> Receiver<Result<ResolvedUpdate, String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                resolve_update_from_console(&repository, &version)
-            });
-            let _ = sender.send(result);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_UPDATE,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    resolve_update_from_console(&repository, &version)
+                });
+                let _ = sender.send(result);
+            },
+        );
         receiver
     }
 }

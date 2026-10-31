@@ -1,3 +1,5 @@
+mod task_names;
+
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -24,8 +26,23 @@ struct Args {
     region: String,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let sequence = std::sync::atomic::AtomicUsize::new(0);
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name_fn(move || {
+            format!(
+                "{}-{}",
+                task_names::RUNTIME,
+                sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )
+        })
+        .build()
+        .expect("build publisher runtime")
+        .block_on(async_main());
+}
+
+async fn async_main() {
     let args = Args::parse();
     let config = PublishConfig {
         version: args.version,

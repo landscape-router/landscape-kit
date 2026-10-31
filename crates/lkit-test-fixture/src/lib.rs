@@ -20,6 +20,7 @@ pub const INIT_CONFIG_ENV: &str = "LKIT_TEST_INIT_CONFIG";
 pub const FIXTURE_BUILD_VERSION: Option<&str> = option_env!("LKIT_FIXTURE_BUILD_VERSION");
 
 pub mod config_cli;
+pub mod task_names;
 
 pub mod contract {
     pub const DOCS_PATH: &str = "/api/docs";

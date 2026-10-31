@@ -33,10 +33,13 @@ impl PreflightOps for RealPreflightOps {
     fn run(&self) -> Receiver<CheckReport> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let report = crate::i18n::with_language(language, check::run_all);
-            let _ = sender.send(report);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_PREFLIGHT,
+            move || {
+                let report = crate::i18n::with_language(language, check::run_all);
+                let _ = sender.send(report);
+            },
+        );
         receiver
     }
 }

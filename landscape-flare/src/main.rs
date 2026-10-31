@@ -1,5 +1,6 @@
 mod client;
 mod i18n;
+mod task_names;
 mod tui;
 
 use clap::{Args, Parser, Subcommand};
@@ -74,8 +75,17 @@ struct CliArgs {
     token: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name_fn(
+            landscape_terrain_proto::concurrency::runtime_thread_name_fn(task_names::RUNTIME),
+        )
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     i18n::preconfigure(std::env::args_os());
     let cli = Cli::parse();
     i18n::configure(i18n::resolve(cli.lang.as_deref()));

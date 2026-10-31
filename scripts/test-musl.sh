@@ -18,7 +18,7 @@ rustup target add "$target"
 
 target_env=${target^^}
 target_env=${target_env//-/_}
-export "CARGO_TARGET_${target_env}_RUSTFLAGS=-C target-feature=+crt-static -C relocation-model=static"
+export "CARGO_TARGET_${target_env}_RUSTFLAGS=--cfg tokio_unstable -C target-feature=+crt-static -C relocation-model=static"
 if [[ -n $runner ]]; then
   export "CARGO_TARGET_${target_env}_RUNNER=$runner"
 else

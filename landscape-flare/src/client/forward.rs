@@ -44,7 +44,7 @@ pub(super) fn spawn_listener(
             status: ForwardStatus::Starting,
         },
     );
-    tokio::spawn(async move {
+    landscape_terrain_proto::concurrency::spawn_task(crate::task_names::LISTENER, async move {
         run_listener(listen_port, dst_port, accept_tx, log, events).await;
     })
 }

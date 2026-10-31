@@ -335,25 +335,26 @@ fn spawn_client(cfg: OwnedConfig) -> DashState {
     let notify = Arc::new(Notify::new());
     let task_notify = notify.clone();
     let device = (!cfg.devs.is_empty()).then(|| cfg.devs.join(","));
-    let client = tokio::spawn(async move {
-        let client_cfg = ClientConfig {
-            devs: &cfg.devs,
-            ethertype: cfg.ethertype,
-            mac: None,
-            user: &cfg.user,
-            psk: &cfg.psk,
-            client_name: &cfg.client_name,
-            forwards: &[],
-            token: &cfg.token,
-            log: LogSink::Chan(log_tx),
-            shutdown: Some(task_notify),
-            forward_control: Some(forward_rx),
-            events: Some(event_tx),
-        };
-        crate::client::run(client_cfg)
-            .await
-            .map_err(|e| e.to_string())
-    });
+    let client =
+        landscape_terrain_proto::concurrency::spawn_task(crate::task_names::CLIENT, async move {
+            let client_cfg = ClientConfig {
+                devs: &cfg.devs,
+                ethertype: cfg.ethertype,
+                mac: None,
+                user: &cfg.user,
+                psk: &cfg.psk,
+                client_name: &cfg.client_name,
+                forwards: &[],
+                token: &cfg.token,
+                log: LogSink::Chan(log_tx),
+                shutdown: Some(task_notify),
+                forward_control: Some(forward_rx),
+                events: Some(event_tx),
+            };
+            crate::client::run(client_cfg)
+                .await
+                .map_err(|e| e.to_string())
+        });
     DashState {
         log_rx,
         event_rx,

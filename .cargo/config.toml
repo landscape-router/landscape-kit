@@ -1,2 +1,6 @@
+# Tokio's named task builder is enabled in ordinary and release builds.
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
+
 [env]
 LIBPCAP_LIBDIR = { value = "landscape-flare/vendor/npcap-sdk/Lib/x64", relative = true }

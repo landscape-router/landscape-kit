@@ -304,7 +304,7 @@ fn spawn_reader(
     ethertype: u16,
     tx: mpsc::Sender<(Frame, i32)>,
 ) {
-    std::thread::spawn(move || {
+    crate::concurrency::spawn_thread(crate::task_names::TRANSPORT_RX, move || {
         let mut pfds: Vec<libc::pollfd> = fds
             .iter()
             .map(|&fd| libc::pollfd {

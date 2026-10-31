@@ -4,6 +4,7 @@ ARG DEBIAN_IMAGE=debian:12.11-slim@sha256:b1a741487078b369e78119849663d7f1a5341e
 FROM ${RUST_IMAGE} AS builder
 WORKDIR /workspace
 COPY Cargo.toml Cargo.lock rustfmt.toml rust-toolchain.toml ./
+COPY .cargo ./.cargo
 COPY crates ./crates
 COPY lkit-cli ./lkit-cli
 COPY landscape-terrain-proto ./landscape-terrain-proto

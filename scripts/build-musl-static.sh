@@ -26,7 +26,8 @@ for tool in cargo-zigbuild rustup readelf install sha256sum; do
 done
 rustup target add "$target"
 # Avoid Zig's static-PIE fallback to a dynamic binary on x86_64.
-flags='-C target-feature=+crt-static -C relocation-model=static'
+# Target flags override .cargo/config.toml's build.rustflags.
+flags='--cfg tokio_unstable -C target-feature=+crt-static -C relocation-model=static'
 target_env=${target^^}
 target_env=${target_env//-/_}
 env "CARGO_TARGET_${target_env}_RUSTFLAGS=$flags" \

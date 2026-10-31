@@ -36,7 +36,7 @@ check_target() {
   grep -Fx -- "$expected" "$test_root/args" >/dev/null || fail "$host: wrong target"
   target_env=${expected^^}
   target_env=${target_env//-/_}
-  grep -Fx "CARGO_TARGET_${target_env}_RUSTFLAGS=-C target-feature=+crt-static -C relocation-model=static" \
+  grep -Fx "CARGO_TARGET_${target_env}_RUSTFLAGS=--cfg tokio_unstable -C target-feature=+crt-static -C relocation-model=static" \
     "$test_root/env" >/dev/null || fail "$host: missing static flags"
 }
 

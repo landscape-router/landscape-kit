@@ -36,6 +36,7 @@
 - [事务与中断恢复](deployment/transactions-and-recovery.md)
 - [初始化与凭据](interaction/initialization-and-credentials.md)
 - [服务、进程与健康检查](service/runtime-and-health.md)
+- [并发任务与线程命名](deployment/concurrency.md)
 - [网络接管](network/takeover.md)
 - [宿主网络适配（hostnet）](network/hostnet.md)
 - [网络重配置(reinit)](network/reinit.md)

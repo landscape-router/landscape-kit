@@ -100,23 +100,26 @@ impl SoftwareOps for RealSoftwareOps {
     ) -> Receiver<SoftwareInstallMessage> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                let phase_sender = sender.clone();
-                crate::software::install(
-                    &host,
-                    confirm.software,
-                    confirm.source,
-                    false,
-                    &cancel,
-                    &mut |phase| {
-                        let _ = phase_sender.send(SoftwareInstallMessage::Phase(phase));
-                    },
-                )
-                .map_err(|error| error.to_string())
-            });
-            let _ = sender.send(SoftwareInstallMessage::Done(result));
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_SOFTWARE_INSTALL,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    let phase_sender = sender.clone();
+                    crate::software::install(
+                        &host,
+                        confirm.software,
+                        confirm.source,
+                        false,
+                        &cancel,
+                        &mut |phase| {
+                            let _ = phase_sender.send(SoftwareInstallMessage::Phase(phase));
+                        },
+                    )
+                    .map_err(|error| error.to_string())
+                });
+                let _ = sender.send(SoftwareInstallMessage::Done(result));
+            },
+        );
         receiver
     }
 
@@ -127,13 +130,16 @@ impl SoftwareOps for RealSoftwareOps {
     ) -> Receiver<Result<(), String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                crate::software::base::install(&packages, false, &cancel)
-                    .map_err(|error| error.to_string())
-            });
-            let _ = sender.send(result);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_BASE_INSTALL,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    crate::software::base::install(&packages, false, &cancel)
+                        .map_err(|error| error.to_string())
+                });
+                let _ = sender.send(result);
+            },
+        );
         receiver
     }
 }

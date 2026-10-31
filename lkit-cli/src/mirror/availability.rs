@@ -121,7 +121,10 @@ pub(crate) fn probe_all(host: &Host) -> HashMap<MirrorName, MirrorStatus> {
         .filter(|mirror| *mirror != MirrorName::Official)
         .map(|mirror| {
             let host = host.clone();
-            std::thread::spawn(move || (mirror, probe(&host, mirror)))
+            landscape_terrain_proto::concurrency::spawn_thread(
+                crate::task_names::MIRROR_PROBE,
+                move || (mirror, probe(&host, mirror)),
+            )
         })
         .collect();
     let mut statuses: HashMap<_, _> = handles

@@ -264,14 +264,20 @@ pub async fn run(
     let mut sweep_timer = tokio::time::interval(SWEEP_INTERVAL);
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
     let sig = match shutdown {
-        Some(rx) => tokio::spawn(async move {
-            let _ = rx.await;
-            let _ = shutdown_tx.send(());
-        }),
-        None => tokio::spawn(async move {
-            wait_for_shutdown().await;
-            let _ = shutdown_tx.send(());
-        }),
+        Some(rx) => landscape_terrain_proto::concurrency::spawn_task(
+            crate::task_names::FLARE_SHUTDOWN,
+            async move {
+                let _ = rx.await;
+                let _ = shutdown_tx.send(());
+            },
+        ),
+        None => landscape_terrain_proto::concurrency::spawn_task(
+            crate::task_names::FLARE_SHUTDOWN,
+            async move {
+                wait_for_shutdown().await;
+                let _ = shutdown_tx.send(());
+            },
+        ),
     };
     loop {
         tokio::select! {
@@ -745,14 +751,17 @@ fn pump_peer(
                     peer_eof_sent: false,
                 },
             );
-            tokio::spawn(server_conn_task(
-                *peer_mac,
-                h,
-                generation,
-                peer.to_tx.clone(),
-                from_rx,
-                peer.allowed.clone(),
-            ));
+            landscape_terrain_proto::concurrency::spawn_task(
+                crate::task_names::FLARE_CONNECTION,
+                server_conn_task(
+                    *peer_mac,
+                    h,
+                    generation,
+                    peer.to_tx.clone(),
+                    from_rx,
+                    peer.allowed.clone(),
+                ),
+            );
         }
     }
 

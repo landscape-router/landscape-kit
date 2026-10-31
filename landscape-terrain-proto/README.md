@@ -24,6 +24,7 @@ of the wire share one implementation:
 | `ipstack` | Userspace TCP/IP stack (smoltcp) bridged over Terrain DATA frames, plus the relay tuning constants |
 | `transport` | Platform `Link` (AF_PACKET on Linux, libpcap elsewhere), ethernet/VLAN parsing |
 | `cli` | Shared argument parsers used by both binaries |
+| `concurrency` | Named Tokio tasks, OS threads and runtime workers shared by both binaries |
 
 ## Security model in one paragraph
 

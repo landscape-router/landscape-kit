@@ -66,71 +66,86 @@ impl BackupOps for RealBackupOps {
     fn list(&self) -> Receiver<Result<Vec<BackupEntry>, String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, load_backups);
-            let _ = sender.send(result);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_BACKUP_LIST,
+            move || {
+                let result = crate::i18n::with_language(language, load_backups);
+                let _ = sender.send(result);
+            },
+        );
         receiver
     }
 
     fn create(&self, remark: String) -> Receiver<BackupCreateMessage> {
         let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = (|| {
-                let root = crate::deployment::state::discover_landscape_root()
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| {
-                        crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION).to_string()
-                    })?;
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|error| format!("build backup create runtime: {error}"))?;
-                runtime
-                    .block_on(crate::commands::backup::create_manual_backup(
-                        &root,
-                        &crate::deployment::runtime::InstallRuntime::production(),
-                        &remark,
-                        None,
-                        |progress| {
-                            let _ = sender.send(BackupCreateMessage::Progress(progress));
-                        },
-                    ))
-                    .map_err(|error| error.to_string())
-            })();
-            let _ = sender.send(BackupCreateMessage::Done(result));
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_BACKUP_CREATE,
+            move || {
+                let result = (|| {
+                    let root = crate::deployment::state::discover_landscape_root()
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| {
+                            crate::tr!(crate::keys::BACKUP_REQUIRES_EXISTING_INSTALLATION)
+                                .to_string()
+                        })?;
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .thread_name_fn(
+                            landscape_terrain_proto::concurrency::runtime_thread_name_fn(
+                                crate::task_names::BACKUP_RUNTIME,
+                            ),
+                        )
+                        .build()
+                        .map_err(|error| format!("build backup create runtime: {error}"))?;
+                    runtime
+                        .block_on(crate::commands::backup::create_manual_backup(
+                            &root,
+                            &crate::deployment::runtime::InstallRuntime::production(),
+                            &remark,
+                            None,
+                            |progress| {
+                                let _ = sender.send(BackupCreateMessage::Progress(progress));
+                            },
+                        ))
+                        .map_err(|error| error.to_string())
+                })();
+                let _ = sender.send(BackupCreateMessage::Done(result));
+            },
+        );
         receiver
     }
 
     fn verify(&self, path: PathBuf) -> Receiver<Result<String, String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-                let metadata =
-                    crate::backup::lkb::verify_lkb(&bytes).map_err(|error| error.to_string())?;
-                let verify_dir = std::env::temp_dir()
-                    .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
-                crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
-                    .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
-                    .map(|_| {
-                        crate::tr!(
-                            crate::keys::CONSOLE_BACKUP_VERIFIED,
-                            backup_id = metadata.backup_id
-                        )
-                    })
-                    .map_err(|error| {
-                        let _ = std::fs::remove_dir_all(&verify_dir);
-                        error.to_string()
-                    })
-                    .inspect(|_message| {
-                        let _ = std::fs::remove_dir_all(&verify_dir);
-                    })
-            });
-            let _ = sender.send(result);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_BACKUP_VERIFY,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                    let metadata = crate::backup::lkb::verify_lkb(&bytes)
+                        .map_err(|error| error.to_string())?;
+                    let verify_dir = std::env::temp_dir()
+                        .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
+                    crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
+                        .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
+                        .map(|_| {
+                            crate::tr!(
+                                crate::keys::CONSOLE_BACKUP_VERIFIED,
+                                backup_id = metadata.backup_id
+                            )
+                        })
+                        .map_err(|error| {
+                            let _ = std::fs::remove_dir_all(&verify_dir);
+                            error.to_string()
+                        })
+                        .inspect(|_message| {
+                            let _ = std::fs::remove_dir_all(&verify_dir);
+                        })
+                });
+                let _ = sender.send(result);
+            },
+        );
         receiver
     }
 }

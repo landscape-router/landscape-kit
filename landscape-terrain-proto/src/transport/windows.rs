@@ -202,7 +202,7 @@ fn spawn_reader(
     // the sender can always acquire it. A short sleep on an empty round
     // bounds CPU use; `idle` skips the sleep while frames are flowing.
     const POLL_INTERVAL: Duration = Duration::from_millis(2);
-    std::thread::spawn(move || {
+    crate::concurrency::spawn_thread(crate::task_names::TRANSPORT_RX, move || {
         loop {
             let mut caps = caps.lock().unwrap();
             let mut idle = true;

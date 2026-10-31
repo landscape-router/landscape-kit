@@ -18,6 +18,7 @@ mod release;
 mod report;
 mod service;
 mod software;
+mod task_names;
 mod workflows;
 
 use std::process::ExitCode;
@@ -29,8 +30,18 @@ use commands::Commands;
 
 rust_i18n::i18n!("locales", fallback = "en");
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name_fn(
+            landscape_terrain_proto::concurrency::runtime_thread_name_fn(task_names::RUNTIME),
+        )
+        .build()
+        .expect("build lkit runtime")
+        .block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     dotenvy::dotenv().ok();
 
     i18n::preconfigure(std::env::args_os());

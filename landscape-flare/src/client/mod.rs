@@ -206,13 +206,16 @@ pub async fn run(mut cfg: ClientConfig<'_>) -> Result<(), Box<dyn std::error::Er
     // One signal task for the whole client lifetime: a termination signal
     // (or the TUI quit key) must interrupt the handshake and retry backoff
     // too, not just an established session.
-    drop(tokio::spawn({
-        let n = notify.clone();
-        async move {
-            wait_for_shutdown().await;
-            n.notify_one();
-        }
-    }));
+    drop(landscape_terrain_proto::concurrency::spawn_task(
+        crate::task_names::SHUTDOWN,
+        {
+            let n = notify.clone();
+            async move {
+                wait_for_shutdown().await;
+                n.notify_one();
+            }
+        },
+    ));
     let mut forward_control = cfg.forward_control.take();
     let mut active_forwards = cfg.forwards.to_vec();
 

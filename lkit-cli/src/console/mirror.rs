@@ -98,23 +98,30 @@ impl MirrorOps for RealMirrorOps {
     fn probe(&self, host: Host) -> Receiver<HashMap<MirrorName, MirrorStatus>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let statuses = crate::i18n::with_language(language, || crate::mirror::probe_all(&host));
-            let _ = sender.send(statuses);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_MIRROR_PROBE,
+            move || {
+                let statuses =
+                    crate::i18n::with_language(language, || crate::mirror::probe_all(&host));
+                let _ = sender.send(statuses);
+            },
+        );
         receiver
     }
 
     fn refresh(&self, family: crate::mirror::Family) -> Receiver<Result<(), String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                crate::mirror::refresh::refresh_index(family, false)
-                    .map_err(|error| error.to_string())
-            });
-            let _ = sender.send(result);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_MIRROR_APPLY,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    crate::mirror::refresh::refresh_index(family, false)
+                        .map_err(|error| error.to_string())
+                });
+                let _ = sender.send(result);
+            },
+        );
         receiver
     }
 }

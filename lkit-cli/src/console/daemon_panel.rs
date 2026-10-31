@@ -27,12 +27,16 @@ impl DeployOps for RealDeployOps {
     fn deploy(&self, psk: Option<String>) -> Receiver<DeployResult> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
-        std::thread::spawn(move || {
-            let result = crate::i18n::with_language(language, || {
-                crate::commands::lkit_self::install_daemon(psk).map_err(|error| error.to_string())
-            });
-            let _ = sender.send(result);
-        });
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_DAEMON,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    crate::commands::lkit_self::install_daemon(psk)
+                        .map_err(|error| error.to_string())
+                });
+                let _ = sender.send(result);
+            },
+        );
         receiver
     }
 }

@@ -4,6 +4,7 @@ ARG RUST_IMAGE=rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc4
 FROM ${RUST_IMAGE} AS builder
 WORKDIR /workspace
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo ./.cargo
 COPY crates ./crates
 COPY lkit-cli ./lkit-cli
 COPY landscape-terrain-proto ./landscape-terrain-proto

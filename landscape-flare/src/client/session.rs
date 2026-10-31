@@ -164,7 +164,7 @@ pub(super) async fn session_loop(
                         close_tx: Some(close_tx),
                     },
                 );
-                tokio::spawn(bridge_task(
+                landscape_terrain_proto::concurrency::spawn_task(crate::task_names::CONNECTION, bridge_task(
                     stream,
                     (h, generation),
                     to_tx.clone(),

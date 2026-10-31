@@ -242,11 +242,14 @@ fn spawn_flare_from(
     if let Some(mac) = section.mac.as_deref() {
         args.mac = landscape_terrain_proto::cli::parse_mac(mac).ok();
     }
-    let handle = tokio::spawn(async move {
-        if let Err(error) = crate::commands::flare::run_serve(&args, Some(rx)).await {
-            eprintln!("lkit daemon: flare server failed: {error}");
-        }
-    });
+    let handle = landscape_terrain_proto::concurrency::spawn_task(
+        crate::task_names::DAEMON_FLARE,
+        async move {
+            if let Err(error) = crate::commands::flare::run_serve(&args, Some(rx)).await {
+                eprintln!("lkit daemon: flare server failed: {error}");
+            }
+        },
+    );
     Some((tx, handle))
 }
 
