@@ -404,16 +404,16 @@ async fn handshake(
         tx.send(&server_mac, cfg.ethertype, &auth_req)?;
 
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
-        // Auth frames must come from the MAC that answered the RESP: a
-        // spoofed lockout NACK from anywhere else is ignored.
+        // Sealed AUTH_ACK/NACK frames are authenticated by the handshake keys,
+        // so they are accepted from any source MAC: when a broadcast DISCOVER
+        // is captured on both a bridge master and its slave, the server can
+        // answer the AUTH_REQ from a different interface than the RESP the
+        // client adopted. Only the unauthenticated plaintext lockout NACK (and
+        // malformed frames) are still gated on the RESP source MAC.
         let Some(auth_frame) = recv_until(
             tx,
             cfg.ethertype,
-            |f| {
-                f.src == server_mac
-                    && frame::decode(&f.payload)
-                        .is_ok_and(|l| l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK)
-            },
+            |f| is_auth_reply(f, &server_mac, sess, master),
             deadline,
         )
         .await?
@@ -468,6 +468,23 @@ fn warn_unadvertised_ports(cfg: &ClientConfig<'_>, advertised: &[u16]) {
             );
         }
     }
+}
+
+/// Whether an incoming frame is the AUTH reply for this handshake. Sealed
+/// ACK/NACK frames are authenticated by the handshake keys, so their source
+/// MAC is irrelevant: a bridge may answer via a different interface than the
+/// RESP the client adopted. Plaintext (unauthenticated) lockout NACKs and
+/// malformed frames are still only trusted from the RESP source MAC.
+fn is_auth_reply(
+    frame: &Frame,
+    server_mac: &[u8; 6],
+    sess: &ClientSession,
+    master: &MasterKey,
+) -> bool {
+    frame::decode(&frame.payload).is_ok_and(|l| {
+        (l.msg_type == TYPE_AUTH_ACK || l.msg_type == TYPE_AUTH_NACK)
+            && (frame.src == *server_mac || sess.auth_frame_authentic(&l, master))
+    })
 }
 
 /// Block until a frame satisfying `pred` arrives, or the deadline passes.
@@ -582,4 +599,84 @@ fn pump(
         conns.remove(&h);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_terrain_proto::protocol::crypto::{Dir, HS_AUTH_ACK};
+    use landscape_terrain_proto::protocol::session::{ServerSession, VerifyResult};
+
+    const ETHERTYPE: u16 = 0x88b6;
+    const SERVER_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+    const OTHER_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x99];
+
+    fn master() -> MasterKey {
+        MasterKey::derive_with_log_n(b"landscape-test-secret", 10)
+    }
+
+    /// Drive a client into AwaitAuth and return it together with an AUTH_ACK
+    /// sealed by the server for that handshake.
+    fn client_awaiting_auth(master: &MasterKey) -> (ClientSession, Vec<u8>) {
+        let mut client = ClientSession::new();
+        let discover_raw = client.discover_frame("pc", None, master);
+        let discover = frame::decode(&discover_raw).unwrap();
+        let (discover_id, _, _) =
+            landscape_terrain_proto::protocol::session::open_discover(&discover, master).unwrap();
+        let mut server = ServerSession::new();
+        let resp_raw = server.begin_discover(discover_id, "router", &[22], master);
+        let resp = frame::decode(&resp_raw).unwrap();
+        let (_, auth_req_raw) = client.on_resp(&resp, "admin", master).unwrap();
+        let auth_req = frame::decode(&auth_req_raw).unwrap();
+        let VerifyResult::Accepted {
+            sid,
+            server_proof,
+            hkey,
+            ..
+        } = server.verify_auth(&auth_req, master)
+        else {
+            panic!("auth should be accepted");
+        };
+        let ack = hkey.seal_frame(
+            Dir::S2C,
+            TYPE_AUTH_ACK,
+            sid,
+            HS_AUTH_ACK,
+            &frame::encode_auth_ack_payload(&server_proof),
+        );
+        (client, ack)
+    }
+
+    fn transport_frame(src: [u8; 6], payload: Vec<u8>) -> Frame {
+        Frame {
+            dst: [0xff; 6],
+            src,
+            vlan_id: None,
+            ethertype: ETHERTYPE,
+            payload,
+        }
+    }
+
+    #[test]
+    fn sealed_ack_is_accepted_from_a_different_interface_mac() {
+        // A bridge can answer the AUTH_REQ from a different interface than the
+        // RESP the client adopted; the seal is what authenticates it.
+        let master = master();
+        let (sess, ack) = client_awaiting_auth(&master);
+        let frame = transport_frame(OTHER_MAC, ack);
+        assert!(is_auth_reply(&frame, &SERVER_MAC, &sess, &master));
+    }
+
+    #[test]
+    fn plaintext_nack_still_requires_the_resp_source_mac() {
+        let master = master();
+        let (sess, _) = client_awaiting_auth(&master);
+        let nack = frame::encode_auth_nack("locked out");
+
+        let foreign = transport_frame(OTHER_MAC, nack.clone());
+        assert!(!is_auth_reply(&foreign, &SERVER_MAC, &sess, &master));
+
+        let from_server = transport_frame(SERVER_MAC, nack);
+        assert!(is_auth_reply(&from_server, &SERVER_MAC, &sess, &master));
+    }
 }

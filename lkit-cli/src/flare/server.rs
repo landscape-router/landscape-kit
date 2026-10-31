@@ -78,7 +78,12 @@ pub struct ServerConfig<'a> {
 /// Per-peer connection state, keyed by the client's MAC address.
 struct Peer {
     sess: ServerSession,
+    /// Interface used for the established session (pinned on AUTH success).
     ifindex: i32,
+    /// Interface that carried this handshake attempt. Duplicate captures of
+    /// the same DISCOVER reuse it, so every RESP/ACK/NACK for this attempt
+    /// leaves with one identity instead of following the last capture.
+    handshake_ifindex: i32,
     stack: Option<IpStack>,
     listeners: Vec<SocketHandle>,
     crypto: Option<SessionCrypto>,
@@ -329,7 +334,13 @@ pub async fn run(
                             continue;
                         }
                         let peer = peers.entry(mac).or_insert_with(|| new_peer(to_tx.clone(), allowed.clone()));
-                        peer.ifindex = ifindex;
+                        // A bridge and its slave capture the same DISCOVER.
+                        // Keep one reply interface for the whole attempt: a
+                        // duplicate reuses the ifindex that answered first, so
+                        // RESP and AUTH_ACK carry the same source MAC.
+                        if starts_new_attempt(peer.sess.pending_discover_id(), discover_id) {
+                            peer.handshake_ifindex = ifindex;
+                        }
                         // Never disturb an active session: only a completed
                         // AUTH_REQ replaces it, so a forged DISCOVER cannot
                         // kick a live client.
@@ -339,7 +350,7 @@ pub async fn run(
                             cfg.forward_ports,
                             &master,
                         );
-                        tx.send_on(ifindex, &mac, cfg.ethertype, &resp)?;
+                        tx.send_on(peer.handshake_ifindex, &mac, cfg.ethertype, &resp)?;
                         println!("discover from {} '{}'", fmt_mac(&mac), name);
                     }
                     TYPE_AUTH_REQ => {
@@ -355,7 +366,11 @@ pub async fn run(
                             println!("auth attempt from {} rate-limited", fmt_mac(&mac));
                             continue;
                         }
-                        let ifindex = peer.ifindex;
+                        let reply_ifindex = if peer.handshake_ifindex != 0 {
+                            peer.handshake_ifindex
+                        } else {
+                            peer.ifindex
+                        };
                         let guard = guards.entry(mac).or_default();
                         // MACs with an active session are never locked out:
                         // an unauthenticated attacker could otherwise spoof
@@ -384,7 +399,7 @@ pub async fn run(
                                     }
                                     None => frame::encode_auth_nack(&reason),
                                 };
-                                let _ = tx.send_on(ifindex, &mac, cfg.ethertype, &nack);
+                                let _ = tx.send_on(reply_ifindex, &mac, cfg.ethertype, &nack);
                             }
                             println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
                             continue;
@@ -407,6 +422,10 @@ pub async fn run(
                                 peer.stack = Some(stack);
                                 peer.listeners = listeners;
                                 peer.crypto = Some(SessionCrypto::new(keys, Dir::S2C));
+                                // Continue the session on the interface that
+                                // carried the handshake, not on whichever
+                                // duplicate capture happened to arrive last.
+                                peer.ifindex = reply_ifindex;
                                 peer.last_seen = Instant::now();
                                 // The AUTH_ACK is sealed with the handshake
                                 // keys, so only a psk-holder can open it.
@@ -417,7 +436,7 @@ pub async fn run(
                                     HS_AUTH_ACK,
                                     &frame::encode_auth_ack_payload(&server_proof),
                                 );
-                                tx.send_on(ifindex, &mac, cfg.ethertype, &ack)?;
+                                tx.send_on(reply_ifindex, &mac, cfg.ethertype, &ack)?;
                                 println!(
                                     "client {} '{}' authenticated, session {sid}",
                                     fmt_mac(&mac),
@@ -436,7 +455,7 @@ pub async fn run(
                                     HS_AUTH_NACK,
                                     &frame::encode_auth_nack_payload(&reason),
                                 );
-                                tx.send_on(ifindex, &mac, cfg.ethertype, &nack)?;
+                                tx.send_on(reply_ifindex, &mac, cfg.ethertype, &nack)?;
                                 let active = peer.sess.session_id().is_some();
                                 if !active {
                                     // Failures only count against MACs without
@@ -639,6 +658,13 @@ async fn wait_for_shutdown() {
     }
 }
 
+/// A DISCOVER starts a new handshake attempt when there is no pending
+/// handshake or it carries a different discover_id. Duplicate captures of one
+/// attempt must keep the interface that answered first.
+fn starts_new_attempt(pending_discover_id: Option<u64>, discover_id: u64) -> bool {
+    pending_discover_id != Some(discover_id)
+}
+
 fn rate_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
     map.entry(*mac).or_default().allow()
 }
@@ -656,6 +682,7 @@ fn new_peer(to_tx: mpsc::Sender<ServerStackMsg>, allowed: Arc<[u16]>) -> Peer {
     Peer {
         sess: ServerSession::new(),
         ifindex: 0,
+        handshake_ifindex: 0,
         stack: None,
         listeners: Vec::new(),
         crypto: None,
@@ -910,6 +937,15 @@ fn devs_display(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_discover_keeps_the_same_reply_interface() {
+        // First capture or a different attempt: pick the current interface.
+        assert!(starts_new_attempt(None, 7));
+        assert!(starts_new_attempt(Some(6), 7));
+        // The bridge/slave re-capture of the same attempt must not move it.
+        assert!(!starts_new_attempt(Some(7), 7));
+    }
 
     #[test]
     fn rate_bucket_allows_burst_then_limits() {

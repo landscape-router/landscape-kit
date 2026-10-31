@@ -125,13 +125,49 @@ impl ClientSession {
         Some((resp, auth_req))
     }
 
+    /// True when an AUTH_ACK / AUTH_NACK is cryptographically bound to this
+    /// handshake, regardless of which interface/MAC it arrived on. The server
+    /// may answer from a different interface than the one whose RESP the
+    /// client adopted (a broadcast DISCOVER captured on both a bridge and its
+    /// slave), but a sealed frame proves it holds the handshake keys. A
+    /// plaintext lockout NACK carries no proof and is therefore never
+    /// authentic here: callers must still require the RESP source MAC for it.
+    pub fn auth_frame_authentic(&self, frame: &Frame<'_>, master: &MasterKey) -> bool {
+        let ClientPhase::AwaitAuth {
+            server_nonce,
+            client_nonce,
+            hkey,
+        } = &self.phase
+        else {
+            return false;
+        };
+        match frame.msg_type {
+            TYPE_AUTH_ACK => hkey
+                .open_frame(Dir::S2C, HS_AUTH_ACK, frame)
+                .is_some_and(|plain| {
+                    frame::decode_auth_ack_payload(&plain).is_ok_and(|server_proof| {
+                        ct_eq(
+                            &server_proof,
+                            &auth_proof_s2c(master, *server_nonce, *client_nonce),
+                        )
+                    })
+                }),
+            TYPE_AUTH_NACK => hkey
+                .open_frame(Dir::S2C, HS_AUTH_NACK, frame)
+                .and_then(|plain| frame::decode_auth_nack_payload(&plain).ok())
+                .is_some(),
+            _ => false,
+        }
+    }
+
     /// Handle an AUTH_ACK / AUTH_NACK frame. The AUTH_ACK payload is sealed
     /// with the handshake keys; once opened, the server's proof must match
     /// the psk, otherwise the server is not authenticated and the handshake
     /// fails. AUTH_NACK is tried sealed first (v5), then as a plaintext
     /// fallback for servers without a pending handshake nonce (e.g. lockout
-    /// messages); the caller should additionally filter auth frames by the
-    /// RESP source MAC.
+    /// messages). Callers should accept a frame from any source MAC when
+    /// [`Self::auth_frame_authentic`] holds, and otherwise require the RESP
+    /// source MAC (the plaintext fallback is unauthenticated).
     pub fn on_auth_frame(&mut self, frame: &Frame<'_>, master: &MasterKey) {
         match frame.msg_type {
             TYPE_AUTH_ACK => {
@@ -296,6 +332,14 @@ impl ServerSession {
             &server_nonce.to_be_bytes(),
             &payload,
         )
+    }
+
+    /// The discover_id of the in-flight handshake, if any. Lets the server
+    /// keep one reply interface per attempt: duplicate captures of the same
+    /// DISCOVER reuse it, while a different discover_id may start on another
+    /// interface.
+    pub fn pending_discover_id(&self) -> Option<u64> {
+        self.pending.map(|pending| pending.discover_id)
     }
 
     /// The server nonce of the in-flight handshake, if any, clearing it.
@@ -565,6 +609,43 @@ mod tests {
     }
 
     #[test]
+    fn sealed_auth_frames_are_authentic_from_any_source() {
+        // The source MAC of a sealed ACK/NACK is irrelevant: the handshake
+        // keys authenticate it. A bridge may deliver the frame from a
+        // different interface than the RESP the client adopted.
+        let mut client = ClientSession::new();
+        let mut server = ServerSession::new();
+        let (s_nonce, c_nonce) = await_auth(&mut client, &mut server);
+        let ack_raw = sealed_auth_ack(master(), s_nonce, c_nonce, 1);
+        let ack = frame::decode(&ack_raw).unwrap();
+        assert!(client.auth_frame_authentic(&ack, master()));
+        let nack_raw = sealed_nack("locked out", master(), s_nonce);
+        let nack = frame::decode(&nack_raw).unwrap();
+        assert!(client.auth_frame_authentic(&nack, master()));
+    }
+
+    #[test]
+    fn plaintext_and_forged_auth_frames_are_not_authentic() {
+        let mut client = ClientSession::new();
+        let mut server = ServerSession::new();
+        let (s_nonce, c_nonce) = await_auth(&mut client, &mut server);
+
+        // The plaintext lockout fallback carries no proof, so a caller must
+        // keep requiring the RESP source MAC for it.
+        let plaintext_raw = frame::encode_auth_nack("lockout");
+        let plaintext = frame::decode(&plaintext_raw).unwrap();
+        assert!(!client.auth_frame_authentic(&plaintext, master()));
+
+        let wrong_psk = sealed_auth_ack(&MasterKey::derive(b"wrong"), s_nonce, c_nonce, 1);
+        let wrong_psk = frame::decode(&wrong_psk).unwrap();
+        assert!(!client.auth_frame_authentic(&wrong_psk, master()));
+
+        let stale_nonce = sealed_auth_ack(master(), s_nonce.wrapping_add(1), c_nonce, 1);
+        let stale_nonce = frame::decode(&stale_nonce).unwrap();
+        assert!(!client.auth_frame_authentic(&stale_nonce, master()));
+    }
+
+    #[test]
     fn server_nonce_enables_sealed_lockout_nack() {
         let mut client = ClientSession::new();
         let mut server = ServerSession::new();
@@ -707,6 +788,25 @@ mod tests {
             server.verify_auth(&l, master()),
             VerifyResult::Accepted { .. }
         ));
+    }
+
+    /// The server can tell duplicate captures of one attempt from a new one,
+    /// so it can keep the reply interface stable per attempt.
+    #[test]
+    fn pending_discover_id_tracks_the_attempt() {
+        let mut server = ServerSession::new();
+        assert_eq!(server.pending_discover_id(), None);
+
+        let _ = server_resp(&mut server, 7, master());
+        assert_eq!(server.pending_discover_id(), Some(7));
+        let _ = server_resp(&mut server, 7, master());
+        assert_eq!(server.pending_discover_id(), Some(7));
+
+        let _ = server_resp(&mut server, 8, master());
+        assert_eq!(server.pending_discover_id(), Some(8));
+
+        let _ = server.take_server_nonce();
+        assert_eq!(server.pending_discover_id(), None);
     }
 
     /// A different discover_id is a new attempt: fresh nonce, and the AUTH

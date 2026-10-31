@@ -345,15 +345,21 @@
 - 状态：`已覆盖`
 - 证据：[幂等 begin_discover 测试](../../landscape-terrain-proto/src/protocol/session.rs)
   （`duplicate_discover_reuses_the_standing_nonce`、
+  `pending_discover_id_tracks_the_attempt`、
   `rediscover_with_a_new_id_replaces_the_nonce`）、
+  [客户端任意源 ACK 测试](../../landscape-flare/src/client/mod.rs)
+  （`sealed_ack_is_accepted_from_a_different_interface_mac`）、
   [双重捕获 e2e](../../scripts/flare/e2e-double-capture.sh)
-  （服务端容器内把 eth0 挂入 br0 复现路由器拓扑）、
+  （服务端容器内把 eth0 挂入 br0、br0 使用与 eth0 不同的 MAC）、
   [协议规范·握手流程](protocol.md)
 - 说明：daemon 托管的 flare 默认 `--dev any`，路由器上 Landscape 的 `br_lan` 桥
   会让同一广播被物理口与桥各捕获一次。服务端按 `discover_id` 幂等处理重复捕获：
   重发以同一服务端 nonce 密封的 RESP（字节相同，无 nonce 重用风险），不换 nonce——
-  客户端已采纳先前 RESP 的 AUTH_REQ 仍可验证。修复前表现为 discover 永远成功、
-  AUTH 永远超时的死循环（服务端日志 `unauthentic auth frame ... bad handshake
-  frame`）。e2e 断言服务端日志出现成对的 `discover from` 行（确认双捕真实发生，
-  非空转通过）且恰好一次认证，随后 2 MiB 隧道传输完整。不同 `discover_id` 仍换
-  新 nonce。
+  客户端已采纳先前 RESP 的 AUTH_REQ 仍可验证。回复接口同样按尝试固定：重复捕获
+  复用首次捕获的接口，AUTH_ACK/NACK 从该接口发出，因此一次握手的 RESP/ACK 源 MAC
+  一致；客户端也接受任意源 MAC 的密封 AUTH 帧（明文锁定 NACK 仍要求 RESP 源 MAC），
+  覆盖 `br_lan` 与物理口 MAC 不同的路由器。修复前表现为 discover 永远成功、AUTH
+  永远超时的死循环（服务端日志 `unauthentic auth frame ... bad handshake frame`，
+  或服务端已 `authenticated` 但 ACK 源 MAC 不匹配被客户端丢弃）。e2e 断言服务端
+  日志出现成对的 `discover from` 行（确认双捕真实发生，非空转通过）且恰好一次认证，
+  随后 2 MiB 隧道传输完整。不同 `discover_id` 仍换新 nonce。

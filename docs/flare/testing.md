@@ -13,7 +13,7 @@ flare 域验证 L2 防失联通道：`lflare` 客户端与 `lkit flare` 服务�
 | --- | --- |
 | `scripts/flare/e2e-docker.sh` | 单网段全功能场景（握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启） |
 | `scripts/flare/e2e-connections.sh` | 单映射连接生命周期（TCP/HTTP 并发、正常与 RST 回收、慢读背压、已建立连接空闲保活） |
-| `scripts/flare/e2e-double-capture.sh` | 桥双重捕获场景（服务端容器内 eth0 挂入 br0，`--dev any` 双捕同一广播，握手与传输仍须完成） |
+| `scripts/flare/e2e-double-capture.sh` | 桥双重捕获场景（服务端容器内 eth0 挂入 br0、两者 MAC 不同，`--dev any` 双捕同一广播，握手与传输仍须完成） |
 | `scripts/flare/e2e-same-segment.sh` | 同段多客户端场景（并发/优雅重启/硬杀恢复/20 MiB） |
 | `scripts/flare/e2e-multiclient.sh` | 双网段多客户端场景（teardown 隔离/空闲保活） |
 | `scripts/flare/e2e-ratelimit.sh` | 限速与锁死场景（洪泛/伪造失败不冻结） |

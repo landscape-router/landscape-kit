@@ -4,10 +4,17 @@
 # The daemon-managed flare server binds --dev any by default. On a router
 # whose LAN ports Landscape bridges into br_lan, the same broadcast DISCOVER
 # is then captured twice in one server process — once on the physical slave
-# and once on the bridge master — and before the discover_id idempotency
-# fix the second capture reminted the pending server nonce after the client
-# had committed to the first RESP, looping the handshake forever between
-# "discover ok" and "auth timeout".
+# and once on the bridge master — looping the handshake forever between
+# "discover ok" and "auth timeout" when the two captures were not kept on one
+# identity:
+#
+#   - before the discover_id idempotency fix, the second capture reminted the
+#     pending server nonce after the client had committed to the first RESP;
+#   - when br_lan and the physical port have different MACs, the RESP and the
+#     AUTH_ACK could leave through different interfaces, so the client's
+#     source-MAC filter dropped the ACK.
+#
+# br0 is given a distinct MAC here on purpose: the test now covers both.
 #
 # Topology (the bridge lives INSIDE the server container, mirroring br_lan
 # on the router):
@@ -18,9 +25,9 @@
 #     server: lkit flare serve --dev any → one broadcast, two captures
 #
 # Steps:
-#   1. build br0 inside the server container, enslave eth0, adopt its MAC,
-#      start serve with --dev any
-#   2. the client must establish a session (deadlocks before the fix)
+#   1. build br0 inside the server container, enslave eth0, give br0 a MAC
+#      distinct from eth0's, start serve with --dev any
+#   2. the client must establish a session (deadlocks before the fixes)
 #   3. the server log shows the duplicated "discover from" lines (the
 #      double capture is real, the test is not passing vacuously) and
 #      exactly one authenticated session
@@ -52,17 +59,17 @@ docker build -q -t "$IMAGE" -f scripts/flare/Dockerfile . >/dev/null
 docker network create "$NET" >/dev/null
 
 echo "== start server (eth0 enslaved into an in-container br0, --dev any) =="
-# br0 adopts eth0's MAC explicitly: the transport stamps frames with the
-# sending interface's MAC, and the client filters AUTH frames by the source
-# MAC of the RESP it accepted — br0 and eth0 must answer with one identity.
+# br0 gets a MAC distinct from eth0's: the transport stamps frames with the
+# sending interface's MAC, so the two capture paths have different identities
+# and the server must keep RESP and AUTH_ACK on the same interface.
 docker run -d --name "$SRV" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW --cap-add NET_ADMIN \
   -v "$PWD/target/debug:/opt/bin:ro" \
   "$IMAGE" bash -c '
     ip link add br0 type bridge
-    ip link set dev br0 address "$(cat /sys/class/net/eth0/address)"
     ip link set eth0 master br0
+    ip link set dev br0 address 02:00:00:00:00:99
     ip link set br0 up
     python3 /opt/fake_service.py &
     exec /opt/bin/lkit flare serve --psk '"$PSK"' --dev any --token '"$TOKEN"
