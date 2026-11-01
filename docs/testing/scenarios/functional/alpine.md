@@ -39,13 +39,14 @@ Alpine 的 sysfs 服务可能自行挂载 bpffs；测试专用 boot 服务在 VM
 
 ## ALP-03
 
-**冲突或只读挂载不被修改，daemon 与 lflare 仍可用**
+**冲突或只读挂载不被修改，daemon、lflare 与 Landscape 启动不受阻断**
 
 - 测试层：QEMU/KVM + VM 内 namespace/veth
 - 状态：`已覆盖`
 - 证据：[guest-tests.sh initial](../../../../scripts/qemu/alpine/guest-tests.sh)。
 - 说明：分别构造只读 tmpfs 占用和只读 bpffs，断言错误诊断、原挂载类型/属性保持、
-  daemon 存活；两种故障下 lflare 均完成真实 L2 握手并得到服务端认证日志。
+  daemon 存活；两种故障下 lflare 均完成真实 L2 握手并得到服务端认证日志，
+  产品服务模板下的最小 Landscape 测试进程也能启动。
 
 ## ALP-04
 

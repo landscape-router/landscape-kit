@@ -17,6 +17,15 @@ bpf_rw() { awk '$5 == "/sys/fs/bpf" && $6 ~ /(^|,)rw(,|$)/ && / - bpf / { found=
 bpf_ro() { awk '$5 == "/sys/fs/bpf" && $6 ~ /(^|,)ro(,|$)/ && / - bpf / { found=1 } END { exit !found }' /proc/self/mountinfo; }
 mount_count() { awk '$5 == "/sys/fs/bpf" { n++ } END { print n+0 }' /proc/self/mountinfo; }
 
+assert_landscape_starts() {
+    rm -f /run/landscape-order-ok
+    rc-service landscape-router.service start
+    wait_for test -f /run/landscape-order-ok
+    rc-service landscape-router.service status
+    rc-service landscape-router.service stop
+    rm -f /run/landscape-order-ok
+}
+
 assert_flare() {
     scenario=$1
     timeout 40 ip netns exec ci-flare \
@@ -75,6 +84,7 @@ case "${1:-}" in
         /usr/local/bin/lkit --lang en check > /var/log/check-conflict.log 2>&1 || true
         grep -F 'Another filesystem is mounted at /sys/fs/bpf' /var/log/check-conflict.log
         assert_flare conflict
+        assert_landscape_starts
 
         echo '== read-only bpffs must not be remounted or block flare =='
         rc-service lkit.service stop
@@ -85,6 +95,7 @@ case "${1:-}" in
         wait_for has_log 'bpffs is read-only; not remounting.*continuing daemon startup'
         bpf_ro
         assert_flare readonly
+        assert_landscape_starts
         bpf_ro
         rc-service lkit.service stop
         umount /sys/fs/bpf
