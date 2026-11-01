@@ -1,0 +1,83 @@
+name: QEMU Alpine bpffs and OpenRC
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/**
+      - lkit-cli/**
+      - landscape-flare/**
+      - landscape-terrain-proto/**
+      - scripts/build-musl-static.sh
+      - scripts/test-qemu-alpine.sh
+      - scripts/qemu/alpine/**
+      - .github/workflows/test-qemu-alpine.yml
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/**
+      - lkit-cli/**
+      - landscape-flare/**
+      - landscape-terrain-proto/**
+      - scripts/build-musl-static.sh
+      - scripts/test-qemu-alpine.sh
+      - scripts/qemu/alpine/**
+      - .github/workflows/test-qemu-alpine.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-alpine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  alpine:
+    name: Real Alpine bpffs and OpenRC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require KVM
+        run: sudo test -c /dev/kvm && sudo test -r /dev/kvm && sudo test -w /dev/kvm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: qemu-alpine-musl
+          cache-on-failure: true
+      - name: Install VM and cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs musl-tools openssh-client python3 qemu-system-x86 shellcheck
+          python3 -m pip install --user --break-system-packages ziglang==0.16.0
+          cargo install --locked cargo-zigbuild --version 0.23.4
+      - name: Check VM scripts
+        run: |
+          shellcheck scripts/test-qemu-alpine.sh scripts/qemu/alpine/guest-tests.sh
+          shellcheck -s sh -e SC2034 scripts/qemu/alpine/prepare.openrc
+      - name: Build production musl binaries
+        env:
+          OUTPUT_DIR: ${{ runner.temp }}/alpine-binaries
+        run: |
+          bash scripts/build-musl-static.sh x86_64-unknown-linux-musl
+          rustc --edition=2024 scripts/qemu/alpine/render-services.rs -o "$RUNNER_TEMP/render-openrc-services"
+      - name: Run real Alpine VM scenarios
+        env:
+          LKIT_E2E: "1"
+          LKIT_QEMU_ALPINE_BIN_DIR: ${{ runner.temp }}/alpine-binaries
+          LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/alpine-artifacts
+          LKIT_QEMU_RENDERER: ${{ runner.temp }}/render-openrc-services
+        run: |
+          sudo --preserve-env=LKIT_E2E,LKIT_QEMU_ALPINE_BIN_DIR,LKIT_QEMU_ARTIFACT_DIR,LKIT_QEMU_RENDERER \
+            bash scripts/test-qemu-alpine.sh
+      - name: Upload VM diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qemu-alpine-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/alpine-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

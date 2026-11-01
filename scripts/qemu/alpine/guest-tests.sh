@@ -1,0 +1,116 @@
+#!/bin/sh
+# Runs only inside the disposable Alpine VM, never on the CI host.
+set -eu
+[ -f /etc/lkit-ci-alpine ] || { echo 'Not an Alpine CI guest' >&2; exit 2; }
+
+wait_for() {
+    attempts=0
+    until "$@"; do
+        attempts=$((attempts + 1))
+        [ "$attempts" -lt 60 ] || { echo "Timed out: $*" >&2; return 1; }
+        sleep 1
+    done
+}
+
+has_log() { grep -E "$1" /var/log/lkit.log >/dev/null; }
+bpf_rw() { awk '$5 == "/sys/fs/bpf" && $6 ~ /(^|,)rw(,|$)/ && / - bpf / { found=1 } END { exit !found }' /proc/self/mountinfo; }
+bpf_ro() { awk '$5 == "/sys/fs/bpf" && $6 ~ /(^|,)ro(,|$)/ && / - bpf / { found=1 } END { exit !found }' /proc/self/mountinfo; }
+mount_count() { awk '$5 == "/sys/fs/bpf" { n++ } END { print n+0 }' /proc/self/mountinfo; }
+
+assert_flare() {
+    scenario=$1
+    LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 timeout 40 ip netns exec ci-flare \
+        /usr/local/bin/lflare cli --dev ci-client --psk alpine-qemu-recovery-secret \
+        >"/var/log/client-$scenario.log" 2>&1 &
+    client_pid=$!
+    attempts=0
+    until grep 'session .* established' "/var/log/client-$scenario.log" >/dev/null; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 30 ] || ! kill -0 "$client_pid" 2>/dev/null; then
+            cat "/var/log/client-$scenario.log" >&2
+            kill "$client_pid" 2>/dev/null || true
+            wait "$client_pid" || true
+            return 1
+        fi
+        sleep 1
+    done
+    kill "$client_pid" 2>/dev/null || true
+    wait "$client_pid" || true
+    has_log 'authenticated, session'
+}
+
+case "${1:-}" in
+    initial)
+        echo '== actual bpffs mount through production self install =='
+        test "$(mount_count)" = 0
+        /usr/local/bin/lkit --lang en --non-interactive self install --flare-psk-file /root/ci-flare.psk
+        test -x /etc/init.d/lkit.service
+        rc-service lkit.service status
+        wait_for bpf_rw
+        wait_for has_log 'mounted bpffs at /sys/fs/bpf'
+        test "$(mount_count)" = 1
+        test "$(stat -c %a /var/log/lkit.log)" = 600
+        /usr/local/bin/lkit --lang en check > /var/log/check-ready.log 2>&1 || true
+        grep -F 'bpffs is mounted read-write at /sys/fs/bpf' /var/log/check-ready.log
+        assert_flare mounted
+
+        echo '== repeated self install must restart without stacking mounts =='
+        before=$(cat /run/lkit.pid)
+        /usr/local/bin/lkit --lang en --non-interactive self install
+        after=$(cat /run/lkit.pid)
+        test "$before" != "$after"
+        wait_for bpf_rw
+        test "$(mount_count)" = 1
+        test "$(grep -c 'mounted bpffs at /sys/fs/bpf' /var/log/lkit.log)" = 1
+
+        echo '== conflicting filesystem must preserve daemon and flare =='
+        rc-service lkit.service stop
+        umount /sys/fs/bpf
+        mount -t tmpfs -o ro tmpfs /sys/fs/bpf
+        : > /var/log/lkit.log
+        rc-service lkit.service start
+        wait_for has_log 'another filesystem is mounted; not replacing it.*continuing daemon startup'
+        rc-service lkit.service status
+        awk '$5 == "/sys/fs/bpf" && / - tmpfs / { found=1 } END { exit !found }' /proc/self/mountinfo
+        /usr/local/bin/lkit --lang en check > /var/log/check-conflict.log 2>&1 || true
+        grep -F 'Another filesystem is mounted at /sys/fs/bpf' /var/log/check-conflict.log
+        assert_flare conflict
+
+        echo '== read-only bpffs must not be remounted or block flare =='
+        rc-service lkit.service stop
+        umount /sys/fs/bpf
+        mount -t bpf -o ro bpf /sys/fs/bpf
+        : > /var/log/lkit.log
+        rc-service lkit.service start
+        wait_for has_log 'bpffs is read-only; not remounting.*continuing daemon startup'
+        bpf_ro
+        assert_flare readonly
+        bpf_ro
+        rc-service lkit.service stop
+        umount /sys/fs/bpf
+
+        # Both services start in the default runlevel after the test-only boot
+        # service removes any bpffs mounted by Alpine's sysfs service.
+        rc-update add landscape-router.service default
+        ;;
+    rebooted)
+        echo '== real OpenRC boot ordering and bpffs fallback after reboot =='
+        wait_for bpf_rw
+        rc-service lkit.service status
+        wait_for test -f /run/landscape-order-ok
+        rc-service landscape-router.service status
+        has_log 'mounted bpffs at /sys/fs/bpf'
+        test "$(mount_count)" = 1
+        assert_flare rebooted
+
+        echo '== self remove is idempotent and leaves shared bpffs mounted =='
+        rc-service landscape-router.service stop
+        /usr/local/bin/lkit --lang en self remove
+        /usr/local/bin/lkit --lang en self remove
+        test ! -e /etc/init.d/lkit.service
+        test -x /usr/local/bin/lkit
+        bpf_rw
+        echo 'ALPINE BPFFS AND OPENRC E2E PASSED'
+        ;;
+    *) echo 'expected initial or rebooted' >&2; exit 2 ;;
+esac

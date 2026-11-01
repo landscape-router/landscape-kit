@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+# Test-only VM fixture: Alpine's sysfs service may mount bpffs itself. Remove
+# it inside the guest so the daemon's fallback is actually exercised on boot.
+description="Prepare isolated bpffs and flare test state"
+
+depend() {
+    need localmount modules
+    after sysfs bootmisc
+    before lkit.service
+}
+
+start() {
+    test -f /etc/lkit-ci-alpine || return 1
+    if mountinfo -q /sys/fs/bpf; then
+        umount /sys/fs/bpf || return 1
+    fi
+    ip netns add ci-flare || return 1
+    ip link add ci-server type veth peer name ci-client || return 1
+    ip link set ci-client netns ci-flare || return 1
+    ip link set ci-server up || return 1
+    ip netns exec ci-flare ip link set ci-client up || return 1
+    ip netns exec ci-flare ip link set lo up || return 1
+    printf 'prepared boot %s\n' "$(cat /proc/sys/kernel/random/boot_id)" > /var/log/ci-prepare.log
+}
