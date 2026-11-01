@@ -9,8 +9,10 @@ pub(crate) use super::manager::{
 };
 use super::plan::InstallError;
 
-pub(crate) const ROUTER_SCRIPT_NAME: &str = "landscape-router.service";
-pub(crate) const LKIT_DAEMON_SCRIPT_NAME: &str = "lkit.service";
+#[path = "openrc_definition.rs"]
+mod definition;
+pub(crate) use definition::{LKIT_DAEMON_SCRIPT_NAME, ROUTER_SCRIPT_NAME};
+use definition::{render_lkit_script, render_router_script, shell_quote};
 pub(crate) const INIT_D_DIR: &str = "/etc/init.d";
 
 /// OpenRC 后端:通过 rc-service/rc-update 管理生命周期,服务定义是
@@ -105,6 +107,9 @@ impl ServiceManager for Openrc {
     }
 
     fn is_active(&self, service: ManagedService) -> Result<bool, InstallError> {
+        if !self.init_d_dir.join(self.service_name(service)).exists() {
+            return Ok(false);
+        }
         rc_service_status(&self.rc_service, self.service_name(service))
     }
 
@@ -117,15 +122,15 @@ impl ServiceManager for Openrc {
     }
 
     fn start(&self, service: ManagedService) -> Result<(), InstallError> {
-        run_rc_service(&self.rc_service, &["start", self.service_name(service)])
+        run_rc_service(&self.rc_service, &[self.service_name(service), "start"])
     }
 
     fn stop(&self, service: ManagedService) -> Result<(), InstallError> {
-        run_rc_service(&self.rc_service, &["stop", self.service_name(service)])
+        run_rc_service(&self.rc_service, &[self.service_name(service), "stop"])
     }
 
     fn restart(&self, service: ManagedService) -> Result<(), InstallError> {
-        run_rc_service(&self.rc_service, &["restart", self.service_name(service)])
+        run_rc_service(&self.rc_service, &[self.service_name(service), "restart"])
     }
 
     fn main_pid(&self, service: ManagedService) -> Result<u32, InstallError> {
@@ -213,30 +218,6 @@ fn run_version(tool: &Path, args: &[&str]) -> Result<String, InstallError> {
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn render_router_script(canonical_root: &Path) -> String {
-    format!(
-        "#!/sbin/openrc-run\n\nname=\"Landscape Router\"\ndescription=\"Landscape webserver reverse proxy\"\n\ncommand=\"{}/current/landscape-webserver\"\ncommand_args=\"--config-dir {}/data --web {}/current/static\"\ncommand_user=\"root\"\n\nstart() {{\n    ebegin \"Starting Landscape\"\n    start-stop-daemon --start --make-pidfile --pidfile /run/landscape-router.pid --background --exec ${{command}} -- ${{command_args}}\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping Landscape\"\n    start-stop-daemon --stop --pidfile /run/landscape-router.pid\n    eend $?\n}}\n",
-        shell_quote(&canonical_root.display().to_string()),
-        shell_quote(&canonical_root.display().to_string()),
-        shell_quote(&canonical_root.display().to_string()),
-    )
-}
-
-fn render_lkit_script(binary: &Path) -> String {
-    format!(
-        "#!/sbin/openrc-run\n\nname=\"lkit\"\ndescription=\"lkit resident daemon\"\n\ncommand=\"{}\"\ncommand_args=\"daemon\"\ncommand_user=\"root\"\n\nstart() {{\n    ebegin \"Starting lkit daemon\"\n    start-stop-daemon --start --make-pidfile --pidfile /run/lkit.pid --background --exec ${{command}} -- ${{command_args}}\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping lkit daemon\"\n    start-stop-daemon --stop --pidfile /run/lkit.pid\n    eend $?\n}}\n",
-        shell_quote(&binary.display().to_string()),
-    )
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.contains([' ', '"', '\'']) {
-        format!("\"{}\"", value.replace('"', "\\\""))
-    } else {
-        value.to_string()
-    }
 }
 
 fn validate_script(
@@ -344,7 +325,7 @@ fn run_rc_service(rc_service: &Path, args: &[&str]) -> Result<(), InstallError> 
 
 fn rc_service_status(rc_service: &Path, name: &str) -> Result<bool, InstallError> {
     let output = Command::new(rc_service)
-        .args(["status", name])
+        .args([name, "status"])
         .output()
         .map_err(|error| InstallError::Systemd(format!("run {}: {error}", rc_service.display())))?;
     if output.status.success() {
@@ -421,6 +402,9 @@ mod tests {
         assert!(script.starts_with("#!/sbin/openrc-run"));
         assert!(script.contains(&format!("{}/current/landscape-webserver", root.display())));
         assert!(script.contains("command_user=\"root\""));
+        assert!(script.contains(&format!("use {LKIT_DAEMON_SCRIPT_NAME}\n")));
+        assert!(script.contains(&format!("after {LKIT_DAEMON_SCRIPT_NAME}\n")));
+        assert!(!script.contains("need lkit"));
         validate_script(&script, ManagedService::LandscapeRouter, &root).unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }

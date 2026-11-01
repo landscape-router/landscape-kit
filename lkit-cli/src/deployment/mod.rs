@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+pub(crate) mod bpffs;
 pub(crate) mod config;
 pub(crate) mod layout;
 pub(crate) mod lock;

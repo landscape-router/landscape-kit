@@ -68,8 +68,8 @@ fn dispatch(config: &InitFixtureConfig, role: &Path, args: &[String]) -> Result<
 // ---------------------------------------------------------------- rc-service
 
 fn rc_service(config: &InitFixtureConfig, args: &[String]) -> Result<ExitCode> {
-    let Some((action, name)) = args.first().zip(args.get(1)) else {
-        anyhow::bail!("rc-service requires an action and a service name");
+    let Some((name, action)) = args.first().zip(args.get(1)) else {
+        anyhow::bail!("rc-service requires a service name and an action");
     };
     let script = config.init_d_dir.join(name);
     let pid_path = config.state_dir.join("pids").join(format!("{name}.pid"));

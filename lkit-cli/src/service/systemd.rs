@@ -205,8 +205,8 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Landscape Router\n\
-         After=network-online.target\n\
-         Wants=network-online.target\n\
+         After=network-online.target lkit.service\n\
+         Wants=network-online.target lkit.service\n\
          \n\
          [Service]\n\
          ExecStart={0}/current/landscape-webserver --config-dir {0}/data --web {0}/current/static\n\
@@ -952,6 +952,10 @@ mod tests {
         let root = Path::new("/srv/landscape");
         let content = render_unit(root);
         assert!(validate_unit(&content, root).is_ok());
+        assert!(content.contains("After=network-online.target lkit.service\n"));
+        assert!(content.contains("Wants=network-online.target lkit.service\n"));
+        assert!(!content.contains("Requires="));
+        assert!(!content.contains("BindsTo="));
 
         let tampered = content.replace("User=root", "User=landscape");
         assert!(validate_unit(&tampered, root).is_err());
@@ -972,6 +976,8 @@ mod tests {
         let content = render_lkit_daemon_unit(binary);
         assert!(content.contains("ExecStart=/usr/local/bin/lkit daemon"));
         assert!(!content.contains("/srv/landscape"));
+        assert!(!content.contains("landscape-router.service"));
+        assert!(!content.contains("Type=notify"));
         assert!(validate_lkit_daemon_unit(&content, binary).is_ok());
 
         let tampered = content.replace("/usr/local/bin/lkit", "/usr/local/bin/other");

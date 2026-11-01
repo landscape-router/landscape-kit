@@ -82,6 +82,21 @@ ifupdown 的 `networking.service`、firewalld 与 systemd-resolved 的唯一显�
 所有需要运行态管理的命令明确失败(退出码 `2`,参数使用错误),不留下任何
 安装或事务文件。
 
+### daemon 启动与 bpffs
+
+daemon 启动时检查 `/sys/fs/bpf`；未挂载时创建目录并通过 `mount(2)` 挂载 bpffs，
+不依赖外部 `mount` 命令。已挂载的 bpffs 不重复挂载；只读或被其他文件系统占用时不
+重挂载、不覆盖。任何检查或挂载失败只记录日志，daemon 和 flare 继续启动，Landscape
+也不因该结果被阻断。不修改 `/etc/fstab`，停止或卸载 lkit 时不卸载 bpffs。
+
+Landscape 服务定义使用弱依赖和启动顺序：systemd 使用 `After=`/`Wants=lkit.service`，
+OpenRC 使用 `use`/`after lkit.service`，SysVinit 使用 `Should-Start`/`Should-Stop: lkit`。
+只声明启动顺序，不增加 readiness 等待、重试或挂载成功条件，也不将 daemon 故障传播为
+Landscape 的硬依赖失败。已有受管服务定义仍遵循下述用户变更与原件更新规则。
+
+`test-support` fixture 运行时禁用宿主 bpffs 准备，挂载策略单测使用注入操作，
+不触碰宿主 `/sys` 或执行真实挂载。
+
 ### 可用性判断
 
 - systemd 同时满足:`/run/systemd/system` 存在、PID 1 确认为 systemd、

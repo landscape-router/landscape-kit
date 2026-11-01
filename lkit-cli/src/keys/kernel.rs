@@ -7,6 +7,13 @@ pub(crate) const KERNEL_UNABLE_PARSE_KERNEL_VERSION: &str = "kernel.unable_parse
 pub(crate) const KERNEL_UNAVAILABLE: &str = "kernel.unavailable";
 pub(crate) const KERNEL_UNABLE_READ_OSRELEASE: &str = "kernel.unable_read_osrelease";
 pub(crate) const KERNEL_BPF_SUBSYSTEM_AND_JIT: &str = "kernel.bpf_subsystem_and_jit";
+pub(crate) const KERNEL_BPFFS: &str = "kernel.bpffs";
+pub(crate) const KERNEL_BPFFS_READY: &str = "kernel.bpffs_ready";
+pub(crate) const KERNEL_BPFFS_MISSING: &str = "kernel.bpffs_missing";
+pub(crate) const KERNEL_BPFFS_READ_ONLY: &str = "kernel.bpffs_read_only";
+pub(crate) const KERNEL_BPFFS_CONFLICT: &str = "kernel.bpffs_conflict";
+pub(crate) const KERNEL_BPFFS_INSPECTION_FAILED: &str = "kernel.bpffs_inspection_failed";
+pub(crate) const KERNEL_BPFFS_SUGGESTION: &str = "kernel.bpffs_suggestion";
 pub(crate) const KERNEL_BPF_PROG_GET_NEXT_ID_PROBE_SUCCEEDED: &str =
     "kernel.bpf_prog_get_next_id_probe_succeeded";
 pub(crate) const KERNEL_BPF_PROG_GET_NEXT_ID_ENOENT: &str = "kernel.bpf_prog_get_next_id_enoent";

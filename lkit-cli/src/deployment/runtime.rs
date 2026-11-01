@@ -42,6 +42,9 @@ pub(crate) enum PreflightPolicy {
 pub(crate) struct InstallRuntime {
     pub allow_non_root: bool,
     pub preflight: PreflightPolicy,
+    /// Only production daemons prepare the host's bpffs; fixture runtimes
+    /// must never mount or create directories under the real /sys tree.
+    pub prepare_bpffs: bool,
     pub managed_uid: u32,
     pub os_release_path: PathBuf,
     pub sys_class_net: PathBuf,
@@ -63,6 +66,7 @@ impl InstallRuntime {
         Self {
             allow_non_root: false,
             preflight: PreflightPolicy::Full,
+            prepare_bpffs: true,
             managed_uid: 0,
             os_release_path: PathBuf::from("/etc/os-release"),
             sys_class_net: PathBuf::from("/sys/class/net"),
@@ -262,6 +266,7 @@ impl TestRuntimeConfig {
         Ok(InstallRuntime {
             allow_non_root: self.allow_non_root,
             preflight: self.preflight.into(),
+            prepare_bpffs: false,
             managed_uid: self.managed_uid,
             os_release_path: self.os_release_path,
             sys_class_net: self.sys_class_net,
@@ -432,6 +437,36 @@ impl TestHealthConfig {
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixture_runtime_never_prepares_host_bpffs() {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-runtime-bpffs-{}", uuid::Uuid::now_v7()));
+        let path = temp.as_path();
+        let config: TestRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "allow_non_root": true,
+            "managed_uid": 0,
+            "os_release_path": path.join("os-release"),
+            "systemd": {
+                "systemctl": path.join("systemctl"),
+                "system_unit_dir": path.join("units"),
+                "run_systemd_dir": path.join("run"),
+                "pid1_is_systemd": true,
+                "resolv_conf": path.join("resolv.conf")
+            },
+            "health": {
+                "base_url": "https://127.0.0.1:16443",
+                "dns_tcp_port": 1053, "dns_udp_port": 1053,
+                "http_port": 16300, "https_port": 16443,
+                "startup_timeout_ms": 1000, "stable_duration_ms": 1000
+            },
+            "export_base_url": "https://127.0.0.1:16443"
+        }))
+        .unwrap();
+        let runtime = config.build(&path.join("runtime.json")).unwrap();
+        assert!(!runtime.prepare_bpffs);
+    }
 
     #[test]
     fn rejects_zero_health_port() {

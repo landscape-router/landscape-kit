@@ -1,13 +1,13 @@
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use super::super::artifacts::hash_str;
-use super::super::manager::{ManagedService, ServiceManager};
+use super::super::manager::{ManagedService, ServiceManager, ServiceManagerKind};
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 
-/// 写入受管服务定义原件(0600,原子替换),返回其 SHA-256。
+/// 原子写入服务原件：systemd 0600，init 脚本 0755；返回 SHA-256。
 /// 写入前用当前后端校验定义仍满足安全不变量。
 pub(crate) fn write_unit_origin(
     root: &InstallRoot,
@@ -21,14 +21,21 @@ pub(crate) fn write_unit_origin(
     let name = manager.service_name(service);
     let path = service_dir.join(name);
     let tmp = service_dir.join(format!(".{name}.tmp"));
+    let mode = if manager.kind() == ServiceManagerKind::Systemd {
+        0o600
+    } else {
+        0o755
+    };
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o600)
+        .mode(mode)
         .open(&tmp)
         .map_err(InstallError::Io)?;
     file.write_all(content.as_bytes())
+        .map_err(InstallError::Io)?;
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
         .map_err(InstallError::Io)?;
     file.sync_all().map_err(InstallError::Io)?;
     std::fs::rename(&tmp, &path).map_err(InstallError::Io)?;
@@ -57,6 +64,31 @@ fn shell_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openrc_service_origins_are_executable() {
+        let dir = std::env::temp_dir().join(format!("lkit-openrc-origin-{}", uuid::Uuid::now_v7()));
+        let root = InstallRoot {
+            install_root: dir.clone(),
+            canonical: dir.clone(),
+        };
+        let manager = crate::service::openrc::Openrc {
+            rc_service: dir.join("rc-service"),
+            rc_update: dir.join("rc-update"),
+            init_d_dir: dir.join("init.d"),
+            resolv_conf: dir.join("resolv.conf"),
+        };
+        let content = manager
+            .render_definition(ManagedService::LandscapeRouter, &dir)
+            .unwrap();
+        write_unit_origin(&root, &manager, ManagedService::LandscapeRouter, &content).unwrap();
+        let path = dir.join("service/landscape-router.service");
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn builds_reference_command() {

@@ -9,12 +9,39 @@ pub fn run() -> Vec<CheckResult> {
     vec![
         kernel_version(),
         bpf(),
+        bpffs(),
         btf(),
         cgroup(),
         cgroup_cpu(),
         cgroup_bpf(),
         bpf_events(),
     ]
+}
+
+fn bpffs() -> CheckResult {
+    bpffs_result(crate::deployment::bpffs::inspect())
+}
+
+fn bpffs_result(state: std::io::Result<crate::deployment::bpffs::State>) -> CheckResult {
+    use crate::deployment::bpffs::{MOUNTPOINT, State};
+    let result = CheckResult::new("kernel.bpffs", crate::tr!(crate::keys::KERNEL_BPFFS));
+    let reason = match state {
+        Ok(State::Ready) => {
+            return result.set(
+                Status::Pass,
+                MOUNTPOINT,
+                crate::tr!(crate::keys::KERNEL_BPFFS_READY),
+            );
+        }
+        Ok(State::Missing) => crate::tr!(crate::keys::KERNEL_BPFFS_MISSING),
+        Ok(State::ReadOnly) => crate::tr!(crate::keys::KERNEL_BPFFS_READ_ONLY),
+        Ok(State::OtherFilesystem) => crate::tr!(crate::keys::KERNEL_BPFFS_CONFLICT),
+        Err(error) => crate::tr!(crate::keys::KERNEL_BPFFS_INSPECTION_FAILED, err = error),
+    };
+    // Advisory only: neither daemon/flare nor deployment is gated on bpffs.
+    result
+        .set(Status::Warning, MOUNTPOINT, reason)
+        .suggestion(crate::tr!(crate::keys::KERNEL_BPFFS_SUGGESTION))
 }
 
 fn kernel_version() -> CheckResult {
@@ -450,6 +477,25 @@ fn parse_config(raw: &str) -> HashMap<String, char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bpffs_ready_passes_and_all_failures_are_advisory() {
+        use crate::deployment::bpffs::State;
+        let ready = bpffs_result(Ok(State::Ready));
+        assert_eq!(ready.id, "kernel.bpffs");
+        assert_eq!(ready.status, Status::Pass);
+        for state in [
+            Ok(State::Missing),
+            Ok(State::ReadOnly),
+            Ok(State::OtherFilesystem),
+            Err(std::io::Error::other("mountinfo unavailable")),
+        ] {
+            let result = bpffs_result(state);
+            assert_eq!(result.status, Status::Warning);
+            assert!(!result.suggestion.is_empty());
+            assert_eq!(result.value, "/sys/fs/bpf");
+        }
+    }
 
     #[test]
     fn parses_kernel_version() {

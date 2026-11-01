@@ -4,7 +4,9 @@
 # The flare server normally runs inside `lkit daemon` (config.toml `[flare]`
 # section). This scenario verifies that the daemon-hosted server accepts an
 # `lflare` client: DISCOVER -> RESP -> AUTH_REQ -> AUTH_ACK and a live session
-# (KEEPALIVE) are enough; tunnel forwarding is NOT exercised here (see the
+# (KEEPALIVE) are enough. A read-only tmpfs occupies /sys/fs/bpf to verify
+# that bpffs preparation errors do not disable daemon-hosted flare.
+# Tunnel forwarding is NOT exercised here (see the
 # FLR-19 scenario note: the full "failed network takeover, recover through
 # the tunnel" flow is out of scope for this layer).
 #
@@ -43,6 +45,7 @@ echo "== start daemon-hosted flare server =="
 docker run -d --name "$SRV" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --env LKIT_TERRITORY=/tmp/territory \
+  --tmpfs /sys/fs/bpf:ro \
   --cap-add NET_RAW --cap-add NET_ADMIN \
   -v "$PWD/target/debug:/opt/bin:ro" \
   "$IMAGE" bash -c '
@@ -83,6 +86,13 @@ if ! docker logs "$SRV" 2>&1 | grep "server .* ready" >/dev/null; then
   exit 1
 fi
 echo "daemon-hosted flare server ready"
+
+echo "== bpffs preparation failure must be diagnostic only =="
+if ! docker logs "$SRV" 2>&1 | grep "cannot prepare bpffs at /sys/fs/bpf:.*continuing daemon startup" >/dev/null; then
+  echo "FAIL: the conflicting bpffs mount did not produce the expected diagnostic"
+  docker logs "$SRV" 2>&1 | tail -20
+  exit 1
+fi
 
 echo "== wait for the client session =="
 for _ in $(seq 1 30); do

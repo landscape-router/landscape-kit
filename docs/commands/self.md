@@ -26,18 +26,19 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 把 lkit 注册为全局常驻服务:
 
 1. 获取安装锁;
-2. 服务管理器固定为 systemd;
-3. 校验 `/usr/local/bin/lkit` 可执行,并把 unit 定义原件渲染到全局目录
-   `/usr/local/lib/lkit/lkit.service`:`ExecStart=/usr/local/bin/lkit daemon`,
-   `User=root`、`Restart=always`、`WantedBy=multi-user.target`;
+2. 按主机探测结果使用 systemd、OpenRC 或 SysVinit;
+3. 校验 `/usr/local/bin/lkit` 可执行,把对应服务定义渲染到全局目录
+   `/usr/local/lib/lkit/lkit.service`。systemd unit 为 `0600`；init 脚本为可执行的 `0755`，
+   各后端均运行 `/usr/local/bin/lkit daemon`，不绑定 Landscape 安装根；
 4. （可选）供给 急救恢复码:提供 `--flare-psk-file`(root 所有、`0400`/`0600`
    私密文件)时,在启动 daemon 前把 psk 写入 lkit 地盘 `config.toml` 的 `[flare]` 段
    (保留既有字段,文件缺失时创建带默认仓库来源的最小配置),daemon 首启即用该 psk
    托管 flare 服务;未提供时保留既有 `[flare]` 配置,交互终端会提示输入 psk(带用途
    说明,至少 12 字符),无终端环境(脚本/控制台后台部署)回落 daemon 自动生成,
    不阻断部署。psK 用途与查看方式见 [flare 协议](../flare/protocol.md);
-5. 注册(注册链接 `/etc/systemd/system/lkit.service` → 全局原件)、启用并启动服务,
-   校验 MainPID 非零。
+5. 注册、启用并启动服务：systemd 注册链接为 `/etc/systemd/system/lkit.service`，
+   OpenRC/SysVinit 为 `/etc/init.d/lkit.service`，均指向全局原件；检查 daemon PID 非零。
+   后台 init 脚本返回后最多等待 3 秒确认进程出现，不等待 bpffs 准备成功。
 
 重复执行时:若旧 daemon 仍在运行,注册完成后执行 `restart` 使其加载当前二进制;
 注册或启动失败时尽力回滚已注册状态并删除定义原件。`install` 不复制二进制——daemon
@@ -61,7 +62,7 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
    安装 daemon。
 
 `upgrade` 不创建事务、不创建保护备份;daemon 在 `restart` 期间短暂退出,由
-`Restart=always` 恢复。替换运行中的 daemon 二进制是安全的:进程继续使用已打开的
+服务管理器执行重启。替换运行中的 daemon 二进制是安全的:进程继续使用已打开的
 旧 inode,重启后加载新文件。
 
 ## remove
@@ -82,6 +83,8 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 
 - pidfile 写入 `/root/.lkit/run/lkit.pid`(`0600`,原子替换);已存在存活实例时拒绝启动;
 - 收到 `SIGTERM` / `SIGINT` 后清理 pidfile 并退出;
+- 尽力准备 bpffs，失败不阻断 daemon/flare，见[服务启动](../service/runtime-and-health.md#daemon-启动与-bpffs)；
+- OpenRC 将 daemon 输出保存在 root-only 的 `/var/log/lkit.log`（`0600`），其中可能包含初次生成的恢复码；
 - **周期中断恢复**:每 2 秒尝试以非阻塞方式获取安装锁,锁空闲且存在未完成
   事务时,执行与 CLI 相同的 `recover_interrupted` 语义——CLI 因 SSH 断开或
   崩溃消失后,遗留事务由 daemon 自动接管(失败激活回滚、中断恢复、卸载前向
@@ -96,7 +99,7 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 ## 退出码
 
 - `0`:成功;
-- `2`:参数错误(如请求 systemd 但不可用、`--version` 非法);
+- `2`:参数错误(如没有可用的服务管理器、`--version` 非法);
 - `1`:其他失败。
 
 `upgrade` 版本相同或已是最新时返回 `0`。

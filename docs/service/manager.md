@@ -118,13 +118,15 @@ daemon 额外要求 `KillMode=process`),且不含凭据内容。
 - 生命周期:`rc-service <name> {start|stop|restart|status}`;`status` 退出码
   3 表示停止,其他非零视为错误;
 - 启用:`rc-update add|del <name> default`,`rc-update show` 解析启用表;
-- 定义:`#!/sbin/openrc-run` 脚本,`command=`/`command_args=` 指向受管可执行文件,
-  校验 command 与 `command_user="root"` 且不含凭据;
+- 定义:`#!/sbin/openrc-run` 可执行脚本,`command=`/`command_args=` 指向受管可执行文件,
+  校验 command 与 `command_user="root"` 且不含凭据；daemon 使用 pidfile 与有界停止等待，
+  stdout/stderr 写入 `0600` 的 `/var/log/lkit.log`；
 - `main_pid`:扫描 `/proc/*/cmdline`(OpenRC 无 MainPID 概念),轮询等待
   服务进程出现;
 - `refresh` 为 no-op。
 
-未覆盖的 OpenRC 特性(runlevels 之外、service 依赖)留给真实操作驱动。
+Landscape 脚本通过 `use lkit.service` 与 `after lkit.service` 声明对 daemon 的
+弱依赖和启动顺序，不使用 `need`。其他 OpenRC 特性留给真实操作驱动。
 
 ## sysvinit 后端(简单实现)
 
@@ -135,7 +137,8 @@ daemon 额外要求 `KillMode=process`),且不含凭据内容。
   (定义原件是受管文本文件,不要求可执行位);
 - 启用:`update-rc.d enable|disable <name>`,`is_enabled` 扫描 `/etc/rc?.d`
   各运行级目录的 `S*<name>` 链接;
-- 定义:`#!/bin/sh` LSB 脚本,内含 `start-stop-daemon` 调用;
+- 定义:`#!/bin/sh` LSB 脚本,内含 `start-stop-daemon` 调用；Landscape 通过
+  `Should-Start: lkit` / `Should-Stop: lkit` 声明相对 daemon 的可选启动/停止顺序；
 - `main_pid` 同 OpenRC 的 `/proc` 扫描。
 
 ## 后端接入清单

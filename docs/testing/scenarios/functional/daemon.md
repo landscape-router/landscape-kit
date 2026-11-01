@@ -56,6 +56,26 @@
   （`address` 缺失或为空）的网卡也跳过；已 UP 的网卡不发命令；任何失败只
   记录日志，不阻断 daemon 启动。
 
+## DAE-06
+
+**daemon 尽力准备 bpffs，失败保留 flare，Landscape 仅声明弱启动依赖**
+
+- 测试层：Rust 单元测试、Docker flare e2e（CI）
+- 状态：`部分覆盖`
+- 证据：[bpffs 策略与失败继续](../../../../lkit-cli/src/deployment/bpffs.rs)、
+  [检查状态](../../../../lkit-cli/src/check/kernel.rs)
+  （`bpffs_ready_passes_and_all_failures_are_advisory`）、
+  [fixture 隔离](../../../../lkit-cli/src/deployment/runtime.rs)
+  （`fixture_runtime_never_prepares_host_bpffs`）、
+  [systemd](../../../../lkit-cli/src/service/systemd.rs)、
+  [OpenRC](../../../../lkit-cli/src/service/openrc.rs)、
+  [SysVinit](../../../../lkit-cli/src/service/sysvinit.rs) 的服务定义渲染测试、
+  [daemon flare e2e](../../../../scripts/flare/e2e-daemon.sh)。
+- 缺口：真实 bpffs 挂载成功与重启后启动顺序尚无专用容器或真实 init smoke 断言。
+- 说明：策略单测注入状态与挂载动作，不调用真实挂载；Docker 使用只读 tmpfs 占用
+  `/sys/fs/bpf`，验证错误日志之后 lflare 仍能建立会话。检查异常均为 warning，
+  不增加安装阻断；服务定义不包含对 daemon 的硬依赖或 readiness 等待。
+
 ## 委托端到端链路（worker）覆盖现状
 
 `daemon_worker` 的委托请求链路（CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）

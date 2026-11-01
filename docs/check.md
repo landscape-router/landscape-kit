@@ -74,11 +74,16 @@
 | 标识符 | 检查内容 | 不满足时 |
 | --- | --- | --- |
 | `kernel.bpf` | 通过只读 `bpf()` 系统调用探测 BPF 子系统，并检查 BPF JIT 状态 | `error` 或 `unknown` |
+| `kernel.bpffs` | `/sys/fs/bpf` 是独立挂载、可读写的 BPF 文件系统 | `warning` |
 | `kernel.btf` | 内核 BTF 信息存在且可读取，优先检查 `/sys/kernel/btf/vmlinux` | `error` 或 `unknown` |
 | `kernel.cgroup` | Cgroup 文件系统已挂载且可用 | `error` |
 | `kernel.cgroup_cpu` | Cgroup CPU controller 可用 | `error` |
 | `kernel.cgroup_bpf` | Cgroup BPF 支持已启用 | `error` |
 | `kernel.bpf_events` | BPF events 支持已启用 | `error` |
+
+`kernel.bpffs` 只读检查当前挂载命名空间的 `/proc/self/mountinfo`、可见文件系统类型和
+只读标志，不以目录存在作为已挂载的依据。未挂载、只读、被其他文件系统占用或无法读取
+状态时均报告 `warning`，不阻断安装。daemon 启动时会尽力挂载缺失的 bpffs，失败只记日志。
 
 `kernel.bpf` 的系统调用探测必须使用不会创建或修改 BPF 对象的操作，例如 `BPF_PROG_GET_NEXT_ID`：
 

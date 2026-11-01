@@ -77,6 +77,12 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     .map_err(InstallError::Io)?;
     write_pidfile(&pidfile)?;
 
+    // Best effort only: bpffs preparation must not disable the L2 recovery
+    // channel or prevent Landscape's normal service startup.
+    if runtime.prepare_bpffs {
+        crate::deployment::bpffs::prepare_best_effort();
+    }
+
     // flare 的 L2 防失联通道依赖链路层收发帧:网卡 DOWN 时即使 flare 服务端
     // 在运行也无法交换帧。托管 flare 之前尽力拉起所有物理以太网卡(失败只
     // 记录日志,不阻断 daemon 启动)。

@@ -192,7 +192,7 @@ fn is_executable(path: &Path) -> bool {
 
 fn render_router_script(canonical_root: &Path) -> String {
     format!(
-        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          landscape-router\n# Required-Start:    $network\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       Landscape webserver reverse proxy\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile /run/landscape-router.pid --background \\\n      --exec {}/current/landscape-webserver -- --config-dir {}/data --web {}/current/static\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile /run/landscape-router.pid\n    ;;\n  restart)\n    sh \"$0\" stop\n    sh \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
+        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          landscape-router\n# Required-Start:    $network\n# Required-Stop:     $network\n# Should-Start:      lkit\n# Should-Stop:       lkit\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       Landscape webserver reverse proxy\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile /run/landscape-router.pid --background \\\n      --exec {}/current/landscape-webserver -- --config-dir {}/data --web {}/current/static\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile /run/landscape-router.pid\n    ;;\n  restart)\n    sh \"$0\" stop\n    sh \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
         shell_quote(&canonical_root.display().to_string()),
         shell_quote(&canonical_root.display().to_string()),
         shell_quote(&canonical_root.display().to_string()),
@@ -381,6 +381,9 @@ mod tests {
         let script = render_router_script(&root);
         assert!(script.starts_with("#!/bin/sh"));
         assert!(script.contains(&format!("{}/current/landscape-webserver", root.display())));
+        assert!(script.contains("# Should-Start:      lkit\n"));
+        assert!(script.contains("# Should-Stop:       lkit\n"));
+        assert!(!script.contains("# Required-Start:    $network lkit"));
         validate_script(&script, ManagedService::LandscapeRouter, &root).unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -27,8 +27,8 @@ use crate::deployment::runtime::InstallRuntime;
 use crate::release::repository::Architecture;
 use crate::release::repository::download::{DownloadClient, validate_network_url};
 use crate::release::repository::{Asset, AssetEncoding, RepositoryError};
+use crate::service::manager::ServiceManagerKind;
 use crate::service::manager::{Availability, ManagedService, ServiceManager, SystemRegistration};
-use crate::service::systemd::{self, Systemd};
 
 /// lkit 自身的 GitHub 仓库(与 landscape-webserver 仓库不同)。
 pub(crate) const LKIT_REPOSITORY: &str = "landscape-router/landscape-kit";
@@ -221,7 +221,7 @@ fn write_flare_psk(psk: &str) -> Result<(), InstallError> {
 }
 
 /// 交互控制台在 TUI 内执行 `lkit self install`:与 CLI 相同的 root 检查、安装锁
-/// 与 systemd 语义,返回结果消息由控制台展示而不直接打印(控制台不另起 lkit
+/// 与服务管理器语义,返回结果消息由控制台展示而不直接打印(控制台不另起 lkit
 /// 进程、不解析 CLI 文本输出)。`psk` 为 TUI 部署弹窗收集的急救恢复码:提供时
 /// 在 daemon 启动前写回 `[flare]` 段,`None` 时由 daemon 首启自动生成。
 pub(crate) fn install_daemon(psk: Option<String>) -> Result<String, InstallError> {
@@ -234,19 +234,14 @@ pub(crate) fn install_daemon(psk: Option<String>) -> Result<String, InstallError
     install(&InstallRuntime::production(), psk.as_deref())
 }
 
-/// `self` 固定使用 systemd:unit 原件、注册链接、MainPID 校验都是 systemd 语义。
-fn require_systemd(runtime: &InstallRuntime) -> Result<&Systemd, InstallError> {
-    let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
-    match systemd.probe() {
-        Availability::Available { .. } => Ok(systemd),
-        _ => Err(InstallError::UnsupportedPlatform(
-            "lkit self requires systemd on this host".into(),
-        )),
-    }
+fn require_manager(runtime: &InstallRuntime) -> Result<&dyn ServiceManager, InstallError> {
+    let manager = runtime.service_manager.as_ref();
+    crate::workflows::install::require_manager(manager)?;
+    Ok(manager)
 }
 
 fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, InstallError> {
-    let systemd = require_systemd(runtime)?;
+    let manager = require_manager(runtime)?;
     let service = ManagedService::LkitDaemon;
     let binary = lkit_binary();
     if !is_executable(&binary) {
@@ -257,69 +252,67 @@ fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, 
     }
     let origin_dir = unit_origin_dir();
     std::fs::create_dir_all(&origin_dir).map_err(InstallError::Io)?;
-    let origin = origin_dir.join(systemd.service_name(service));
-    let content = systemd.render_definition(service, &binary)?;
-    systemd.validate_definition(service, &content, &binary)?;
-    write_unit_origin(&origin, &content)?;
-    // flare 恢复通道配置在 daemon 启动前落盘:daemon 首启即用该 psk 托管 flare。
+    let origin = origin_dir.join(manager.service_name(service));
+    let content = manager.render_definition(service, &binary)?;
+    manager.validate_definition(service, &content, &binary)?;
+    let mode = if manager.kind() == ServiceManagerKind::Systemd {
+        0o600
+    } else {
+        0o755
+    };
+    write_unit_origin(&origin, &content, mode)?;
     if let Some(psk) = flare_psk {
         write_flare_psk(psk)?;
     }
     let result = (|| -> Result<(), InstallError> {
-        systemd.register(service, &origin)?;
-        systemd.enable(service)?;
-        if systemd.is_active(service)? {
-            // 旧 daemon 仍在运行:重启使其加载当前二进制。
-            systemd.restart(service)?;
+        manager.register(service, &origin)?;
+        manager.enable(service)?;
+        if manager.is_active(service)? {
+            manager.restart(service)?;
         } else {
-            systemd.start(service)?;
+            manager.start(service)?;
         }
-        let pid = systemd.main_pid(service)?;
-        if pid == 0 {
-            return Err(InstallError::Systemd(
-                "lkit daemon did not produce a main pid after start".into(),
-            ));
+        // Backgrounding init scripts can return before exec is visible in
+        // /proc. This only verifies process existence, not bpffs readiness.
+        for _ in 0..30 {
+            if manager.main_pid(service).is_ok_and(|pid| pid != 0) {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        Ok(())
+        Err(InstallError::Systemd(
+            "lkit daemon did not produce a main pid after start".into(),
+        ))
     })();
     if let Err(error) = result {
-        // 注册/启动失败:尽力恢复现场,避免遗留已启用但未运行的注册服务。
-        cleanup_partial_install(systemd, service, &origin);
+        cleanup_partial_install(manager, service, &origin);
         return Err(error);
     }
     Ok(crate::tr!(crate::keys::SELF_INSTALLED))
 }
 
 /// 注册/启动失败后的尽力清理:停止、注销并删除定义原件。
-fn cleanup_partial_install(systemd: &Systemd, service: ManagedService, origin: &Path) {
-    let _ = systemd.stop(service);
-    if systemd.is_enabled(service).unwrap_or(false) {
-        let _ = systemd.disable(service);
+fn cleanup_partial_install(manager: &dyn ServiceManager, service: ManagedService, origin: &Path) {
+    let _ = manager.stop(service);
+    if manager.is_enabled(service).unwrap_or(false) {
+        let _ = manager.disable(service);
     }
-    let _ = systemd.unregister(service, origin);
-    let _ = systemd.refresh();
+    let _ = manager.unregister(service, origin);
+    let _ = manager.refresh();
     let _ = remove_file_if_present(origin);
 }
 
 fn remove(runtime: &InstallRuntime) -> Result<String, InstallError> {
-    let systemd = require_systemd(runtime)?;
+    let manager = require_manager(runtime)?;
     let service = ManagedService::LkitDaemon;
-    if systemd.is_active(service)? {
-        systemd.stop_and_wait(
-            service,
-            &(|| {
-                systemd
-                    .active_state(service)
-                    .map(|value| value != "active")
-                    .unwrap_or(true)
-            }),
-        )?;
+    if manager.is_active(service)? {
+        manager.stop_and_wait(service, &|| !manager.is_active(service).unwrap_or(false))?;
     }
-    if systemd.is_enabled(service).unwrap_or(false) {
-        let _ = systemd.disable(service);
+    if manager.is_enabled(service).unwrap_or(false) {
+        let _ = manager.disable(service);
     }
-    let origin = unit_origin_dir().join(systemd.service_name(service));
-    if let Err(error) = systemd.unregister(service, &origin) {
+    let origin = unit_origin_dir().join(manager.service_name(service));
+    if let Err(error) = manager.unregister(service, &origin) {
         eprintln!("self: {error}");
     }
     remove_file_if_present(&origin)?;
@@ -455,19 +448,17 @@ fn verify_version_output(output: &std::process::Output) -> Result<(), InstallErr
     Ok(())
 }
 
-/// daemon 刷新是尽力而为:systemd 不可用时跳过(CLI 升级仍然成功)。
+/// daemon 刷新是尽力而为:服务管理器不可用时跳过。
 fn refresh_daemon(runtime: &InstallRuntime) -> Result<(), InstallError> {
-    let Ok(systemd) = systemd::downcast(runtime.service_manager.as_ref()) else {
-        return Ok(());
-    };
-    if !matches!(systemd.probe(), Availability::Available { .. }) {
+    let manager = runtime.service_manager.as_ref();
+    if !matches!(manager.probe(), Availability::Available { .. }) {
         return Ok(());
     }
     let service = ManagedService::LkitDaemon;
-    match systemd.query_registration(service)? {
+    match manager.query_registration(service)? {
         SystemRegistration::Symlink { .. } => {
-            if systemd.is_active(service)? {
-                systemd.restart(service)?;
+            if manager.is_active(service)? {
+                manager.restart(service)?;
             }
         }
         SystemRegistration::Missing => {
@@ -676,7 +667,7 @@ fn manifest_checksum(body: &[u8], asset_name: &str) -> Option<String> {
     found
 }
 
-fn write_unit_origin(path: &Path, content: &str) -> Result<(), InstallError> {
+fn write_unit_origin(path: &Path, content: &str, mode: u32) -> Result<(), InstallError> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -686,10 +677,12 @@ fn write_unit_origin(path: &Path, content: &str) -> Result<(), InstallError> {
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o600)
+        .mode(mode)
         .open(&tmp)
         .map_err(InstallError::Io)?;
     file.write_all(content.as_bytes())
+        .map_err(InstallError::Io)?;
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
         .map_err(InstallError::Io)?;
     file.sync_all().map_err(InstallError::Io)?;
     std::fs::rename(&tmp, path).map_err(InstallError::Io)?;
@@ -767,6 +760,25 @@ mod tests {
         let mut runtime = InstallRuntime::production();
         runtime.managed_uid = unsafe { libc::geteuid() };
         runtime
+    }
+
+    #[test]
+    fn service_origin_modes_support_systemd_and_executable_init_scripts() {
+        let dir = std::env::temp_dir().join(format!("lkit-self-origin-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let origin = dir.join("lkit.service");
+        for mode in [0o600, 0o755] {
+            write_unit_origin(&origin, "service definition", mode).unwrap();
+            assert_eq!(
+                std::fs::metadata(&origin).unwrap().permissions().mode() & 0o777,
+                mode
+            );
+            assert_eq!(
+                std::fs::read_to_string(&origin).unwrap(),
+                "service definition"
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
