@@ -91,7 +91,6 @@ printf '%s\n' '/dev/vda / ext4 defaults 0 0' > "$rootfs/etc/fstab"
 printf '%s\n' 'virtio_net' 'veth' >> "$rootfs/etc/modules"
 printf '%s\n' 'auto lo' 'iface lo inet loopback' 'auto eth0' 'iface eth0 inet dhcp' > "$rootfs/etc/network/interfaces"
 printf '%s\n' 'rc_logger="YES"' 'rc_log_path="/var/log/rc.log"' 'rc_parallel="YES"' >> "$rootfs/etc/rc.conf"
-printf '%s\n' 'export LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10' > "$rootfs/etc/conf.d/lkit.service"
 printf '%s\n' alpine-qemu-recovery-secret > "$rootfs/root/ci-flare.psk"
 chmod 0600 "$rootfs/root/ci-flare.psk"
 

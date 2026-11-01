@@ -19,7 +19,7 @@ mount_count() { awk '$5 == "/sys/fs/bpf" { n++ } END { print n+0 }' /proc/self/m
 
 assert_flare() {
     scenario=$1
-    LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 timeout 40 ip netns exec ci-flare \
+    timeout 40 ip netns exec ci-flare \
         /usr/local/bin/lflare cli --dev ci-client --psk alpine-qemu-recovery-secret \
         >"/var/log/client-$scenario.log" 2>&1 &
     client_pid=$!
