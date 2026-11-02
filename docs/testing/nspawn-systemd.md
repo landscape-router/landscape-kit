@@ -70,8 +70,18 @@ sudo env LKIT_NSPAWN_PREBUILT_DIR="$PWD/target/release" \
 未设置 `LKIT_NSPAWN_PREBUILT_DIR` 时脚本也可自行构建，但 root 环境必须能直接使用项目
 要求的 Rust toolchain。
 
-脚本创建临时 trixie rootfs 和 private network namespace，结束时终止 machine 并删除
-rootfs。CI 当前每周及手动运行；普通 PR 和普通发布不承担 rootfs 下载和 boot 成本。
+脚本创建临时 trixie rootfs 和 private network namespace。结束时通过 `machinectl terminate`
+请求停止 machine，等待本脚本启动的 nspawn 子进程退出并回收后，才删除 rootfs；不能将
+异步终止请求返回当作容器已经退出。正常退出最多等待 10 秒，必要时向自有 nspawn 进程
+发送 TERM 并再等 10 秒，最后 KILL 后最多再等 5 秒。若使用了 KILL，即使父进程已退出
+也保留目录并报错，因为不能据此确认 guest namespace 已正常清理。进程仍未退出、
+无法检查挂载，或临时树下仍存在挂载时同样保留目录，不强制卸载、不跨文件系统删除。
+清理保留原测试失败退出码；测试成功但清理失败时仍报告失败。
+
+[`scripts/test-nspawn-cleanup.sh`](../../scripts/test-nspawn-cleanup.sh) 使用 shell 函数替身
+验证退出等待、信号升级、残留挂载保护、删除失败、启动前失败和危险参数拒绝；只读写
+临时目录，不启动真实容器、不发送真实进程信号。CI 在系统集成测试前运行该单元测试及
+ShellCheck。CI 当前每周及手动运行；普通 PR 和普通发布不承担 rootfs 下载和 boot 成本。
 
 测试先注册并启动受管的 landscape-router unit，再以 `lkit self install` 部署
 常驻 daemon，断言 unit 注册、启停、MainPID 与 `KillMode=process`；随后按

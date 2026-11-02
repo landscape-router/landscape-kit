@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Remote shell payloads deliberately expand variables inside the guest, not here.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 # 真实 systemd 契约验证:在 systemd-nspawn 中部署 lkit 常驻 daemon
@@ -21,7 +23,7 @@ if [[ $EUID -ne 0 ]]; then
   echo "systemd-nspawn integration must run as root" >&2
   exit 2
 fi
-required_commands=(mmdebstrap systemd-nspawn machinectl systemd-run)
+required_commands=(mmdebstrap systemd-nspawn machinectl systemd-run findmnt)
 if [[ -z ${LKIT_NSPAWN_PREBUILT_DIR:-} ]]; then
   required_commands+=(cargo)
 fi
@@ -37,6 +39,18 @@ test_root=$(mktemp -d /var/tmp/lkit-nspawn.XXXXXX)
 rootfs=$test_root/rootfs
 machine=lkit-nspawn-$$
 machine_started=false
+nspawn_pid=
+
+# shellcheck source=scripts/lib/nspawn-cleanup.sh
+source "$repo_root/scripts/lib/nspawn-cleanup.sh"
+cleanup() {
+  local status=$?
+  trap - EXIT
+  local result=0
+  nspawn_cleanup_status "$status" "$machine_started" "$machine" "$nspawn_pid" "$test_root" || result=$?
+  exit "$result"
+}
+trap cleanup EXIT
 
 keyring_deb=$test_root/debian-archive-keyring.deb
 keyring_root=$test_root/debian-keyring
@@ -52,14 +66,6 @@ archive_keyring=$keyring_root/usr/share/keyrings/debian-archive-keyring.gpg
   echo "verified Debian archive keyring package did not contain its keyring" >&2
   exit 1
 }
-
-cleanup() {
-  if [[ $machine_started == true ]]; then
-    machinectl terminate "$machine" >/dev/null 2>&1 || true
-  fi
-  rm -rf "$test_root"
-}
-trap cleanup EXIT
 
 cd "$repo_root"
 if [[ -n ${LKIT_NSPAWN_PREBUILT_DIR:-} ]]; then

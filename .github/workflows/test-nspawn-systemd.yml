@@ -18,7 +18,11 @@ jobs:
         with:
           workspaces: ". -> target"
       - name: Install nspawn tooling
-        run: sudo apt-get update && sudo apt-get install -y mmdebstrap systemd-container
+        run: sudo apt-get update && sudo apt-get install -y mmdebstrap systemd-container shellcheck
+      - name: Check cleanup safety
+        run: |
+          shellcheck scripts/test-nspawn-systemd.sh scripts/lib/nspawn-cleanup.sh scripts/test-nspawn-cleanup.sh
+          bash scripts/test-nspawn-cleanup.sh
       - name: Build integration binaries
         run: |
           cargo build --locked --release --features test-support -p lkit-cli --bin lkit
