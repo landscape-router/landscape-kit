@@ -24,12 +24,40 @@ pub(crate) enum PreflightState {
 /// 生产实现真实跑全量检查;单测注入脚本化 `MockPreflightOps`。
 pub(crate) trait PreflightOps {
     fn run(&self) -> Receiver<CheckReport>;
+    fn can_enable_cgroup(&self) -> bool;
+    fn enable_cgroup(&self) -> Receiver<Result<CheckReport, String>>;
+}
+
+pub(crate) enum CgroupPreparation {
+    Idle,
+    Confirming,
+    Running(Receiver<Result<CheckReport, String>>),
+    Failed(String),
 }
 
 /// 生产实现:后台线程执行真实环境检查(`check::run_all`)。
 pub(crate) struct RealPreflightOps;
 
 impl PreflightOps for RealPreflightOps {
+    fn can_enable_cgroup(&self) -> bool {
+        crate::deployment::cgroup::available()
+    }
+
+    fn enable_cgroup(&self) -> Receiver<Result<CheckReport, String>> {
+        let (sender, receiver) = mpsc::channel();
+        let language = crate::i18n::current();
+        landscape_terrain_proto::concurrency::spawn_thread(
+            crate::task_names::CONSOLE_CGROUP,
+            move || {
+                let result = crate::i18n::with_language(language, || {
+                    crate::deployment::cgroup::enable_openrc().map(|()| check::run_all())
+                });
+                let _ = sender.send(result);
+            },
+        );
+        receiver
+    }
+
     fn run(&self) -> Receiver<CheckReport> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
@@ -52,6 +80,8 @@ fn default_preflight_ops() -> Arc<dyn PreflightOps> {
 #[cfg(test)]
 pub(crate) struct MockPreflightOps {
     run_tx: std::sync::Mutex<Option<mpsc::Sender<CheckReport>>>,
+    cgroup_available: bool,
+    cgroup_tx: std::sync::Mutex<Option<mpsc::Sender<Result<CheckReport, String>>>>,
 }
 
 #[cfg(test)]
@@ -59,7 +89,24 @@ impl MockPreflightOps {
     pub(crate) fn manual() -> Self {
         Self {
             run_tx: std::sync::Mutex::new(None),
+            cgroup_available: false,
+            cgroup_tx: std::sync::Mutex::new(None),
         }
+    }
+
+    pub(crate) fn with_cgroup() -> Self {
+        Self {
+            cgroup_available: true,
+            ..Self::manual()
+        }
+    }
+
+    pub(crate) fn cgroup_sender(&self) -> mpsc::Sender<Result<CheckReport, String>> {
+        self.cgroup_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("cgroup operation must start first")
     }
 
     pub(crate) fn run_sender(&self) -> mpsc::Sender<CheckReport> {
@@ -73,6 +120,16 @@ impl MockPreflightOps {
 
 #[cfg(test)]
 impl PreflightOps for MockPreflightOps {
+    fn can_enable_cgroup(&self) -> bool {
+        self.cgroup_available
+    }
+
+    fn enable_cgroup(&self) -> Receiver<Result<CheckReport, String>> {
+        let (sender, receiver) = mpsc::channel();
+        *self.cgroup_tx.lock().unwrap() = Some(sender);
+        receiver
+    }
+
     fn run(&self) -> Receiver<CheckReport> {
         let (sender, receiver) = mpsc::channel();
         *self.run_tx.lock().unwrap() = Some(sender);
@@ -86,6 +143,7 @@ pub(crate) struct Preflight {
     pub(crate) state: PreflightState,
     pub(crate) expanded: bool,
     pub(crate) scroll: u16,
+    pub(crate) cgroup: CgroupPreparation,
 }
 
 impl Default for Preflight {
@@ -93,6 +151,7 @@ impl Default for Preflight {
         Self {
             ops: default_preflight_ops(),
             state: PreflightState::NotRun,
+            cgroup: CgroupPreparation::Idle,
             expanded: false,
             scroll: 0,
         }
@@ -101,14 +160,34 @@ impl Default for Preflight {
 
 impl Preflight {
     pub(crate) fn start(&mut self) {
-        if matches!(&self.state, PreflightState::Running(_)) {
+        if matches!(&self.state, PreflightState::Running(_))
+            || matches!(&self.cgroup, CgroupPreparation::Running(_))
+        {
             return;
         }
+        self.cgroup = CgroupPreparation::Idle;
         self.state = PreflightState::Running(self.ops.run());
         self.scroll = 0;
     }
 
     pub(crate) fn poll(&mut self) {
+        if let CgroupPreparation::Running(receiver) = &self.cgroup {
+            match receiver.try_recv() {
+                Ok(Ok(report)) => {
+                    self.state = PreflightState::Complete(report);
+                    self.cgroup = CgroupPreparation::Idle;
+                    self.scroll = 0;
+                }
+                Ok(Err(error)) => self.cgroup = CgroupPreparation::Failed(error),
+                Err(TryRecvError::Disconnected) => {
+                    self.cgroup = CgroupPreparation::Failed(crate::tr!(
+                        crate::keys::CONSOLE_CHECK_WORKER_STOPPED
+                    ))
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+            return;
+        }
         let result = match &self.state {
             PreflightState::Running(receiver) => receiver.try_recv(),
             _ => return,
@@ -127,6 +206,9 @@ impl Preflight {
     }
 
     pub(crate) fn restart(&mut self) {
+        if matches!(&self.cgroup, CgroupPreparation::Running(_)) {
+            return;
+        }
         self.state = PreflightState::NotRun;
         self.expanded = false;
         self.scroll = 0;
@@ -166,6 +248,13 @@ impl ConsoleApp {
     }
 }
 pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
+    if matches!(
+        &app.preflight.cgroup,
+        CgroupPreparation::Confirming | CgroupPreparation::Running(_)
+    ) {
+        super::cgroup::render_confirmation(frame, app);
+        return;
+    }
     let mut lines: Vec<Line<'_>> = match &app.preflight.state {
         PreflightState::Failed(error) => vec![
             Line::styled(
@@ -190,6 +279,20 @@ pub(crate) fn render_preflight_dialog(frame: &mut Frame<'_>, app: &mut ConsoleAp
             lines.push(Line::raw(""));
             // daemon 未运行属于委托前置失败:弹框内直接提供部署按钮,
             // 而不是只提示命令行 `lkit self install`。
+            if let CgroupPreparation::Failed(error) = &app.preflight.cgroup {
+                lines.push(Line::styled(error.clone(), Style::default().fg(Color::Red)));
+                lines.push(Line::raw(""));
+            }
+            if app.preflight_cgroup_blocked() {
+                lines.push(Line::styled(
+                    crate::tr!(crate::keys::CONSOLE_CGROUP_ACTION),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                lines.push(Line::raw(""));
+            }
             let daemon_blocked = daemon_check_blocks(report);
             if daemon_blocked {
                 // 按钮常显选中态(黑底青字+Bold):它是弹窗内唯一要突出的动作,

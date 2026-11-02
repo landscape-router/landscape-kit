@@ -38,6 +38,12 @@ Docker 服务的启用、启动、停止、重启后自启动、`docker info`，
 VM 同时执行 [ALP-01 至 ALP-06](scenarios/functional/alpine.md) 的 bpffs、daemon、flare
 及 OpenRC 场景；保留串口、OpenRC、Docker/containerd 和进程诊断。
 
+虚拟机检查 `init.backend` 为 OpenRC、`openrc.cgroup_boot` 的 boot 链接指向正确服务，
+并验证 Cgroup v2 可写且 CPU controller 可用。移除 boot 注册但保留当前挂载时必须报告
+错误；恢复注册及真实重启后检查通过。Landscape fixture 启动时要求 OpenRC 已标记
+cgroups 完成启动、CPU controller 可读；bpffs 准备失败仍不作为阻断条件。服务检查还
+断言未安装的 NetworkManager、systemd-resolved 和 firewalld 不因缺少 systemctl 报未知。
+
 ## 单元测试与边界
 
 - 基础依赖检测使用临时目录模拟原生二进制、BusyBox 链接与版本化 PPPoE 插件。

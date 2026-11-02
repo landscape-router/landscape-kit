@@ -17,6 +17,30 @@ bpf_rw() { awk '$5 == "/sys/fs/bpf" && $6 ~ /(^|,)rw(,|$)/ && / - bpf / { found=
 bpf_ro() { awk '$5 == "/sys/fs/bpf" && $6 ~ /(^|,)ro(,|$)/ && / - bpf / { found=1 } END { exit !found }' /proc/self/mountinfo; }
 mount_count() { awk '$5 == "/sys/fs/bpf" { n++ } END { print n+0 }' /proc/self/mountinfo; }
 
+assert_cgroup_ready() {
+    rc-service cgroups status
+    test -L /etc/runlevels/boot/cgroups
+    test "$(readlink -f /etc/runlevels/boot/cgroups)" = /etc/init.d/cgroups
+    awk '$5 == "/sys/fs/cgroup" && $6 ~ /(^|,)rw(,|$)/ && / - cgroup2 / { found=1 } END { exit !found }' /proc/self/mountinfo
+    grep -w cpu /sys/fs/cgroup/cgroup.controllers
+}
+
+assert_init_report() {
+    report=$1
+    /usr/local/bin/lkit --lang en check > "$report" 2>&1 || true
+    grep -F 'Init system and startup' "$report"
+    grep -E '^PASS.*init[.]backend.*OpenRC' "$report"
+    grep -E '^PASS.*openrc[.]cgroup_boot.*boot' "$report"
+    for service in network_manager systemd_resolved firewalld; do
+        grep -E "^PASS.*service[.]${service}[[:space:]]" "$report"
+    done
+    grep -F 'OpenRC requires cgroups in the boot runlevel' "$report"
+    grep -F 'The cgroups service is registered in the boot runlevel' "$report"
+    grep -F 'NetworkManager is not installed' "$report"
+    grep -F 'systemd-resolved is not running or enabled' "$report"
+    grep -F 'firewalld is not running or enabled' "$report"
+}
+
 assert_landscape_starts() {
     rm -f /run/landscape-order-ok
     rc-service landscape-router.service start
@@ -57,6 +81,16 @@ assert_docker_ready() {
 
 case "${1:-}" in
     initial)
+        echo '== OpenRC identity and mandatory Cgroup boot registration =='
+        assert_cgroup_ready
+        # Current mounts remain intact: boot registration is a separate requirement.
+        rc-update del cgroups boot
+        /usr/local/bin/lkit --lang en check > /var/log/check-no-cgroup-boot.log 2>&1 || true
+        rc-update add cgroups boot
+        grep -E '^ERROR.*openrc[.]cgroup_boot' /var/log/check-no-cgroup-boot.log
+        grep -F 'Cgroups must start at boot before Landscape' /var/log/check-no-cgroup-boot.log
+        assert_init_report /var/log/check-init-ready.log
+
         echo '== actual bpffs mount through production self install =='
         test "$(mount_count)" = 0
         /usr/local/bin/lkit --lang en --non-interactive self install --flare-psk-file /root/ci-flare.psk
@@ -119,6 +153,9 @@ case "${1:-}" in
         rc-service docker stop
         ;;
     rebooted)
+        echo '== persistent Cgroup and current init report after reboot =='
+        assert_cgroup_ready
+        assert_init_report /var/log/check-init-rebooted.log
         echo '== real OpenRC boot ordering and bpffs fallback after reboot =='
         wait_for bpf_rw
         rc-service lkit.service status

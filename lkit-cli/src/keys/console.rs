@@ -1,4 +1,12 @@
 pub(crate) const CONSOLE_TERMINAL_REQUIRED: &str = "console.terminal_required";
+pub(crate) const CONSOLE_CGROUP_ACTION: &str = "console.cgroup_action";
+pub(crate) const CONSOLE_CGROUP_READY: &str = "console.cgroup_ready";
+pub(crate) const CONSOLE_CGROUP_TITLE: &str = "console.cgroup_title";
+pub(crate) const CONSOLE_CGROUP_CONFIRM: &str = "console.cgroup_confirm";
+pub(crate) const CONSOLE_CGROUP_PROTECTION: &str = "console.cgroup_protection";
+pub(crate) const CONSOLE_CGROUP_RUNNING: &str = "console.cgroup_running";
+pub(crate) const CONSOLE_CGROUP_HINT_CONFIRM: &str = "console.cgroup_hint_confirm";
+pub(crate) const CONSOLE_CGROUP_HINT_OPEN: &str = "console.cgroup_hint_open";
 pub(crate) const CONSOLE_OVERVIEW: &str = "console.overview";
 pub(crate) const CONSOLE_INSTALL_MENU: &str = "console.install_menu";
 pub(crate) const CONSOLE_CHECK_WORKER_STOPPED: &str = "console.check_worker_stopped";

@@ -177,7 +177,7 @@ impl ConsoleApp {
         {
             self.preflight.start();
         }
-        self.preflight.poll();
+        self.poll_preflight();
         if self.menu() == Menu::Backup {
             if !self.backup_menu_active {
                 self.backup_menu_active = true;
@@ -333,12 +333,28 @@ impl ConsoleApp {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_ESC_AGAIN)
         } else if self.backup.create.is_some() {
             crate::tr!(crate::keys::CONSOLE_BACKUP_HINT_CREATE_RUNNING)
+        } else if self.preflight_dialog
+            && matches!(
+                &self.preflight.cgroup,
+                super::preflight::CgroupPreparation::Confirming
+            )
+        {
+            crate::tr!(crate::keys::CONSOLE_CGROUP_HINT_CONFIRM)
+        } else if self.preflight_dialog
+            && matches!(
+                &self.preflight.cgroup,
+                super::preflight::CgroupPreparation::Running(_)
+            )
+        {
+            crate::tr!(crate::keys::CONSOLE_CGROUP_RUNNING)
         } else if self.preflight.expanded && self.menu() == Menu::Install {
             crate::tr!(crate::keys::CONSOLE_HINT_CTRL_C_EXIT_SCROLL)
         } else if self.preflight_dialog {
             // daemon 阻断时 Enter 是部署,否则是查看详情;底栏按状态给正确变体。
             if self.preflight_daemon_blocked() {
                 crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DEPLOY_ESC_CLOSE_R)
+            } else if self.preflight_cgroup_blocked() {
+                crate::tr!(crate::keys::CONSOLE_CGROUP_HINT_OPEN)
             } else {
                 crate::tr!(crate::keys::CONSOLE_DIALOG_ENTER_DETAILS_ESC_CLOSE_R)
             }
@@ -426,6 +442,10 @@ impl ConsoleApp {
     /// 落入字段而不是切换语言。
     pub(super) fn language_switch_available(&self) -> bool {
         self.exit_state != ExitState::Confirming
+            && !matches!(
+                &self.preflight.cgroup,
+                super::preflight::CgroupPreparation::Running(_)
+            )
             && !self.deploy_daemon_confirming
             && !self.show_psk
             && !self.flare.open

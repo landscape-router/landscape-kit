@@ -1,5 +1,6 @@
 mod app;
 mod backup;
+mod cgroup;
 mod daemon;
 mod gallery;
 mod gates;

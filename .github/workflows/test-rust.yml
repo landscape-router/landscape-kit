@@ -37,5 +37,19 @@ jobs:
         run: cargo build --locked --workspace --features test-support
       - name: Run unit tests
         run: cargo test --locked --workspace --features test-support --lib
+      - name: Run init and Cgroup CLI unit tests
+        run: |
+          for module in \
+            check::init::tests \
+            check::openrc::tests \
+            service::manager::init_detection_tests \
+            console::tests::cgroup \
+            console::tests::gates \
+            deployment::cgroup::tests \
+            check::service::tests \
+            check::kernel::tests \
+            service::openrc::tests::renders; do
+            cargo test --locked -p lkit-cli --features test-support --bin lkit "$module"
+          done
       - name: Run CLI i18n tests
         run: cargo test --locked -p lkit-cli --features test-support --test i18n_cli

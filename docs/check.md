@@ -187,6 +187,10 @@ DNS `53` 端口是硬性冲突，Landscape DNS 服务无法在端口被占用时
 | `security.selinux` | SELinux 是否启用及是否为 enforcing | enforcing 为 `warning`，提示需要额外放行 Landscape 权限 |
 
 服务检查需要区分“未安装、已安装未运行、正在运行、已启用”，避免把所有状态都混为一个结果。
+systemd 使用 `systemctl`；OpenRC 使用 init 脚本存在性、`rc-service <服务> status` 与
+`/etc/runlevels/` 注册信息，NetworkManager 兼容 `networkmanager` / `NetworkManager`
+脚本名。OpenRC 下未安装的服务不会因为缺少 systemctl 被报告为未知；实际查询失败或
+异常退出码仍为 `unknown`。这些检查描述跨后端的服务风险，仍使用通用 `service.*` ID。
 
 ### 7. DNS 配置风险
 
@@ -208,6 +212,34 @@ root 会话的安装与生命周期命令（install/switch/update/repair/restore
 daemon，只报告 `warning`。控制台 Install 面板的部署前检查复用本检查：root 下 daemon
 未运行时，检查汇总为阻断状态，未部署 daemon 前无法进入安装表单。
 
+### 9. 初始化系统与开机启动
+
+systemd、OpenRC、SysVinit 是并列的初始化／服务管理后端，不与发行版名称绑定。
+统一在“初始化系统与开机启动”分组中通过 `init.backend` 告知当前主机的实际方式和
+对应的准备策略，仅生成当前后端的特有检查。通用内核能力仍使用 `kernel.*`，
+后端专属条件使用相应的 `openrc.*` 等前缀，不改变内核分组的说明。
+
+识别优先依据 PID 1（systemd）、运行中的 OpenRC 状态目录，以及 SysVinit 的 init
+进程和受支持注册工具。`init.d` 是脚本目录，不能单凭它识别后端；安装了兼容命令也
+不等于正在使用该后端。未知或不受支持的运行方式报告 `unknown`，不默认声称是 systemd。
+
+| 标识符 | 检查内容 | 无法识别时 |
+| --- | --- | --- |
+| `init.backend` | 当前服务管理方式及对应启动准备策略 | `unknown` |
+
+- systemd：由 manager 初始化 Cgroup 并管理启动顺序，仍须通过通用内核检查。
+- OpenRC：核实下述 boot 注册，并提供用户确认后的自动准备。
+- SysVinit：按主机启动脚本准备；不套用 OpenRC 命令，也不声称已验证所有平台的开机挂载策略。
+
+| 标识符 | 检查内容 | 不满足时 |
+| --- | --- | --- |
+| `openrc.cgroup_boot` | `cgroups` 可执行服务已注册到 `boot` 运行级别，且链接指向正确原件 | `error` |
+
+当前会话已经挂载 cgroup 并不能代替开机注册。控制台的检查阻断弹框可在用户确认后
+立即准备 cgroup，并强制完成开机注册；两者不是可独立取消的选项。执行后重新检查，
+失败不放行安装。该修复动作只在具备 OpenRC cgroups 服务时提供，`lkit check` 本身
+仍为只读。systemd/SysVinit 主机不生成 `openrc.cgroup_boot`，只展示自己的当前策略。
+
 ## 输出顺序
 
 CLI 按以下顺序输出，保证人工阅读和未来日志解析稳定：
@@ -220,7 +252,8 @@ CLI 按以下顺序输出，保证人工阅读和未来日志解析稳定：
 6. 系统服务与安全策略；
 7. DNS 配置风险；
 8. lkit 常驻服务；
-9. 汇总结果和继续部署建议。
+9. 初始化系统与开机启动（当前后端及其特有检查）；
+10. 汇总结果和继续部署建议。
 
 每个项目只输出一条主结果；详细的命令输出、配置来源和占用者信息放入该项目的 `details` 字段或 verbose 输出，避免默认报告过长。
 

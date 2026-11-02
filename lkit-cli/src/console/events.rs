@@ -121,6 +121,9 @@ impl ConsoleApp {
             return None;
         }
         if self.preflight_dialog {
+            if self.handle_cgroup_preparation_key(key.code) {
+                return None;
+            }
             match key.code {
                 // daemon 未运行被阻断时 Enter 打开「部署 daemon」确认弹窗
                 // (内嵌急救恢复码输入与二次确认),确认后在后台执行
@@ -128,6 +131,10 @@ impl ConsoleApp {
                 KeyCode::Enter if self.preflight_daemon_blocked() => {
                     self.preflight_dialog = false;
                     self.open_deploy_dialog();
+                }
+                KeyCode::Enter if self.preflight_cgroup_blocked() => self.open_cgroup_preparation(),
+                KeyCode::Char('c' | 'C') if self.preflight_cgroup_blocked() => {
+                    self.open_cgroup_preparation()
                 }
                 KeyCode::Enter => {
                     if matches!(&self.preflight.state, PreflightState::Complete(_)) {

@@ -1,5 +1,6 @@
 mod app;
 mod backup;
+mod cgroup;
 mod daemon_panel;
 mod events;
 mod flare_panel;

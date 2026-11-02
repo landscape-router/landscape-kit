@@ -1,0 +1,4 @@
+openrc.cgroup_boot = "Cgroup 开机服务"
+openrc.service_query_failed = "无法读取 OpenRC 服务状态或运行级别，服务也可能处于异常状态"
+openrc.cgroup_boot_enabled = "cgroups 服务已注册到 boot 运行级别"
+openrc.cgroup_boot_required = "必须在开机时、Landscape 启动前准备 Cgroup，不能仅在当前会话挂载"

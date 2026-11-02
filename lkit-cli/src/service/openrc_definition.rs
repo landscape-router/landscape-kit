@@ -13,6 +13,7 @@ name="Landscape Router"
 description="Landscape webserver reverse proxy"
 
 depend() {{
+    need cgroups
     use {LKIT_DAEMON_SCRIPT_NAME}
     after {LKIT_DAEMON_SCRIPT_NAME}
 }}

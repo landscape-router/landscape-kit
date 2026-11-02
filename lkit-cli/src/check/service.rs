@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "service_tests.rs"]
+mod tests;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -9,6 +13,7 @@ const UNIT_DIRS: [&str; 3] = [
     "/lib/systemd/system/",
 ];
 
+#[derive(Debug, PartialEq, Eq)]
 struct UnitInfo {
     installed: bool,
     active: bool,
@@ -30,7 +35,7 @@ fn network_manager() -> CheckResult {
         None => result.set(
             Status::Unknown,
             crate::tr!(crate::keys::SERVICE_QUERY_FAILED),
-            crate::tr!(crate::keys::SERVICE_SYSTEMCTL_UNAVAILABLE_OR_QUERY_FAILED),
+            query_failed_reason(),
         ),
         Some(info) if info.active => result
             .set(
@@ -67,7 +72,7 @@ fn systemd_resolved() -> CheckResult {
         None => result.set(
             Status::Unknown,
             crate::tr!(crate::keys::SERVICE_QUERY_FAILED),
-            crate::tr!(crate::keys::SERVICE_SYSTEMCTL_UNAVAILABLE_OR_QUERY_FAILED),
+            query_failed_reason(),
         ),
         Some(info) if info.active || info.enabled => result
             .set(
@@ -90,7 +95,7 @@ fn firewalld() -> CheckResult {
         None => result.set(
             Status::Unknown,
             crate::tr!(crate::keys::SERVICE_QUERY_FAILED),
-            crate::tr!(crate::keys::SERVICE_SYSTEMCTL_UNAVAILABLE_OR_QUERY_FAILED),
+            query_failed_reason(),
         ),
         Some(info) if info.active => result
             .set(
@@ -148,7 +153,36 @@ fn selinux() -> CheckResult {
     }
 }
 
+fn query_failed_reason() -> String {
+    if crate::deployment::cgroup::is_openrc() {
+        crate::tr!(crate::keys::OPENRC_SERVICE_QUERY_FAILED)
+    } else {
+        crate::tr!(crate::keys::SERVICE_SYSTEMCTL_UNAVAILABLE_OR_QUERY_FAILED)
+    }
+}
+
 fn unit_info(unit: &str) -> Option<UnitInfo> {
+    if crate::deployment::cgroup::is_openrc() {
+        let scripts: &[&str] = match unit {
+            "NetworkManager.service" => &["networkmanager", "NetworkManager"],
+            "systemd-resolved.service" => &["systemd-resolved"],
+            "firewalld.service" => &["firewalld"],
+            _ => return None,
+        };
+        return openrc_info_at(
+            Path::new("/etc/init.d"),
+            Path::new("/etc/runlevels"),
+            scripts,
+            |script| {
+                Command::new("/sbin/rc-service")
+                    .args([script, "status"])
+                    .output()
+                    .ok()?
+                    .status
+                    .code()
+            },
+        );
+    }
     let installed = UNIT_DIRS
         .iter()
         .any(|dir| Path::new(dir).join(unit).exists());
@@ -159,6 +193,44 @@ fn unit_info(unit: &str) -> Option<UnitInfo> {
         active: is_active?,
         enabled: is_enabled?,
     })
+}
+
+fn openrc_info_at(
+    init: &Path,
+    runlevels: &Path,
+    scripts: &[&str],
+    query: impl Fn(&str) -> Option<i32>,
+) -> Option<UnitInfo> {
+    let installed: Vec<_> = scripts
+        .iter()
+        .copied()
+        .filter(|script| init.join(script).is_file())
+        .collect();
+    let mut info = UnitInfo {
+        installed: !installed.is_empty(),
+        active: false,
+        enabled: false,
+    };
+    if installed.is_empty() {
+        return Some(info);
+    }
+    for script in &installed {
+        match query(script)? {
+            0 => info.active = true,
+            3 => {} // OpenRC: stopped.
+            _ => return None,
+        }
+    }
+    for level in std::fs::read_dir(runlevels).ok()? {
+        let level = level.ok()?;
+        if installed
+            .iter()
+            .any(|script| level.path().join(script).exists())
+        {
+            info.enabled = true;
+        }
+    }
+    Some(info)
 }
 
 fn systemctl_equals(unit: &str, verb: &str, expected: &str) -> Option<bool> {

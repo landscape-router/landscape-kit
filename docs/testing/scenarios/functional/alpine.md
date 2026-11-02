@@ -59,8 +59,10 @@ Alpine 的 sysfs 服务可能自行挂载 bpffs；测试专用 boot 服务在 VM
   [最小 Landscape 进程](../../../../scripts/qemu/alpine/router-fixture.c)、
   [生产模板生成器](../../../../scripts/qemu/alpine/render-services.rs)。
 - 说明：宿主断言 boot ID 改变；boot fixture 先移除 bpffs，daemon 自动挂载，两个服务
-  均启动且 lflare 可连接。Landscape fixture 仅检查 OpenRC 已标记 daemon 启动完成，
-  不以 bpffs 成功作为启动条件。
+  均启动且 lflare 可连接。Landscape fixture 检查 OpenRC 已标记 daemon 和 cgroups
+  启动完成，并要求 CPU controller 可读，不以 bpffs 成功作为启动条件。guest 同时核实
+  Cgroup v2 可写挂载、boot 注册链接，以及当前初始化系统报告；注册缺失时必须报告
+  `openrc.cgroup_boot` 错误，恢复及重启后通过，未安装的网络服务不因缺少 systemctl 报未知。
 
 ## ALP-05
 

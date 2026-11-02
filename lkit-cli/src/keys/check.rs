@@ -9,6 +9,7 @@ pub(crate) const CHECK_SYSTEM_SERVICES_AND_SECURITY_POLICY: &str =
     "check.system_services_and_security_policy";
 pub(crate) const CHECK_DNS_CONFIGURATION_RISKS: &str = "check.dns_configuration_risks";
 pub(crate) const CHECK_LKIT_DAEMON: &str = "check.lkit_daemon";
+pub(crate) const CHECK_INIT_SYSTEM_AND_STARTUP: &str = "check.init_system_and_startup";
 pub(crate) const CHECK_LKIT_DAEMON_RUNNING: &str = "check.lkit_daemon_running";
 pub(crate) const CHECK_LKIT_DAEMON_NOT_RUNNING: &str = "check.lkit_daemon_not_running";
 pub(crate) const CHECK_LKIT_DAEMON_RUNNING_REASON: &str = "check.lkit_daemon_running_reason";

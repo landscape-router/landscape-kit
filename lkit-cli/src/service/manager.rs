@@ -2,8 +2,8 @@
 //!
 //! 契约只暴露 lkit 对服务的操作需求,不绑定任何具体 init 系统的概念
 //! (systemd 的 unit 名、MainPID、daemon-reload、mask 等细节由各后端内部处理)。
-//! 当前实现后端为 [`crate::service::systemd::Systemd`];OpenRC、runit、sysvinit
-//! 等后端按需接入,接入时以真实操作驱动契约演进,不做投机抽象。
+//! 当前实现并列的 systemd、OpenRC、SysVinit 后端;主机检查识别实际运行方式,
+//! 不从发行版名称或 init.d 目录单独推断后端。其他后端按实际需求接入。
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -38,6 +38,35 @@ impl ServiceManagerKind {
     /// 当前受支持的后端集合,用于状态校验与探测顺序。
     pub(crate) fn supported() -> [Self; 3] {
         [Self::Systemd, Self::Openrc, Self::Sysvinit]
+    }
+}
+
+/// Identify the running init style, not merely installed tools or distribution ID.
+/// Detection does not imply that its management tools are usable.
+pub(crate) fn host_kind() -> Option<ServiceManagerKind> {
+    let pid1 = std::fs::read_to_string("/proc/1/comm").unwrap_or_default();
+    kind_from_evidence(
+        pid1.trim(),
+        Path::new("/run/openrc").is_dir(),
+        Path::new("/etc/init.d").is_dir()
+            && (Path::new("/sbin/update-rc.d").is_file()
+                || Path::new("/usr/sbin/update-rc.d").is_file()),
+    )
+}
+
+fn kind_from_evidence(
+    pid1: &str,
+    openrc_runtime: bool,
+    sysv_registration: bool,
+) -> Option<ServiceManagerKind> {
+    if pid1 == "systemd" {
+        Some(ServiceManagerKind::Systemd)
+    } else if openrc_runtime {
+        Some(ServiceManagerKind::Openrc)
+    } else if matches!(pid1, "init" | "sysvinit") && sysv_registration {
+        Some(ServiceManagerKind::Sysvinit)
+    } else {
+        None
     }
 }
 
@@ -245,4 +274,32 @@ pub(crate) fn pid_of_command(pattern: &str) -> Option<i64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod init_detection_tests {
+    use super::*;
+
+    #[test]
+    fn running_backend_takes_precedence_over_installed_compatibility_tools() {
+        assert_eq!(
+            kind_from_evidence("systemd", true, true),
+            Some(ServiceManagerKind::Systemd)
+        );
+        assert_eq!(
+            kind_from_evidence("init", true, true),
+            Some(ServiceManagerKind::Openrc)
+        );
+        assert_eq!(
+            kind_from_evidence("init", false, true),
+            Some(ServiceManagerKind::Sysvinit)
+        );
+    }
+
+    #[test]
+    fn init_directory_or_tools_alone_do_not_identify_a_container_backend() {
+        assert_eq!(kind_from_evidence("python", false, true), None);
+        assert_eq!(kind_from_evidence("init", false, false), None);
+        assert_eq!(kind_from_evidence("", false, true), None);
+    }
 }

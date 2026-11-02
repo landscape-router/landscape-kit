@@ -402,6 +402,7 @@ mod tests {
         assert!(script.starts_with("#!/sbin/openrc-run"));
         assert!(script.contains(&format!("{}/current/landscape-webserver", root.display())));
         assert!(script.contains("command_user=\"root\""));
+        assert!(script.contains("need cgroups\n"));
         assert!(script.contains(&format!("use {LKIT_DAEMON_SCRIPT_NAME}\n")));
         assert!(script.contains(&format!("after {LKIT_DAEMON_SCRIPT_NAME}\n")));
         assert!(!script.contains("need lkit"));
@@ -416,6 +417,7 @@ mod tests {
         assert!(script.contains("command=\"/usr/local/bin/lkit\""));
         assert!(script.contains("command_args=\"daemon\""));
         assert!(!script.contains("/srv/landscape"));
+        assert!(!script.contains("need cgroups"));
         validate_script(&script, ManagedService::LkitDaemon, binary).unwrap();
     }
 

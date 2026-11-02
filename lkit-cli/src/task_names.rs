@@ -9,6 +9,7 @@ pub const FLARE_SHUTDOWN: &str = "flare.server.shutdown";
 pub const FLARE_CONNECTION: &str = "flare.server.connection";
 pub const CONSOLE_DAEMON: &str = "lkit-daemon";
 pub const CONSOLE_PREFLIGHT: &str = "lkit-preflight";
+pub const CONSOLE_CGROUP: &str = "lkit-cgroup";
 pub const CONSOLE_SOFTWARE_INSTALL: &str = "lkit-sw-install";
 pub const CONSOLE_BASE_INSTALL: &str = "lkit-base-inst";
 pub const CONSOLE_BACKUP_LIST: &str = "lkit-bak-list";

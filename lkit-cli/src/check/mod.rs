@@ -1,8 +1,10 @@
 pub mod daemon;
 pub mod dependency;
 pub mod dns;
+pub mod init;
 pub mod kernel;
 pub mod model;
+mod openrc;
 pub mod platform;
 pub mod ports;
 pub mod resource;
@@ -40,7 +42,14 @@ pub fn run_all() -> CheckReport {
             dns::run(),
         ),
         (crate::tr!(crate::keys::CHECK_LKIT_DAEMON), daemon::run()),
+        (
+            crate::tr!(crate::keys::CHECK_INIT_SYSTEM_AND_STARTUP),
+            init::run(),
+        ),
     ] {
+        if results.is_empty() {
+            continue;
+        }
         for result in &results {
             match result.status {
                 Status::Pass => counts.pass += 1,

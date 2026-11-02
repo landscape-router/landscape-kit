@@ -240,6 +240,16 @@ daemon 未运行时报告 `error` 并建议 `lkit self install`，未部署 daem
 Overview 动作行还是阻断弹框发起）预检都会自动重跑，不需要手动按 `R` 刷新过期的
 daemon 检查结果。
 
+“初始化系统与开机启动”组通过 `init.backend` 展示当前的 systemd、OpenRC 或 SysVinit
+方式及对应策略，不按发行版猜测。OpenRC 下通用 Cgroup 能力或 `openrc.cgroup_boot`
+阻断时，具备系统服务与工具的主机提供 `C`／Enter 打开准备确认框（daemon 阻断时
+Enter 优先处理 daemon）。再次 Enter 才执行；Esc 返回，不执行命令。确认框明确列出
+`rc-service cgroups start` 和 `rc-update add cgroups boot`，立即准备和开机注册必须
+同时满足，没有“仅本次启用”的选项。已有安全的统一挂载仅补齐注册；不自动转换已有
+v1／混合／只读层级。准备期间防止重复执行和重查，成功后刷新报告并收起已解除的阻断框；
+其他检查仍阻断则继续展示。失败或 worker 断开保留门禁和错误，不将当前挂载误当成
+持久化成功。systemd、SysVinit 或未知环境不会获得 OpenRC 的修复命令。
+
 检查尚未运行或仍在运行时，用户不能离开检查汇总进入表单，焦点保持在汇总并显示等待状态。
 检查完成后，Pass 和 warning 都允许进入表单；warning 继续显示其风险提示。Error、unknown
 或检查 worker 失败时，任何进入表单、开始安装或进入网络向导的路径都会被阻止，并显示居中

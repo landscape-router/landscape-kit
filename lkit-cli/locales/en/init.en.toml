@@ -1,0 +1,6 @@
+init.backend = "Init / service management style"
+init.systemd = "systemd manages startup ordering and initializes Cgroups; generic kernel.cgroup checks must still pass"
+init.openrc = "OpenRC requires cgroups in the boot runlevel; Landscape starts after it through need cgroups"
+init.sysvinit = "SysVinit startup preparation depends on host init scripts; generic automatic Cgroup preparation is not available"
+init.unknown = "No supported running init style was identified; an init.d directory or compatibility tools alone do not identify it"
+init.unknown_hint = "Use a supported running service manager; restricted containers may require Cgroup preparation on the host"

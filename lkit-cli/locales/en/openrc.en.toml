@@ -1,0 +1,4 @@
+openrc.cgroup_boot = "Cgroup boot service"
+openrc.service_query_failed = "OpenRC service status or runlevels could not be read; the service may have failed"
+openrc.cgroup_boot_enabled = "The cgroups service is registered in the boot runlevel"
+openrc.cgroup_boot_required = "Cgroups must start at boot before Landscape; a mount in the current session is not sufficient"

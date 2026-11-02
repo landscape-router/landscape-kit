@@ -1,0 +1,6 @@
+init.backend = "初始化／服务管理方式"
+init.systemd = "systemd 管理启动顺序并初始化 Cgroup；通用 kernel.cgroup 检查仍需通过"
+init.openrc = "OpenRC 要求 cgroups 注册到 boot 运行级别；Landscape 通过 need cgroups 排在其后启动"
+init.sysvinit = "SysVinit 开机准备取决于主机启动脚本；不提供通用 Cgroup 自动准备操作"
+init.unknown = "无法识别受支持的运行中初始化系统；仅有 init.d 目录或兼容命令不足以判定"
+init.unknown_hint = "请使用受支持且正在运行的服务管理器；受限容器可能需要在宿主机准备 Cgroup"

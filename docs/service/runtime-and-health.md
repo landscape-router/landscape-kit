@@ -91,8 +91,10 @@ daemon 启动时检查 `/sys/fs/bpf`；未挂载时创建目录并通过 `mount(
 
 Landscape 服务定义使用弱依赖和启动顺序：systemd 使用 `After=`/`Wants=lkit.service`，
 OpenRC 使用 `use`/`after lkit.service`，SysVinit 使用 `Should-Start`/`Should-Stop: lkit`。
-只声明启动顺序，不增加 readiness 等待、重试或挂载成功条件，也不将 daemon 故障传播为
-Landscape 的硬依赖失败。已有受管服务定义仍遵循下述用户变更与原件更新规则。
+对 daemon 只声明启动顺序，不增加 readiness 等待、重试或 bpffs 挂载成功条件，也不将
+其故障传播为 Landscape 的硬依赖失败。OpenRC 下 Landscape 对 `cgroups` 另有
+`need cgroups` 硬依赖，与相对 daemon 的弱依赖分开；daemon 自身不要求 cgroups。
+已有受管服务定义仍遵循下述用户变更与原件更新规则。
 
 `test-support` fixture 运行时禁用宿主 bpffs 准备，挂载策略单测使用注入操作，
 不触碰宿主 `/sys` 或执行真实挂载。

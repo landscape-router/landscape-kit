@@ -126,7 +126,14 @@ daemon 额外要求 `KillMode=process`),且不含凭据内容。
 - `refresh` 为 no-op。
 
 Landscape 脚本通过 `use lkit.service` 与 `after lkit.service` 声明对 daemon 的
-弱依赖和启动顺序，不使用 `need`。其他 OpenRC 特性留给真实操作驱动。
+弱依赖和启动顺序；Cgroup 则通过 `need cgroups` 声明硬依赖，使 Landscape 排在该服务
+准备成功后启动。lkit daemon 本身不依赖 cgroups，环境未准备好时仍可运行以便修复。
+
+控制台仅在识别到当前 OpenRC 环境且具备可执行的 cgroups/rc-service/rc-update 时提供
+用户确认后的准备：缺少挂载时启动 cgroups，核实可写统一层级和 CPU controller，
+再强制注册 `cgroups` 到 `boot` 并验证。已有 v1、混合、只读或冲突挂载不自动转换；
+持久化失败不报告成功，也不卸载当前层级。不编辑内核启动参数或直接写资源限额，
+系统服务按已有 OpenRC 配置运行。检查域与其他后端的展示见 [check](../check.md)。
 
 ## sysvinit 后端(简单实现)
 
