@@ -276,6 +276,105 @@ fn self_upgrade_without_registered_daemon_updates_cli_only() {
     );
 }
 
+/// 自动发现稳定版或 opt-in RC 后走完整下载、校验、自检和替换链路。
+#[test]
+fn self_upgrade_auto_selects_stable_or_opt_in_prerelease() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for (tag, include_prerelease) in [("v9.9.8", false), ("v9.9.9-rc2", true)] {
+        let harness = InstallHarness::new("self-upgrade-auto", "healthy", 30_000);
+        harness.seed_global_lkit_binary();
+        let fixture = SelfUpgradeFixture::start(
+            tag,
+            upgrade_asset_name(),
+            upgrade_asset(tag, &harness.world.path("auto-marker")),
+            None,
+        );
+        let mut command = harness.command();
+        command.args(["self", "upgrade"]);
+        if include_prerelease {
+            command.arg("--include-prerelease");
+        }
+        let upgraded = command
+            .args([
+                "--test-release-api-root",
+                fixture.api.base_url.as_str(),
+                "--test-release-download-root",
+                fixture.downloads.base_url.as_str(),
+                "--test-runtime",
+            ])
+            .arg(&harness.runtime_config)
+            .output()
+            .unwrap();
+        assert_success(&upgraded);
+        let binary = harness.host.join("usr/local/bin/lkit");
+        assert!(!binary.is_symlink());
+        let installed = std::process::Command::new(&binary)
+            .arg("--version")
+            .output()
+            .unwrap();
+        assert_success(&installed);
+        assert_eq!(
+            String::from_utf8_lossy(&installed.stdout).trim(),
+            format!("lkit {}", tag.trim_start_matches('v'))
+        );
+        assert_eq!(
+            fixture.api.request_paths(),
+            vec![if include_prerelease {
+                "/repos/landscape-router/landscape-kit/releases?per_page=100&page=1"
+            } else {
+                "/repos/landscape-router/landscape-kit/releases/latest"
+            }]
+        );
+        assert_eq!(
+            fixture.downloads.request_paths(),
+            vec![
+                format!("/{tag}/SHA256SUMS"),
+                format!("/{tag}/{}", upgrade_asset_name()),
+            ]
+        );
+        assert!(!has_upgrade_temp_file(&harness));
+    }
+}
+
+#[test]
+fn self_upgrade_default_never_falls_back_to_a_prerelease() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-upgrade-stable-only", "healthy", 30_000);
+    harness.seed_global_lkit_binary();
+    let fixture =
+        SelfUpgradeFixture::start("v9.9.9-rc2", upgrade_asset_name(), b"unused".to_vec(), None);
+    let binary = harness.host.join("usr/local/bin/lkit");
+    let before = std::fs::read_link(&binary).unwrap();
+    let output = harness
+        .command()
+        .args([
+            "self",
+            "upgrade",
+            "--test-release-api-root",
+            fixture.api.base_url.as_str(),
+            "--test-release-download-root",
+            fixture.downloads.base_url.as_str(),
+            "--test-runtime",
+        ])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(std::fs::read_link(binary).unwrap(), before);
+    assert_eq!(
+        fixture.api.request_paths(),
+        vec!["/repos/landscape-router/landscape-kit/releases/latest"]
+    );
+    assert!(fixture.downloads.request_paths().is_empty());
+    assert!(!has_upgrade_temp_file(&harness));
+}
+
 fn run_self_upgrade(
     harness: &InstallHarness,
     fixture: &SelfUpgradeFixture,

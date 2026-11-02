@@ -9,7 +9,7 @@ lkit 地盘(`/root/.lkit/`),见[安装布局与状态](../deployment/layout-and-
 
 ```text
 lkit self install [--flare-psk-file <PATH>]
-lkit self upgrade [--version <TAG>]
+lkit self upgrade [--include-prerelease] [--version <TAG>]
 lkit self remove
 ```
 
@@ -49,9 +49,10 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 把 lkit CLI 与 daemon 一起升级到目标版本(默认最新 stable):
 
 1. 获取安装锁;
-2. 解析目标版本:默认 GitHub `releases/latest` 的 stable;`--version <TAG>` 指定
-   版本（候选版显式指定，例如 `--version v0.7.1-rc2`；支持 `rc1` 和 `rc.1`，
-   prerelease 必须以数字发布序号结尾）；
+2. 解析目标版本：默认使用 GitHub `releases/latest`，只接受正式版；
+   `--include-prerelease` 允许从 Release 列表自动选择包含预发布版本（如 RC）在内的最高
+   版本；`--version <TAG>` 显式指定版本并优先于自动选择（如 `--version v0.7.1-rc2`），
+   显式指定候选版不需要再加 `--include-prerelease`；
 3. 下载对应架构静态二进制（`lkit-<arch>`，arch 为 `x86_64`、`aarch64`、`riscv64` 或 `loongarch64`）与 `SHA256SUMS`,校验 SHA-256,
    与 `install.sh` 同源同校验规则(见[自发布](../release/lkit.md));
 4. 版本对比:当前版本与目标版本相同 → 输出提示并返回 `0`,不修改任何文件;
@@ -60,6 +61,25 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 6. 刷新 daemon:若 `lkit.service` 已注册且 `is-active` → `restart` 加载新二进制;
    已注册但未运行 → 不启动;未注册 → 仅更新 CLI,并提示可用 `lkit self install`
    安装 daemon。
+
+示例：
+
+```sh
+lkit self upgrade                              # 最新正式版
+lkit self upgrade --include-prerelease         # 包含 RC 等预发布版本的最新版本
+lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
+```
+
+自动预发布选择会分页读取 GitHub Release 列表，不依赖列表顺序或发布时间；排除 draft
+与非法版本 tag，忽略 build metadata 比较版本优先级。同一基础版本的正式版优先于候选版，
+更高基础版本的候选版可以被选中。兼容 `rcN` 和 `rc.N`，RC 序号按数字比较（`rc10` 高于
+`rc2`）；预发布 tag 必须以数字发布序号结尾。最多读取 100 页、每页 100 条，超限或任一
+页请求/解析失败时报告错误，不使用不完整列表，不下载或替换二进制。
+默认模式没有正式 Release 时直接报错，不自动回退 RC。显式目标也不允许 draft，API
+返回的 tag 必须与请求版本一致。
+
+`--include-prerelease` 只影响本次 `self upgrade` / `self update` 的自动选择，不保存到
+配置，不影响安装脚本、`self install` 或 Landscape 的顶层 `update`。
 
 `upgrade` 不创建事务、不创建保护备份;daemon 在 `restart` 期间短暂退出,由
 服务管理器执行重启。替换运行中的 daemon 二进制是安全的:进程继续使用已打开的

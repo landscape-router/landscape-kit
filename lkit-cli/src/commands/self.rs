@@ -11,6 +11,10 @@
 //! 原子替换 `/usr/local/bin/lkit`;`self remove` 停止、注销并删除全局原件,
 //! 幂等可重复,不删除 CLI 二进制。
 
+#[cfg(test)]
+#[path = "self_upgrade_tests.rs"]
+mod upgrade_tests;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -106,9 +110,12 @@ pub struct InstallSelfArgs {
 
 #[derive(Debug, Args)]
 pub struct UpgradeArgs {
-    /// 目标版本 tag,如 v0.2.0-rc.1;缺省为 GitHub 最新 stable
+    /// 目标版本 tag,如 v0.2.0-rc.1；优先于自动 stable/预发布选择
     #[arg(long, value_name = "TAG")]
     pub version: Option<String>,
+    /// 自动选择版本时包含已发布的预发布版本（如 RC）；默认仅 stable
+    #[arg(long)]
+    pub include_prerelease: bool,
     /// 测试用 Release API 根地址(仅 test-support 构建,隐藏参数)
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "URL", hide = true)]
@@ -337,26 +344,9 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         ))
     })?;
     let source = upgrade_source(args)?;
-    // 解析目标版本:默认 GitHub releases/latest 的 stable;--version 指定版本
-    // (候选版必须用带 tag 的版本,例如 v0.2.0-rc.1)。
-    let release = fetch_release(&source, args.version.as_deref()).await?;
-    let version = match args.version.as_deref() {
-        Some(tag) => parse_upgrade_version(tag)?,
-        None => {
-            if release.draft || release.prerelease {
-                return Err(InstallError::ParameterUsage(format!(
-                    "the latest GitHub release {} is a draft or prerelease",
-                    release.tag_name
-                )));
-            }
-            parse_release_tag(&release.tag_name).ok_or_else(|| {
-                InstallError::ParameterUsage(format!(
-                    "the latest GitHub release has an invalid tag {:?}",
-                    release.tag_name
-                ))
-            })?
-        }
-    };
+    let release = fetch_release(&source, args.version.as_deref(), args.include_prerelease).await?;
+    let version =
+        upgrade_release_version(&release, args.version.as_deref(), args.include_prerelease)?;
     // 版本相同 → 输出提示并返回 0,不修改任何文件。
     if current_version()? == version {
         println!(
@@ -541,14 +531,70 @@ fn source_root(value: &str) -> Result<Url, InstallError> {
 async fn fetch_release(
     source: &UpgradeSource,
     version: Option<&str>,
+    include_prerelease: bool,
 ) -> Result<GithubRelease, InstallError> {
     let client = DownloadClient::new()?;
-    let url = match version {
-        None => source.api_url(&format!("repos/{LKIT_REPOSITORY}/releases/latest"))?,
-        Some(tag) => source.api_url(&format!("repos/{LKIT_REPOSITORY}/releases/tags/{tag}"))?,
-    };
+    if let Some(tag) = version {
+        // 参数错误不能触发下载或任意 tag API 请求。
+        parse_upgrade_version(tag)?;
+        return fetch_release_json(
+            &client,
+            source,
+            &format!("repos/{LKIT_REPOSITORY}/releases/tags/{tag}"),
+        )
+        .await;
+    }
+    if !include_prerelease {
+        return fetch_release_json(
+            &client,
+            source,
+            &format!("repos/{LKIT_REPOSITORY}/releases/latest"),
+        )
+        .await;
+    }
+
+    // GitHub 按创建时间列出 Release，不保证版本号顺序；完整遍历分页再选择。
+    let mut latest: Option<(Version, GithubRelease)> = None;
+    for page in 1..=100 {
+        let releases: Vec<GithubRelease> = fetch_release_json(
+            &client,
+            source,
+            &format!("repos/{LKIT_REPOSITORY}/releases?per_page=100&page={page}"),
+        )
+        .await?;
+        let count = releases.len();
+        for release in releases {
+            let Some(version) = eligible_release_version(&release, true) else {
+                continue;
+            };
+            let key = upgrade_version_precedence(version);
+            if latest
+                .as_ref()
+                .is_none_or(|(current, _)| key.cmp_precedence(current).is_gt())
+            {
+                latest = Some((key, release));
+            }
+        }
+        if count < 100 {
+            return latest.map(|(_, release)| release).ok_or_else(|| {
+                InstallError::Repository(RepositoryError::InvalidRelease(
+                    "no published lkit release with a supported version tag was found".into(),
+                ))
+            });
+        }
+    }
+    Err(InstallError::Repository(RepositoryError::InvalidRelease(
+        "lkit release discovery exceeded 100 pages; specify --version explicitly".into(),
+    )))
+}
+
+async fn fetch_release_json<T: serde::de::DeserializeOwned>(
+    client: &DownloadClient,
+    source: &UpgradeSource,
+    path: &str,
+) -> Result<T, InstallError> {
     let Some((_, body)) = client
-        .get_metadata(url, github_headers()?, false)
+        .get_metadata(source.api_url(path)?, github_headers()?, false)
         .await
         .map_err(InstallError::Repository)?
     else {
@@ -556,6 +602,52 @@ async fn fetch_release(
     };
     serde_json::from_slice(&body)
         .map_err(|error| InstallError::Repository(RepositoryError::InvalidJson(error)))
+}
+
+fn eligible_release_version(release: &GithubRelease, include_prerelease: bool) -> Option<Version> {
+    if release.draft || (!include_prerelease && release.prerelease) {
+        return None;
+    }
+    let version = parse_upgrade_version(&release.tag_name).ok()?;
+    (include_prerelease || version.pre.is_empty()).then_some(version)
+}
+
+fn upgrade_release_version(
+    release: &GithubRelease,
+    requested: Option<&str>,
+    include_prerelease: bool,
+) -> Result<Version, InstallError> {
+    // 显式 pin 候选版本即已选择预发布；默认分支不能被元数据误标绕过。
+    let version = eligible_release_version(release, requested.is_some() || include_prerelease)
+        .ok_or_else(|| InstallError::Repository(RepositoryError::InvalidRelease(format!(
+            "release {:?} is a draft, an invalid version, or a prerelease not allowed by this selection",
+            release.tag_name,
+        ))))?;
+    if let Some(requested) = requested
+        && parse_upgrade_version(requested)? != version
+    {
+        return Err(InstallError::Repository(RepositoryError::InvalidRelease(
+            format!(
+                "release tag {:?} does not match requested version {requested:?}",
+                release.tag_name,
+            ),
+        )));
+    }
+    Ok(version)
+}
+
+/// 本仓库同时使用 rcN 和 rc.N；按候选序号比较，而不是把 rc10 排在 rc2 前面。
+fn upgrade_version_precedence(mut version: Version) -> Version {
+    if let Some(number) = version.pre.as_str().strip_prefix("rc")
+        && !number.is_empty()
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let number = number.trim_start_matches('0');
+        let number = if number.is_empty() { "0" } else { number };
+        version.pre = semver::Prerelease::new(&format!("rc.{number}"))
+            .expect("numeric RC suffix is a valid prerelease");
+    }
+    version
 }
 
 fn github_headers() -> Result<HeaderMap, InstallError> {
@@ -589,15 +681,11 @@ fn github_headers() -> Result<HeaderMap, InstallError> {
 /// 解析 `lkit self upgrade --version` 的目标版本:接受可选 `v` 前缀,
 /// 候选版必须带完整 prerelease 后缀(如 `v0.2.0-rc.1`)。
 fn parse_upgrade_version(value: &str) -> Result<Version, InstallError> {
-    let stripped = value.strip_prefix('v').unwrap_or(value);
-    let version = Version::parse(stripped).map_err(|error| {
-        InstallError::ParameterUsage(format!("invalid lkit version {value:?}: {error}"))
+    let version = parse_release_tag(value).ok_or_else(|| {
+        InstallError::ParameterUsage(format!(
+            "invalid lkit version {value:?}; use a canonical semver like 0.2.0 or v0.2.0-rc.1"
+        ))
     })?;
-    if version.to_string() != stripped {
-        return Err(InstallError::ParameterUsage(format!(
-            "lkit version must be a canonical semver like 0.2.0 or v0.2.0-rc.1, got {value:?}"
-        )));
-    }
     // 候选版以发布序号结尾，兼容 rc.1 和 rc1；裸 -rc 不属于发布 tag。
     if !version.pre.is_empty()
         && version

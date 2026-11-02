@@ -71,7 +71,8 @@ worker 继续完成提交或自动回滚。worker 或主机重启导致事务中
 - 不保证所有发行版的系统服务、网络后端和可选软件都受支持；lkit 的 musl 静态
   发布产物可用于 Alpine，各功能支持范围以对应文档为准。
 - 不支持 `x86_64`、`aarch64`、`riscv64` 和 `loongarch64` 以外架构。
-- 不允许安装 prerelease。
+- Landscape 安装不接受 prerelease；lkit 自身的 `self upgrade` 可通过
+  `--include-prerelease` 自动选择预发布版本，或通过 `--version` 显式指定。
 - 不实现 AWS S3 profile、region 或 access key 鉴权。
 - 不自动删除旧版本、事务或 `.lkb`；`uninstall` 是唯一显式清理入口，删除 landscape 根
   受管内容并保留 lkit 地盘（`config.toml`、`backups/` 与 `transactions/`），不支持

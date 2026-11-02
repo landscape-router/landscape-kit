@@ -39,7 +39,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 主机换源 | `MIR-01` 至 `MIR-12` | [mirror.md](functional/mirror.md) |
 | 常用软件安装 | `SFT-01` 至 `SFT-07` | [software.md](functional/software.md) |
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
-| lkit 自身生命周期 | `SS-01` 至 `SS-10` | [self.md](functional/self.md) |
+| lkit 自身生命周期 | `SS-01` 至 `SS-11` | [self.md](functional/self.md) |
 | Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
 | daemon 自动恢复 | `DAE-01` 至 `DAE-06` | [daemon.md](functional/daemon.md) |
 | Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-35` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |

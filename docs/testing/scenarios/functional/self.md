@@ -93,3 +93,22 @@
   psk 写入地盘 `config.toml` 的 `[flare]` 段（0600，保留既有字段）；未提供时保留
   既有 `[flare]`（重复执行不改动配置），交互终端提示输入（≥12 字符），无终端回落
   daemon 自动生成，不阻断部署。单元测试覆盖文件/保留/短 psk 拒绝/非交互回落分支。
+
+## SS-11
+
+**`self upgrade` 默认正式版，显式 opt-in 自动选择 RC 等预发布版本**
+
+- 测试层：Rust 单元（临时回环 HTTP）+ Fixture E2E
+- 状态：`部分覆盖`
+- 证据：[`self_upgrade_tests.rs`](../../../../lkit-cli/src/commands/self_upgrade_tests.rs)、
+  [`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、
+  [`lkit self upgrade`](../../../commands/self.md#upgrade)
+- 说明：默认只请求 `releases/latest`，拒绝预发布标记和误标为正式版的 RC tag；
+  `--include-prerelease` 仅适用于 `self upgrade` 及其 `self update` 别名。
+  允许预发布时读取分页列表，排除 draft/非法 tag，按版本优先级选择而非按创建时间；
+  覆盖 `rc2`/`rc10`/`rc.11`、正式版优先、后续页更高版本、空列表、API 错误、分页失败
+  与 100 页上限，不使用部分结果。显式 `--version` 优先于自动发现，候选 pin 无需额外
+  选项；draft 和不匹配的 API tag 被拒绝。单元测试不启动子进程，只用临时回环端口。
+  Fixture E2E 定义稳定/RC 自动发现后的完整校验、自检和替换链路，以及无 stable 时
+  默认失败、原二进制和下载请求保持不变。
+- 缺口：完整替换链路的 Fixture E2E 场景待 CI 验证；真实 GitHub 发布列表不作为单元测试依赖。

@@ -77,23 +77,38 @@ impl SelfUpgradeFixture {
             ),
             (format!("/{tag}/{asset_name}"), asset),
         ]));
+        let prerelease = !semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag))
+            .unwrap()
+            .pre
+            .is_empty();
         let release = serde_json::json!({
             "tag_name": tag,
             "draft": false,
-            "prerelease": false,
+            "prerelease": prerelease,
             "assets": [{
                 "name": asset_name,
                 "size": size,
                 "browser_download_url": format!("{}{tag}/{asset_name}", downloads.base_url),
             }],
         });
-        let api = RepositoryServer::start(HashMap::from([(
-            format!(
-                "/repos/{}/releases/tags/{tag}",
-                "landscape-router/landscape-kit"
+        let root = "/repos/landscape-router/landscape-kit/releases";
+        let mut files = HashMap::from([
+            (
+                format!("{root}/tags/{tag}"),
+                serde_json::to_vec(&release).unwrap(),
             ),
-            serde_json::to_vec(&release).unwrap(),
-        )]));
+            (
+                format!("{root}?per_page=100&page=1"),
+                serde_json::to_vec(&vec![&release]).unwrap(),
+            ),
+        ]);
+        if !prerelease {
+            files.insert(
+                format!("{root}/latest"),
+                serde_json::to_vec(&release).unwrap(),
+            );
+        }
+        let api = RepositoryServer::start(files);
         Self { api, downloads }
     }
 }
