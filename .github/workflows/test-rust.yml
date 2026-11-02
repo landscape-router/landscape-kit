@@ -5,6 +5,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
+      - landscape-terrain-proto/**
       - crates/**
       - lkit-cli/**
       - .github/workflows/test-rust.yml
@@ -13,6 +14,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
+      - landscape-terrain-proto/**
       - crates/**
       - lkit-cli/**
       - .github/workflows/test-rust.yml
@@ -35,6 +37,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Build workspace
         run: cargo build --locked --workspace --features test-support
+      - name: Verify native task tracing in an isolated test binary
+        run: cargo test --locked -p landscape-terrain-proto --test task_tracing
       - name: Run unit tests
         run: cargo test --locked --workspace --features test-support --lib
       - name: Run init and Cgroup CLI unit tests

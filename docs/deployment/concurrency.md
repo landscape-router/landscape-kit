@@ -33,6 +33,14 @@ profile 使用同样的命名代码。
 Docker 源码构建需要复制 `.cargo/config.toml`。在工作区外构建该协议库时也必须配置
 这一 rustflag。Tokio 的该 API 不稳定，升级 Tokio 时需要重新检查兼容性。
 
+## 原生元数据测试
+
+`landscape-terrain-proto/tests/task_tracing.rs` 在独立测试二进制中安装局部 subscriber，
+断言 `spawn_task` 的指定名称确实出现在 Tokio `task.name` 元数据中，不以线程名或
+自建同名 span 代替。subscriber 同时记录创建时属性和后续字段更新。隔离避免并行库
+测试初始化同一进程的 tracing callsite 缓存时干扰采集；其他库单测仍正常并行执行。
+CI 显式运行该目标，再运行 workspace 库单测，不能仅用 `--lib` 代替此项验证。
+
 ## 查看名称
 
 - `top -H -p <PID>`、htop 的线程视图、`/proc/<PID>/task/*/comm` 可查看系统线程名，
