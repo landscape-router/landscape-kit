@@ -3,14 +3,14 @@
 # docker info use recording shims. Real daemon startup is covered in the QEMU VM.
 set -eu
 [ "${LKIT_E2E:-0}" = 1 ] || { echo 'Requires LKIT_E2E=1' >&2; exit 2; }
-[ -f /.dockerenv ] && [ -f /etc/alpine-release ] && [ "$(id -u)" = 0 ] || {
+if [ ! -f /.dockerenv ] || [ ! -f /etc/alpine-release ] || [ "$(id -u)" != 0 ]; then
     echo 'Requires a disposable Alpine Docker container as root' >&2
     exit 2
-}
+fi
 
 lkit=/usr/local/bin/lkit
 work=$(mktemp -d)
-export LKIT_ALPINE_CALL_LOG=$work/service-calls.log
+export LKIT_ALPINE_CALL_LOG="$work/service-calls.log"
 export PATH="$work/shims:$PATH"
 mkdir -p "$work/shims"
 
