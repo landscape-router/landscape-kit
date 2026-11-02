@@ -216,6 +216,40 @@ EOF
     original["$repo"]="$(cat "$repo")"
   done
 
+  # Fedora 45 is a native DNF5-layout contract, not a promise that public
+  # mirrors have synchronized a newly released Fedora tree.
+  # shellcheck source=/dev/null
+  source /etc/os-release
+  if [[ ${VERSION_ID:?missing Fedora VERSION_ID} == 45 ]]; then
+    "$lkit" set-mirror official --yes
+    sources_assert "download.fedoraproject.org/pub/fedora" "${repos[@]}"
+    sources_assert_not "download.example" "${repos[@]}"
+    [ -d "$backup_dir" ] || fail "native repository conversion was not backed up"
+    "$lkit" set-mirror --restore --yes
+    for repo in "${!original[@]}"; do
+      [ "$(cat "$repo")" = "${original[$repo]}" ] || fail "native restore changed $repo"
+    done
+    [ ! -d "$backup_dir" ] || fail "native restore left its backup directory"
+
+    if "$lkit" --lang en set-mirror tuna --yes >/tmp/fedora-mirror-result.log 2>&1; then
+      cat /tmp/fedora-mirror-result.log
+      sources_assert "mirrors.tuna.tsinghua.edu.cn/fedora" "${repos[@]}"
+      sources_assert_not "download.example" "${repos[@]}"
+      [ -d "$backup_dir" ] || fail "successful mirror conversion was not backed up"
+      "$lkit" set-mirror --restore --yes
+    else
+      cat /tmp/fedora-mirror-result.log
+      grep -qF 'does not provide the Fedora package repository; nothing was changed' \
+        /tmp/fedora-mirror-result.log || fail "unexpected Fedora 45 mirror failure"
+    fi
+    for repo in "${!original[@]}"; do
+      [ "$(cat "$repo")" = "${original[$repo]}" ] || fail "mirror action did not preserve/restore $repo"
+    done
+    [ ! -d "$backup_dir" ] || fail "rejected or restored mirror left a backup directory"
+    ok "Fedora 45 native repositories, restore and mirror-availability contract"
+    exit 0
+  fi
+
   "$lkit" set-mirror tuna --yes
   ok "switch to tuna"
   # 镜像源保留原始协议（http/https），断言不依赖 scheme。

@@ -13,7 +13,8 @@
 | --- | --- | --- |
 | `debian:bookworm` | apt（deb822，新版镜像无 `sources.list`） | one-line 与 deb822 两种布局、Debian security 默认保留官方、`--replace-security`、CD 源默认注释+合成与 `--keep-cdrom` 转换两种兜底 |
 | `ubuntu:24.04` | apt（deb822） | Ubuntu security 并入主仓库路径、x86_64 与 aarch64（CI）两种架构下 CD 源兜底（`/ubuntu` vs `/ubuntu-ports`、`archive.ubuntu.com` vs `ports.ubuntu.com`） |
-| `fedora:44`、`fedora:45` | dnf / DNF5 | 管理员与 vendor 两种目录布局、原生占位地址解析、`#baseurl=` 解注释与重写、metalink 注释、fedora/epel 映射 |
+| `fedora:44` | dnf | 完整镜像互转、原生占位地址解析、`#baseurl=` 解注释、metalink 注释、fedora/epel 映射 |
+| `fedora:45` | DNF5 | vendor 与管理员目录、原生官方源转换及恢复、镜像可用性／拒绝零修改契约 |
 | `archlinux:latest` | pacman | mirrorlist 整体重新生成（单 Server） |
 
 ## 流程
@@ -27,7 +28,7 @@
    `scripts/docker/mirrors/run-distro.sh <distro>`；
 3. 汇总各发行版结果，任一失败整体返回非零。
 
-容器内验证序列（各家族相同）：
+常规验证序列（Fedora 44 与其他家族）：
 
 ```text
 官方源 → set-mirror tuna → 断言镜像 URL 生效
@@ -35,6 +36,11 @@
       → set-mirror aliyun → 断言镜像互转
       → set-mirror official → 断言恢复官方主机
 ```
+
+Fedora 45 先验证原生 vendor 配置转换到规范官方 URL、备份和逐文件还原。随后尝试
+TUNA：成功时验证镜像 URL、备份和恢复；若明确提示仓库未同步，则断言该拒绝原因、
+原文件逐字节不变且没有备份副作用。其他失败仍使测试失败。不关闭可用性探测，
+不把新版公共镜像尚未发布当作产品应强制改写的理由。
 
 Debian 与 Ubuntu 额外执行"仅 CD 源"场景（Ubuntu 同时覆盖"空源文件"与 `--check` 由
 Debian 覆盖）：清空受管文件，只留一行 `deb cdrom:[...]`，`set-mirror tuna` 默认应
