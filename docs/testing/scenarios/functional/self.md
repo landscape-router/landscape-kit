@@ -99,10 +99,11 @@
 **`self upgrade` 默认正式版，显式 opt-in 自动选择 RC 等预发布版本**
 
 - 测试层：Rust 单元（临时回环 HTTP）+ Fixture E2E
-- 状态：`部分覆盖`
+- 状态：`已覆盖`
 - 证据：[`self_upgrade_tests.rs`](../../../../lkit-cli/src/commands/self_upgrade_tests.rs)、
   [`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、
-  [`lkit self upgrade`](../../../commands/self.md#upgrade)
+  [`lkit self upgrade`](../../../commands/self.md#upgrade)、
+  [Fixture E2E 成功记录](https://github.com/landscape-router/landscape-kit/actions/runs/41378532454)
 - 说明：默认只请求 `releases/latest`，拒绝预发布标记和误标为正式版的 RC tag；
   `--include-prerelease` 仅适用于 `self upgrade` 及其 `self update` 别名。
   允许预发布时读取分页列表，排除 draft/非法 tag，按版本优先级选择而非按创建时间；
@@ -111,4 +112,3 @@
   选项；draft 和不匹配的 API tag 被拒绝。单元测试不启动子进程，只用临时回环端口。
   Fixture E2E 定义稳定/RC 自动发现后的完整校验、自检和替换链路，以及无 stable 时
   默认失败、原二进制和下载请求保持不变。
-- 缺口：完整替换链路的 Fixture E2E 场景待 CI 验证；真实 GitHub 发布列表不作为单元测试依赖。
