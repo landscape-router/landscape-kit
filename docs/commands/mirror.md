@@ -75,7 +75,7 @@ lkit set-mirror --restore [--yes]
 | --- | --- | --- |
 | Debian | apt | `/etc/apt/sources.list`、`/etc/apt/sources.list.d/*`（含 deb822 `.sources`；兜底时可能新建 `sources.list.d/lkit-mirror.list`） |
 | Ubuntu | apt | 同上 |
-| Fedora、Rocky、AlmaLinux | dnf | `/etc/yum.repos.d/*.repo` |
+| Fedora、Rocky、AlmaLinux | dnf | `/etc/yum.repos.d/*.repo` 与 `/usr/share/dnf5/repos.d/*.repo` |
 | Arch | pacman | `/etc/pacman.d/mirrorlist` |
 | Alpine | apk | `/etc/apk/repositories` |
 
@@ -146,6 +146,11 @@ dnf/yum 按仓库块（`[section]`）解析：
 - 只转换包含 `baseurl=`（含被注释的 `# baseurl=`）的块：解注释并重写官方主机，
   同时把 `mirrorlist=`/`metalink=` 行注释掉（前缀 `#lkit-mirror: `）；
 - Fedora：`download.fedoraproject.org/pub/fedora` 与 `.../pub/epel` 映射到镜像；
+  原生模板中的 `download.example/pub/fedora` 在禁用 metalink 前解析为所选镜像，
+  选择 `official` 时解析为规范官方主机，不留下无法使用的占位地址；
+- DNF5 的 vendor 仓库目录与管理员目录同时发现、改写和按原路径备份恢复。即使
+  `/etc/yum.repos.d/` 不存在也能处理 vendor 仓库；只读目录写入失败会报错，不重挂载
+  或强制覆盖权限。vendor 文件受发行版包管理，升级后应复查镜像配置；
 - Rocky：`dl.rockylinux.org/$contentdir`；AlmaLinux：`repo.almalinux.org/almalinux`；
 - 没有 `baseurl=` 的仓库块原样保留并计入跳过统计，避免把仓库改成空配置；
 - 自定义主机 URL 不受影响；已识别的十一个公共镜像（USTC、腾讯云、华为云、阿里云、

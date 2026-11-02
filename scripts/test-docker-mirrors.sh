@@ -28,6 +28,8 @@ fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 volume=lkit-mirror-bin
+# Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2317
 cleanup() {
   docker volume rm "$volume" >/dev/null 2>&1 || true
 }
@@ -41,7 +43,8 @@ docker run --rm --volume "$volume:/out" lkit-mirror-builder test -x /out/lkit
 
 overall=0
 # Arch Linux 官方镜像只有 amd64 manifest;aarch64 job 跳过 archlinux。
-distro_list=$'debian debian:bookworm\nubuntu ubuntu:24.04\nfedora fedora:latest'
+# Keep both legacy and DNF5 vendor-repository layouts in the real-image matrix.
+distro_list=$'debian debian:bookworm\nubuntu ubuntu:24.04\nfedora fedora:44\nfedora fedora:45'
 if [[ $(uname -m) == x86_64 ]]; then
   distro_list+=$'\narchlinux archlinux:latest'
 fi

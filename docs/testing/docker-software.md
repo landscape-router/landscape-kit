@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | `debian:bookworm` | apt | official | `docker.list` 官方 URL、debian 代号、`docker.gpg` keyring 有效性 |
 | `ubuntu:24.04` | apt | official | `docker.list` 官方 URL、ubuntu 代号、`docker.gpg` keyring 有效性、x86_64/aarch64（CI）两种架构的 `arch=` 映射 |
-| `fedora:latest` | dnf | aliyun | `docker-ce.repo` 按 `VERSION_ID` 主版本生成 baseurl、`gpgkey` 指向镜像 |
+| `fedora:44` | dnf | aliyun | `docker-ce.repo` 按 `VERSION_ID` 主版本生成 baseurl、`gpgkey` 指向镜像 |
 | `archlinux:latest` | pacman | ustc | 官方仓库真实安装（来源参数被接受，pacman 不写第三方仓库） |
 
 ## 流程
@@ -58,8 +58,9 @@ Debian/Ubuntu 镜像自带的 `policy-rc.d` 会阻止 docker-ce postinst 真实�
   版本号（`VERSION_ID` 取 `.` 前段）动态生成期望值；
 - apt 架构按容器 `uname -m` 映射（x86_64 → `amd64`，aarch64 → `arm64`），与 lkit
   的 `std::env::consts::ARCH` 映射一致，CI 的 aarch64 runner 自动覆盖 arm64 分支；
-- Fedora 的 docker-ce 仓库随官方发布节奏更新，`fedora:latest` 若在 Docker 官方
-  尚未支持的版本上安装失败，把矩阵固定到 Docker 官方已支持的 Fedora 版本；
+- Fedora 安装矩阵固定为 Docker CE 仓库已发布的 Fedora 44；主版本号与架构仍从容器
+  实际信息读取。未发布新主版本仓库时不回退安装旧版发行包；Fedora 45 的原生软件源
+  适配由换源 E2E 覆盖，不宣称 Docker CE 安装已支持它；
 - pacman（Arch）不写第三方仓库，来源参数仅验证被接受。
 
 ## 本地运行

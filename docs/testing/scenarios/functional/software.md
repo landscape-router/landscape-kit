@@ -97,7 +97,7 @@
   [`run-distro.sh`](../../../../scripts/docker/software/run-distro.sh)、
   [测试说明](../../../testing/docker-software.md)
 - 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
-  `debian:bookworm`/`ubuntu:24.04`/`fedora:latest`/`archlinux:latest` 容器（root，无需
+  `debian:bookworm`/`ubuntu:24.04`/`fedora:44`/`archlinux:latest` 容器（root，无需
   test-support）执行 `lkit software install docker --yes`，每个发行版覆盖一个来源
   （debian=official、ubuntu=official、fedora=aliyun、arch=ustc；CI runner 在海外，
   ubuntu 使用官方源，国内镜像的 URL 映射由单元测试覆盖）：
@@ -111,4 +111,5 @@
 - 缺口：TUNA 的 docker-ce 仓库存在地域/UA 过滤（非 CN 流量 403）、USTC 只同步
   apt 家族（fedora 404），未纳入真实安装矩阵（URL 映射由单元测试覆盖）；
   Rocky、AlmaLinux 尚未纳入容器矩阵；真实 dockerd 启动由宿主
-  验收负责。
+  验收负责；Fedora 主版本固定为上游 Docker CE 已发布的 44，不对未发布的 45 仓库
+  回退使用旧版本软件包。

@@ -133,7 +133,7 @@ apt/dnf/pacman/apk 源文件，换源前自动备份原文件，可一键恢复�
   [`run-distro.sh`](../../../../scripts/docker/mirrors/run-distro.sh)、
   [测试说明](../../../testing/docker-mirrors.md)
 - 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
-  `debian:bookworm`/`ubuntu:24.04`/`fedora:latest`/`archlinux:latest` 容器（root，无需
+  `debian:bookworm`/`ubuntu:24.04`/`fedora:44`/`fedora:45`/`archlinux:latest` 容器（root，无需
   test-support），依次验证 tuna 切换、`--restore` 恢复（内容逐字节还原、备份删除）、
   aliyun 互转、official 恢复。Debian 覆盖 one-line 与 deb822 两种镜像布局，并验证
   "仅 CD 源"兜底两种路径：默认注释 CD 行并合成镜像条目、`--keep-cdrom` 时 cdrom
@@ -142,8 +142,9 @@ apt/dnf/pacman/apk 源文件，换源前自动备份原文件，可一键恢复�
   Ubuntu 覆盖 deb822 布局、security 并入主仓库路径，且断言按容器架构选择
   `archive.ubuntu.com`/`/ubuntu` 或（CI 的 aarch64 runner 上）
   `ports.ubuntu.com`/`/ubuntu-ports`（含 CD 源兜底两种路径）；
-  Fedora 覆盖 `#baseurl=` 解注释、metalink 注释与 fedora/epel 映射（占位主机先 sed
-  为规范官方主机）；Arch 验证 mirrorlist 整体重新生成（恰好一个 Server）。
+  Fedora 覆盖管理员与 DNF5 vendor 两种目录、原生 `download.example` 占位主机解析、
+  `#baseurl=` 解注释、metalink 注释与 fedora/epel 映射；不预处理原生仓库文件，
+  备份恢复保留原始内容。Arch 验证 mirrorlist 整体重新生成（恰好一个 Server）。
 - 缺口：Rocky、AlmaLinux 尚未纳入容器矩阵（机制相同，
   可在 compose 列表扩充）。
 

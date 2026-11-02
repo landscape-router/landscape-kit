@@ -24,7 +24,9 @@ fn dnf_paths(family: Family) -> &'static [(&'static str, &'static str)] {
 /// - `Official` 走 [`official_pairs`]，把所有已识别镜像映射回官方主机。
 fn replacement_pairs(family: Family, mirror: MirrorName) -> Vec<(String, String)> {
     let Some(target) = mirror_host(mirror) else {
-        return official_pairs(family);
+        let mut pairs = official_pairs(family);
+        add_fedora_placeholder(&mut pairs, family, mirror);
+        return pairs;
     };
     let paths = dnf_paths(family);
     let mut pairs: Vec<(String, String)> = paths
@@ -41,7 +43,19 @@ fn replacement_pairs(family: Family, mirror: MirrorName) -> Vec<(String, String)
                 .map(|(_, path)| (format!("{other}/{path}"), format!("{target}/{path}"))),
         );
     }
+    add_fedora_placeholder(&mut pairs, family, mirror);
     pairs
+}
+
+// Fedora's native templates contain this placeholder alongside a working
+// metalink. Resolve it before disabling the metalink, including for Official.
+fn add_fedora_placeholder(pairs: &mut Vec<(String, String)>, family: Family, mirror: MirrorName) {
+    if family == Family::Fedora {
+        let target = mirror_host(mirror)
+            .map(|host| format!("{host}/fedora"))
+            .unwrap_or_else(|| "download.fedoraproject.org/pub/fedora".into());
+        pairs.push(("download.example/pub/fedora".into(), target));
+    }
 }
 
 fn official_pairs(family: Family) -> Vec<(String, String)> {
@@ -191,6 +205,32 @@ fn replace_host(url: &str, pairs: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fedora_native_placeholder_resolves_before_disabling_metalink() {
+        let original = "[fedora]\n#baseurl=http://download.example/pub/fedora/linux/releases/$releasever/Everything/$basearch/os/\nmetalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch\nenabled=1\n";
+        for (mirror, host) in [
+            (MirrorName::Tuna, "mirrors.tuna.tsinghua.edu.cn/fedora"),
+            (
+                MirrorName::Official,
+                "download.fedoraproject.org/pub/fedora",
+            ),
+        ] {
+            let result = rewrite(original, Family::Fedora, mirror).unwrap();
+            assert!(result.content.contains(&format!(
+                "baseurl=http://{host}/linux/releases/$releasever/Everything/$basearch/os/"
+            )));
+            assert!(result.content.contains("#lkit-mirror: metalink="));
+            assert!(!result.content.contains("download.example"));
+            assert!(already_target(&result.content, Family::Fedora, mirror));
+        }
+        // A Fedora-specific placeholder mapping must not apply to other families.
+        assert!(
+            !replacement_pairs(Family::Rocky, MirrorName::Tuna)
+                .iter()
+                .any(|(from, _)| from.contains("download.example"))
+        );
+    }
 
     #[test]
     fn parses_blocks_and_flags_baseurl() {

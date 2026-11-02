@@ -41,26 +41,34 @@ impl SourcesBackend for DnfBackend {
     }
 }
 
-/// 受管 dnf/yum 仓库文件：`/etc/yum.repos.d/*.repo`。
+/// Native repositories include both administrator and DNF5 vendor directories.
+/// The injected filesystem root keeps vendor discovery inside unit-test territory.
 pub(crate) fn managed_files() -> Result<Vec<PathBuf>, MirrorError> {
-    let entries = fs::read_dir(&paths().dnf_repos_dir).map_err(|_| {
-        MirrorError::Message(crate::tr!(crate::keys::mirror::MIRROR_NO_SOURCE_FILES))
-    })?;
-    let mut files: Vec<_> = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            // `fs::metadata` 跟随符号链接：dnf 会读取 symlink 指向的 repo 文件。
-            fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_file())
+    let vendor = paths().restore_root.join("usr/share/dnf5/repos.d");
+    let mut files = Vec::new();
+    for dir in [&paths().dnf_repos_dir, &vendor] {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            // Follow repo symlinks as DNF does; ignore non-files and other extensions.
+            if fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_file())
                 && entry.file_name().to_string_lossy().ends_with(".repo")
-        })
-        .map(|entry| entry.path())
-        .collect();
+            {
+                files.push(entry.path());
+            }
+        }
+    }
     if files.is_empty() {
         return Err(MirrorError::Message(crate::tr!(
             crate::keys::mirror::MIRROR_NO_SOURCE_FILES
         )));
     }
     files.sort();
+    files.dedup();
     Ok(files)
 }
 
@@ -199,6 +207,77 @@ mod apply_tests {
         fs::create_dir_all(repo.parent().unwrap()).unwrap();
         fs::write(&repo, content).unwrap();
         repo
+    }
+
+    #[test]
+    fn fedora_vendor_and_admin_repositories_round_trip_together() {
+        let temp = temp_root("dnf5-vendor");
+        let admin = temp.join("etc/yum.repos.d");
+        let vendor = temp.join("usr/share/dnf5/repos.d");
+        fs::create_dir_all(&admin).unwrap();
+        fs::create_dir_all(&vendor).unwrap();
+        let native = "[fedora]\n#baseurl=http://download.example/pub/fedora/linux/releases/$releasever/Everything/$basearch/os/\nmetalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch\n";
+        let third_party = "[custom]\nbaseurl=https://packages.example.net/repo\n";
+        let vendor_file = vendor.join("fedora.repo");
+        let admin_file = admin.join("custom.repo");
+        fs::write(&vendor_file, native).unwrap();
+        fs::write(&admin_file, third_party).unwrap();
+        fs::write(vendor.join("ignored.txt"), "not a repository").unwrap();
+        let _guard = paths_guard(&temp, &admin);
+        assert_eq!(
+            managed_files().unwrap(),
+            vec![admin_file.clone(), vendor_file.clone()]
+        );
+        let report = apply(&Family::Fedora, MirrorName::Tuna).unwrap();
+        assert_eq!(report.changed_files, 1);
+        assert!(
+            fs::read_to_string(&vendor_file)
+                .unwrap()
+                .contains("mirrors.tuna.tsinghua.edu.cn/fedora")
+        );
+        assert_eq!(fs::read_to_string(&admin_file).unwrap(), third_party);
+        let backup = report.backup_path.unwrap();
+        assert_eq!(
+            fs::read_to_string(backup.join("usr/share/dnf5/repos.d/fedora.repo")).unwrap(),
+            native
+        );
+        assert_eq!(
+            fs::read_to_string(backup.join("etc/yum.repos.d/custom.repo")).unwrap(),
+            third_party
+        );
+        assert_eq!(
+            apply(&Family::Fedora, MirrorName::Tuna)
+                .unwrap()
+                .changed_files,
+            0
+        );
+        restore(&Family::Fedora).unwrap();
+        assert_eq!(fs::read_to_string(&vendor_file).unwrap(), native);
+        assert_eq!(fs::read_to_string(&admin_file).unwrap(), third_party);
+        assert!(!backup.exists());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn vendor_only_installation_does_not_require_the_legacy_directory() {
+        let temp = temp_root("dnf5-vendor-only");
+        let admin = temp.join("etc/yum.repos.d");
+        let vendor = temp.join("usr/share/dnf5/repos.d");
+        fs::create_dir_all(&vendor).unwrap();
+        let file = vendor.join("fedora.repo");
+        fs::write(
+            &file,
+            "[fedora]\nbaseurl=https://download.fedoraproject.org/pub/fedora/linux/\n",
+        )
+        .unwrap();
+        let _guard = paths_guard(&temp, &admin);
+        assert_eq!(managed_files().unwrap(), vec![file]);
+        assert!(
+            show()
+                .unwrap()
+                .contains("usr/share/dnf5/repos.d/fedora.repo")
+        );
+        fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]

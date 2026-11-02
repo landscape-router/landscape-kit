@@ -30,6 +30,8 @@ fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 volume=lkit-software-bin
+# Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2317
 cleanup() {
   docker volume rm "$volume" >/dev/null 2>&1 || true
 }
@@ -43,7 +45,9 @@ docker run --rm --volume "$volume:/out" lkit-software-builder test -x /out/lkit
 
 overall=0
 # Arch Linux 官方镜像只有 amd64 manifest;aarch64 job 跳过 archlinux。
-distro_list=$'debian debian:bookworm\nubuntu ubuntu:24.04\nfedora fedora:latest'
+# Docker CE must publish packages for the tested release; do not silently use
+# another release's packages when a newer Fedora major is not supported yet.
+distro_list=$'debian debian:bookworm\nubuntu ubuntu:24.04\nfedora fedora:44'
 if [[ $(uname -m) == x86_64 ]]; then
   distro_list+=$'\narchlinux archlinux:latest'
 fi

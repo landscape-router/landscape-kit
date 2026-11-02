@@ -195,11 +195,9 @@ EOF
   ;;
 
 fedora)
-  # fedora:latest 的 .repo 使用 download.example 占位主机，先换成规范官方主机，
-  # 让测试验证"官方源 → 镜像"的真实映射；另补一个 epel fixture 覆盖 epel 路径。
-  for repo in /etc/yum.repos.d/*.repo; do
-    sed -i 's#download.example/pub/#download.fedoraproject.org/pub/#' "$repo"
-  done
+  # Test native templates unchanged, including download.example placeholders.
+  # Fedora 45 stores defaults in DNF5's vendor directory; EPEL is an admin repo.
+  mkdir -p /etc/yum.repos.d
   cat >/etc/yum.repos.d/epel.repo <<'EOF'
 [epel]
 name=Extra Packages for Enterprise Linux $releasever - $basearch
@@ -209,7 +207,9 @@ gpgcheck=1
 enabled=1
 EOF
 
-  repos=(/etc/yum.repos.d/*.repo)
+  shopt -s nullglob
+  repos=(/etc/yum.repos.d/*.repo /usr/share/dnf5/repos.d/*.repo)
+  [ "${#repos[@]}" -gt 1 ] || fail "native Fedora repositories are missing"
   backup_dir=/var/lib/lkit/mirror-backup/fedora
   declare -A original
   for repo in "${repos[@]}"; do
@@ -221,6 +221,7 @@ EOF
   # 镜像源保留原始协议（http/https），断言不依赖 scheme。
   sources_assert "mirrors.tuna.tsinghua.edu.cn/fedora" "${repos[@]}"
   sources_assert "mirrors.tuna.tsinghua.edu.cn/epel" "${repos[@]}"
+  sources_assert_not "download.example" "${repos[@]}"
   sources_assert "#lkit-mirror: metalink=" "${repos[@]}"
   [ -d "$backup_dir" ] || fail "backup directory missing after switch"
 
@@ -240,13 +241,14 @@ EOF
   ok "restore official hosts"
   sources_assert "download.fedoraproject.org/pub/fedora" "${repos[@]}"
   sources_assert "download.fedoraproject.org/pub/epel" "${repos[@]}"
+  sources_assert_not "download.example" "${repos[@]}"
   sources_assert_not "mirrors.tuna.tsinghua.edu.cn/fedora" "${repos[@]}"
   ;;
 
 archlinux)
   mirrorlist=/etc/pacman.d/mirrorlist
   backup_dir=/var/lib/lkit/mirror-backup/arch
-  original=$(cat "$mirrorlist")
+  original_mirrorlist=$(cat "$mirrorlist")
 
   "$lkit" set-mirror tuna --yes
   ok "switch to tuna"
@@ -256,7 +258,7 @@ archlinux)
 
   "$lkit" set-mirror --restore --yes
   ok "restore from backup"
-  [ "$(cat "$mirrorlist")" = "$original" ] || fail "restore did not return the original mirrorlist"
+  [ "$(cat "$mirrorlist")" = "$original_mirrorlist" ] || fail "restore did not return the original mirrorlist"
   [ ! -d "$backup_dir" ] || fail "backup directory must be removed after restore"
 
   "$lkit" set-mirror aliyun --yes
