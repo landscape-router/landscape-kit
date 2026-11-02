@@ -76,10 +76,11 @@ Alpine 的 sysfs 服务可能自行挂载 bpffs；测试专用 boot 服务在 VM
 **真实 Docker OpenRC 服务启停、重启自启动及 CLI 插件**
 
 - 测试层：QEMU/KVM + 真实 Alpine/OpenRC/Docker
-- 状态：`待 CI 验证`
+- 状态：`已覆盖`
 - 证据：[guest-tests.sh](../../../../scripts/qemu/alpine/guest-tests.sh)、
   [rootfs Docker 软件包](../../../../scripts/qemu/alpine/Dockerfile)、
-  [Alpine CI](../../../../.github/workflows/test-qemu-alpine.yml)。
+  [Alpine CI](../../../../.github/workflows/test-qemu-alpine.yml)、
+  [成功运行记录](https://github.com/landscape-router/landscape-kit/actions/runs/41371564446)。
 - 说明：构建 rootfs 时安装 v3.22 main/community 签名软件包；VM 真实执行
   `rc-update add docker default`、`rc-service docker start/stop`、`docker info`，
   验证 default runlevel 链接、重启后服务运行及 Buildx/Compose 版本命令。

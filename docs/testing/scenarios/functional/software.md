@@ -71,12 +71,13 @@
 **Alpine 基础包与 Docker 安装计划使用 apk 和 OpenRC**
 
 - 测试层：Rust 单元 + Rust 控制台测试 + Alpine Docker/QEMU CI
-- 状态：`部分覆盖`
+- 状态：`已覆盖`
 - 证据：[`software::base` 映射测试](../../../../lkit-cli/src/software/base.rs)、
   [`Docker apk 命令替身测试`](../../../../lkit-cli/src/software/docker/apk_tests.rs)、
   [`Alpine 控制台测试`](../../../../lkit-cli/src/console/tests/software.rs)、
   [软件安装规范](../../../commands/software.md)、
-  [真实 Alpine 测试入口](../../../testing/alpine.md)
+  [真实 Alpine 测试入口](../../../testing/alpine.md)、
+  [成功运行记录](https://github.com/landscape-router/landscape-kit/actions/runs/41371564446)
 - 说明：基础包使用 `apk add --no-cache`，PPP 包集合为 `ppp ppp-pppoe`，`procps` 映射为
   `procps-ng`；PPPoE 插件缺失、BusyBox ip/sysctl 及缺 tc 不视为完整安装。
   Docker 安装 `docker docker-openrc docker-cli-buildx docker-cli-compose`，依次启用、启动、
@@ -84,8 +85,7 @@
   包管理器或服务。Alpine 仅接受 `--source official`（当前 apk 仓库）；控制台不提供
   CE 镜像切换。CI 容器覆盖真实包下载、缺 community 失败、pppd-only 修复、状态刷新及
   OpenRC 调用契约；真实服务启动与重启由 [ALP-06](alpine.md#alp-06) 验证。
-- 缺口：真实系统场景待 CI 首次验证；非 x86_64、其他 Alpine 版本、实际 PPPoE/无线链路
-  未纳入矩阵。
+- 缺口：非 x86_64、其他 Alpine 版本、实际 PPPoE/无线链路未纳入矩阵。
 
 ## SFT-06
 

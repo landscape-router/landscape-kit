@@ -168,19 +168,19 @@ apt/dnf/pacman/apk 源文件，换源前自动备份原文件，可一键恢复�
 **Alpine apk 仓库重写、备份恢复与索引刷新**
 
 - 测试层：Rust 单元 + Rust 控制台测试 + Alpine Docker CI
-- 状态：`部分覆盖`
+- 状态：`已覆盖`
 - 证据：[`apk 后端测试`](../../../../lkit-cli/src/mirror/apk.rs)、
   [`探测 URL 测试`](../../../../lkit-cli/src/mirror/availability.rs)、
   [`索引刷新命令测试`](../../../../lkit-cli/src/mirror/refresh.rs)、
   [`Alpine 面板测试`](../../../../lkit-cli/src/console/tests/mirror.rs)、
-  [换源规范](../../../commands/mirror.md)、[真实 Alpine 测试入口](../../../testing/alpine.md)
+  [换源规范](../../../commands/mirror.md)、[真实 Alpine 测试入口](../../../testing/alpine.md)、
+  [成功运行记录](https://github.com/landscape-router/landscape-kit/actions/runs/41371564446)
 - 说明：十二个镜像双向改写保留版本/edge、仓库组件、标签、注释和缩进；自定义主机、
   本地路径和伪装域名不改写。临时目录验证备份、恢复、文件权限、重复执行保留备份、
   缺文件/仅自定义源及原子写入失败回滚。探测使用稳定版本或 edge 的 APKINDEX，刷新
   计划为 `apk update`；单元测试不启动真实包管理器。控制台正确显示 Alpine/apk 主机。
   CI 容器验证官方/阿里云切换、真实 apk 索引下载、文件权限、备份、no-op、逐字节恢复。
-- 缺口：真实容器场景待 CI 首次验证；其他国内站点、非 x86_64 和其他 Alpine 版本未纳入
-  真实下载矩阵。
+- 缺口：其他国内站点、非 x86_64 和其他 Alpine 版本未纳入真实下载矩阵。
 
 ## MIR-11
 
