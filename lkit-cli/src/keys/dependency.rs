@@ -3,6 +3,7 @@ pub(crate) const DEPENDENCY_IP_COMMAND_EXISTS_EXECUTABLE: &str =
     "dependency.ip_command_exists_executable";
 pub(crate) const DEPENDENCY_NOT_FOUND: &str = "dependency.not_found";
 pub(crate) const DEPENDENCY_IP_COMMAND_NOT_FOUND: &str = "dependency.ip_command_not_found";
+pub(crate) const DEPENDENCY_IPROUTE2_INCOMPLETE: &str = "dependency.iproute2_incomplete";
 pub(crate) const DEPENDENCY_TC_COMMAND_AND_BPF: &str = "dependency.tc_command_and_bpf";
 pub(crate) const DEPENDENCY_TC_EXISTS_SUPPORTS_BPF: &str = "dependency.tc_exists_supports_bpf";
 pub(crate) const DEPENDENCY_TC_FILTER_HELP_FAILED: &str = "dependency.tc_filter_help_failed";
@@ -13,6 +14,7 @@ pub(crate) const DEPENDENCY_UNABLE_RUN_TC_FILTER_HELP: &str =
 pub(crate) const DEPENDENCY_PPPD_COMMAND: &str = "dependency.pppd_command";
 pub(crate) const DEPENDENCY_PPPD_COMMAND_EXISTS: &str = "dependency.pppd_command_exists";
 pub(crate) const DEPENDENCY_PPPD_NOT_FOUND: &str = "dependency.pppd_not_found";
+pub(crate) const DEPENDENCY_PPPOE_PLUGIN_NOT_FOUND: &str = "dependency.pppoe_plugin_not_found";
 pub(crate) const DEPENDENCY_CONTAINER_RUNTIME: &str = "dependency.container_runtime";
 pub(crate) const DEPENDENCY_DOCKER_OR_PODMAN_AVAILABLE: &str =
     "dependency.docker_or_podman_available";

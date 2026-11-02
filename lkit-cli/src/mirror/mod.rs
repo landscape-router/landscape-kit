@@ -1,3 +1,4 @@
+pub(crate) mod apk;
 pub(crate) mod apt;
 pub(crate) mod availability;
 pub(crate) mod backend;
@@ -22,6 +23,7 @@ pub(crate) const APT_SOURCES_LIST: &str = "/etc/apt/sources.list";
 pub(crate) const APT_SOURCES_LIST_D: &str = "/etc/apt/sources.list.d";
 pub(crate) const DNF_REPOS_DIR: &str = "/etc/yum.repos.d";
 pub(crate) const PACMAN_MIRRORLIST: &str = "/etc/pacman.d/mirrorlist";
+pub(crate) const APK_REPOSITORIES: &str = "/etc/apk/repositories";
 
 /// mirror 模块读写的主机路径与权限策略。生产环境恒为 [`MirrorPaths::production`]；
 /// `test-support` 构建下测试可以覆盖为临时目录，隔离真实系统文件。
@@ -33,6 +35,7 @@ pub(crate) struct MirrorPaths {
     pub(crate) apt_sources_list_d: PathBuf,
     pub(crate) dnf_repos_dir: PathBuf,
     pub(crate) pacman_mirrorlist: PathBuf,
+    pub(crate) apk_repositories: PathBuf,
     /// 恢复时把备份中的相对路径写回的根目录（生产为 `/`）。
     pub(crate) restore_root: PathBuf,
     /// 测试注入：允许非 root 执行换源/恢复（生产恒为 false）。
@@ -52,6 +55,7 @@ impl MirrorPaths {
             apt_sources_list_d: PathBuf::from(APT_SOURCES_LIST_D),
             dnf_repos_dir: PathBuf::from(DNF_REPOS_DIR),
             pacman_mirrorlist: PathBuf::from(PACMAN_MIRRORLIST),
+            apk_repositories: PathBuf::from(APK_REPOSITORIES),
             restore_root: PathBuf::from("/"),
             allow_non_root: false,
             skip_refresh: false,
@@ -233,6 +237,7 @@ pub(crate) enum Family {
     Rocky,
     Alma,
     Arch,
+    Alpine,
 }
 
 impl Family {
@@ -244,6 +249,7 @@ impl Family {
             Self::Rocky => crate::tr!(crate::keys::mirror::FAMILY_ROCKY),
             Self::Alma => crate::tr!(crate::keys::mirror::FAMILY_ALMA),
             Self::Arch => crate::tr!(crate::keys::mirror::FAMILY_ARCH),
+            Self::Alpine => crate::tr!(crate::keys::mirror::FAMILY_ALPINE),
         }
     }
 
@@ -255,6 +261,7 @@ impl Family {
             Self::Rocky => "rocky",
             Self::Alma => "alma",
             Self::Arch => "arch",
+            Self::Alpine => "alpine",
         }
     }
 
@@ -263,6 +270,7 @@ impl Family {
             Self::Debian | Self::Ubuntu => "apt",
             Self::Fedora | Self::Rocky | Self::Alma => "dnf",
             Self::Arch => "pacman",
+            Self::Alpine => "apk",
         }
     }
 }

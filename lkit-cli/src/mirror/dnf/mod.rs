@@ -180,6 +180,7 @@ mod apply_tests {
             apt_sources_list_d: temp.join("etc/apt/sources.list.d"),
             dnf_repos_dir: repos_dir.to_path_buf(),
             pacman_mirrorlist: temp.join("etc/pacman.d/mirrorlist"),
+            apk_repositories: temp.join("etc/apk/repositories"),
             restore_root: temp.to_path_buf(),
             allow_non_root: true,
             skip_refresh: true,

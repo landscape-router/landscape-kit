@@ -42,6 +42,22 @@ fn debian_ready_app() -> ConsoleApp {
 }
 
 #[test]
+fn alpine_mirror_panel_renders_apk_host_without_detection_error() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = mirror_ready_app();
+    app.mirror.host = Some(Ok(Host {
+        family: Family::Alpine,
+        codename: None,
+    }));
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Alpine Linux"));
+    assert!(content.contains("apk"));
+    assert!(!content.contains("could not be detected"));
+}
+
+#[test]
 fn mirror_menu_is_navigable_when_not_installed() {
     let mut app = ConsoleApp::new();
     app.snapshot = Snapshot::NotInstalled;
@@ -405,6 +421,7 @@ fn mirror_confirmation_dialog_executes_apply() {
     let _paths = crate::mirror::test_support::TestPathsGuard::set(crate::mirror::MirrorPaths {
         os_release: temp.join("etc/os-release"),
         backup_root: temp.join("var/lib/lkit/mirror-backup"),
+        apk_repositories: temp.join("etc/apk/repositories"),
         apt_sources_list: sources.clone(),
         apt_sources_list_d: temp.join("etc/apt/sources.list.d"),
         dnf_repos_dir: temp.join("etc/yum.repos.d"),
@@ -481,6 +498,7 @@ fn mirror_apply_skips_refresh_worker_under_test_injection() {
     let _paths = crate::mirror::test_support::TestPathsGuard::set(crate::mirror::MirrorPaths {
         os_release: temp.join("etc/os-release"),
         backup_root: temp.join("var/lib/lkit/mirror-backup"),
+        apk_repositories: temp.join("etc/apk/repositories"),
         apt_sources_list: temp.join("etc/apt/sources.list"),
         apt_sources_list_d: temp.join("etc/apt/sources.list.d"),
         dnf_repos_dir: temp.join("etc/yum.repos.d"),

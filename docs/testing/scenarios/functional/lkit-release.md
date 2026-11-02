@@ -26,6 +26,8 @@
 - 状态：`已覆盖`
 - 证据：[安装器测试](../../../../scripts/test-install-lkit.sh)、[安装入口](../../../release/lkit.md#安装入口)
 
+- 说明：命令替身覆盖 GNU wget 回退、BusyBox wget 或无下载器时通过 apk 引导 curl、apk 失败与安装后 curl 缺失、无 apk 时的依赖提示；apk 调用仅写入临时目录，不修改真实系统软件包。
+
 ## LKR-04
 
 **一条管道命令安装 lkit 并进入既有 Landscape 安装流程**

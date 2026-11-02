@@ -1,7 +1,7 @@
 # 常用软件安装场景
 
 `lkit software` 安装当前主机的常用软件：检测发行版与安装状态，按家族配置 Docker 官方
-或国内镜像仓库并安装 `docker-ce`，启用并启动服务后验证 daemon。控制台 Software
+或国内镜像仓库并安装 `docker-ce`，Arch/Alpine 使用系统仓库包，启用并启动服务后验证 daemon。控制台 Software
 面板与命令共享同一安装流程。
 
 ## SFT-01
@@ -48,7 +48,7 @@
 - 状态：`已覆盖`
 - 证据：[`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
 - 说明：面板检测失败时显示错误且确认 Enter 不启动安装（无 worker 产生）；非 root
-  （`test-support` 下注入 `allow_non_root=false`）确认 Enter 报权限错误、不启动安装；
+  （注入 `MockSoftwareOps::manual(false)`，不依赖测试进程 UID）确认 Enter 报权限错误、不启动安装；
   面板渲染显示发行版摘要与软件行。CLI 非 root 安装报错阻断、
   `--non-interactive` 无参数报参数使用错误。
 
@@ -65,6 +65,27 @@
   高亮与切换提示文案）与安装进度弹窗渲染（阶段文案与 Gauge）。CLI 解析测试覆盖
   `software list`、`software install docker [--source ...]`、未知软件与非法来源拒绝、
   裸命令交互模式。
+
+## SFT-07
+
+**Alpine 基础包与 Docker 安装计划使用 apk 和 OpenRC**
+
+- 测试层：Rust 单元 + Rust 控制台测试 + Alpine Docker/QEMU CI
+- 状态：`部分覆盖`
+- 证据：[`software::base` 映射测试](../../../../lkit-cli/src/software/base.rs)、
+  [`Docker apk 命令替身测试`](../../../../lkit-cli/src/software/docker/apk_tests.rs)、
+  [`Alpine 控制台测试`](../../../../lkit-cli/src/console/tests/software.rs)、
+  [软件安装规范](../../../commands/software.md)、
+  [真实 Alpine 测试入口](../../../testing/alpine.md)
+- 说明：基础包使用 `apk add --no-cache`，PPP 包集合为 `ppp ppp-pppoe`，`procps` 映射为
+  `procps-ng`；PPPoE 插件缺失、BusyBox ip/sysctl 及缺 tc 不视为完整安装。
+  Docker 安装 `docker docker-openrc docker-cli-buildx docker-cli-compose`，依次启用、启动、
+  探测 daemon；命令替身覆盖调用顺序、每一步失败即停止、就绪重试和取消，不运行真实
+  包管理器或服务。Alpine 仅接受 `--source official`（当前 apk 仓库）；控制台不提供
+  CE 镜像切换。CI 容器覆盖真实包下载、缺 community 失败、pppd-only 修复、状态刷新及
+  OpenRC 调用契约；真实服务启动与重启由 [ALP-06](alpine.md#alp-06) 验证。
+- 缺口：真实系统场景待 CI 首次验证；非 x86_64、其他 Alpine 版本、实际 PPPoE/无线链路
+  未纳入矩阵。
 
 ## SFT-06
 

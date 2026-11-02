@@ -1,4 +1,4 @@
-use super::{ApplyReport, Family, Host, MirrorError, MirrorName, apt, dnf, pacman};
+use super::{ApplyReport, Family, Host, MirrorError, MirrorName, apk, apt, dnf, pacman};
 
 /// 各发行版软件源后端的统一接口。
 ///
@@ -29,5 +29,6 @@ pub(crate) fn backend(host: &Host) -> Box<dyn SourcesBackend> {
         Family::Debian | Family::Ubuntu => Box::new(apt::AptBackend::new(host)),
         Family::Fedora | Family::Rocky | Family::Alma => Box::new(dnf::DnfBackend::new(host)),
         Family::Arch => Box::new(pacman::PacmanBackend),
+        Family::Alpine => Box::new(apk::ApkBackend),
     }
 }

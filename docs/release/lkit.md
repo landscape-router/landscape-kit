@@ -158,8 +158,15 @@ sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 `loongarch64` 的 `lkit-<arch>` 静态产物，不依赖宿主 glibc 或 musl 动态加载器。
 这不表示所有发行版的系统服务、网络后端或可选软件都受支持；这些功能仍受各自平台限制。
 安装器自动选择下载工具：
-优先使用 `curl`，缺失时回退 `wget`，两者都不可用时明确报错。下载工具不存在时，
-`wget -qO- … | sudo sh` 拉取安装脚本的用法仍然无效。安装器强制使用 HTTPS，
+优先使用 `curl`，缺失时回退支持 `--https-only` 的 GNU `wget`。
+两者都不可用时，若系统提供 `apk`，安装器会提示并执行 `apk add --no-cache curl`，
+成功后继续下载；这会安装系统软件包，安装结束后保留 `curl` 及其依赖。
+Alpine 自带的 BusyBox `wget` 走此引导路径，不通过移除 HTTPS 限制来兼容。
+`apk` 安装失败或完成后仍找不到 `curl` 时明确报错，不替换已有 lkit；
+没有 `apk` 的系统需自行安装 `curl` 或 GNU `wget`。
+SHA-256 校验使用 GNU 和 BusyBox 均支持的 `sha256sum -c`，
+校验清单由安装器严格解析后生成，无需为校验安装 `coreutils`。
+拉取安装脚本本身仍需可用的下载工具。安装器强制使用 HTTPS，
 下载对应二进制和 `SHA256SUMS`，校验成功并执行
 `lkit --version` 自检后才原子替换目标文件。下载、校验、自检或替换失败时保留原有
 二进制。

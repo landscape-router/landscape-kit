@@ -16,6 +16,7 @@ pub(crate) const FAMILY_FEDORA: &str = "family.fedora";
 pub(crate) const FAMILY_ROCKY: &str = "family.rocky";
 pub(crate) const FAMILY_ALMA: &str = "family.alma";
 pub(crate) const FAMILY_ARCH: &str = "family.arch";
+pub(crate) const FAMILY_ALPINE: &str = "family.alpine";
 pub(crate) const MIRROR_OS_RELEASE_UNREADABLE: &str = "mirror.os_release_unreadable";
 pub(crate) const MIRROR_DISTRO_UNSUPPORTED: &str = "mirror.distro_unsupported";
 pub(crate) const MIRROR_NO_SOURCE_FILES: &str = "mirror.no_source_files";

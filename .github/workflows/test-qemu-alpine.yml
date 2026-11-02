@@ -1,4 +1,4 @@
-name: QEMU Alpine bpffs and OpenRC
+name: Alpine apk, bpffs and OpenRC
 
 on:
   push:
@@ -14,6 +14,9 @@ on:
       - scripts/test-qemu-alpine.sh
       - scripts/qemu/alpine/**
       - .github/workflows/test-qemu-alpine.yml
+      - scripts/docker/alpine/**
+      - scripts/install-lkit.sh
+      - scripts/test-install-lkit.sh
   pull_request:
     paths:
       - Cargo.toml
@@ -26,6 +29,9 @@ on:
       - scripts/test-qemu-alpine.sh
       - scripts/qemu/alpine/**
       - .github/workflows/test-qemu-alpine.yml
+      - scripts/docker/alpine/**
+      - scripts/install-lkit.sh
+      - scripts/test-install-lkit.sh
   workflow_dispatch:
 
 permissions:
@@ -37,9 +43,9 @@ concurrency:
 
 jobs:
   alpine:
-    name: Real Alpine bpffs and OpenRC
+    name: Real Alpine apk, bpffs and OpenRC
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
       - name: Require KVM
@@ -56,7 +62,8 @@ jobs:
           cargo install --locked cargo-zigbuild --version 0.23.4
       - name: Check VM scripts
         run: |
-          shellcheck scripts/test-qemu-alpine.sh scripts/qemu/alpine/guest-tests.sh
+          shellcheck scripts/test-qemu-alpine.sh scripts/qemu/alpine/guest-tests.sh scripts/docker/alpine/run-tests.sh scripts/install-lkit.sh scripts/test-install-lkit.sh
+          bash scripts/test-install-lkit.sh
           shellcheck -s sh -e SC2034 scripts/qemu/alpine/prepare.openrc
       - name: Build production musl binaries
         env:
@@ -64,6 +71,14 @@ jobs:
         run: |
           bash scripts/build-musl-static.sh x86_64-unknown-linux-musl
           rustc --edition=2024 scripts/qemu/alpine/render-services.rs -o "$RUNNER_TEMP/render-openrc-services"
+      - name: Run Alpine apk mirror and software scenarios
+        run: |
+          mkdir -p "$RUNNER_TEMP/alpine-artifacts"
+          docker run --rm --env LKIT_E2E=1 \
+            --volume "$RUNNER_TEMP/alpine-binaries/lkit-x86_64:/usr/local/bin/lkit:ro" \
+            --volume "$GITHUB_WORKSPACE/scripts/docker/alpine/run-tests.sh:/opt/run-tests.sh:ro" \
+            --entrypoint /bin/sh alpine:3.22 /opt/run-tests.sh \
+            2>&1 | tee "$RUNNER_TEMP/alpine-artifacts/apk.log"
       - name: Run real Alpine VM scenarios
         env:
           LKIT_E2E: "1"

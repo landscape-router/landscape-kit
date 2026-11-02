@@ -4,15 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use super::model::{CheckResult, Status};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PackageManager {
-    Apt,
-    Dnf,
-    Yum,
-    Pacman,
-    Zypper,
-}
+use crate::software::base::{BasePackage, PackageManager};
 
 #[derive(Clone, Copy)]
 enum DependencyPackage {
@@ -30,6 +22,13 @@ fn iproute2() -> CheckResult {
         crate::tr!(crate::keys::DEPENDENCY_IP_COMMAND),
     );
     match find_in_path("ip") {
+        Some(path) if !BasePackage::Iproute2.installed() => result
+            .set(
+                Status::Error,
+                path.display().to_string(),
+                crate::tr!(crate::keys::DEPENDENCY_IPROUTE2_INCOMPLETE),
+            )
+            .suggestion(install_suggestion(DependencyPackage::Iproute)),
         Some(path) => result.set(
             Status::Pass,
             path.display().to_string(),
@@ -104,6 +103,13 @@ fn pppd() -> CheckResult {
         crate::tr!(crate::keys::DEPENDENCY_PPPD_COMMAND),
     );
     match find_in_path("pppd") {
+        Some(path) if !BasePackage::Ppp.installed() => result
+            .set(
+                Status::Error,
+                path.display().to_string(),
+                crate::tr!(crate::keys::DEPENDENCY_PPPOE_PLUGIN_NOT_FOUND),
+            )
+            .suggestion(install_suggestion(DependencyPackage::Ppp)),
         Some(path) => result.set(
             Status::Pass,
             path.display().to_string(),
@@ -165,15 +171,7 @@ fn install_suggestion(package: DependencyPackage) -> String {
 }
 
 fn detect_package_manager() -> Option<PackageManager> {
-    [
-        ("apt-get", PackageManager::Apt),
-        ("dnf", PackageManager::Dnf),
-        ("yum", PackageManager::Yum),
-        ("pacman", PackageManager::Pacman),
-        ("zypper", PackageManager::Zypper),
-    ]
-    .into_iter()
-    .find_map(|(command, manager)| find_in_path(command).map(|_| manager))
+    PackageManager::detect()
 }
 
 fn install_suggestion_for(package: DependencyPackage, manager: Option<PackageManager>) -> String {
@@ -188,6 +186,8 @@ fn install_suggestion_for(package: DependencyPackage, manager: Option<PackageMan
         (Some(PackageManager::Pacman), DependencyPackage::Ppp) => "pacman -S ppp",
         (Some(PackageManager::Zypper), DependencyPackage::Iproute) => "zypper install iproute2",
         (Some(PackageManager::Zypper), DependencyPackage::Ppp) => "zypper install ppp",
+        (Some(PackageManager::Apk), DependencyPackage::Iproute) => "apk add --no-cache iproute2",
+        (Some(PackageManager::Apk), DependencyPackage::Ppp) => "apk add --no-cache ppp ppp-pppoe",
         (None, DependencyPackage::Iproute) => {
             return crate::tr!(crate::keys::DEPENDENCY_INSTALL_PROVIDING_IP_AND_TC);
         }
@@ -241,6 +241,18 @@ mod tests {
                 install_suggestion_for(DependencyPackage::Ppp, Some(manager)).contains(expected)
             );
         }
+    }
+
+    #[test]
+    fn alpine_suggestions_include_pppoe_and_full_iproute2() {
+        assert!(
+            install_suggestion_for(DependencyPackage::Ppp, Some(PackageManager::Apk))
+                .contains("apk add --no-cache ppp ppp-pppoe")
+        );
+        assert!(
+            install_suggestion_for(DependencyPackage::Iproute, Some(PackageManager::Apk))
+                .contains("apk add --no-cache iproute2")
+        );
     }
 
     #[test]

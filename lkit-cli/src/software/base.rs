@@ -1,7 +1,10 @@
+#[cfg(test)]
+mod alpine_tests;
+
 use std::fs::Metadata;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -74,9 +77,43 @@ impl BasePackage {
         }
     }
 
-    /// 当前主机上是否已安装(按 PATH 探测二进制)。
+    /// Alpine 要求真实 iproute2/procps 工具，PPP 还需要内核 PPPoE 插件。
     pub(crate) fn installed(self) -> bool {
-        find_in_path(self.binary()).is_some()
+        self.installed_with(
+            PackageManager::detect(),
+            find_in_path,
+            &super::paths().ppp_plugins_dir,
+        )
+    }
+
+    fn installed_with(
+        self,
+        manager: Option<PackageManager>,
+        probe: impl Fn(&str) -> Option<PathBuf>,
+        ppp_plugins_dir: &Path,
+    ) -> bool {
+        let Some(binary) = probe(self.binary()) else {
+            return false;
+        };
+        if manager != Some(PackageManager::Apk) {
+            return true;
+        }
+        match self {
+            Self::Ppp => has_pppoe_plugin(ppp_plugins_dir),
+            Self::Iproute2 => {
+                !is_busybox(&binary) && probe("tc").is_some_and(|tc| !is_busybox(&tc))
+            }
+            Self::Procps => !is_busybox(&binary),
+            Self::Iw | Self::Hostapd => true,
+        }
+    }
+
+    fn package_names(self, manager: PackageManager) -> Vec<&'static str> {
+        if self == Self::Ppp && manager == PackageManager::Apk {
+            vec!["ppp", "ppp-pppoe"]
+        } else {
+            vec![self.package_name(manager)]
+        }
     }
 
     /// 该包在指定包管理器下的包名。
@@ -91,7 +128,8 @@ impl BasePackage {
             (Self::Hostapd, _) => "hostapd",
             (Self::Procps, PackageManager::Dnf)
             | (Self::Procps, PackageManager::Yum)
-            | (Self::Procps, PackageManager::Pacman) => "procps-ng",
+            | (Self::Procps, PackageManager::Pacman)
+            | (Self::Procps, PackageManager::Apk) => "procps-ng",
             (Self::Procps, _) => "procps",
         }
     }
@@ -111,16 +149,18 @@ pub(crate) enum PackageManager {
     Yum,
     Pacman,
     Zypper,
+    Apk,
 }
 
 impl PackageManager {
-    fn detect() -> Option<Self> {
+    pub(crate) fn detect() -> Option<Self> {
         [
             ("apt-get", Self::Apt),
             ("dnf", Self::Dnf),
             ("yum", Self::Yum),
             ("pacman", Self::Pacman),
             ("zypper", Self::Zypper),
+            ("apk", Self::Apk),
         ]
         .into_iter()
         .find_map(|(command, manager)| find_in_path(command).map(|_| manager))
@@ -133,6 +173,7 @@ impl PackageManager {
             Self::Yum => "yum",
             Self::Pacman => "pacman",
             Self::Zypper => "zypper",
+            Self::Apk => "apk",
         }
     }
 
@@ -141,6 +182,7 @@ impl PackageManager {
         match self {
             Self::Apt | Self::Dnf | Self::Yum | Self::Zypper => &["install", "-y"],
             Self::Pacman => &["-S", "--noconfirm"],
+            Self::Apk => &["add", "--no-cache"],
         }
     }
 }
@@ -219,6 +261,36 @@ impl BasePackageDialog {
     }
 }
 
+fn is_busybox(path: &Path) -> bool {
+    std::fs::canonicalize(path)
+        .ok()
+        .is_some_and(|path| path.file_name().is_some_and(|name| name == "busybox"))
+}
+
+fn has_pppoe_plugin(root: &Path) -> bool {
+    let contains_plugin = |dir: &Path| {
+        ["pppoe.so", "rp-pppoe.so"]
+            .iter()
+            .any(|name| dir.join(name).is_file())
+    };
+    contains_plugin(root)
+        || std::fs::read_dir(root).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.path().is_dir() && contains_plugin(&entry.path()))
+        })
+}
+
+fn install_args(packages: &[BasePackage], manager: PackageManager) -> Vec<&'static str> {
+    let mut args = manager.install_prefix().to_vec();
+    args.extend(
+        packages
+            .iter()
+            .flat_map(|package| package.package_names(manager)),
+    );
+    args
+}
+
 /// 在当前 PATH 中探测可执行文件,返回完整路径。
 fn find_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
@@ -260,9 +332,12 @@ pub(crate) fn install(
     if manager == PackageManager::Apt {
         run_command("apt-get", &["update", "-y"], stream, cancel)?;
     }
-    let mut args: Vec<&str> = manager.install_prefix().to_vec();
-    args.extend(missing.iter().map(|package| package.package_name(manager)));
-    run_command(manager.command(), &args, stream, cancel)
+    run_command(
+        manager.command(),
+        &install_args(&missing, manager),
+        stream,
+        cancel,
+    )
 }
 
 /// 运行包管理器命令。`stream` 为 true 时继承 stdio 并透出原始输出;
@@ -380,6 +455,7 @@ mod tests {
                 PackageManager::Yum,
                 PackageManager::Pacman,
                 PackageManager::Zypper,
+                PackageManager::Apk,
             ] {
                 assert_eq!(package.package_name(manager), expected);
             }
@@ -430,6 +506,16 @@ mod tests {
     #[test]
     fn install_prefixes_match_expected_commands() {
         assert_eq!(PackageManager::Apt.install_prefix(), &["install", "-y"]);
+        assert_eq!(PackageManager::Apk.command(), "apk");
+        assert_eq!(PackageManager::Apk.install_prefix(), &["add", "--no-cache"]);
+        assert_eq!(
+            BasePackage::Iproute2.package_name(PackageManager::Apk),
+            "iproute2"
+        );
+        assert_eq!(
+            BasePackage::Procps.package_name(PackageManager::Apk),
+            "procps-ng"
+        );
         assert_eq!(
             PackageManager::Pacman.install_prefix(),
             &["-S", "--noconfirm"]

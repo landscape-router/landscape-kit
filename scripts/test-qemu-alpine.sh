@@ -32,7 +32,7 @@ diagnostics() {
       cat /proc/self/mountinfo
       rc-status -a
       ps -ef
-      for file in /var/log/lkit.log /var/log/rc.log /var/log/ci-prepare.log /var/log/client-*.log /var/log/check-*.log; do
+      for file in /var/log/lkit.log /var/log/rc.log /var/log/ci-prepare.log /var/log/client-*.log /var/log/check-*.log /var/log/docker.log /var/log/containerd.log; do
         test -f "$file" && { echo "--- $file"; cat "$file"; }
       done
     ' >"$artifacts/guest-diagnostics.log" 2>&1 || true

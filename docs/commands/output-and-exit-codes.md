@@ -68,7 +68,8 @@ worker 继续完成提交或自动回滚。worker 或主机重启导致事务中
 - 不自动安装系统软件包、PPP 或容器运行时。
 - `install` 不迁移 `/root/.landscape-router` 等旧手工部署；迁移使用 `lkit migrate`
   （备份 → 确认 → 停止旧实例 → 重建 → 接管），见 [`lkit migrate`](migrate.md)。
-- 当前发布产物不支持 Alpine 等 musl 发行版。
+- 不保证所有发行版的系统服务、网络后端和可选软件都受支持；lkit 的 musl 静态
+  发布产物可用于 Alpine，各功能支持范围以对应文档为准。
 - 不支持 `x86_64`、`aarch64`、`riscv64` 和 `loongarch64` 以外架构。
 - 不允许安装 prerelease。
 - 不实现 AWS S3 profile、region 或 access key 鉴权。

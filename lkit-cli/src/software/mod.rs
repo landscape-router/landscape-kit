@@ -88,6 +88,31 @@ impl DockerSource {
         }
     }
 
+    pub(crate) fn available(family: Family) -> Vec<Self> {
+        if family == Family::Alpine {
+            vec![Self::Official]
+        } else {
+            Self::all().to_vec()
+        }
+    }
+
+    pub(crate) fn label_for(self, family: Family) -> String {
+        if family == Family::Alpine && self == Self::Official {
+            crate::tr!(crate::keys::SOFTWARE_SOURCE_SYSTEM)
+        } else {
+            self.label()
+        }
+    }
+
+    pub(crate) fn validate(self, family: Family) -> Result<(), SoftwareError> {
+        if !Self::available(family).contains(&self) {
+            return Err(SoftwareError::Message(crate::tr!(
+                crate::keys::SOFTWARE_ALPINE_SOURCE_UNSUPPORTED
+            )));
+        }
+        Ok(())
+    }
+
     /// 各来源的 docker-ce 仓库根 URL。
     pub(crate) fn base_url(self) -> &'static str {
         match self {
@@ -130,6 +155,7 @@ pub(crate) struct SoftwarePaths {
     pub(crate) apt_sources_list_d: PathBuf,
     pub(crate) dnf_repos_dir: PathBuf,
     pub(crate) docker_bin: Vec<PathBuf>,
+    pub(crate) ppp_plugins_dir: PathBuf,
     /// 测试注入：允许非 root 执行安装（生产恒为 false）。
     #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
     pub(crate) allow_non_root: bool,
@@ -139,6 +165,7 @@ impl SoftwarePaths {
     pub(crate) fn production() -> Self {
         Self {
             os_release: PathBuf::from(OS_RELEASE_PATH),
+            ppp_plugins_dir: PathBuf::from("/usr/lib/pppd"),
             apt_keyrings_dir: PathBuf::from(APT_KEYRINGS_DIR),
             apt_sources_list_d: PathBuf::from(APT_SOURCES_LIST_D),
             dnf_repos_dir: PathBuf::from(DNF_REPOS_DIR),
@@ -254,5 +281,6 @@ pub(crate) fn docker_family_slug(family: Family) -> &'static str {
         Family::Rocky => "rocky",
         Family::Alma => "almalinux",
         Family::Arch => "arch",
+        Family::Alpine => "alpine",
     }
 }

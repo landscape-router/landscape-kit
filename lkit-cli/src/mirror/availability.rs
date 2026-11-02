@@ -230,6 +230,32 @@ fn urls_for(
         Family::Arch => Some(vec![format!(
             "https://{target}/archlinux/core/os/{arch}/core.db"
         )]),
+        Family::Alpine => {
+            let version = releasever?;
+            let branch = if version.contains("_alpha") || version.contains("_beta") {
+                "edge".to_owned()
+            } else {
+                let mut parts = version.split('.');
+                let major = parts.next()?;
+                let minor = parts.next()?;
+                if ![major, minor]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                {
+                    return None;
+                }
+                format!("v{major}.{minor}")
+            };
+            let arch = match arch {
+                "armv7l" => "armv7",
+                "armv6l" => "armhf",
+                "i386" | "i686" => "x86",
+                other => other,
+            };
+            Some(vec![format!(
+                "https://{target}/alpine/{branch}/main/{arch}/APKINDEX.tar.gz"
+            )])
+        }
     }
 }
 
@@ -256,6 +282,41 @@ fn releasever() -> Option<String> {
 mod tests {
     use super::*;
     use crate::mirror::{Family, Host};
+
+    #[test]
+    fn alpine_probe_urls_match_release_and_architecture() {
+        for (version, arch, suffix) in [
+            ("3.22.2", "x86_64", "v3.22/main/x86_64"),
+            ("3.23.0_alpha20250601", "aarch64", "edge/main/aarch64"),
+            ("3.22.2", "armv7l", "v3.22/main/armv7"),
+            ("3.22.2", "i686", "v3.22/main/x86"),
+        ] {
+            assert_eq!(
+                urls_for(
+                    Family::Alpine,
+                    None,
+                    arch,
+                    Some(version),
+                    "mirrors.ustc.edu.cn"
+                )
+                .unwrap(),
+                vec![format!(
+                    "https://mirrors.ustc.edu.cn/alpine/{suffix}/APKINDEX.tar.gz"
+                )]
+            );
+        }
+        assert!(urls_for(Family::Alpine, None, "x86_64", None, "example.org").is_none());
+        assert!(
+            urls_for(
+                Family::Alpine,
+                None,
+                "x86_64",
+                Some("invalid"),
+                "example.org"
+            )
+            .is_none()
+        );
+    }
 
     fn host(family: Family, codename: Option<&str>) -> Host {
         Host {

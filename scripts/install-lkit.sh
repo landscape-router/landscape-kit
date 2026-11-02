@@ -56,15 +56,6 @@ for command_name in awk dirname id install mktemp mv rm sha256sum uname; do
     command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
 done
 
-downloader=
-if command -v curl >/dev/null 2>&1; then
-    downloader=curl
-elif command -v wget >/dev/null 2>&1; then
-    downloader=wget
-else
-    die "curl or wget is required"
-fi
-
 case "$install_path" in
     /*) ;;
     *) die "LKIT_INSTALL_PATH must be an absolute path" ;;
@@ -73,6 +64,27 @@ esac
 install_directory=$(dirname "$install_path")
 [ -d "$install_directory" ] || die "install directory does not exist: $install_directory"
 [ ! -d "$install_path" ] || die "install path is a directory: $install_path"
+
+downloader=
+if command -v curl >/dev/null 2>&1; then
+    downloader=curl
+elif command -v wget >/dev/null 2>&1; then
+    wget_help=$(wget --help 2>&1 || :)
+    case "$wget_help" in
+        *--https-only*) downloader=wget ;;
+    esac
+fi
+
+if [ -z "$downloader" ] && command -v apk >/dev/null 2>&1; then
+    printf 'install-lkit: installing curl with apk for HTTPS downloads\n' >&2
+    apk add --no-cache curl || die "could not install curl; check apk repositories and network access"
+    command -v curl >/dev/null 2>&1 || die "apk completed but curl is still unavailable"
+    downloader=curl
+fi
+
+if [ -z "$downloader" ]; then
+    die "curl or wget is required (wget must support --https-only); install curl (Alpine: apk add curl) and retry"
+fi
 
 work_directory=$(mktemp -d "${TMPDIR:-/tmp}/lkit-install.XXXXXX")
 
@@ -117,7 +129,7 @@ if ! awk -v asset="$asset_name" '
     die "SHA256SUMS does not contain exactly one valid entry for $asset_name"
 fi
 
-if ! (cd "$work_directory" && sha256sum --check --strict selected.sha256); then
+if ! (cd "$work_directory" && sha256sum -c selected.sha256); then
     die "SHA-256 verification failed for $asset_name"
 fi
 

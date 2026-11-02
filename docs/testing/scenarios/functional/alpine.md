@@ -5,7 +5,7 @@
 [guest 断言](../../../../scripts/qemu/alpine/guest-tests.sh)。
 
 CI 用校验 SHA256 的 Alpine 3.22.2 x86_64 minirootfs，在容器内安装来自 v3.22 签名仓库的
-OpenRC、linux-virt 和 SSH，导出 rootfs 并用 `mke2fs -d` 生成磁盘。QEMU 必须使用 KVM；
+OpenRC、linux-virt、SSH 和 Docker/Buildx/Compose，导出 rootfs 并用 `mke2fs -d` 生成磁盘。QEMU 必须使用 KVM；
 管理 SSH 仅转发到宿主随机回环端口，guest 不可访问外网。lflare 使用 VM 内部的
 namespace/veth，不创建宿主 TAP、桥或 bpffs 挂载。
 
@@ -15,7 +15,8 @@ namespace/veth，不创建宿主 TAP、桥或 bpffs 挂载。
 
 Alpine 的 sysfs 服务可能自行挂载 bpffs；测试专用 boot 服务在 VM 内移除该挂载，
 确保 daemon 的挂载兜底被实际执行。测试不在本地正常开发中运行，要求显式 `LKIT_E2E=1`。
-失败保留镜像构建日志、串口、OpenRC、daemon、客户端和挂载诊断。
+失败保留镜像构建日志、串口、OpenRC、daemon、客户端、Docker/containerd 和挂载诊断。
+联网容器中的真实 apk 换源与软件安装场景见 [Alpine 测试说明](../../../testing/alpine.md)。
 
 ## ALP-01
 
@@ -69,3 +70,18 @@ Alpine 的 sysfs 服务可能自行挂载 bpffs；测试专用 boot 服务在 VM
 - 状态：`已覆盖`
 - 证据：[guest-tests.sh rebooted](../../../../scripts/qemu/alpine/guest-tests.sh)。
 - 说明：连续移除两次均成功，服务链接消失，CLI 二进制保留，bpffs 仍为可读写挂载。
+
+## ALP-06
+
+**真实 Docker OpenRC 服务启停、重启自启动及 CLI 插件**
+
+- 测试层：QEMU/KVM + 真实 Alpine/OpenRC/Docker
+- 状态：`待 CI 验证`
+- 证据：[guest-tests.sh](../../../../scripts/qemu/alpine/guest-tests.sh)、
+  [rootfs Docker 软件包](../../../../scripts/qemu/alpine/Dockerfile)、
+  [Alpine CI](../../../../.github/workflows/test-qemu-alpine.yml)。
+- 说明：构建 rootfs 时安装 v3.22 main/community 签名软件包；VM 真实执行
+  `rc-update add docker default`、`rc-service docker start/stop`、`docker info`，
+  验证 default runlevel 链接、重启后服务运行及 Buildx/Compose 版本命令。
+  不拉取容器镜像，所有 cgroup、存储和 Docker 网络操作仅在 VM 中进行。
+- 缺口：不同 Alpine 版本与非 x86_64 架构未纳入此真实系统矩阵。

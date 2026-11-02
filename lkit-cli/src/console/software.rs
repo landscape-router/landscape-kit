@@ -13,7 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use super::render::panel_block;
 use super::widgets::Focus;
 use super::{ConsoleAction, ConsoleApp, Notice};
-use crate::mirror::Host;
+use crate::mirror::{Family, Host};
 use crate::software::base::{BasePackage, BasePackageDialog};
 use crate::software::{DockerSource, InstallPhase, Software};
 
@@ -510,7 +510,15 @@ impl ConsoleApp {
                 KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
                     self.software.confirming = Some(SoftwareConfirm {
                         software: confirm.software,
-                        source: cycle_source(confirm.source, key.code),
+                        source: cycle_source(
+                            confirm.source,
+                            key.code,
+                            self.software
+                                .host
+                                .as_ref()
+                                .and_then(|host| host.as_ref().ok())
+                                .map(|host| host.family),
+                        ),
                     });
                     return Some(None);
                 }
@@ -561,8 +569,10 @@ impl ConsoleApp {
 }
 
 /// 确认层内循环切换来源：Space/Right 前进，Left 后退。
-fn cycle_source(current: DockerSource, code: KeyCode) -> DockerSource {
-    let all = DockerSource::all();
+fn cycle_source(current: DockerSource, code: KeyCode, family: Option<Family>) -> DockerSource {
+    let all = family
+        .map(DockerSource::available)
+        .unwrap_or_else(|| DockerSource::all().to_vec());
     let index = all
         .iter()
         .position(|source| *source == current)
@@ -717,7 +727,17 @@ pub(crate) fn render_software_confirmation(frame: &mut Frame<'_>, app: &mut Cons
             ),
             Span::raw("  "),
             Span::styled(
-                format!("◀ {} ▶", confirm.source.label()),
+                format!(
+                    "◀ {} ▶",
+                    app.software
+                        .host
+                        .as_ref()
+                        .and_then(|host| host.as_ref().ok())
+                        .map_or_else(
+                            || confirm.source.label(),
+                            |host| confirm.source.label_for(host.family)
+                        )
+                ),
                 Style::default()
                     .bg(Color::Blue)
                     .fg(Color::White)

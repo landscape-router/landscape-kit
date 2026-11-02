@@ -120,9 +120,9 @@ BPF JIT 使用只读方式检查 `/proc/sys/net/core/bpf_jit_enable`：值为 `1
 
 | 标识符 | 检查内容 | 不满足时 |
 | --- | --- | --- |
-| `dependency.iproute2` | `ip` 命令存在且可执行 | `error` |
+| `dependency.iproute2` | `ip` 命令存在且可执行；Alpine 需原生 `ip`/`tc` 而非 BusyBox applet | `error` |
 | `dependency.tc` | `tc` 命令存在且可执行，并支持 BPF 相关功能 | `error` 或 `unknown` |
-| `dependency.pppd` | `pppd` 命令存在且可执行，用于 PPPoE 拨号 | `error` |
+| `dependency.pppd` | `pppd` 命令存在且可执行；Alpine 还需 PPPoE 插件 | `error` |
 
 报告中应显示缺失的具体命令和适用于当前包管理器的安装建议，而不是只显示“依赖缺失”。
 常见映射如下：
@@ -133,9 +133,12 @@ BPF JIT 使用只读方式检查 `/proc/sys/net/core/bpf_jit_enable`：值为 `1
 | Fedora/RHEL `dnf` 或 `yum` | `iproute` | `ppp` |
 | Arch Linux `pacman` | `iproute2` | `ppp` |
 | openSUSE `zypper` | `iproute2` | `ppp` |
+| Alpine `apk` | `iproute2`（包含 `iproute2-tc` 依赖） | `ppp ppp-pppoe` |
 
 尤其应明确 `pppd` 是命令名，软件包名通常是 `ppp`。无法识别包管理器时，提示用户安装
 提供相应命令的软件包，不猜测一条可能不可用的安装命令。
+Alpine 即使已有 `pppd`，若 `/usr/lib/pppd/` 或其版本子目录中缺少 `pppoe.so` /
+`rp-pppoe.so`，仍报告缺少 PPPoE 插件并建议 `apk add --no-cache ppp ppp-pppoe`。
 
 `tc` 的 BPF 能力检查使用只读命令 `tc filter help`：命令必须成功退出，且合并后的标准输出和标准错误中（大小写不敏感）包含 `bpf`。`tc` 命令不存在时报告 `error`，因为 `iproute2` 是硬性依赖；命令存在但执行失败或输出无法读取时报告 `unknown`；命令成功但帮助文本不包含 `bpf` 时报告 `error`。不执行 `tc filter add` 等会改变网络状态的命令。
 

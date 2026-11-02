@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod apk_tests;
+
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -36,7 +39,9 @@ pub(crate) fn install(
     cancel: &AtomicBool,
     phase: &mut dyn FnMut(InstallPhase),
 ) -> Result<(), SoftwareError> {
+    source.validate(host.family)?;
     match host.family {
+        Family::Alpine => install_apk(stream, cancel, phase),
         Family::Debian | Family::Ubuntu => install_apt(host, source, stream, cancel, phase),
         Family::Fedora | Family::Rocky | Family::Alma => {
             install_dnf(host, source, stream, cancel, phase)
@@ -158,6 +163,75 @@ fn install_pacman(
     finish(stream, cancel, phase)
 }
 
+/// Alpine 使用系统配置的 main/community 仓库及 OpenRC，不写 Docker CE 源。
+fn install_apk(
+    stream: bool,
+    cancel: &AtomicBool,
+    phase: &mut dyn FnMut(InstallPhase),
+) -> Result<(), SoftwareError> {
+    install_apk_with(
+        &mut |program, args| {
+            if program == "docker" && args == ["info"] {
+                wait_for_docker(
+                    &mut || run_command("docker", &["info"], false, cancel),
+                    &mut || std::thread::sleep(Duration::from_millis(500)),
+                    cancel,
+                )
+            } else {
+                run_command(program, args, stream, cancel)
+            }
+        },
+        phase,
+    )
+}
+
+fn install_apk_with(
+    run: &mut impl FnMut(&str, &[&str]) -> Result<(), SoftwareError>,
+    phase: &mut dyn FnMut(InstallPhase),
+) -> Result<(), SoftwareError> {
+    phase(InstallPhase::Preparing);
+    phase(InstallPhase::InstallingPackages);
+    run(
+        "apk",
+        &[
+            "add",
+            "--no-cache",
+            "docker",
+            "docker-openrc",
+            "docker-cli-buildx",
+            "docker-cli-compose",
+        ],
+    )?;
+    phase(InstallPhase::StartingService);
+    run("rc-update", &["add", "docker", "default"])?;
+    run("rc-service", &["docker", "start"])?;
+    run("docker", &["info"])
+}
+
+/// OpenRC start 返回时 socket 可能还未就绪；轮询期间保留取消语义。
+fn wait_for_docker(
+    probe: &mut impl FnMut() -> Result<(), SoftwareError>,
+    wait: &mut impl FnMut(),
+    cancel: &AtomicBool,
+) -> Result<(), SoftwareError> {
+    for attempt in 0..30 {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(SoftwareError::Message(crate::tr!(
+                crate::keys::SOFTWARE_CANCELLED
+            )));
+        }
+        if probe().is_ok() {
+            return Ok(());
+        }
+        if attempt < 29 {
+            wait();
+        }
+    }
+    Err(SoftwareError::Message(crate::tr!(
+        crate::keys::SOFTWARE_SERVICE_NOT_RUNNING
+    )))
+}
+
 /// 启用并启动 docker 服务，并做最终功能验证。
 fn finish(
     stream: bool,
@@ -187,6 +261,11 @@ fn run_command(
     stream: bool,
     cancel: &AtomicBool,
 ) -> Result<(), SoftwareError> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(SoftwareError::Message(crate::tr!(
+            crate::keys::SOFTWARE_CANCELLED
+        )));
+    }
     let mut command = std::process::Command::new(program);
     command.args(args);
     #[cfg(unix)]
@@ -322,6 +401,7 @@ mod tests {
             apt_sources_list_d: root.join("etc/apt/sources.list.d"),
             dnf_repos_dir: root.join("etc/yum.repos.d"),
             docker_bin: vec![root.join("usr/bin/docker")],
+            ppp_plugins_dir: root.join("usr/lib/pppd"),
             allow_non_root: true,
         };
         (paths, root)

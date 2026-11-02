@@ -48,6 +48,13 @@ assert_flare() {
     has_log 'authenticated, session'
 }
 
+assert_docker_ready() {
+    wait_for docker info
+    rc-service docker status
+    docker buildx version
+    docker compose version
+}
+
 case "${1:-}" in
     initial)
         echo '== actual bpffs mount through production self install =='
@@ -103,6 +110,13 @@ case "${1:-}" in
         # Both services start in the default runlevel after the test-only boot
         # service removes any bpffs mounted by Alpine's sysfs service.
         rc-update add landscape-router.service default
+
+        echo '== real Alpine Docker service and CLI plugins =='
+        rc-update add docker default
+        rc-service docker start
+        assert_docker_ready
+        test -L /etc/runlevels/default/docker
+        rc-service docker stop
         ;;
     rebooted)
         echo '== real OpenRC boot ordering and bpffs fallback after reboot =='
@@ -113,6 +127,11 @@ case "${1:-}" in
         has_log 'mounted bpffs at /sys/fs/bpf'
         test "$(mount_count)" = 1
         assert_flare rebooted
+
+        echo '== real Docker daemon starts through OpenRC after reboot =='
+        assert_docker_ready
+        rc-service docker stop
+        rc-update del docker default
 
         echo '== self remove is idempotent and leaves shared bpffs mounted =='
         rc-service landscape-router.service stop

@@ -36,11 +36,11 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-04` | [security-and-environment.md](functional/security-and-environment.md) |
 | 网络接管 | `NET-01` 至 `NET-12` | [network-takeover.md](functional/network-takeover.md) |
 | 宿主网络适配 | `HNET-01` 至 `HNET-08` | [hostnet.md](functional/hostnet.md) |
-| 主机换源 | `MIR-01` 至 `MIR-11` | [mirror.md](functional/mirror.md) |
-| 常用软件安装 | `SFT-01` 至 `SFT-06` | [software.md](functional/software.md) |
+| 主机换源 | `MIR-01` 至 `MIR-12` | [mirror.md](functional/mirror.md) |
+| 常用软件安装 | `SFT-01` 至 `SFT-07` | [software.md](functional/software.md) |
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-10` | [self.md](functional/self.md) |
-| Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-05` | [alpine.md](functional/alpine.md) |
+| Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
 | daemon 自动恢复 | `DAE-01` 至 `DAE-06` | [daemon.md](functional/daemon.md) |
 | Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-35` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
 

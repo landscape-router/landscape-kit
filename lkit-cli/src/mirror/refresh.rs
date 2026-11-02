@@ -2,6 +2,17 @@ use std::process::Command;
 
 use super::MirrorError;
 
+fn refresh_command(family: super::Family) -> (&'static str, &'static [&'static str]) {
+    match family {
+        super::Family::Debian | super::Family::Ubuntu => ("apt-get", &["update"]),
+        super::Family::Fedora | super::Family::Rocky | super::Family::Alma => {
+            ("dnf", &["makecache"])
+        }
+        super::Family::Arch => ("pacman", &["-Sy"]),
+        super::Family::Alpine => ("apk", &["update"]),
+    }
+}
+
 /// 换源成功后刷新软件包索引,让新源立即生效,避免后续 apt/dnf/pacman 操作
 /// 基于过期或空索引报 "Unable to locate package" 之类的错误。
 /// `stream` 为 true 时输出流到终端(CLI 模式);false 时捕获输出(TUI worker 模式)。
@@ -11,13 +22,7 @@ pub(crate) fn refresh_index(family: super::Family, stream: bool) -> Result<(), M
     if super::paths().skip_refresh {
         return Ok(());
     }
-    let (program, args): (&str, &[&str]) = match family {
-        super::Family::Debian | super::Family::Ubuntu => ("apt-get", &["update"]),
-        super::Family::Fedora | super::Family::Rocky | super::Family::Alma => {
-            ("dnf", &["makecache"])
-        }
-        super::Family::Arch => ("pacman", &["-Sy"]),
-    };
+    let (program, args) = refresh_command(family);
     let mut command = Command::new(program);
     command.args(args);
     #[cfg(unix)]
@@ -57,5 +62,16 @@ pub(crate) fn refresh_index(family: super::Family, stream: bool) -> Result<(), M
                 format!("{program}: {stderr}")
             }))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn alpine_refresh_uses_apk_update() {
+        assert_eq!(
+            super::refresh_command(crate::mirror::Family::Alpine),
+            ("apk", &["update"][..])
+        );
     }
 }

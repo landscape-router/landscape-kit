@@ -1,7 +1,7 @@
 # `lkit set-mirror`
 
 切换当前主机的 Linux 软件包管理器软件源（换源）。支持 apt（Debian/Ubuntu）、dnf
-（Fedora、Rocky、AlmaLinux）与 pacman（Arch Linux），预置官方源、中科大 USTC、
+（Fedora、Rocky、AlmaLinux）、pacman（Arch Linux）与 apk（Alpine），预置官方源、中科大 USTC、
 腾讯云、华为云、阿里云与六所大学镜像（南大 NJU、上交 SJTU、浙大 ZJU、兰大 LZU、
 华科 HUST、北外 BFSU）以及清华 TUNA。展示顺序即友好程度：官方源第一（默认选中），
 其余按镜像站对自动化下载的宽容度排列——中科大 USTC 最开放，清华 TUNA 反爬限制
@@ -32,6 +32,7 @@ lkit set-mirror --restore [--yes]
 | Fedora | `<镜像>/fedora/linux/releases/<主版本>/Everything/<架构>/os/repodata/repomd.xml` 与 `<镜像>/fedora/releases/<主版本>/...`（官方树带 `linux` 段，阿里云/腾讯云/清华 TUNA 等国内站无该段，两种布局任一命中即可；部分镜像站如 USTC 用 301 兼容官方路径） |
 | Rocky、AlmaLinux | `<镜像>/rockylinux|<镜像>/almalinux/<主版本>/BaseOS/<架构>/os/repodata/repomd.xml` |
 | Arch | `<镜像>/archlinux/core/os/<架构>/core.db` |
+| Alpine | `<镜像>/alpine/v<主版本>.<次版本>/main/<架构>/APKINDEX.tar.gz`（`VERSION_ID` 含 `_alpha`/`_beta` 时使用 `edge`） |
 
 探测结果分三档：
 
@@ -50,7 +51,7 @@ lkit set-mirror --restore [--yes]
 
 ## 格式检查
 
-`--check` 只读检查受管软件源文件的格式（仅 apt 家族；dnf/pacman 主机提示不支持），
+`--check` 只读检查受管软件源文件的格式（仅 apt 家族；dnf/pacman/apk 主机提示不支持），
 不需要 root。按 one-line/deb822 解析全部受管文件，报告无法识别的行与行号：
 
 - `NotADebLine`：one-line 文件里类型不是 `deb`/`deb-src` 的内容行（可能是混入的
@@ -76,8 +77,9 @@ lkit set-mirror --restore [--yes]
 | Ubuntu | apt | 同上 |
 | Fedora、Rocky、AlmaLinux | dnf | `/etc/yum.repos.d/*.repo` |
 | Arch | pacman | `/etc/pacman.d/mirrorlist` |
+| Alpine | apk | `/etc/apk/repositories` |
 
-不支持的其他发行版（如 Alpine）直接报错，不修改任何文件。检测失败同样报错阻断。
+不支持的其他发行版直接报错，不修改任何文件。检测失败同样报错阻断。
 
 ## 重写规则
 
@@ -154,6 +156,14 @@ pacman 直接生成新的 `mirrorlist`：注释头说明来源，随后是单个
 `Server = https://<镜像>/archlinux/$repo/os/$arch`（官方源使用
 `geo.mirror.pkgbuild.com`）。
 
+apk 逐行改写已启用的 `http(s)://<已识别主机>/alpine/...`，目标统一使用 HTTPS。
+官方主机为 `dl-cdn.alpinelinux.org` 或 `dl-1` 至 `dl-5.alpinelinux.org`，公共镜像主机
+与其他家族共用；`official` 回到 `dl-cdn.alpinelinux.org`。保留路径中的版本分支
+（如 `v3.22`、`edge`）、`main/community/testing` 组件、`@tag`、缩进及注释，不启用
+被注释的仓库。自定义主机、本地路径、带凭证/非默认端口或查询参数的 URL 原样保留。
+文件不存在时报错；没有可重写条目或已处于目标状态时不写入、不覆盖已有备份。
+实际修改前备份单个 repositories 文件，原子写入保留权限，写入失败尝试恢复原文件。
+
 `official` 把已识别的镜像主机 URL 恢复为官方主机（反向映射），用于换回官方源；
 已在官方源或已处于所选镜像的重复执行不会修改文件，视为成功 no-op（打印
 "nothing was changed" 提示，退出码 `0`）。
@@ -185,7 +195,7 @@ CD 源注释或合成新条目）时额外打印对应提示；注释了 CD 源�
 ## 索引刷新
 
 换源或 `--restore` 实际修改了源文件后，会立即刷新软件包索引让新源生效
-（apt 家族 `apt-get update`、dnf 家族 `dnf makecache`、Arch `pacman -Sy`），
+（apt 家族 `apt-get update`、dnf 家族 `dnf makecache`、Arch `pacman -Sy`、Alpine `apk update`），
 输出流到终端；刷新失败只警告，不回滚已写入的源文件。索引刷新失败时，后续
 `apt install` 等操作可能基于空索引报 "Unable to locate package"，需要用户自行
 处理源配置或重试刷新。控制台面板换源后在后台刷新索引（不阻塞 TUI），刷新完成前

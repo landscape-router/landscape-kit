@@ -1,5 +1,7 @@
 pub(crate) const SOFTWARE_DOCKER: &str = "software.docker";
 pub(crate) const SOFTWARE_SOURCE_OFFICIAL: &str = "software.source_official";
+pub(crate) const SOFTWARE_SOURCE_SYSTEM: &str = "software.source_system";
+pub(crate) const SOFTWARE_ALPINE_SOURCE_UNSUPPORTED: &str = "software.alpine_source_unsupported";
 pub(crate) const SOFTWARE_SOURCE_ALIYUN: &str = "software.source_aliyun";
 pub(crate) const SOFTWARE_SOURCE_TENCENT: &str = "software.source_tencent";
 pub(crate) const SOFTWARE_SOURCE_HUAWEI: &str = "software.source_huawei";

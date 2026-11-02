@@ -111,7 +111,7 @@ fn run_docker_install(host: &Host, install: &SoftwareInstall) -> ExitCode {
         let confirmed = match tty.confirm(&crate::tr!(
             crate::keys::SOFTWARE_CONFIRM_INSTALL,
             software = software::Software::Docker.label(),
-            source = source.label()
+            source = source.label_for(host.family)
         )) {
             Ok(confirmed) => confirmed,
             Err(error) => return fail_install(&error),
@@ -276,6 +276,9 @@ fn run_interactive(host: &Host) -> ExitCode {
 /// 报参数使用错误（与 `set-mirror` 的 `MIRROR` 语义一致）。
 fn resolve_source(host: &Host, install: &SoftwareInstall) -> Result<DockerSource, ExitCode> {
     if let Some(source) = install.source {
+        source
+            .validate(host.family)
+            .map_err(|error| fail_usage(error.to_string()))?;
         return Ok(source);
     }
     if crate::interaction::interactive::is_non_interactive() {
@@ -289,7 +292,8 @@ fn resolve_source(host: &Host, install: &SoftwareInstall) -> Result<DockerSource
 }
 
 fn prompt_source(host: &Host, tty: &mut Tty) -> Result<DockerSource, ExitCode> {
-    let options: Vec<String> = DockerSource::all().into_iter().map(|s| s.label()).collect();
+    let sources = DockerSource::available(host.family);
+    let options: Vec<String> = sources.iter().map(|s| s.label_for(host.family)).collect();
     match tty.select_one(
         &crate::tr!(
             crate::keys::SOFTWARE_SELECT_SOURCE,
@@ -298,7 +302,7 @@ fn prompt_source(host: &Host, tty: &mut Tty) -> Result<DockerSource, ExitCode> {
         &options,
         Some(0),
     ) {
-        Ok(selected) => Ok(DockerSource::all()[selected]),
+        Ok(selected) => Ok(sources[selected]),
         Err(error) => Err(fail_install(&error)),
     }
 }
@@ -320,7 +324,7 @@ fn execute_install(
                 crate::tr!(
                     crate::keys::SOFTWARE_INSTALLED_OK,
                     software = software.label(),
-                    source = source.label()
+                    source = source.label_for(host.family)
                 )
             );
             ExitCode::SUCCESS
@@ -370,6 +374,21 @@ mod tests {
         let command = <Software as Args>::augment_args(Command::new("software"));
         let matches = command.try_get_matches_from(args)?;
         Software::from_arg_matches(&matches)
+    }
+
+    #[test]
+    fn alpine_explicit_source_is_validated_without_prompting() {
+        let host = Host {
+            family: crate::mirror::Family::Alpine,
+            codename: None,
+        };
+        for (source, accepted) in [("official", true), ("aliyun", false)] {
+            let command = parse(&["software", "install", "docker", "--source", source]).unwrap();
+            let SoftwareAction::Install(install) = command.action.unwrap() else {
+                panic!("expected install action");
+            };
+            assert_eq!(resolve_source(&host, &install).is_ok(), accepted);
+        }
     }
 
     #[test]

@@ -22,6 +22,35 @@ fn software_ready_app() -> ConsoleApp {
 }
 
 #[test]
+fn alpine_software_uses_configured_repositories_without_ce_source_choices() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = software_ready_app();
+    app.software.host = Some(Ok(Host {
+        family: Family::Alpine,
+        codename: None,
+    }));
+    app.software.ops = std::sync::Arc::new(MockSoftwareOps::manual(true));
+    app.software.confirming = Some(SoftwareConfirm {
+        software: Software::Docker,
+        source: DockerSource::Official,
+    });
+    for code in [KeyCode::Right, KeyCode::Left, KeyCode::Char(' ')] {
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        assert_eq!(
+            app.software.confirming.unwrap().source,
+            DockerSource::Official
+        );
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Host: Alpine Linux"));
+    assert!(content.contains("Configured Alpine repositories"));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.software.install.is_some());
+}
+
+#[test]
 fn software_menu_is_navigable_when_not_installed() {
     let mut app = ConsoleApp::new();
     app.snapshot = Snapshot::NotInstalled;
@@ -333,25 +362,9 @@ fn software_cancel_after_confirm_allows_reselecting_source() {
 #[test]
 fn software_confirmation_enter_with_non_root_policy_shows_notice() {
     let _language = LanguageGuard::set(Language::En);
-    // 注入临时路径但保持非 root 权限策略：确认 Enter 必须拒绝并提示 root 权限，
-    // 且不启动任何安装 worker。
-    let temp = std::env::temp_dir().join(format!(
-        "lkit-console-software-{}-{}",
-        std::process::id(),
-        unique_suffix()
-    ));
-    std::fs::create_dir_all(&temp).unwrap();
-    let _paths =
-        crate::software::test_support::TestPathsGuard::set(crate::software::SoftwarePaths {
-            os_release: temp.join("os-release"),
-            apt_keyrings_dir: temp.join("etc/apt/keyrings"),
-            apt_sources_list_d: temp.join("etc/apt/sources.list.d"),
-            dnf_repos_dir: temp.join("etc/yum.repos.d"),
-            docker_bin: vec![temp.join("usr/bin/docker")],
-            allow_non_root: false,
-        });
-
+    // 使用权限替身，不能依赖执行测试的真实 UID，也不能启动包管理器。
     let mut app = software_ready_app();
+    app.software.ops = std::sync::Arc::new(MockSoftwareOps::manual(false));
     app.software.confirming = Some(SoftwareConfirm {
         software: Software::Docker,
         source: DockerSource::Official,
@@ -364,14 +377,6 @@ fn software_confirmation_enter_with_non_root_policy_shows_notice() {
         "unexpected notice: {}",
         app.notice.text()
     );
-    std::fs::remove_dir_all(&temp).unwrap();
-}
-
-#[cfg(feature = "test-support")]
-fn unique_suffix() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 fn controlled_base_dialog() -> BasePackageDialog {

@@ -7,6 +7,8 @@ test_root=$(mktemp -d)
 fixture_directory=$test_root/fixtures
 fake_bin=$test_root/bin
 wget_bin=$test_root/wget-bin
+apk_bin=$test_root/apk-bin
+apk_log=$test_root/apk.log
 plain_bin=$test_root/plain-bin
 restricted_bin=$test_root/restricted-bin
 install_directory=$test_root/install
@@ -23,7 +25,7 @@ fail() {
   exit 1
 }
 
-mkdir -p "$fixture_directory" "$fake_bin" "$wget_bin" "$plain_bin" "$restricted_bin" "$install_directory"
+mkdir -p "$fixture_directory" "$fake_bin" "$wget_bin" "$plain_bin" "$restricted_bin" "$install_directory" "$apk_bin"
 
 for tool in awk bash cp dirname install mktemp mv rm sha256sum sh; do
   ln -s "$(command -v "$tool")" "$restricted_bin/$tool"
@@ -96,6 +98,15 @@ cat >"$wget_bin/wget" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --help ]]; then
+  if [[ ${FAKE_WGET_FLAVOR:-gnu} == busybox ]]; then
+    printf 'BusyBox wget: -q -O FILE URL\n'
+  else
+    printf 'GNU wget: --https-only --secure-protocol=TLSv1_2\n'
+  fi
+  exit 0
+fi
+
 output=
 url=
 while (($# > 0)); do
@@ -128,6 +139,17 @@ if [[ ${FAKE_WGET_CORRUPT_ASSET:-} == "$asset" ]]; then
 fi
 SH
 
+cat >"$apk_bin/apk" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >"$FAKE_APK_LOG"
+[[ $* == 'add --no-cache curl' ]] || exit 2
+[[ ${FAKE_APK_FAIL:-0} != 1 ]] || exit 1
+if [[ ${FAKE_APK_SKIP_CURL:-0} != 1 ]]; then
+  cp "$FAKE_CURL_SOURCE" "$FAKE_APK_BIN/curl"
+fi
+SH
+
 cat >"$fixture_directory/lkit-x86_64" <<'SH'
 #!/bin/sh
 case "${1:-}" in
@@ -149,7 +171,7 @@ esac
 SH
 
 chmod 0755 "$fake_bin/id" "$fake_bin/uname" "$fake_bin/ldd" "$fake_bin/curl" \
-  "$wget_bin/wget" \
+  "$wget_bin/wget" "$apk_bin/apk" \
   "$fixture_directory/lkit-x86_64" "$fixture_directory/lkit-aarch64"
 cp "$fake_bin/id" "$fake_bin/uname" "$fake_bin/ldd" "$wget_bin"
 cp "$fake_bin/id" "$fake_bin/uname" "$fake_bin/ldd" "$plain_bin"
@@ -171,6 +193,14 @@ run_installer() {
       run_path="$wget_bin:$plain_bin:$restricted_bin"
       shift
       ;;
+    apk | apk-wget)
+      rm -f "$apk_bin/curl" "$apk_log"
+      run_path="$apk_bin:$plain_bin:$restricted_bin"
+      if [[ $1 == apk-wget ]]; then
+        run_path="$run_path:$wget_bin"
+      fi
+      shift
+      ;;
     none)
       run_path="$plain_bin:$restricted_bin"
       shift
@@ -179,15 +209,21 @@ run_installer() {
   env \
     PATH="$run_path" \
     FAKE_FIXTURE_DIRECTORY="$fixture_directory" \
+    FAKE_APK_BIN="$apk_bin" \
+    FAKE_APK_LOG="$apk_log" \
+    FAKE_CURL_SOURCE="$fake_bin/curl" \
+    FAKE_APK_FAIL="${FAKE_APK_FAIL:-0}" \
+    FAKE_APK_SKIP_CURL="${FAKE_APK_SKIP_CURL:-0}" \
     FAKE_ID_U="${FAKE_ID_U:-0}" \
     FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
     FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" \
     FAKE_LDD_FLAVOR="${FAKE_LDD_FLAVOR:-glibc}" \
     FAKE_CURL_FAIL_ASSET="${FAKE_CURL_FAIL_ASSET:-}" \
     FAKE_CURL_CORRUPT_ASSET="${FAKE_CURL_CORRUPT_ASSET:-}" \
+    FAKE_WGET_FLAVOR="${FAKE_WGET_FLAVOR:-gnu}" \
     FAKE_WGET_FAIL_ASSET="${FAKE_WGET_FAIL_ASSET:-}" \
     FAKE_WGET_CORRUPT_ASSET="${FAKE_WGET_CORRUPT_ASSET:-}" \
-    LKIT_INSTALL_PATH="$destination" \
+    LKIT_INSTALL_PATH="${LKIT_INSTALL_PATH:-$destination}" \
     LKIT_TEST_LOG="$log" \
     sh "$installer" "$@"
 }
@@ -267,10 +303,61 @@ fi
 [[ $(sha256sum "$destination") == "$before" ]] \
   || fail "wget download failure replaced the existing binary"
 
+if error_output=$(FAKE_WGET_FLAVOR=busybox run_installer wget 2>&1); then
+  fail "wget without HTTPS-only support was accepted"
+fi
+[[ $error_output == *"apk add curl"* ]] \
+  || fail "BusyBox wget error does not explain the Alpine workaround"
+[[ $(sha256sum "$destination") == "$before" ]] \
+  || fail "unsupported wget replaced the existing binary"
+
 if error_output=$(run_installer none 2>&1); then
   fail "installation without curl or wget was accepted"
 fi
 [[ $error_output == *"curl or wget is required"* ]] \
   || fail "missing downloader error message is unclear"
+
+for downloader_mode in apk apk-wget; do
+  rm -f "$destination"
+  FAKE_WGET_FLAVOR=busybox run_installer "$downloader_mode" >/dev/null
+  [[ -x $destination ]] || fail "apk bootstrap did not install the binary"
+  [[ $($destination --fixture-architecture) == x86_64 ]] \
+    || fail "apk bootstrap selected the wrong asset"
+  [[ $(<"$apk_log") == $'add\n--no-cache\ncurl' ]] \
+    || fail "apk bootstrap did not request curl correctly"
+done
+
+# A capable wget must not cause package installation.
+run_installer apk-wget >/dev/null
+[[ ! -e $apk_log ]] || fail "GNU wget installation unnecessarily invoked apk"
+
+printf 'existing binary\n' >"$destination"
+before=$(sha256sum "$destination")
+if error_output=$(FAKE_APK_FAIL=1 run_installer apk 2>&1); then
+  fail "apk failure was accepted"
+fi
+[[ $error_output == *"could not install curl"* ]] \
+  || fail "apk failure error is unclear"
+[[ $(sha256sum "$destination") == "$before" ]] \
+  || fail "apk failure replaced the existing binary"
+
+if error_output=$(FAKE_APK_SKIP_CURL=1 run_installer apk 2>&1); then
+  fail "apk success without curl was accepted"
+fi
+[[ $error_output == *"curl is still unavailable"* ]] \
+  || fail "missing curl after apk error is unclear"
+[[ $(sha256sum "$destination") == "$before" ]] \
+  || fail "missing curl after apk replaced the existing binary"
+
+if FAKE_ID_U=1000 run_installer apk >/dev/null 2>&1; then
+  fail "non-root apk bootstrap was accepted"
+fi
+[[ ! -e $apk_log ]] || fail "non-root installation invoked apk"
+
+# Validate the destination before changing system packages.
+if LKIT_INSTALL_PATH=relative run_installer apk >/dev/null 2>&1; then
+  fail "relative install path was accepted"
+fi
+[[ ! -e $apk_log ]] || fail "invalid install path invoked apk"
 
 echo "install-lkit test: passed"

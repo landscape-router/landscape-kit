@@ -57,6 +57,7 @@ pub(crate) fn detect_from(path: &Path) -> Result<Host, MirrorError> {
         "rocky" => Family::Rocky,
         "almalinux" => Family::Alma,
         "arch" => Family::Arch,
+        "alpine" => Family::Alpine,
         _ => {
             return Err(MirrorError::Message(crate::tr!(
                 crate::keys::mirror::MIRROR_DISTRO_UNSUPPORTED,
@@ -124,6 +125,7 @@ mod tests {
             ("rocky", Family::Rocky),
             ("almalinux", Family::Alma),
             ("arch", Family::Arch),
+            ("alpine", Family::Alpine),
         ] {
             let path = write_os_release(&format!("ID={id}\n"));
             assert_eq!(detect_from(&path).unwrap().family, expected);
@@ -133,7 +135,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_distributions() {
-        for id in ["alpine", "centos"] {
+        for id in ["gentoo", "centos"] {
             let path = write_os_release(&format!("ID={id}\n"));
             assert!(detect_from(&path).is_err(), "{id} must be rejected");
             let _ = std::fs::remove_dir_all(path.parent().unwrap());
