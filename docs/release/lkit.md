@@ -7,7 +7,7 @@ workspace crate 的版本来源。成员 crate 通过 `version.workspace = true`
 `landscape-terrain-proto` 例外，它作为可独立发布的 Terrain L2 协议库使用自己的
 版本线（当前 `0.1.0`），与 workspace 版本无关，也不参与 release tag 校验。
 版本必须是 SemVer；候选版可以带 prerelease 后缀，发布 tag 固定为
-`v<workspace.package.version>`。当前版本为 `0.7.1-rc3`。
+`v<workspace.package.version>`。当前版本为 `0.7.1-rc4`。
 
 发布前执行：
 
@@ -22,8 +22,8 @@ bash scripts/test-build-musl-static.sh
 提交候选版本变更后创建并推送 prerelease tag：
 
 ```sh
-git tag v0.7.1-rc3
-git push origin v0.7.1-rc3
+git tag v0.7.1-rc4
+git push origin v0.7.1-rc4
 ```
 
 候选版本验证通过后，将 workspace 版本改为 `0.7.1`，再创建并推送正式 tag
@@ -134,11 +134,11 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landsc
 发布时 `install.sh` 内的下载地址会被替换为对应 Release 的资产地址
 （`releases/download/<tag>/`），不依赖 `releases/latest` 的指向。因此每个 Release
 的 `install.sh` 始终安装该 Release 自身的内容；`releases/latest/download/install.sh`
-是 GitHub 固定的入口，指向最新 stable Release。候选版（如 `0.7.1-rc3`）是 prerelease，
+是 GitHub 固定的入口，指向最新 stable Release。候选版（如 `0.7.1-rc4`）是 prerelease，
 `releases/latest` 不会指向它，通过脚本引导安装候选版需使用带 tag 的地址：
 
 ```sh
-wget -qO- https://github.com/landscape-router/landscape-kit/releases/download/v0.7.1-rc3/install.sh | sudo sh
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/download/v0.7.1-rc4/install.sh | sudo sh
 ```
 
 交互式安装推荐分两步执行，确保 `lkit` 直接连接当前终端的 `/dev/tty`：
