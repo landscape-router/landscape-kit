@@ -1,7 +1,13 @@
 #!/bin/sh
-# CI-only, disposable Alpine container. Downloads are real; OpenRC startup and
-# docker info use recording shims. Real daemon startup is covered in the QEMU VM.
+# CI-only, disposable Alpine container. Routine downloads use official sources;
+# public mirror probes/indexes require the guarded ci-mirror workflow.
+# OpenRC/docker use recording shims; real startup is covered in the QEMU VM.
 set -eu
+if [ "${LKIT_ALLOW_MIRROR_NETWORK:-0}" = 1 ]; then
+    # shellcheck source=scripts/lib/mirror-network-guard.sh
+    . /opt/mirror-network-guard.sh
+    lkit_require_mirror_network || exit $?
+fi
 [ "${LKIT_E2E:-0}" = 1 ] || { echo 'Requires LKIT_E2E=1' >&2; exit 2; }
 if [ ! -f /.dockerenv ] || [ ! -f /etc/alpine-release ] || [ "$(id -u)" != 0 ]; then
     echo 'Requires a disposable Alpine Docker container as root' >&2
@@ -59,13 +65,16 @@ contains "$work/list-before.log" '(docker) [not installed]'
 contains "$work/list-before.log" '(iproute2) [not installed]'
 contains "$work/list-before.log" '(procps) [not installed]'
 
-status=0
-"$lkit" --lang en software install docker --source aliyun --yes >"$work/unsupported-source.log" 2>&1 || status=$?
-[ "$status" = 2 ] || fail "Docker CE source must return usage error, got $status"
-contains "$work/unsupported-source.log" 'configured apk repositories'
-[ ! -e "$LKIT_ALPINE_CALL_LOG" ] || fail 'invalid source started a service'
-! apk info -e docker >/dev/null 2>&1 || fail 'invalid source installed Docker'
-ok 'Alpine detection and Docker CE source rejection'
+ok 'Alpine detection and pre-install package status'
+if [ "${LKIT_ALLOW_MIRROR_NETWORK:-0}" = 1 ]; then
+    status=0
+    "$lkit" --lang en software install docker --source aliyun --yes >"$work/unsupported-source.log" 2>&1 || status=$?
+    [ "$status" = 2 ] || fail "Docker CE source must return usage error, got $status"
+    contains "$work/unsupported-source.log" 'configured apk repositories'
+    [ ! -e "$LKIT_ALPINE_CALL_LOG" ] || fail 'invalid source started a service'
+    ! apk info -e docker >/dev/null 2>&1 || fail 'invalid source installed Docker'
+    ok 'Docker CE source rejection'
+fi
 
 # This job pins alpine:3.22; derive its matching stable branch.
 release=$(cut -d. -f1,2 /etc/alpine-release)
@@ -83,27 +92,32 @@ printf 'https://dl-cdn.alpinelinux.org/alpine/%s/community\n' "$branch" >>"$repo
 printf '# @testing https://dl-cdn.alpinelinux.org/alpine/edge/testing\n' >>"$repositories"
 cp "$repositories" "$work/original-repositories"
 chmod 0640 "$repositories"
-mirror=aliyun
-mirror_host=mirrors.aliyun.com
-"$lkit" --lang en set-mirror "$mirror" --yes >"$work/mirror.log" 2>&1 || { cat "$work/mirror.log"; fail 'switch mirror'; }
-contains "$repositories" "https://$mirror_host/alpine/$branch/main"
-contains "$repositories" "https://$mirror_host/alpine/$branch/community"
-contains "$repositories" '# @testing https://dl-cdn.alpinelinux.org/alpine/edge/testing'
-[ "$(stat -c %a "$repositories")" = 640 ] || fail 'mirror rewrite changed permissions'
-backup=/var/lib/lkit/mirror-backup/alpine/etc/apk/repositories
-cmp "$work/original-repositories" "$backup" || fail 'backup differs from original'
-"$lkit" --lang en set-mirror --show >"$work/show.log"
-contains "$work/show.log" "https://$mirror_host/alpine/$branch/main"
-"$lkit" --lang en set-mirror "$mirror" --yes
-cmp "$work/original-repositories" "$backup" || fail 'no-op overwrote original backup'
-# lkit warns rather than failing on refresh errors, so require real apk success.
-apk update
-"$lkit" --lang en set-mirror --restore --yes
-cmp "$work/original-repositories" "$repositories" || fail 'restore differs from original'
-[ ! -d /var/lib/lkit/mirror-backup/alpine ] || fail 'restore left its backup'
-"$lkit" --lang en set-mirror "$mirror" --yes
-apk update
-ok 'domestic mirror, real APK indexes, no-op backup and restore'
+if [ "${LKIT_ALLOW_MIRROR_NETWORK:-0}" = 1 ]; then
+    mirror=aliyun
+    mirror_host=mirrors.aliyun.com
+    "$lkit" --lang en set-mirror "$mirror" --yes >"$work/mirror.log" 2>&1 || { cat "$work/mirror.log"; fail 'switch mirror'; }
+    contains "$repositories" "https://$mirror_host/alpine/$branch/main"
+    contains "$repositories" "https://$mirror_host/alpine/$branch/community"
+    contains "$repositories" '# @testing https://dl-cdn.alpinelinux.org/alpine/edge/testing'
+    [ "$(stat -c %a "$repositories")" = 640 ] || fail 'mirror rewrite changed permissions'
+    backup=/var/lib/lkit/mirror-backup/alpine/etc/apk/repositories
+    cmp "$work/original-repositories" "$backup" || fail 'backup differs from original'
+    "$lkit" --lang en set-mirror --show >"$work/show.log"
+    contains "$work/show.log" "https://$mirror_host/alpine/$branch/main"
+    "$lkit" --lang en set-mirror "$mirror" --yes
+    cmp "$work/original-repositories" "$backup" || fail 'no-op overwrote original backup'
+    # Require real index success, not just lkit's refresh warning.
+    apk update
+    "$lkit" --lang en set-mirror --restore --yes
+    cmp "$work/original-repositories" "$repositories" || fail 'restore differs from original'
+    [ ! -d /var/lib/lkit/mirror-backup/alpine ] || fail 'restore left its backup'
+    "$lkit" --lang en set-mirror "$mirror" --yes
+    apk update
+    # Even live tests download subsequent packages from official sources.
+    "$lkit" --lang en set-mirror --restore --yes
+    cmp "$work/original-repositories" "$repositories" || fail 'second restore differs'
+    ok 'public mirror indexes, no-op backup and restore'
+fi
 
 # Reproduce a minimal host with pppd but no PPPoE plugin.
 apk add --no-cache ppp-daemon
@@ -147,4 +161,4 @@ contains "$work/list-after.log" '(docker) [installed]'
 contains "$repositories" "https://dl-cdn.alpinelinux.org/alpine/$branch/main"
 apk update
 ok 'Docker packages, configured mirror, OpenRC calls and installed status'
-echo 'ALPINE APK MIRROR AND SOFTWARE E2E PASSED'
+echo 'ALPINE APK AND SOFTWARE E2E PASSED'

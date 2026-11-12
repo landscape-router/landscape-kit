@@ -132,7 +132,8 @@ apt/dnf/pacman/apk 源文件，换源前自动备份原文件，可一键恢复�
 - 证据：[`scripts/test-docker-mirrors.sh`](../../../../scripts/test-docker-mirrors.sh)、
   [`run-distro.sh`](../../../../scripts/docker/mirrors/run-distro.sh)、
   [测试说明](../../../testing/docker-mirrors.md)
-- 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
+- 说明：仅由 `ci-mirror` 分支的 push 触发，普通 PR／分支仅运行离线回归。
+  用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
   `debian:bookworm`/`ubuntu:24.04`/`fedora:44`/`fedora:45`/`archlinux:latest` 容器（root，无需
   test-support），依次验证 tuna 切换、`--restore` 恢复（内容逐字节还原、备份删除）、
   aliyun 互转、official 恢复。Debian 覆盖 one-line 与 deb822 两种镜像布局，并验证
@@ -149,6 +150,16 @@ apt/dnf/pacman/apk 源文件，换源前自动备份原文件，可一键恢复�
   （恰好一个 Server）。
 - 缺口：Rocky、AlmaLinux 尚未纳入容器矩阵（机制相同，
   可在 compose 列表扩充）。
+
+## MIR-13
+
+**公共镜像脚本只在专用分支 push 与显式联网许可同时成立时运行**
+
+- 测试层：Shell 策略单元、GitHub Actions 配置
+- 状态：`部分覆盖`
+- 证据：[策略与边界](../../../testing/mirror-network-policy.md)、[guard 单测](../../../../scripts/test-mirror-network-guard.sh)、[专用分支工作流](../../../../.github/workflows/test-docker-mirrors.yml)
+- 说明：14 种组合覆盖普通分支、近似分支名、tag、PR、手动 dispatch、schedule、缺少许可和非 Actions 环境。宿主与容器入口防误调用；双架构串行并取消旧任务，Alpine 镜像模式通过显式输入复用工作流。
+- 缺口：配置与单测不代替 GitHub 实际事件／复用工作流验证；公开镜像实测只能由专用分支 push 发起。guard 不是恶意代码的网络沙箱。
 
 ## MIR-10
 

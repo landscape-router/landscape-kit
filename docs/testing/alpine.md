@@ -1,7 +1,9 @@
 # Alpine 换源、软件包与 OpenRC 测试
 
 入口为 [Alpine CI](../../.github/workflows/test-qemu-alpine.yml)。同一任务构建普通 musl
-生产二进制，分别在联网的临时 Alpine 容器与不可访问外网的 QEMU/KVM 虚拟机中验证。
+生产二进制，分别在使用官方源的临时 Alpine 容器与不可访问外网的 QEMU/KVM 虚拟机中验证。
+公共镜像模式只由 `ci-mirror` push 工作流复用本工作流，并显式传入
+`allow_mirror_network: true`；其他触发默认 false，详见[联网策略](mirror-network-policy.md)。
 不使用 `--test-runtime`，不在本地正常开发流程中运行系统级测试。
 
 ## apk 与换源容器
@@ -13,18 +15,21 @@ CI 使用 `alpine:3.22`，只读挂载本次构建的 `lkit-x86_64` 和测试脚
 
 真实执行的部分：
 
-- 发行版检测、软件列表、拒绝 Docker CE 来源参数。
+- 发行版检测、软件列表；公共镜像模式下还验证拒绝 Docker CE 镜像来源参数。
 - 缺少 community 仓库时 apk 安装失败，且不启动服务。
-- 官方源 → 阿里云 Alpine 源、真实 `apk update`、源文件权限、备份、重复换源保留备份、
-  逐字节恢复和官方反向映射；禁用的 edge/testing 行保持原样。
+- 仅公共镜像模式：官方源 → 阿里云 Alpine 源、真实 `apk update`、源文件权限、备份、
+  重复换源保留备份及逐字节恢复；禁用的 edge/testing 行保持原样。之后恢复官方仓库，
+  后续软件包不从阿里云下载。普通分支不执行这段流程。
 - BusyBox `ip`/`sysctl` 不被判定为完整依赖；安装真正的 `iproute2`、`procps-ng`。
 - 从只有 `ppp-daemon` 的状态修复 PPPoE 插件；检查命令、插件文件和包安装状态。
 - 安装 `ppp ppp-pppoe iproute2 iw hostapd procps-ng` 及 Docker、OpenRC 服务脚本、Buildx、
-  Compose，确认下载遵循当前 apk 镜像且不写入 apt/dnf Docker CE 源。
+  Compose，确认从配置的官方 apk 仓库下载且不写入 apt/dnf Docker CE 源。
 
 容器内的 `rc-update`、`rc-service` 和 `docker info` 使用记录型 shim，断言启用、启动、
 最终验证的顺序，不在共享宿主内启动 Docker daemon。真实包安装与文件系统操作仅发生
-在一次性容器内。国内镜像网络不可用或真实包安装失败会使 CI 失败，不跳过该断言。
+在一次性容器内。申请公共镜像模式时，工作流和脚本均校验 push 事件、`ci-mirror` ref
+及显式联网许可；镜像索引更新失败会使该实测失败，不跳过断言。真实包安装失败同样
+使测试失败。
 容器日志保存为 `alpine-artifacts/apk.log`。
 
 ## 真实 OpenRC 与 Docker daemon

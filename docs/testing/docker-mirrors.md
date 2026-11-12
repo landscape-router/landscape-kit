@@ -7,6 +7,16 @@
 改写软件源文件、不依赖 systemd，因此直接用各发行版的官方基础镜像，
 容器内以 root 运行生产二进制，无需 `test-support`。
 
+## 联网触发边界
+
+本工作流只由推送到 `ci-mirror` 分支触发，不监听普通分支、PR、定时任务或手动 dispatch。
+普通 CI 使用离线单测验证镜像 URL、文件改写和备份恢复。工作流串行执行两个架构，
+完成后调用 Alpine 镜像实测；同分支的新推送取消旧任务。
+
+宿主入口与容器入口均调用共享 guard，要求 `LKIT_ALLOW_MIRROR_NETWORK=1`、
+`GITHUB_ACTIONS=true`、`GITHUB_EVENT_NAME=push`、`GITHUB_REF=refs/heads/ci-mirror`
+同时成立，否则在 Docker、探测或包管理操作前失败。详情见[联网策略](mirror-network-policy.md)。
+
 覆盖发行版：
 
 | 容器镜像 | 家族 | 覆盖点 |
@@ -63,11 +73,14 @@ suites/components）；随后把 `sources.list` 置空，`set-mirror tuna` 应�
   runner 上自动覆盖该分支）；
 - 镜像 URL 保留原始协议（`http://`/`https://`），断言不依赖 scheme。
 
-## 本地运行
+## 运行方式
+
+审阅待测提交后，将其推送到专用分支：
 
 ```sh
-scripts/test-docker-mirrors.sh
+git push origin HEAD:ci-mirror
 ```
 
-要求 Docker；默认仅支持 Linux x86_64（CI 在原生 x86_64/aarch64 runner 上执行）。
-需网络拉取镜像、构建依赖并执行命令默认的软件包索引刷新；源文件改写本身不依赖联网。
+不在本地执行系统级脚本，也不通过伪造 CI 环境变量绕过 guard。CI 在原生 x86_64/aarch64
+runner 上使用 Docker，需要网络拉取镜像、构建依赖并执行软件包索引刷新。离线回归只
+操作临时目录，不向公共镜像站发送请求。

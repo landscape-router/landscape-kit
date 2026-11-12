@@ -99,11 +99,10 @@
 - 说明：用 rust:bookworm 构建生产二进制，经 docker 命名卷挂载进
   `debian:bookworm`/`ubuntu:24.04`/`fedora:44`/`archlinux:latest` 容器（root，无需
   test-support）执行 `lkit software install docker --yes`，每个发行版覆盖一个来源
-  （debian=official、ubuntu=official、fedora=aliyun、arch=ustc；CI runner 在海外，
-  ubuntu 使用官方源，国内镜像的 URL 映射由单元测试覆盖）：
+  （所有发行版均为 official，不从公共镜像站下载包；镜像 URL 映射由离线单测覆盖）：
   断言 apt `docker.list` 按真实 `VERSION_CODENAME` 与架构写入官方/镜像 URL、
   `docker.gpg` 为有效 keyring、dnf `docker-ce.repo` 按真实 `VERSION_ID` 主版本生成
-  baseurl 与 gpgkey 指向阿里云、pacman 真实安装且来源参数被接受；安装后断言真实
+  baseurl 与 gpgkey 指向官方仓库、pacman 真实安装；安装后断言真实
   `/usr/bin/docker` 存在、`software list` 状态刷新为已安装；容器内无法运行
   dockerd，`systemctl enable --now docker` 与 `docker info` 用记录型 shim
   验证调用契约；安装前验证 `--non-interactive` 无 `--source` 报用法错误。CI 在

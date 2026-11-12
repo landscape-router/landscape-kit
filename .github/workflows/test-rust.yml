@@ -3,6 +3,8 @@ name: Test Rust workspace
 on:
   pull_request:
     paths:
+      - scripts/lib/mirror-network-guard.sh
+      - scripts/test-mirror-network-guard.sh
       - Cargo.lock
       - Cargo.toml
       - landscape-terrain-proto/**
@@ -12,6 +14,8 @@ on:
   push:
     branches: [dev, main, build/musl-static]
     paths:
+      - scripts/lib/mirror-network-guard.sh
+      - scripts/test-mirror-network-guard.sh
       - Cargo.lock
       - Cargo.toml
       - landscape-terrain-proto/**
@@ -33,6 +37,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - name: Check mirror network opt-in policy
+        run: bash scripts/test-mirror-network-guard.sh
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Build workspace
@@ -52,8 +58,18 @@ jobs:
             deployment::cgroup::tests \
             check::service::tests \
             check::kernel::tests \
+            mirror::apt::parse::tests \
+            mirror::apt::apply_tests \
             mirror::dnf::apply_tests \
             mirror::dnf::parse::tests \
+            mirror::pacman::tests \
+            mirror::apk::tests \
+            mirror::apk::apply_tests \
+            mirror::availability::tests \
+            software::docker::tests::apt_source_file \
+            software::docker::tests::dnf_repo_file \
+            software::docker::tests::apt_arch_maps_common_architectures \
+            software::docker::apk_tests \
             service::openrc::tests::renders; do
             cargo test --locked -p lkit-cli --features test-support --bin lkit "$module"
           done

@@ -37,7 +37,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-04` | [security-and-environment.md](functional/security-and-environment.md) |
 | 网络接管 | `NET-01` 至 `NET-12` | [network-takeover.md](functional/network-takeover.md) |
 | 宿主网络适配 | `HNET-01` 至 `HNET-08` | [hostnet.md](functional/hostnet.md) |
-| 主机换源 | `MIR-01` 至 `MIR-12` | [mirror.md](functional/mirror.md) |
+| 主机换源 | `MIR-01` 至 `MIR-13` | [mirror.md](functional/mirror.md) |
 | 常用软件安装 | `SFT-01` 至 `SFT-07` | [software.md](functional/software.md) |
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-11` | [self.md](functional/self.md) |

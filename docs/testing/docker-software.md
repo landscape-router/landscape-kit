@@ -7,17 +7,16 @@
 启用命令与 daemon 验证契约，以及安装后软件状态刷新。与换源 E2E 不同，本测试需要
 联网下载 docker-ce 软件包与 GPG key。
 
-覆盖发行版（每个发行版覆盖一个安装来源；TUNA 对 docker-ce 仓库存在地域/UA 过滤
-（非 CN 流量 403），USTC 只同步 apt 家族（fedora 404），因此真实安装矩阵
-使用官方源、阿里云与 USTC 源，TUNA、腾讯云与华为云的 URL 映射由单元测试
-覆盖）：
+常规分支与 PR 的真实安装矩阵统一使用官方源，不从公共镜像站下载软件包。
+各公共镜像的 URL 映射由临时目录中的离线单测验证；公共镜像实测的触发边界见
+[联网策略](mirror-network-policy.md)。覆盖发行版：
 
 | 容器镜像 | 家族 | 来源 | 覆盖点 |
 | --- | --- | --- | --- |
 | `debian:bookworm` | apt | official | `docker.list` 官方 URL、debian 代号、`docker.gpg` keyring 有效性 |
 | `ubuntu:24.04` | apt | official | `docker.list` 官方 URL、ubuntu 代号、`docker.gpg` keyring 有效性、x86_64/aarch64（CI）两种架构的 `arch=` 映射 |
-| `fedora:44` | dnf | aliyun | `docker-ce.repo` 按 `VERSION_ID` 主版本生成 baseurl、`gpgkey` 指向镜像 |
-| `archlinux:latest` | pacman | ustc | 官方仓库真实安装（来源参数被接受，pacman 不写第三方仓库） |
+| `fedora:44` | dnf | official | `docker-ce.repo` 按 `VERSION_ID` 主版本生成官方 baseurl 与 gpgkey |
+| `archlinux:latest` | pacman | official | 官方仓库真实安装，pacman 不写第三方仓库 |
 
 ## 流程
 

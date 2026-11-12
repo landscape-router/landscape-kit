@@ -4,8 +4,13 @@
 #
 # 流程：先用 rust:bookworm 构建一次 lkit 生产二进制，通过 docker 命名卷挂载进
 # 各发行版容器执行 run-distro.sh。容器内以 root 运行，无需 test-support。
-# 换源只改文件不联网。命名卷避免了 docker 对缺失宿主路径的自动创建（root 目录）。
+# Probes and index refreshes contact public mirrors: ci-mirror pushes only.
 set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=scripts/lib/mirror-network-guard.sh
+source "$root/scripts/lib/mirror-network-guard.sh"
+lkit_require_mirror_network || exit $?
 
 case $(uname -s):$(uname -m) in
   Linux:x86_64) ;;
@@ -26,7 +31,6 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 volume=lkit-mirror-bin
 # Invoked indirectly by the EXIT trap.
 # shellcheck disable=SC2317
@@ -52,6 +56,9 @@ while read -r distro image; do
   [[ -n $distro ]] || continue
   echo "== $distro ($image) =="
   if docker run --rm \
+    --env LKIT_ALLOW_MIRROR_NETWORK --env GITHUB_ACTIONS \
+    --env GITHUB_EVENT_NAME --env GITHUB_REF \
+    --volume "$root/scripts/lib/mirror-network-guard.sh:/opt/mirror-network-guard.sh:ro" \
     --volume "$volume:/usr/local/bin:ro" \
     --volume "$root/scripts/docker/mirrors/run-distro.sh:/opt/run-distro.sh:ro" \
     --entrypoint bash \

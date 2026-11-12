@@ -4,6 +4,9 @@
 #
 # 注意：`--restore` 只还原上一次换源前的备份，因此 restore 验证紧跟首次切换。
 set -euo pipefail
+# shellcheck source=scripts/lib/mirror-network-guard.sh
+source /opt/mirror-network-guard.sh
+lkit_require_mirror_network || exit $?
 
 distro=${1:?usage: run-distro.sh <debian|ubuntu|fedora|archlinux>}
 lkit=/usr/local/bin/lkit

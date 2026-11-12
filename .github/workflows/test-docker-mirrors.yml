@@ -1,33 +1,25 @@
 name: Test Docker mirror switching
 
+# Public mirror traffic is deliberately opt-in by branch name, not PRs,
+# schedules, or workflow_dispatch. Push the commit under test to ci-mirror.
 on:
-  pull_request:
-    paths:
-      - Cargo.lock
-      - Cargo.toml
-      - lkit-cli/**
-      - scripts/docker/mirrors/**
-      - scripts/test-docker-mirrors.sh
-      - .github/workflows/test-docker-mirrors.yml
   push:
-    branches: [dev, main]
-    paths:
-      - Cargo.lock
-      - Cargo.toml
-      - lkit-cli/**
-      - scripts/docker/mirrors/**
-      - scripts/test-docker-mirrors.sh
-      - .github/workflows/test-docker-mirrors.yml
-  workflow_dispatch:
+    branches: [ci-mirror]
 
 permissions:
   contents: read
 
+concurrency:
+  group: mirror-live-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   mirrors:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ci-mirror'
     name: Docker mirror switching (${{ matrix.architecture }})
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - architecture: x86_64
@@ -42,13 +34,21 @@ jobs:
     steps:
       - name: Check out landscape-kit
         uses: actions/checkout@v7
-
+      - name: Verify mirror network policy
+        run: bash scripts/test-mirror-network-guard.sh
       - name: Verify Docker
         run: |
           docker info
           docker compose version
-
       - name: Run Docker mirror E2E
         env:
           LKIT_E2E_ALLOW_ARM: ${{ matrix.allow_arm }}
+          LKIT_ALLOW_MIRROR_NETWORK: "1"
         run: scripts/test-docker-mirrors.sh
+
+  alpine-mirror:
+    needs: mirrors
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ci-mirror'
+    uses: ./.github/workflows/test-qemu-alpine.yml
+    with:
+      allow_mirror_network: true

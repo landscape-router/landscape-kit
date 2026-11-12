@@ -2,7 +2,7 @@ name: Alpine apk, bpffs and OpenRC
 
 on:
   push:
-    branches: ["**"]
+    branches-ignore: [ci-mirror]
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -33,6 +33,11 @@ on:
       - scripts/install-lkit.sh
       - scripts/test-install-lkit.sh
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      allow_mirror_network:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,6 +53,13 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
+      - name: Authorize public mirror network
+        if: inputs.allow_mirror_network == true
+        env:
+          LKIT_ALLOW_MIRROR_NETWORK: "1"
+        run: |
+          . scripts/lib/mirror-network-guard.sh
+          lkit_require_mirror_network
       - name: Require KVM
         run: sudo test -c /dev/kvm && sudo test -r /dev/kvm && sudo test -w /dev/kvm
       - uses: Swatinem/rust-cache@v2
@@ -62,7 +74,8 @@ jobs:
           cargo install --locked cargo-zigbuild --version 0.23.4
       - name: Check VM scripts
         run: |
-          shellcheck scripts/test-qemu-alpine.sh scripts/qemu/alpine/guest-tests.sh scripts/docker/alpine/run-tests.sh scripts/install-lkit.sh scripts/test-install-lkit.sh
+          shellcheck scripts/test-qemu-alpine.sh scripts/qemu/alpine/guest-tests.sh scripts/docker/alpine/run-tests.sh scripts/install-lkit.sh scripts/test-install-lkit.sh scripts/lib/mirror-network-guard.sh scripts/test-mirror-network-guard.sh
+          bash scripts/test-mirror-network-guard.sh
           bash scripts/test-install-lkit.sh
           shellcheck -s sh -e SC2034 scripts/qemu/alpine/prepare.openrc
       - name: Build production musl binaries
@@ -71,10 +84,15 @@ jobs:
         run: |
           bash scripts/build-musl-static.sh x86_64-unknown-linux-musl
           rustc --edition=2024 scripts/qemu/alpine/render-services.rs -o "$RUNNER_TEMP/render-openrc-services"
-      - name: Run Alpine apk mirror and software scenarios
+      - name: Run Alpine apk and software scenarios
+        env:
+          LKIT_ALLOW_MIRROR_NETWORK: ${{ inputs.allow_mirror_network == true && '1' || '0' }}
         run: |
           mkdir -p "$RUNNER_TEMP/alpine-artifacts"
           docker run --rm --env LKIT_E2E=1 \
+            --env LKIT_ALLOW_MIRROR_NETWORK --env GITHUB_ACTIONS \
+            --env GITHUB_EVENT_NAME --env GITHUB_REF \
+            --volume "$GITHUB_WORKSPACE/scripts/lib/mirror-network-guard.sh:/opt/mirror-network-guard.sh:ro" \
             --volume "$RUNNER_TEMP/alpine-binaries/lkit-x86_64:/usr/local/bin/lkit:ro" \
             --volume "$GITHUB_WORKSPACE/scripts/docker/alpine/run-tests.sh:/opt/run-tests.sh:ro" \
             --entrypoint /bin/sh alpine:3.22 /opt/run-tests.sh \

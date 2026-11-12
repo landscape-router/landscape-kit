@@ -63,6 +63,8 @@ export PATH="$shim_dir:$PATH"
 
 case "$distro" in
 debian)
+  # The release file belongs to the test container, not the lint host.
+  # shellcheck source=/dev/null
   source /etc/os-release
   codename=${VERSION_CODENAME:?missing VERSION_CODENAME}
   "$lkit" software install docker --yes --source official
@@ -75,6 +77,7 @@ debian)
   ;;
 
 ubuntu)
+  # shellcheck source=/dev/null
   source /etc/os-release
   codename=${VERSION_CODENAME:?missing VERSION_CODENAME}
   # CI runner 在海外,USTC 等国内镜像对数据中心流量不稳定(DNS/连接失败),
@@ -89,23 +92,24 @@ ubuntu)
   ;;
 
 fedora)
+  # shellcheck source=/dev/null
   source /etc/os-release
   major=${VERSION_ID%%.*}
-  # TUNA/USTC 对 docker-ce 的 fedora 仓库存在地域/UA 过滤（非 CN 流量 403），
-  # 真实安装矩阵使用官方源与阿里云源；TUNA/USTC 的 URL 映射由单元测试覆盖。
-  "$lkit" software install docker --yes --source aliyun
-  ok "install docker from the Aliyun mirror"
+  # Routine CI downloads only from the official Docker repository. Public
+  # mirror URL mappings are verified offline, not by downloading their packages.
+  "$lkit" software install docker --yes --source official
+  ok "install docker from the official repository"
   assert_contains /etc/yum.repos.d/docker-ce.repo \
-    "baseurl=https://mirrors.aliyun.com/docker-ce/linux/fedora/$major/\$basearch/stable"
+    "baseurl=https://download.docker.com/linux/fedora/$major/\$basearch/stable"
   assert_contains /etc/yum.repos.d/docker-ce.repo \
-    "gpgkey=https://mirrors.aliyun.com/docker-ce/linux/fedora/gpg"
-  ok "dnf repo file points at the Aliyun mirror"
+    "gpgkey=https://download.docker.com/linux/fedora/gpg"
+  ok "dnf repo file points at the official repository"
   ;;
 
 archlinux)
   # pacman 从 Arch 官方仓库安装，不写第三方仓库；来源参数仍必须被接受。
-  "$lkit" software install docker --yes --source ustc
-  ok "install docker from pacman (source ustc accepted)"
+  "$lkit" software install docker --yes --source official
+  ok "install docker from the official pacman repositories"
   pacman -Q docker >/dev/null || fail "docker package must be installed"
   ;;
 
