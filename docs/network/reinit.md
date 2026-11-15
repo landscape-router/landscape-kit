@@ -63,20 +63,23 @@ reinit 只对新计划中选中的 LAN 物理接口执行 IPv4/IPv6 address flus
 
 管理地址可能变化导致 SSH 断线,因此 v1 一律进入确认窗口(无论地址是否变化):
 
-- 健康检查通过后 arm 恢复机制并提交 pending 状态,进入 `awaiting_network_confirmation`;
+- 停止服务前持久化恢复依据并检查 daemon 可用；健康检查通过后写入 pending 状态，
+  进入 `awaiting_network_confirmation`;
 - `lkit network status` 显示事务阶段、新管理地址与确认截止时间;
 - `lkit network confirm` 复核接口 MAC、管理 IPv4/prefix、`br_lan` 成员、Landscape
-  PID 与健康后提交 state 并移除恢复 unit;
+  PID 与健康，再检查期限与启动标识；持久化 `finalizing` 后提交 state;
 - 10 分钟确认期限到达、确认前重启与手工 `lkit network rollback` 都进入同一幂等回滚:
-  停止 Landscape → 恢复事务目录中的旧 `data/` → 重启旧配置并健康检查 → 标记
-  `rolled_back`;桥接现场随旧数据恢复,由 Landscape 按旧配置重新接管;
-- 确认与回滚入口接受 `Operation::Reinit` 事务,判定规则与首次接管相同(只接受
-  `awaiting_network_confirmation`、`finalizing`、`rolling_back` 阶段)。
+  停止 Landscape → 恢复事务目录中的旧 `data/` → 恢复原服务状态 → 标记
+  `rolled_back`；原本运行时启动旧配置并健康检查，桥接由 Landscape 按旧配置接管；
+  原本停止时保持停止，不承诺网络连通性；原开机启动设置保持不变;
+- 确认接受 `awaiting_network_confirmation`，并允许续做 `finalizing`；回滚接受
+  `awaiting_network_confirmation` 和 `rolling_back`，不撤销已接受的确认。
+  判定规则见 [daemon 恢复契约](daemon-recovery.md#确认与恢复)。
 
 ## 边界
 
 - install 与 reinit 都不检查 `br_lan` 是否存在,桥接的创建、成员同步与清理全部由
   Landscape 按新配置处理;
 - 待确认的 reinit 事务与首次接管一样阻断其他命令进入(含再次 reinit);
-- 回滚成功后的安装保持可用,现场与保护 `.lkb` 保留;用户可用 `lkit restore` 从保护
+- 回滚成功后的安装恢复原服务状态，现场与保护 `.lkb` 保留;用户可用 `lkit restore` 从保护
   备份人工恢复被清空的非网络配置。

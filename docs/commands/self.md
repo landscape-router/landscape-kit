@@ -102,6 +102,9 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 安装根与 lkit 地盘元数据(`config.toml`、`backups/`、`transactions/` 保留)。
 
 存在未完成事务时 `self remove` 拒绝移除 daemon，须先完成事务恢复。
+已提交的 Landscape 不以 daemon 存活为持续运行条件；移除 daemon 后，服务启动仍
+调用保留的 lkit CLI 执行恢复检查。需要新建接管、reinit 或委托修改时，必须先重新
+部署 daemon。手工删除 `/usr/local/bin/lkit` 会导致受管 Landscape 的启动检查失败。
 
 ## daemon 进程
 

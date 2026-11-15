@@ -18,8 +18,8 @@ lkit [--non-interactive] reinit
   daemon worker 通过隐藏 `--network-plan-file` 提供计划,见 [daemon worker](../service/runtime-and-health.md));
 - 安装状态存在且已提交;lkit 地盘无有效状态时返回参数错误并提示先执行
   `lkit install`;
-- 服务后端为 systemd、OpenRC 或 SysVinit,且宿主网络服务已被接管(NetworkManager、
-  `networking.service`、firewalld、systemd-resolved 处于 stop/disable/mask 状态);
+- 服务后端为 systemd、OpenRC 或 SysVinit,且该后端管理的宿主网络服务已被接管
+  (停止且禁用；systemd 同时保留对应 mask 状态);
   未接管的安装提示不支持,不回退、不隐式接管;
 - 无未完成事务;存在待确认的网络接管事务时阻断并提示使用 `lkit network status`、
   `lkit network confirm` 或 `lkit network rollback`。
@@ -45,7 +45,9 @@ reinit 是配置级重建,与 [restore](restore.md) 的数据库重建语义一�
 交互收集(凭据与网络计划)和破坏性计划确认必须先于任何修改完成:确认被拒绝或非交互
 模式缺少 `--yes` 时不创建事务、不写任何文件、不停止服务。
 
-服务定义必须包含 lkit 的启动恢复检查；缺少该检查的旧部署不能执行 reinit。`lkit repair static|binary` 不更新服务定义，当前没有自动迁移旧服务定义的入口。
+服务定义必须包含 lkit 的启动恢复检查；缺少该检查时，先执行
+[`lkit repair service`](repair.md#服务定义修复)，成功后重新执行 reinit。
+reinit 不隐式改写服务定义。
 
 ## 确认窗口(一律进入)
 
@@ -56,7 +58,7 @@ reinit 是配置级重建,与 [restore](restore.md) 的数据库重建语义一�
 - 用户从任意可达主机(推荐重新连接到新管理地址)运行 `lkit network confirm` 复核接口
   MAC、管理地址、`br_lan` 成员、Landscape PID 与健康后提交;
 - 期限内未确认、确认前重启或手工 `lkit network rollback` 走同一幂等回滚:停止服务 →
-  恢复旧 `data/` → 重启旧配置并通过健康检查;回滚成功后事务标记 `rolled_back`,
+  恢复旧 `data/` → 恢复原服务运行状态与开机启动状态;回滚成功后事务标记 `rolled_back`,
   现场与保护 `.lkb` 保留;
 - 确认或回滚成功后,后续 `lkit reinit` 才能再次运行。
 
@@ -78,19 +80,22 @@ reinit 是配置级重建,与 [restore](restore.md) 的数据库重建语义一�
    `br_lan`,桥接由 Landscape 按新配置处理)→ 启动服务;
 8. 更新为 `verifying`:完成 180 秒启动检查与 10 秒稳定观察;
 9. 进入 `awaiting_network_confirmation`,输出确认命令与恢复机制说明;
-10. `lkit network confirm` 通过后提交 state(`verified: true`)、更新为 `finalizing` 再
-    更新为 `committed`;旧 data 事务现场与保护 `.lkb` 保留供诊断与人工 restore。
+10. `lkit network confirm` 完成校验并再次验证期限和启动标识后，先持久化 `finalizing`，
+    再提交 state(`verified: true`)并更新为 `committed`;旧 data 事务现场与保护 `.lkb` 保留供诊断与人工 restore。
 
 ## 失败与回滚
 
-- 目标激活或健康检查失败:停止服务 → 从事务目录恢复旧 `data/` → 重启旧配置并健康检查;
+- 目标激活或健康检查失败:停止服务 → 从事务目录恢复旧 `data/` → 恢复原服务状态;
+  原本运行时启动旧配置并健康检查，原本停止时验证进程已退出并保持停止；
+  原开机启动设置保持不变，`--allow-no-backup` 不改变该规则;
   回滚成功返回 `5`,回滚失败返回 `6` 并保留现场、输出人工恢复所需路径;
 - 回滚优先使用事务目录中的旧 data 现场,不依赖保护 `.lkb`(后者用于人工 restore);
-- 中断恢复规则见[事务与中断恢复](../deployment/transactions-and-recovery.md):
-  `preparing` 标记 `failed`;`prepared`/`stopping` 恢复事务前 systemd 状态后标记
-  `failed`;`activating`/`verifying` 执行上述回滚;
-  `awaiting_network_confirmation`/`finalizing`/`rolling_back` 阻断并提示使用
-  `lkit network confirm` 或 `lkit network rollback`;
+- 带完整网络恢复依据的中断 reinit 由 daemon 处理：进入确认窗口前回滚；
+  `awaiting_network_confirmation` 在同次主机启动且未超时时等待，超时或重启则回滚；
+  `finalizing` 续做提交，`rolling_back` 重试回滚。确认窗口内不因 daemon 进程重启
+  提前回滚或延长期限。尚未建立完整恢复依据的准备阶段按通用事务清理规则处理。
+- 确认健康检查跨过截止时刻时拒绝确认；完整判定见
+  [daemon 网络接管恢复](../network/daemon-recovery.md#确认与恢复)。
 - 退出码:成功 `0`,参数错误 `2`,普通失败 `1`,回滚成功 `5`,回滚失败 `6`,Ctrl+C `130`。
 
 ## 控制台

@@ -140,15 +140,19 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 
 `resolv_conf_backup` 是 lkit 地盘相对路径，固定指向本事务按前述格式创建并自校验成功的 `backups/<transaction-id>/host/resolv.conf` 目录。纯验证、纯静态 repair 不修改运行状态时，该字段为 null。
 
-`network_takeover` 是 v3 新增的可空字段，只允许出现在首次 `install`。它保存用户选择的
-接口与 MAC、Landscape 网络计划、NetworkManager/`networking.service`/firewalld/
-systemd-resolved 的原始 installed/active/enable 状态、确认截止时间、恢复 unit 名、恢复二进制
-和待提交安装状态路径。
-字段不得包含 PPPoE 凭据。接管事务在 `awaiting_network_confirmation` 或 `finalizing`
-期间不允许通用中断恢复猜测结果，只能执行 `lkit network confirm` 或
-`lkit network rollback`。
+`network_takeover` 是可空字段，允许出现在首次 `install` 与 `reinit`。它保存用户选择
+的接口与 MAC、网络计划、对应后端的宿主网络服务快照、确认截止时间、主机启动标识
+及待提交安装状态路径。恢复 unit 名和恢复二进制路径仅用于旧事务兼容清理；新事务
+不创建专属恢复 unit。字段不得包含 PPPoE 凭据。
 
-恢复时必须按 `systemd_before` 恢复注册链接以及 enabled/active 状态，并通过 `resolv_conf_backup` 找到对应主机备份。缺少必要字段、备份不可用或现场出现无法安全覆盖的所有权冲突时，不猜测原状态，事务标记为 `failed` 并要求人工处理。
+网络事务的恢复只按[统一恢复契约](../network/daemon-recovery.md)执行：待确认阶段
+等待或回滚，`finalizing` 续做提交，`rolling_back` 重试恢复。不能以通用失败清理
+替代网络恢复，也不能把已经接受的确认改为回滚。
+
+恢复时按 `systemd_before`（兼容字段名，适用于三个后端）恢复原服务状态，并通过
+`resolv_conf_backup` 找到主机备份。缺少必要字段、备份不可用或存在所有权冲突时，
+不猜测原状态；网络回滚保留 `rolling_back` 和恢复依据，记录错误供重试或人工修复，
+不能标记为终态后放行目标配置启动。其他事务遵守各自的失败恢复规则。
 
 `log_path` 是必填的 lkit 地盘相对路径，固定指向 `logs/<transaction-id>.log`，不得逃逸
 lkit 地盘。
@@ -241,18 +245,18 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 - `rolled_back`：不重复恢复；
 - `failed`：阻断新安装并要求人工诊断。
 
-恢复再次失败时标记 `failed`，保留可用的 `.lkb`、静态备份、版本目录和失败现场，不无限循环重试。
+普通事务恢复再次失败时标记 `failed`；网络回滚遵守保留 `rolling_back` 的规则。保留可用的 `.lkb`、静态备份、版本目录和失败现场，不无限循环重试。
 
 ### 未提交网络接管安装的回滚清理
 
 网络接管首次安装只有在同时满足以下条件时才允许清理整个 `data/`：事务 `operation` 为
-`install`，存在 `network_takeover`，阶段为 `awaiting_network_confirmation`、`finalizing`
+`install`，存在 `network_takeover`，阶段为 `awaiting_network_confirmation`
 或 `rolling_back`，不存在旧版本、`previous_current`、`.lkb` 或已提交的
 `state/install-state.json`，且事务记录的 canonical 安装根目录与当前真实目录一致。
 
 通过校验后，手工 rollback、daemon 超时回滚和确认前主机重启触发的回滚 都必须：
 
-1. 恢复 Landscape 服务注册、enabled/active 状态和 `/etc/resolv.conf`；
+1. 停止并确认未提交的 Landscape 进程退出，再恢复服务注册、enabled/active 状态和 `/etc/resolv.conf`；
 2. 恢复事务快照中的宿主网络服务；
 3. 删除 `current`、目标 release、临时 current 链接、pending install state 和整个
    `<landscape-root>/data/`；
@@ -388,3 +392,18 @@ Schema v5 用于 daemon 网络恢复；读取 v1 至 v4 时保留旧事务恢复
 并按已有期限处理。OpenRC/SysVinit 的 `host_services[].enable_state` 保存 JSON
 形式的后端标识与开机链接快照；systemd 保留原 enable/mask 状态字符串。
 委托执行与恢复检查独立调度，修改安装现场仍由安装锁串行化。
+
+## 服务定义修复事务
+
+[`repair service`](../commands/repair.md#服务定义修复) 使用独立可识别的服务定义修复
+记录，不根据 `.lkb` 或静态资产备份是否为空猜测修复类型。恢复入口必须能将其与
+binary、static 和初始化观测 repair 区分。
+
+替换前持久化原定义字节和权限、系统注册、启用状态、运行状态、安装状态快照及目标
+定义身份。事务恢复不调用二进制修复或数据库恢复路径。进入提交阶段前中断恢复原定义和状态，
+服务管理器重新加载失败或恢复校验失败时保留可重试的非终态。持久化提交阶段后续做
+目标定义校验和安装状态提交；失败不得删除原定义备份。操作全过程不重启 Landscape。
+
+服务定义修复的持久化格式必须有显式版本和类型判别。执行前验证运行中的 daemon
+支持该格式和对应恢复能力；不支持时在写事务前拒绝，提示先升级并重启 daemon。
+未知版本或修复类型不得按普通 repair 清理。失败恢复数据在事务终结前不得删除。
