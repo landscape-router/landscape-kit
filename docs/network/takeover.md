@@ -9,6 +9,12 @@ systemd 和交互终端。网卡始终由用户选择，lkit 不按默认路由�
 时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
+网络发现和部署运行时通过 PATH 调用完整 iproute2 的 `ip`，不假定它安装在
+`/usr/sbin/ip`。网络向导与后台部署使用同一命令选择；显式测试运行时仍可覆盖命令路径。
+调用失败时诊断包含命令和参数，而不只显示缺少文件的 I/O 错误。
+OpenRC/SysVinit 的控制台入口提供明确标注的普通安装，不启动仅支持 systemd 的
+接管／回滚流程，也不声称已经实现这些后端的自动网络接管。
+
 接管支持 NetworkManager 和 Debian ifupdown 的 `networking.service`；不存在的 unit 保持
 未安装状态且不会执行服务操作。接管不会卸载 NetworkManager、ifupdown、firewalld、
 systemd-resolved 或其他软件包，也不收集 PPPoE 用户名、密码或 MTU。它保存这些宿主服务

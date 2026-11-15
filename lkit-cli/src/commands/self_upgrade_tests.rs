@@ -22,6 +22,97 @@ fn parse(args: &[&str]) -> Result<SelfCommand, clap::Error> {
 }
 
 #[test]
+fn automatic_upgrades_require_strictly_higher_precedence() {
+    for (current, target, upgrade) in [
+        ("0.7.1-rc4", "0.6.2", false),
+        ("0.7.1-rc4", "0.7.1-rc3", false),
+        ("0.7.1-rc4", "0.7.1-rc4", false),
+        ("0.7.1-rc4", "0.7.1-rc5", true),
+        ("0.7.1-rc4", "0.7.1", true),
+        ("0.7.1-rc10", "0.7.1-rc2", false),
+        ("0.7.1-rc.10", "0.7.1-rc10", false),
+        ("0.7.1+build2", "0.7.1+build3", false),
+        ("0.7.1", "0.7.1-rc5", false),
+    ] {
+        assert_eq!(
+            should_upgrade(
+                &Version::parse(current).unwrap(),
+                &Version::parse(target).unwrap(),
+                false
+            ),
+            upgrade,
+            "{current} -> {target}"
+        );
+    }
+    assert!(should_upgrade(
+        &Version::parse("0.7.1-rc4").unwrap(),
+        &Version::parse("0.6.2").unwrap(),
+        true
+    ));
+    assert!(!should_upgrade(
+        &Version::parse("0.7.1-rc4").unwrap(),
+        &Version::parse("0.7.1-rc4").unwrap(),
+        true
+    ));
+}
+
+#[tokio::test]
+async fn older_stable_channel_stops_after_release_metadata_without_assets() {
+    let server = TestServer::start(|path| {
+        assert_eq!(
+            path,
+            "/repos/landscape-router/landscape-kit/releases/latest"
+        );
+        TestResponse::ok(serde_json::to_vec(&release("v0.6.2", false, false)).unwrap())
+    });
+    let candidate = resolve_upgrade_candidate(
+        &source(&server),
+        None,
+        false,
+        &Version::parse("0.7.1-rc4").unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(candidate.is_none());
+    assert_eq!(server.request_count(), 1, "no checksum or binary requests");
+}
+
+#[tokio::test]
+async fn a_newer_stable_release_remains_eligible_when_current_version_is_rc() {
+    let server = TestServer::start(|path| {
+        assert_eq!(
+            path,
+            "/repos/landscape-router/landscape-kit/releases/latest"
+        );
+        TestResponse::ok(serde_json::to_vec(&release("v0.7.1", false, false)).unwrap())
+    });
+    let candidate = resolve_upgrade_candidate(
+        &source(&server),
+        None,
+        false,
+        &Version::parse("0.7.1-rc4").unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(candidate.unwrap().1, Version::parse("0.7.1").unwrap());
+    assert_eq!(server.request_count(), 1);
+}
+
+#[test]
+fn staged_execution_errors_identify_the_binary_and_loader_without_running_it() {
+    let message = crate::i18n::with_language(crate::i18n::Language::En, || {
+        staged_execution_error(
+            Path::new("/fixture/staged-lkit"),
+            &std::io::Error::from(std::io::ErrorKind::NotFound),
+        )
+        .to_string()
+    });
+    assert!(message.contains("/fixture/staged-lkit"));
+    assert!(message.contains("interpreter/loader"));
+    assert!(message.contains("not replaced"));
+}
+
+#[test]
 fn prerelease_flag_is_opt_in_and_only_applies_to_self_upgrade() {
     let SelfAction::Upgrade(default) = parse(&["self", "upgrade"]).unwrap().action else {
         panic!("expected upgrade");

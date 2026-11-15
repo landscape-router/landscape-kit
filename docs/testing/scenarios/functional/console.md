@@ -9,8 +9,8 @@
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：内存终端断言品牌、Navigation、Install root 和安装操作均已渲染，不要求测试进程
   连接真实终端；同时断言 Repository URL 默认隐藏、仅在选择 Custom HTTP 后显示，字段导航
-  会跳过隐藏行，并验证所有安装字段都有随选择变化的说明。网络接管开关暂隐藏（固定启用，
-  见代码中的 `TODO(network-takeover)`），不在表单字段中。
+  会跳过隐藏行，并验证所有安装字段都有随选择变化的说明。网络接管开关暂隐藏，不在
+  表单字段中；systemd 默认接管，OpenRC/SysVinit 明确使用普通安装。
 
 ## UI-02
 
@@ -90,8 +90,9 @@
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖从 Install 表单进入无侧栏网络向导、WAN 配置面板（Static/DHCP client tab、
   静态字段与底部“确认并继续”按钮）、LAN 空集合的 WAN-only 计划，以及 LAN
-  列表的 Up/Down、Space、Enter 语义。Install 面板始终启用网络接管（开关暂隐藏），激活
-  “开始安装”固定进入向导。systemd worker 的安装页在下载阶段可停止，配置阶段
+  列表的 Up/Down、Space、Enter 语义。systemd 的 Install 面板启用网络接管，激活
+  “开始安装”进入向导；OpenRC/SysVinit 使用普通安装，不进入该流程。
+  systemd worker 的安装页在下载阶段可停止，配置阶段
   忽略停止请求，结果页等待 Ctrl+C。安装/reinit 完成且存在待确认网络接管事务时，
   结果页底栏显示确认入口（`Enter Confirm takeover`），确认层正文说明断连后果与兜底
   语句（`lkit network confirm` / `lkit network rollback`）；确认后退出全屏页内联执行
@@ -334,6 +335,15 @@
   刷新，破坏快照确定性）。
 - 缺口：快照不含颜色（沿 [`UI-17`](#ui-17)，色彩断言由 cell 前景色测试承担）；
   瞬态的持续时间与节奏不在静态快照的表达能力内。
+
+## UI-21
+
+**非 systemd 后端明确提供普通安装，不强制进入不受支持的网络接管流程**
+
+- 测试层：Rust 单元、Ratatui TestBackend
+- 状态：`已覆盖`
+- 证据：[安装表单测试](../../../../lkit-cli/src/console/tests/install.rs)、[网络命令测试](../../../../lkit-cli/src/network/discovery.rs)、[控制台规格](../../../interaction/console.md)
+- 说明：后端输入为 OpenRC/SysVinit 时关闭自动接管，按钮和说明明确展示不接管网络；构建请求不携带 takeover 标记或计划；按 Enter 直接分发普通安装请求且不打开网络向导。systemd 保留向导。网络发现以假命令 runner 验证 PATH 命令选择与错误上下文，不在单测中启动真实 ip 或 daemon。
 
 ## UI-20
 

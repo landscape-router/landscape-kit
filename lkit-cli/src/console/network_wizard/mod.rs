@@ -58,7 +58,7 @@ impl NetworkWizard {
     pub(crate) fn discover() -> Result<Self, String> {
         let (interfaces, routes) = discovery::discover(
             std::path::Path::new("/sys/class/net"),
-            std::path::Path::new("/usr/sbin/ip"),
+            std::path::Path::new(discovery::HOST_IP_COMMAND),
         )
         .map_err(|error| error.to_string())?;
         let mut wizard = Self {

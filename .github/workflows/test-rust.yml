@@ -55,9 +55,12 @@ jobs:
             service::manager::init_detection_tests \
             console::tests::cgroup \
             console::tests::gates \
+            console::tests::install \
             deployment::cgroup::tests \
             check::service::tests \
             check::kernel::tests \
+            commands::lkit_self::upgrade_tests \
+            network::discovery::tests \
             mirror::apt::parse::tests \
             mirror::apt::apply_tests \
             mirror::dnf::apply_tests \

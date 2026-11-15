@@ -70,7 +70,7 @@ impl InstallRuntime {
             managed_uid: 0,
             os_release_path: PathBuf::from("/etc/os-release"),
             sys_class_net: PathBuf::from("/sys/class/net"),
-            ip_command: PathBuf::from("/usr/sbin/ip"),
+            ip_command: PathBuf::from(crate::network::discovery::HOST_IP_COMMAND),
             selinux_fs_path: PathBuf::from("/sys/fs/selinux"),
             selinux_config_path: PathBuf::from("/etc/selinux/config"),
             network_confirm_timeout: Duration::from_secs(600),
@@ -309,7 +309,7 @@ fn default_sys_class_net() -> PathBuf {
 
 #[cfg(feature = "test-support")]
 fn default_ip_command() -> PathBuf {
-    PathBuf::from("/usr/sbin/ip")
+    PathBuf::from(crate::network::discovery::HOST_IP_COMMAND)
 }
 
 #[cfg(feature = "test-support")]

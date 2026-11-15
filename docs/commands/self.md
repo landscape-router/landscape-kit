@@ -53,11 +53,15 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
    `--include-prerelease` 允许从 Release 列表自动选择包含预发布版本（如 RC）在内的最高
    版本；`--version <TAG>` 显式指定版本并优先于自动选择（如 `--version v0.7.1-rc2`），
    显式指定候选版不需要再加 `--include-prerelease`；
-3. 下载对应架构静态二进制（`lkit-<arch>`，arch 为 `x86_64`、`aarch64`、`riscv64` 或 `loongarch64`）与 `SHA256SUMS`,校验 SHA-256,
+3. 下载前比较版本：自动选择只允许高于当前版本的目标，不自动降级；相同或更低时
+   输出所选渠道没有更新的提示并返回 `0`，不请求校验清单或二进制，也不替换文件。
+   当前为 RC 而正式渠道版本更低时提示可使用 `--include-prerelease`。更高版本的正式版
+   仍可正常升级；显式 `--version` 允许有意指定旧版本，同版本仍为 no-op；
+4. 下载对应架构静态二进制（`lkit-<arch>`，arch 为 `x86_64`、`aarch64`、`riscv64` 或 `loongarch64`）与 `SHA256SUMS`,校验 SHA-256,
    与 `install.sh` 同源同校验规则(见[自发布](../release/lkit.md));
-4. 版本对比:当前版本与目标版本相同 → 输出提示并返回 `0`,不修改任何文件;
 5. 下载并校验成功后,先使暂存二进制可执行并运行 `lkit --version` 自检,再原子替换
-   `/usr/local/bin/lkit`;下载、校验、自检或替换失败时保留原二进制;
+   `/usr/local/bin/lkit`;下载、校验、自检或替换失败时保留原二进制。自检启动失败明确
+   标注暂存文件路径，提示检查目标架构及解释器／动态加载器，避免仅报告裸 I/O 错误；
 6. 刷新 daemon:若 `lkit.service` 已注册且 `is-active` → `restart` 加载新二进制;
    已注册但未运行 → 不启动;未注册 → 仅更新 CLI,并提示可用 `lkit self install`
    安装 daemon。
@@ -65,7 +69,7 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 示例：
 
 ```sh
-lkit self upgrade                              # 最新正式版
+lkit self upgrade                              # 检查更高版本的正式版，不自动降级
 lkit self upgrade --include-prerelease         # 包含 RC 等预发布版本的最新版本
 lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 ```

@@ -375,6 +375,55 @@ fn self_upgrade_default_never_falls_back_to_a_prerelease() {
     assert!(!has_upgrade_temp_file(&harness));
 }
 
+#[test]
+fn self_update_does_not_download_or_replace_an_older_automatic_candidate() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for include_prerelease in [false, true] {
+        let harness = InstallHarness::new("self-update-older", "healthy", 30_000);
+        harness.seed_global_lkit_binary();
+        let fixture = SelfUpgradeFixture::start(
+            "v0.0.0",
+            upgrade_asset_name(),
+            b"must not execute".to_vec(),
+            None,
+        );
+        let binary = harness.host.join("usr/local/bin/lkit");
+        let before = std::fs::read_link(&binary).unwrap();
+        let mut command = harness.command();
+        command.args(["--lang", "en", "self", "update"]);
+        if include_prerelease {
+            command.arg("--include-prerelease");
+        }
+        let output = command
+            .args([
+                "--test-release-api-root",
+                fixture.api.base_url.as_str(),
+                "--test-release-download-root",
+                fixture.downloads.base_url.as_str(),
+                "--test-runtime",
+            ])
+            .arg(&harness.runtime_config)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        assert!(String::from_utf8_lossy(&output.stdout).contains("No newer release"));
+        assert_eq!(std::fs::read_link(&binary).unwrap(), before);
+        assert_eq!(
+            fixture.api.request_paths(),
+            vec![if include_prerelease {
+                "/repos/landscape-router/landscape-kit/releases?per_page=100&page=1"
+            } else {
+                "/repos/landscape-router/landscape-kit/releases/latest"
+            }]
+        );
+        assert!(fixture.downloads.request_paths().is_empty());
+        assert!(!has_upgrade_temp_file(&harness));
+    }
+}
+
 fn run_self_upgrade(
     harness: &InstallHarness,
     fixture: &SelfUpgradeFixture,
@@ -583,4 +632,53 @@ fn self_install_provisions_the_flare_psk_before_starting_the_daemon() {
         .output()
         .unwrap();
     assert_success(&removed);
+}
+
+#[test]
+fn self_upgrade_execution_failure_preserves_binary_and_cleans_staging() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-upgrade-exec-failure", "healthy", 30_000);
+    harness.seed_global_lkit_binary();
+    let binary = harness.host.join("usr/local/bin/lkit");
+    let before = std::fs::read_link(&binary).unwrap();
+    let fixture = SelfUpgradeFixture::start(
+        "v9.9.7",
+        upgrade_asset_name(),
+        b"#!/nonexistent/lkit-test-interpreter\n".to_vec(),
+        None,
+    );
+    let output = harness
+        .command()
+        .args([
+            "--lang",
+            "en",
+            "self",
+            "upgrade",
+            "--version",
+            "v9.9.7",
+            "--test-release-api-root",
+            fixture.api.base_url.as_str(),
+            "--test-release-download-root",
+            fixture.downloads.base_url.as_str(),
+            "--test-runtime",
+        ])
+        .arg(&harness.runtime_config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cannot execute downloaded binary"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&binary.parent().unwrap().display().to_string()),
+        "{stderr}"
+    );
+    assert!(stderr.contains("interpreter/loader"), "{stderr}");
+    assert_eq!(std::fs::read_link(&binary).unwrap(), before);
+    assert!(!has_upgrade_temp_file(&harness));
 }

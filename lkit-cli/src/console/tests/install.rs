@@ -9,6 +9,60 @@ use ratatui::backend::TestBackend;
 use ratatui::style::Color;
 
 #[test]
+fn non_systemd_backends_offer_plain_installation_without_a_takeover_plan() {
+    let _daemon = DaemonTerritory::new("plain-install-backends", true);
+    use crate::service::manager::ServiceManagerKind;
+    for kind in [
+        Some(ServiceManagerKind::Openrc),
+        Some(ServiceManagerKind::Sysvinit),
+        None,
+    ] {
+        let mut form = InstallForm::for_backend(kind);
+        assert!(!form.takeover_network);
+        form.password = "Secret123".into();
+        form.password_confirmation = form.password.clone();
+        let root =
+            std::env::temp_dir().join(format!("lkit-plain-install-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&root).unwrap();
+        form.install_dir = root.join("landscape").display().to_string();
+        let ConsoleAction::Command {
+            command: Commands::Install(request),
+            args,
+        } = form.command().unwrap()
+        else {
+            panic!("expected an ordinary install request");
+        };
+        assert!(!request.takeover_network);
+        assert!(request.network_plan.is_none());
+        assert!(request.network_plan_file.is_none());
+        assert!(!args.iter().any(|arg| arg == "--takeover-network"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    assert!(InstallForm::for_backend(Some(ServiceManagerKind::Systemd)).takeover_network);
+}
+
+#[test]
+fn openrc_plain_installation_is_clearly_labelled_before_submission() {
+    use crate::service::manager::ServiceManagerKind;
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = ConsoleApp::new();
+    app.menu_index = 1;
+    app.install = InstallForm::for_backend(Some(ServiceManagerKind::Openrc));
+    app.install.checks_selected = false;
+    app.install.selected = InstallField::StartInstallation;
+    let mut terminal = Terminal::new(TestBackend::new(120, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("Install without network takeover"));
+    assert!(
+        app.install
+            .selected_help()
+            .1
+            .contains("configure networking manually")
+    );
+}
+
+#[test]
 fn renders_sidebar_and_install_form() {
     let _language = LanguageGuard::set(Language::En);
     let backend = TestBackend::new(100, 28);
@@ -285,6 +339,7 @@ fn right_still_changes_install_choices() {
 
 #[test]
 fn install_form_builds_cli_and_domain_request() {
+    let _daemon = DaemonTerritory::new("install-request", true);
     let mut form = InstallForm {
         version: "1.2.3".into(),
         repository: RepositoryMode::Custom,
@@ -319,6 +374,7 @@ fn install_form_builds_cli_and_domain_request() {
 
 #[test]
 fn install_form_defaults_to_network_takeover() {
+    let _daemon = DaemonTerritory::new("install-takeover", true);
     let mut form = InstallForm {
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
@@ -337,6 +393,7 @@ fn install_form_defaults_to_network_takeover() {
 
 #[test]
 fn install_form_maps_repository_modes_to_cli_flags() {
+    let _daemon = DaemonTerritory::new("install-repositories", true);
     let base = InstallForm {
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
@@ -385,6 +442,7 @@ fn install_form_maps_repository_modes_to_cli_flags() {
 
 #[test]
 fn install_form_rejects_invalid_version_before_launch() {
+    let _daemon = DaemonTerritory::new("install-invalid-version", true);
     let mut form = InstallForm {
         version: "nightly".into(),
         ..InstallForm::default()
@@ -394,6 +452,8 @@ fn install_form_rejects_invalid_version_before_launch() {
 
 #[test]
 fn install_form_masks_and_confirms_password() {
+    let _language = LanguageGuard::set(Language::En);
+    let _daemon = DaemonTerritory::new("install-password-validation", true);
     assert_eq!(mask("Secret123"), "*********");
     let mut form = InstallForm {
         password: "Secret123".into(),
@@ -487,6 +547,7 @@ fn start_installation_is_blocked_when_checks_fail() {
 
 #[test]
 fn enter_on_start_installation_dispatches_the_install_command() {
+    let _daemon = DaemonTerritory::new("install-start-dispatch", true);
     let mut app = ConsoleApp::new();
     app.menu_index = 1;
     app.focus = Focus::Panel;
@@ -501,4 +562,36 @@ fn enter_on_start_installation_dispatches_the_install_command() {
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("Enter on the start installation row must dispatch");
     assert!(matches!(action, ConsoleAction::Command { .. }));
+}
+
+#[test]
+fn non_systemd_enter_dispatches_without_opening_network_wizard() {
+    use crate::service::manager::ServiceManagerKind;
+    let _daemon = DaemonTerritory::new("plain-install-enter", true);
+    for kind in [ServiceManagerKind::Openrc, ServiceManagerKind::Sysvinit] {
+        let mut app = ConsoleApp::new();
+        app.menu_index = 1;
+        app.focus = Focus::Panel;
+        app.preflight.state = PreflightState::Complete(pass_preflight_report());
+        app.install = InstallForm::for_backend(Some(kind));
+        app.install.checks_selected = false;
+        app.install.selected = InstallField::StartInstallation;
+        app.install.password = "Secret123".into();
+        app.install.password_confirmation = "Secret123".into();
+        let action = app
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert!(app.network_wizard.is_none());
+        let ConsoleAction::Command {
+            command: Commands::Install(request),
+            args,
+        } = action
+        else {
+            panic!("expected install command");
+        };
+        assert!(!request.takeover_network);
+        assert!(request.network_plan.is_none());
+        assert!(request.network_plan_file.is_none());
+        assert!(!args.iter().any(|arg| arg == "--takeover-network"));
+    }
 }

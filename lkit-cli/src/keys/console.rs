@@ -124,6 +124,10 @@ pub(crate) const CONSOLE_FAILED: &str = "console.failed";
 pub(crate) const CONSOLE_CHECKS_HAVE_NOT_RUN: &str = "console.checks_have_not_run";
 pub(crate) const CONSOLE_PREFLIGHT_COUNTS: &str = "console.preflight_counts";
 pub(crate) const CONSOLE_START_INSTALLATION_BUTTON: &str = "console.start_installation_button";
+pub(crate) const CONSOLE_START_PLAIN_INSTALLATION_BUTTON: &str =
+    "console.start_plain_installation_button";
+pub(crate) const CONSOLE_START_PLAIN_INSTALLATION_HELP: &str =
+    "console.start_plain_installation_help";
 pub(crate) const CONSOLE_DAEMON_NOT_RUNNING_NOTICE: &str = "console.daemon_not_running_notice";
 pub(crate) const CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE: &str =
     "console.daemon_spawn_unavailable_notice";

@@ -15,11 +15,11 @@ use crate::commands::install::Install;
 use crate::deployment::plan;
 use crate::interaction::credentials;
 use crate::network::config::NetworkPlan;
+use crate::service::manager::ServiceManagerKind;
 
 // TODO(network-takeover): 处理完不同发行版网络服务差异后恢复网络接管开关:
-// 在 `InstallField::ALL` 中于 `PasswordConfirmation` 之后插入 `NetworkTakeover`
-// 变体(表单高度 `FORM_FIELDS` 自动加一),并把 `InstallForm::default` 的
-// `takeover_network` 改回 false。
+// 只有实现可靠的网络接管与回滚后才能为更多后端启用该能力。
+// 当前 systemd 使用接管向导；OpenRC/SysVinit 明确提供普通安装。
 pub(crate) const FORM_FIELDS: usize = InstallField::ALL.len();
 
 /// 安装表单字段:声明顺序即表单次序,`StartInstallation` 恒为最后一个字段。
@@ -89,9 +89,10 @@ impl InstallField {
             Self::AdminUser => form.admin_user.clone(),
             Self::Password => mask(&form.password),
             Self::PasswordConfirmation => mask(&form.password_confirmation),
-            Self::StartInstallation => {
-                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON)
+            Self::StartInstallation if !form.takeover_network => {
+                crate::tr!(crate::keys::CONSOLE_START_PLAIN_INSTALLATION_BUTTON)
             }
+            Self::StartInstallation => crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_BUTTON),
         }
     }
 }
@@ -145,6 +146,16 @@ pub(crate) struct InstallForm {
 
 impl Default for InstallForm {
     fn default() -> Self {
+        #[cfg(not(test))]
+        let kind = crate::service::manager::host_kind();
+        #[cfg(test)]
+        let kind = Some(ServiceManagerKind::Systemd);
+        Self::for_backend(kind)
+    }
+}
+
+impl InstallForm {
+    pub(crate) fn for_backend(kind: Option<ServiceManagerKind>) -> Self {
         Self {
             version: "latest".into(),
             repository: RepositoryMode::Default,
@@ -154,9 +165,9 @@ impl Default for InstallForm {
             admin_user: "admin".into(),
             password: String::new(),
             password_confirmation: String::new(),
-            // TODO(network-takeover): 开关暂隐藏且恒为 true,console 安装始终走网络接管;
-            // 处理完不同发行版网络服务差异后恢复开关并把默认改回 false。
-            takeover_network: true,
+            // Automatic takeover and its rollback timers require systemd.
+            // Other backends retain the supported ordinary-install path.
+            takeover_network: kind == Some(ServiceManagerKind::Systemd),
             selected: InstallField::Version,
             checks_selected: true,
             editing: false,
@@ -230,6 +241,10 @@ impl InstallForm {
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_LABEL),
             //     crate::tr!(crate::keys::CONSOLE_NETWORK_TAKEOVER_HELP),
             // ),
+            InstallField::StartInstallation if !self.takeover_network => (
+                crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_LABEL),
+                crate::tr!(crate::keys::CONSOLE_START_PLAIN_INSTALLATION_HELP),
+            ),
             InstallField::StartInstallation => (
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_LABEL),
                 crate::tr!(crate::keys::CONSOLE_START_INSTALLATION_HELP),

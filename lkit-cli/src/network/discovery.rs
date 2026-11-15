@@ -12,6 +12,10 @@ use super::config::{
 use crate::deployment::plan::InstallError;
 use crate::interaction::interactive::Tty;
 
+/// Use the same PATH lookup as dependency checks instead of assuming a distro's
+/// iproute2 installation prefix (Alpine commonly installs ip in /sbin).
+pub(crate) const HOST_IP_COMMAND: &str = "ip";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Interface {
     pub name: String,
@@ -247,10 +251,20 @@ fn read_default_routes(ip_command: &Path) -> Result<Vec<DefaultRoute>, InstallEr
 }
 
 fn run_ip(ip_command: &Path, args: &[&str]) -> Result<Vec<u8>, InstallError> {
-    let output = Command::new(ip_command)
-        .args(args)
-        .output()
-        .map_err(InstallError::Io)?;
+    run_ip_with(ip_command, args, |program, arguments| {
+        Command::new(program).args(arguments).output()
+    })
+}
+
+fn run_ip_with(
+    ip_command: &Path,
+    args: &[&str],
+    run: impl FnOnce(&Path, &[&str]) -> std::io::Result<std::process::Output>,
+) -> Result<Vec<u8>, InstallError> {
+    let output = run(ip_command, args).map_err(|error| network_error(format!(
+        "cannot execute {} {}: {error}; ensure the full iproute2 ip command is installed and available on PATH",
+        ip_command.display(), args.join(" "),
+    )))?;
     if !output.status.success() {
         return Err(network_error(format!(
             "{} {} failed: {}",
@@ -368,6 +382,38 @@ fn network_error(reason: impl Into<String>) -> InstallError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_ip_uses_path_and_keeps_json_arguments_without_real_processes() {
+        use std::os::unix::process::ExitStatusExt;
+        let args = ["-j", "-4", "addr", "show"];
+        let bytes = run_ip_with(Path::new(HOST_IP_COMMAND), &args, |program, actual_args| {
+            assert_eq!(program, Path::new("ip"));
+            assert!(!program.is_absolute());
+            assert_eq!(actual_args, args);
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"[]".to_vec(),
+                stderr: vec![],
+            })
+        })
+        .unwrap();
+        assert_eq!(bytes, b"[]");
+    }
+
+    #[test]
+    fn missing_ip_reports_command_context_instead_of_a_bare_io_error() {
+        let error = run_ip_with(
+            Path::new(HOST_IP_COMMAND),
+            &["-j", "-4", "addr", "show"],
+            |_, _| Err(std::io::ErrorKind::NotFound.into()),
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("ip -j -4 addr show"));
+        assert!(message.contains("iproute2"));
+        assert!(message.contains("PATH"));
+    }
 
     #[test]
     fn builds_wan_only_plan_for_a_multi_interface_host() {

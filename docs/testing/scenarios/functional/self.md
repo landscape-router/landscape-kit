@@ -94,6 +94,15 @@
   既有 `[flare]`（重复执行不改动配置），交互终端提示输入（≥12 字符），无终端回落
   daemon 自动生成，不阻断部署。单元测试覆盖文件/保留/短 psk 拒绝/非交互回落分支。
 
+## SS-12
+
+**自动升级不下载同版本或更低版本，显式版本仍允许选择旧版**
+
+- 测试层：Rust 单元、临时回环 Release API、Fixture E2E（仅 CI／容器）
+- 状态：`已覆盖`
+- 证据：[版本决策与请求断言](../../../../lkit-cli/src/commands/self_upgrade_tests.rs)、[命令级不下载／不替换断言](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[升级规格](../../../commands/self.md#upgrade)
+- 说明：当前 0.7.1-rc4、默认正式渠道返回 0.6.2 时只请求 Release 元数据，不请求校验清单或二进制。覆盖更高正式版、候选序号、rcN/rc.N、build metadata 与显式旧版选择；暂存自检执行失败的错误包含路径和加载器提示，单元测试不执行真实下载文件；CI fixture 使用缺失解释器的资产验证执行失败时保留原二进制并清理暂存文件。
+
 ## SS-11
 
 **`self upgrade` 默认正式版，显式 opt-in 自动选择 RC 等预发布版本**

@@ -344,17 +344,16 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         ))
     })?;
     let source = upgrade_source(args)?;
-    let release = fetch_release(&source, args.version.as_deref(), args.include_prerelease).await?;
-    let version =
-        upgrade_release_version(&release, args.version.as_deref(), args.include_prerelease)?;
-    // 版本相同 → 输出提示并返回 0,不修改任何文件。
-    if current_version()? == version {
-        println!(
-            "self: {}",
-            crate::tr!(crate::keys::SELF_ALREADY_LATEST, version = version)
-        );
+    let Some((release, version)) = resolve_upgrade_candidate(
+        &source,
+        args.version.as_deref(),
+        args.include_prerelease,
+        &current_version()?,
+    )
+    .await?
+    else {
         return Ok(());
-    }
+    };
     let asset_name = upgrade_asset_name(architecture);
     let asset = unique_asset(&release.assets, asset_name).ok_or_else(|| {
         InstallError::Repository(RepositoryError::InvalidRelease(format!(
@@ -397,7 +396,10 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         // 下载器创建的暂存文件通常不可执行;先补上权限才能运行版本自检。
         set_staged_binary_executable(&staged)?;
         // 自检:替换前对下载的二进制执行 `lkit --version`。
-        let output = Command::new(&staged).arg("--version").output()?;
+        let output = Command::new(&staged)
+            .arg("--version")
+            .output()
+            .map_err(|error| staged_execution_error(&staged, &error))?;
         verify_version_output(&output)?;
         install_staged_binary(&staged, &binary)?;
         Ok::<(), InstallError>(())
@@ -415,6 +417,53 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
         crate::tr!(crate::keys::SELF_UPGRADED, version = version)
     );
     Ok(())
+}
+
+// Resolve only release metadata before inspecting assets or creating staging files.
+async fn resolve_upgrade_candidate(
+    source: &UpgradeSource,
+    requested: Option<&str>,
+    include_prerelease: bool,
+    current: &Version,
+) -> Result<Option<(GithubRelease, Version)>, InstallError> {
+    let release = fetch_release(source, requested, include_prerelease).await?;
+    let version = upgrade_release_version(&release, requested, include_prerelease)?;
+    if !should_upgrade(current, &version, requested.is_some()) {
+        let message = if current == &version {
+            crate::tr!(crate::keys::SELF_ALREADY_LATEST, version = current)
+        } else {
+            crate::tr!(
+                crate::keys::SELF_NO_NEWER_RELEASE,
+                current = current,
+                available = version
+            )
+        };
+        println!("self: {message}");
+        if requested.is_none() && !include_prerelease && !current.pre.is_empty() {
+            println!(
+                "self: {}",
+                crate::tr!(crate::keys::SELF_PRERELEASE_UPGRADE_HINT)
+            );
+        }
+        return Ok(None);
+    }
+    Ok(Some((release, version)))
+}
+
+fn should_upgrade(current: &Version, target: &Version, explicit: bool) -> bool {
+    current != target
+        && (explicit
+            || upgrade_version_precedence(target.clone())
+                .cmp_precedence(&upgrade_version_precedence(current.clone()))
+                .is_gt())
+}
+
+fn staged_execution_error(path: &Path, error: &std::io::Error) -> InstallError {
+    InstallError::Repository(RepositoryError::InvalidRelease(crate::tr!(
+        crate::keys::SELF_STAGED_EXECUTION_FAILED,
+        path = path.display(),
+        error = error,
+    )))
 }
 
 /// 下载、校验、自检或替换失败时保留原二进制;成功时以暂存文件原子替换目标。
