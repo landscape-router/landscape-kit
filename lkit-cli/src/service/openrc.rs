@@ -85,6 +85,7 @@ impl ServiceManager for Openrc {
     }
 
     fn unregister(&self, service: ManagedService, origin: &Path) -> Result<(), InstallError> {
+        super::host_network::remove_managed_startup_links(self, service, origin)?;
         unregister_at(&self.init_d_dir.join(self.service_name(service)), origin)
     }
 
@@ -150,6 +151,9 @@ impl ServiceManager for Openrc {
         before: &ServiceBefore,
         origin: &Path,
     ) -> Result<(), InstallError> {
+        if before.registration.kind == RegistrationKind::Missing {
+            return self.unregister(service, origin);
+        }
         restore_registration_at(
             &self.init_d_dir.join(self.service_name(service)),
             before,

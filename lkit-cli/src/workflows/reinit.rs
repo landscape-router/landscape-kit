@@ -77,7 +77,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         std::fs::read_to_string(root.canonical.join("service/landscape-router.service"))
             .map_err(InstallError::Io)?;
     if runtime.test_runtime_path.is_none() && !definition.contains("network startup-check") {
-        return Err(InstallError::Preflight("refresh the Landscape service with lkit repair before reinit to install its recovery startup check".into()));
+        return Err(InstallError::Preflight("Landscape service definition lacks the recovery startup check; reinit requires a service definition with `lkit network startup-check` (lkit repair does not update service definitions)".into()));
     }
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
     confirm_reinit(options, args, state, network)?;

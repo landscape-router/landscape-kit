@@ -18,9 +18,9 @@ runlevel 成员关系，SysVinit 保存启动链接及顺序。回滚恢复原�
 
 用户通过 `lkit network confirm` 显式确认接管。确认通过网卡身份、网络配置和
 Landscape 健康校验后进入 `finalizing`，表示用户确认已被接受；中断恢复继续提交，
-不因期限随后到达而撤销已经接受的确认。
+不因期限随后到达而撤销已经接受的确认。`finalizing` 不接受手动回滚，避免将已经写入安装状态的事务转为回滚。
 
-`awaiting_network_confirmation` 保持原确认期限。期限到达后 daemon 进入
+首次安装和 reinit 的 `awaiting_network_confirmation` 均保持原确认期限。期限到达后 daemon 进入
 `rolling_back`；daemon 进程重启不延长期限。事务保存主机启动标识，标识变化表示
 主机重启，daemon 立即回滚尚未确认的接管。
 
@@ -61,4 +61,4 @@ unit 必须在事务得到处理后进行。
 真实服务操作、开机启动屏障和网络恢复由 CI 的 fixture、容器或虚拟机验证，分别覆盖
 systemd、OpenRC 和 SysVinit。普通开发过程不在宿主执行这些系统级测试。
 
-旧 Landscape 服务定义须先通过 `lkit repair` 刷新启动检查，再执行 reinit。
+旧 Landscape 服务定义缺少启动检查时，reinit 拒绝执行。`lkit repair static|binary` 不更新服务定义，当前没有自动迁移旧服务定义的入口。

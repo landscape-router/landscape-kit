@@ -387,6 +387,13 @@ pub(crate) fn clear_selected_lan_addresses(
     Ok(())
 }
 
+fn rollback_allowed(phase: transaction::Phase) -> bool {
+    matches!(
+        phase,
+        transaction::Phase::AwaitingNetworkConfirmation | transaction::Phase::RollingBack
+    )
+}
+
 pub(crate) async fn rollback(
     root: &InstallRoot,
     runtime: &InstallRuntime,
@@ -403,12 +410,8 @@ pub(crate) async fn rollback(
     if !matches!(
         pending.operation,
         transaction::Operation::Install | transaction::Operation::Reinit
-    ) || !matches!(
-        pending.phase,
-        transaction::Phase::AwaitingNetworkConfirmation
-            | transaction::Phase::Finalizing
-            | transaction::Phase::RollingBack
-    ) {
+    ) || !rollback_allowed(pending.phase)
+    {
         return Err(InstallError::BlockedByTransaction(format!(
             "transaction {} is {}; network rollback only handles an uncommitted confirmation phase",
             pending.transaction_id,
@@ -565,6 +568,21 @@ fn resolve_runtime(_args: &Network) -> Result<InstallRuntime, InstallError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_confirmation_cannot_be_changed_to_rollback() {
+        use transaction::Phase;
+        assert!(rollback_allowed(Phase::AwaitingNetworkConfirmation));
+        assert!(rollback_allowed(Phase::RollingBack));
+        for phase in [
+            Phase::Finalizing,
+            Phase::Committed,
+            Phase::RolledBack,
+            Phase::Preparing,
+        ] {
+            assert!(!rollback_allowed(phase), "{phase:?}");
+        }
+    }
 
     #[test]
     fn detects_selinux_config_even_when_not_mounted() {

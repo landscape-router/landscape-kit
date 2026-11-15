@@ -84,6 +84,7 @@ impl ServiceManager for Sysvinit {
     }
 
     fn unregister(&self, service: ManagedService, origin: &Path) -> Result<(), InstallError> {
+        super::host_network::remove_managed_startup_links(self, service, origin)?;
         unregister_at(&self.init_d_dir.join(self.service_name(service)), origin)
     }
 
@@ -95,11 +96,15 @@ impl ServiceManager for Sysvinit {
     }
 
     fn enable(&self, service: ManagedService) -> Result<(), InstallError> {
-        run_update_rc_d(&self.update_rc_d, &["enable", self.service_name(service)])
+        set_enabled_with(self.service_name(service), true, |args| {
+            run_update_rc_d(&self.update_rc_d, args)
+        })
     }
 
     fn disable(&self, service: ManagedService) -> Result<(), InstallError> {
-        run_update_rc_d(&self.update_rc_d, &["disable", self.service_name(service)])
+        set_enabled_with(self.service_name(service), false, |args| {
+            run_update_rc_d(&self.update_rc_d, args)
+        })
     }
 
     fn is_active(&self, service: ManagedService) -> Result<bool, InstallError> {
@@ -143,6 +148,9 @@ impl ServiceManager for Sysvinit {
         before: &ServiceBefore,
         origin: &Path,
     ) -> Result<(), InstallError> {
+        if before.registration.kind == RegistrationKind::Missing {
+            return self.unregister(service, origin);
+        }
         restore_registration_at(
             &self.init_d_dir.join(self.service_name(service)),
             before,
@@ -311,6 +319,18 @@ fn run_script(script: &Path, action: &str) -> Result<(), InstallError> {
     )))
 }
 
+fn set_enabled_with(
+    name: &str,
+    enabled: bool,
+    mut run: impl FnMut(&[&str]) -> Result<(), InstallError>,
+) -> Result<(), InstallError> {
+    // A newly registered script has no runlevel links for `enable` to modify.
+    if enabled {
+        run(&[name, "defaults"])?;
+    }
+    run(&[name, if enabled { "enable" } else { "disable" }])
+}
+
 fn run_update_rc_d(update_rc_d: &Path, args: &[&str]) -> Result<(), InstallError> {
     let output = Command::new(update_rc_d)
         .args(args)
@@ -331,11 +351,25 @@ fn run_update_rc_d(update_rc_d: &Path, args: &[&str]) -> Result<(), InstallError
 
 /// 在 `/etc/rc?.d` 的每个运行级目录中查找指向 `init.d/<name>` 的 S 链接(enabled)。
 fn rc_d_link_exists(rc_d_dir: &Path, name: &str) -> bool {
-    let Ok(runlevels) = std::fs::read_dir(rc_d_dir) else {
+    let parent = if rc_d_dir.file_name().is_some_and(|name| name == "rc?.d") {
+        rc_d_dir.parent().unwrap_or(rc_d_dir)
+    } else {
+        rc_d_dir
+    };
+    let Ok(runlevels) = std::fs::read_dir(parent) else {
         return false;
     };
     for runlevel in runlevels.flatten() {
         let directory = runlevel.path();
+        let directory_name = runlevel.file_name();
+        let bytes = directory_name.as_encoded_bytes();
+        if bytes.len() != 5
+            || &bytes[..2] != b"rc"
+            || &bytes[3..] != b".d"
+            || !b"0123456S".contains(&bytes[2])
+        {
+            continue;
+        }
         if !directory.is_dir() {
             continue;
         }
@@ -347,7 +381,11 @@ fn rc_d_link_exists(rc_d_dir: &Path, name: &str) -> bool {
             let Ok(target) = std::fs::read_link(link.path()) else {
                 continue;
             };
-            if file_name.starts_with('S') && target.to_string_lossy().ends_with(&format!("/{name}"))
+            if file_name.len() == name.len() + 3
+                && file_name.starts_with('S')
+                && file_name.as_bytes()[1..3].iter().all(u8::is_ascii_digit)
+                && &file_name[3..] == name
+                && target.to_string_lossy().ends_with(&format!("/{name}"))
             {
                 return true;
             }
@@ -447,5 +485,56 @@ mod tests {
             SystemRegistration::Missing
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn enabling_creates_defaults_before_enabling_with_service_first() {
+        let mut calls = Vec::new();
+        set_enabled_with("lkit.service", true, |args| {
+            calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                vec!["lkit.service", "defaults"],
+                vec!["lkit.service", "enable"]
+            ]
+        );
+        calls.clear();
+        set_enabled_with("lkit.service", false, |args| {
+            calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(calls, vec![vec!["lkit.service", "disable"]]);
+        let mut attempted = 0;
+        assert!(
+            set_enabled_with("lkit.service", true, |_| {
+                attempted += 1;
+                Err(InstallError::Preflight("injected failure".into()))
+            })
+            .is_err()
+        );
+        assert_eq!(attempted, 1);
+    }
+
+    #[test]
+    fn production_runlevel_pattern_detects_start_links_but_not_stop_links() {
+        let dir = temp_dir("production-pattern");
+        let runlevel = dir.join("rc2.d");
+        std::fs::create_dir_all(&runlevel).unwrap();
+        let pattern = dir.join("rc?.d");
+        symlink("../init.d/lkit.service", runlevel.join("K20lkit.service")).unwrap();
+        assert!(!rc_d_link_exists(&pattern, "lkit.service"));
+        symlink("../init.d/lkit.service", runlevel.join("S20lkit.service")).unwrap();
+        assert!(rc_d_link_exists(&pattern, "lkit.service"));
+        assert!(!rc_d_link_exists(&pattern, "kit.service"));
+        std::fs::remove_file(runlevel.join("S20lkit.service")).unwrap();
+        let unrelated = dir.join("other");
+        std::fs::create_dir(&unrelated).unwrap();
+        symlink("../init.d/lkit.service", unrelated.join("S20lkit.service")).unwrap();
+        assert!(!rc_d_link_exists(&pattern, "lkit.service"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

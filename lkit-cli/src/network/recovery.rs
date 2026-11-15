@@ -30,6 +30,7 @@ pub(crate) fn action(tx: &TransactionFile, now: DateTime<Utc>, boot_id: &str) ->
         {
             Action::Rollback
         }
+        Phase::AwaitingNetworkConfirmation => Action::Wait,
         _ if tx.operation == transaction::Operation::Reinit && !tx.phase.is_terminal() => {
             Action::Rollback
         }
@@ -191,6 +192,72 @@ mod tests {
         ] {
             tx.phase = phase;
             assert_eq!(action(&tx, now, &boot), Action::Rollback);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn install_and_reinit_both_wait_until_expiry_or_a_host_reboot() {
+        let dir =
+            std::env::temp_dir().join(format!("lkit-recovery-matrix-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = crate::deployment::root::normalize_install_root(&dir).unwrap();
+        let now = Utc::now();
+        let boot = uuid::Uuid::now_v7().to_string();
+        for operation in [
+            transaction::Operation::Install,
+            transaction::Operation::Reinit,
+        ] {
+            let mut tx = match operation {
+                transaction::Operation::Install => {
+                    TransactionFile::new_install(&root, &semver::Version::new(1, 2, 3)).unwrap()
+                }
+                _ => TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap(),
+            };
+            tx.network_takeover = Some(transaction::NetworkTakeoverTransaction {
+                boot_id: Some(boot.clone()),
+                plan: NetworkPlan {
+                    mode: NetworkMode::WanDhcp { wan: "eth0".into() },
+                    selected_macs: vec![SelectedInterface {
+                        name: "eth0".into(),
+                        mac: "02:00:00:00:00:01".into(),
+                    }],
+                },
+                host_services: vec![],
+                confirmation_deadline: now,
+                rollback_service: "lkit-test.service".into(),
+                rollback_timer: "lkit-test.timer".into(),
+                boot_rollback_service: "lkit-test-boot.service".into(),
+                recovery_binary: "service/lkit-network-recovery".into(),
+                pending_state: format!(
+                    "transactions/{}/pending-install-state.json",
+                    tx.transaction_id
+                ),
+            });
+            tx.phase = Phase::AwaitingNetworkConfirmation;
+            for saved_boot in [Some(boot.clone()), None] {
+                tx.network_takeover.as_mut().unwrap().boot_id = saved_boot;
+                assert_eq!(
+                    action(&tx, now - chrono::Duration::seconds(1), &boot),
+                    Action::Wait,
+                    "{operation:?} must retain its confirmation window"
+                );
+                assert_eq!(action(&tx, now, &boot), Action::Rollback);
+                assert_eq!(
+                    action(&tx, now + chrono::Duration::seconds(1), &boot),
+                    Action::Rollback
+                );
+            }
+            tx.network_takeover.as_mut().unwrap().boot_id = Some(boot.clone());
+            assert_eq!(
+                action(&tx, now - chrono::Duration::seconds(1), "new-boot"),
+                Action::Rollback
+            );
+            for phase in [Phase::Committed, Phase::RolledBack, Phase::Failed] {
+                tx.phase = phase;
+                assert_eq!(action(&tx, now, "new-boot"), Action::Wait);
+            }
+            tx.phase = Phase::Finalizing;
+            assert_eq!(action(&tx, now, "new-boot"), Action::Confirm);
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

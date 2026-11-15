@@ -98,7 +98,7 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
 - 测试层：Rust 单元、Fixture E2E（CI）
 - 状态：`已覆盖`
 - 证据：[恢复决策](../../../../lkit-cli/src/network/recovery.rs)、[daemon fixture](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)、[恢复契约](../../../network/daemon-recovery.md)
-- 说明：覆盖截止时刻、同次启动继续等待、主机重启提前回滚、提交中续做和回滚重试决策。fixture 验证到期和模拟启动标识改变后清理未提交安装；本地不运行 fixture。
+- 说明：覆盖首次安装与 reinit 的截止时刻、同次启动继续等待、主机重启提前回滚、提交中续做和回滚重试决策。fixture 验证到期和模拟启动标识改变后清理未提交安装；本地不运行 fixture。
 
 ## DAE-08
 
@@ -108,4 +108,31 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
 - 状态：`部分覆盖`
 - 证据：[宿主服务快照](../../../../lkit-cli/src/service/host_network.rs)、[恢复契约](../../../network/daemon-recovery.md)
 - 缺口：OpenRC/SysVinit 真实重启后的网络恢复需虚拟机验收。
-- 说明：临时目录验证 OpenRC 多 runlevel 与 SysVinit S/K 链接顺序，以及拒绝越界快照。服务定义调用统一启动检查。
+- 说明：临时目录验证 OpenRC 多 runlevel 与 SysVinit S/K 链接顺序、拒绝越界快照、注销服务清理启动链接和拒绝删除外部链接；注入服务动作验证恢复后的状态检查与失败重试。SysVinit 单测验证 `update-rc.d` 参数顺序、首次启用创建默认链接及真实 `rc?.d` 目录布局的启用检测。服务定义调用统一启动检查。
+
+## DAE-09
+
+**旧部署服务定义迁移与 reinit 准入**
+
+- 测试层：CLI Fixture E2E（待补充）
+- 状态：`待实现`
+- 证据：[reinit](../../../commands/reinit.md)、[恢复契约](../../../network/daemon-recovery.md)
+- 缺口：旧服务定义的自动迁移入口，以及迁移失败保留原定义、成功后通过 reinit 准入的用例。`repair static|binary` 不承担服务定义迁移。
+
+## DAE-10
+
+**reinit 回滚保留原服务运行状态**
+
+- 测试层：隔离单元、CLI Fixture E2E（待补充）
+- 状态：`待修复`
+- 证据：[reinit 回滚实现](../../../../lkit-cli/src/workflows/reinit.rs)
+- 缺口：原服务停止、允许无保护备份的 reinit 回滚用例。当前恢复路径无条件启动原 Landscape，与恢复原运行状态的契约不一致。
+
+## DAE-11
+
+**确认健康检查跨越截止时刻**
+
+- 测试层：注入时钟的单元、CLI Fixture E2E（待补充）
+- 状态：`待修复`
+- 证据：[确认实现](../../../../lkit-cli/src/network/takeover.rs)、[恢复契约](../../../network/daemon-recovery.md)
+- 缺口：确认开始时未超时、健康检查结束时已超时的用例。当前只在健康检查前校验截止时刻，进入 `finalizing` 前没有再次校验。

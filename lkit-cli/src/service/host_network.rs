@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::manager::{ServiceManager, ServiceManagerKind};
+use super::manager::{ManagedService, ServiceManager, ServiceManagerKind, SystemRegistration};
 use super::transaction::HostServiceBefore;
 use super::{openrc::Openrc, systemd, sysvinit::Sysvinit};
 use crate::deployment::plan::InstallError;
@@ -275,12 +275,163 @@ fn restore_with(
     let active = run("status")?;
     if active != before.active {
         run(if before.active { "start" } else { "stop" })?;
+        if run("status")? != before.active {
+            return Err(error(
+                "host network service did not reach its captured running state",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Remove only links owned by this managed service before its init script is
+/// unregistered. Validate every link first so a conflict leaves the set intact.
+pub(crate) fn remove_managed_startup_links(
+    manager: &dyn ServiceManager,
+    service: ManagedService,
+    origin: &Path,
+) -> Result<(), InstallError> {
+    match manager.query_registration(service)? {
+        SystemRegistration::Missing => return Ok(()),
+        SystemRegistration::Symlink { target } if target == origin => {}
+        _ => return Err(error("managed service registration has changed")),
+    }
+    let links = matching_links(manager, manager.service_name(service))?;
+    if links.is_empty() {
+        return Ok(());
+    }
+    let expected = std::fs::canonicalize(origin).map_err(InstallError::Io)?;
+    for (path, _) in &links {
+        if std::fs::canonicalize(path).map_err(InstallError::Io)? != expected {
+            return Err(error(
+                "refusing to remove foreign managed service startup link",
+            ));
+        }
+    }
+    for (path, _) in links {
+        std::fs::remove_file(path).map_err(InstallError::Io)?;
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unregister_removes_owned_startup_links_and_rejects_foreign_links() {
+        use super::*;
+        for openrc in [true, false] {
+            let root =
+                std::env::temp_dir().join(format!("lkit-managed-links-{}", uuid::Uuid::now_v7()));
+            let init = root.join("init.d");
+            std::fs::create_dir_all(&init).unwrap();
+            let origin = root.join("service");
+            std::fs::write(&origin, "fixture").unwrap();
+            let manager: Box<dyn ServiceManager> = if openrc {
+                Box::new(Openrc {
+                    init_d_dir: init.clone(),
+                    rc_service: root.join("unused"),
+                    rc_update: root.join("unused"),
+                    resolv_conf: root.join("resolv.conf"),
+                })
+            } else {
+                Box::new(Sysvinit {
+                    init_d_dir: init.clone(),
+                    rc_d_glob: root.join("rc?.d"),
+                    update_rc_d: root.join("unused"),
+                    resolv_conf: root.join("resolv.conf"),
+                })
+            };
+            let service = ManagedService::LandscapeRouter;
+            let name = manager.service_name(service);
+            let registration = init.join(name);
+            std::os::unix::fs::symlink(&origin, &registration).unwrap();
+            let mut paths = Vec::new();
+            for (level, prefix) in if openrc {
+                [("runlevels/boot", ""), ("runlevels/default", "")]
+            } else {
+                [("rc2.d", "S20"), ("rc0.d", "K80")]
+            } {
+                let dir = root.join(level);
+                std::fs::create_dir_all(&dir).unwrap();
+                let path = dir.join(format!("{prefix}{name}"));
+                std::os::unix::fs::symlink(&registration, &path).unwrap();
+                paths.push(path);
+            }
+            let foreign = root.join("foreign");
+            std::fs::write(&foreign, "foreign").unwrap();
+            std::fs::remove_file(&paths[1]).unwrap();
+            std::os::unix::fs::symlink(&foreign, &paths[1]).unwrap();
+            assert!(manager.unregister(service, &origin).is_err());
+            assert!(registration.exists());
+            assert!(paths.iter().all(|path| path.exists()));
+            std::fs::remove_file(&paths[1]).unwrap();
+            std::os::unix::fs::symlink(&registration, &paths[1]).unwrap();
+            for _ in 0..2 {
+                manager.unregister(service, &origin).unwrap();
+                assert!(std::fs::symlink_metadata(&registration).is_err());
+                assert!(
+                    paths
+                        .iter()
+                        .all(|path| std::fs::symlink_metadata(path).is_err())
+                );
+            }
+            assert!(foreign.exists());
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn restoring_running_state_checks_effect_and_can_retry() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("lkit-restore-state-{}", uuid::Uuid::now_v7()));
+        let init = root.join("init.d");
+        std::fs::create_dir_all(&init).unwrap();
+        std::fs::write(init.join("networking"), "fixture").unwrap();
+        let manager = Openrc {
+            init_d_dir: init,
+            rc_service: root.join("unused"),
+            rc_update: root.join("unused"),
+            resolv_conf: root.join("resolv.conf"),
+        };
+        for desired in [false, true] {
+            let before = HostServiceBefore {
+                unit: "networking".into(),
+                installed: true,
+                active: desired,
+                enable_state: serde_json::to_string(&StartupLinks {
+                    backend: ServiceManagerKind::Openrc,
+                    links: Vec::new(),
+                })
+                .unwrap(),
+            };
+            let action = if desired { "start" } else { "stop" };
+            let mut calls = Vec::new();
+            assert!(
+                restore_with(&manager, &before, |verb| {
+                    calls.push(verb.to_owned());
+                    Ok(if verb == "status" { !desired } else { true })
+                })
+                .is_err()
+            );
+            assert_eq!(calls, ["status", action, "status"]);
+            let mut active = !desired;
+            restore_with(&manager, &before, |verb| {
+                if verb == action {
+                    active = desired;
+                }
+                Ok(active)
+            })
+            .unwrap();
+            restore_with(&manager, &before, |verb| {
+                assert_eq!(verb, "status");
+                Ok(desired)
+            })
+            .unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn openrc_snapshots_all_runlevels_and_rejects_foreign_links() {
         use super::*;

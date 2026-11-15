@@ -63,6 +63,8 @@ jobs:
             network::discovery::tests \
             network::recovery::tests \
             service::host_network::tests \
+            service::sysvinit::tests \
+            network::takeover::tests::accepted_confirmation_cannot_be_changed_to_rollback \
             mirror::apt::parse::tests \
             mirror::apt::apply_tests \
             mirror::dnf::apply_tests \
