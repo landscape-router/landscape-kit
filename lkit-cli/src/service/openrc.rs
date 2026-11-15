@@ -399,6 +399,7 @@ mod tests {
     fn renders_router_script_pointing_at_managed_executable() {
         let root = temp_dir("render");
         let script = render_router_script(&root);
+        assert!(script.contains("/usr/local/bin/lkit network startup-check ||"));
         assert!(script.starts_with("#!/sbin/openrc-run"));
         assert!(script.contains(&format!("{}/current/landscape-webserver", root.display())));
         assert!(script.contains("command_user=\"root\""));

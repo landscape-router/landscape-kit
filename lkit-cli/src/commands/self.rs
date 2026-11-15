@@ -52,7 +52,7 @@ fn global_dir() -> Option<&'static Path> {
 }
 
 /// CLI 二进制固定位置(由 install.sh 安装,self 命令只读不删)。
-fn lkit_binary() -> PathBuf {
+pub(crate) fn lkit_binary() -> PathBuf {
     match global_dir() {
         Some(dir) => dir.join("bin/lkit"),
         None => PathBuf::from(LKIT_BINARY),
@@ -310,6 +310,11 @@ fn cleanup_partial_install(manager: &dyn ServiceManager, service: ManagedService
 }
 
 fn remove(runtime: &InstallRuntime) -> Result<String, InstallError> {
+    if crate::deployment::state::discover_landscape_root_from_unfinished_transaction()?.is_some() {
+        return Err(InstallError::BlockedByTransaction(
+            "finish the pending transaction before removing the lkit daemon".into(),
+        ));
+    }
     let manager = require_manager(runtime)?;
     let service = ManagedService::LkitDaemon;
     if manager.is_active(service)? {

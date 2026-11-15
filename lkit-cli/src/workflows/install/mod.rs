@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::state::StateServiceManager;
 use chrono::Utc;
 
 use super::artifacts::build_release;
@@ -15,7 +17,7 @@ pub(crate) use super::preflight::run_preflight;
 use super::repository::{Architecture, ProviderKind, Release, ReleaseProvider};
 use super::resolv;
 use super::root::InstallRoot;
-use super::state::{InitStatus, InitializationState, ServiceState, StateServiceManager};
+use super::state::{InitStatus, InitializationState, ServiceState};
 pub(crate) use super::switch::{SwitchArgs, SwitchOptions, SwitchOutcome, switch_version};
 use super::transaction::Phase;
 use crate::deployment::layout;
@@ -176,7 +178,7 @@ async fn first_install_impl<P: DocsProbe>(
                 initialized_at: Some(Utc::now()),
             },
             service: ServiceState {
-                manager: StateServiceManager::Systemd,
+                manager: manager.kind(),
                 registered: true,
                 enabled: true,
                 verified: true,

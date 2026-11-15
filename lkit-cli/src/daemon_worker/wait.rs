@@ -258,6 +258,7 @@ mod tests {
         let id = transaction.transaction_id.clone();
         transaction.network_takeover =
             Some(crate::deployment::transaction::NetworkTakeoverTransaction {
+                boot_id: None,
                 plan: crate::network::config::NetworkPlan {
                     mode: crate::network::config::NetworkMode::RoutedLan {
                         wan: "ens3".into(),

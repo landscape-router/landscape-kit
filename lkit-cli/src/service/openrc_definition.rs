@@ -24,6 +24,7 @@ command_user="root"
 pidfile="/run/landscape-router.pid"
 
 start() {{
+    /usr/local/bin/lkit network startup-check || return 1
     ebegin "Starting Landscape"
     start-stop-daemon --start --make-pidfile --pidfile /run/landscape-router.pid --background --exec ${{command}} -- ${{command_args}}
     eend $?

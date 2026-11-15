@@ -1,5 +1,4 @@
 reinit.requires_existing_installation = "reinit requires an existing installation with a valid install-state.json"
-reinit.requires_systemd = "reinit requires the systemd service manager; this installation uses another manager"
 reinit.requires_network_takeover = "reinit requires host network services already handed over to Landscape (stop/disable/mask detected); use `lkit install --takeover-network` for a first takeover"
 reinit.blocked_by_pending_takeover = "network takeover %{transaction_id} is %{phase}; use `lkit network status`, `lkit network confirm`, or `lkit network rollback` first"
 reinit.enter_admin_password = "Enter the new admin password for the reinitialized Landscape"

@@ -209,6 +209,7 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
          Wants=network-online.target lkit.service\n\
          \n\
          [Service]\n\
+         ExecStartPre=/usr/local/bin/lkit network startup-check\n\
          ExecStart={0}/current/landscape-webserver --config-dir {0}/data --web {0}/current/static\n\
          User=root\n\
          Restart=always\n\
@@ -228,8 +229,7 @@ pub(crate) fn render_lkit_daemon_unit(binary: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Lkit daemon\n\
-         After=network-online.target\n\
-         Wants=network-online.target\n\
+         After=local-fs.target\n\
          \n\
          [Service]\n\
          ExecStart={} daemon\n\
@@ -541,7 +541,10 @@ pub(crate) fn restore_host_service(
         "enabled-runtime" | "linked-runtime" => {
             run_systemctl(systemd, &["enable", "--runtime", &before.unit], None)?;
         }
-        "masked" | "masked-runtime" => unit_command(systemd, "mask", &before.unit)?,
+        "masked" => unit_command(systemd, "mask", &before.unit)?,
+        "masked-runtime" => {
+            run_systemctl(systemd, &["mask", "--runtime", &before.unit], None)?;
+        }
         _ => {}
     }
     if before.active {
@@ -951,6 +954,7 @@ mod tests {
     fn renders_and_validates_unit() {
         let root = Path::new("/srv/landscape");
         let content = render_unit(root);
+        assert!(content.contains("ExecStartPre=/usr/local/bin/lkit network startup-check"));
         assert!(validate_unit(&content, root).is_ok());
         assert!(content.contains("After=network-online.target lkit.service\n"));
         assert!(content.contains("Wants=network-online.target lkit.service\n"));

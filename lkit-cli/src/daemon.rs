@@ -20,8 +20,8 @@
 //! 恢复目标从地盘的状态与事务发现 landscape 根,不再绑定任何安装根。
 //! 并发安全依赖安装锁:CLI 命令在整个操作期间持有
 //! `<territory>/run/install.lock`,daemon 每个周期以非阻塞方式尝试获取,
-//! 获取失败说明有活动命令,跳过本周期。网络接管待确认阶段保持人工
-//! `lkit network confirm|rollback`,daemon 不代替用户确认。
+//! 获取失败说明有活动命令,跳过本周期。网络接管由 daemon 监测期限与主机重启,
+//! 自动回滚未确认事务并继续已接受的提交;用户仍需显式确认。
 
 use std::path::Path;
 #[cfg(feature = "test-support")]
@@ -76,6 +76,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     )
     .map_err(InstallError::Io)?;
     write_pidfile(&pidfile)?;
+    let recovery_capability = layout::territory_run_dir().join("network-recovery-v1.pid");
+    write_pidfile(&recovery_capability)?;
 
     // Best effort only: bpffs preparation must not disable the L2 recovery
     // channel or prevent Landscape's normal service startup.
@@ -98,9 +100,15 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
         libc::signal(libc::SIGINT, handler as libc::sighandler_t);
     }
+    let mut worker: Option<tokio::task::JoinHandle<()>> = None;
     loop {
-        execute_pending_requests();
         recovery_cycle(&runtime).await;
+        if worker.as_ref().is_none_or(|task| task.is_finished()) {
+            if let Some(task) = worker.take() {
+                let _ = task.await;
+            }
+            worker = Some(tokio::task::spawn_blocking(execute_pending_requests));
+        }
         flare = reload_flare(flare);
         // 分片睡眠,保证 SIGTERM 及时生效。
         let slices = DAEMON_CYCLE_INTERVAL.as_millis().div_ceil(200).max(1) as u64;
@@ -117,6 +125,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         }
     }
     drop(flare);
+    let _ = std::fs::remove_file(&recovery_capability);
     let _ = std::fs::remove_file(&pidfile);
     Ok(())
 }
@@ -271,8 +280,8 @@ fn spawn_flare_from(
 }
 
 /// 扫描并执行委托请求。请求文件由 CLI 写入
-/// `OPERATIONS_DIR/<id>.request.json`;daemon 逐次认领执行,期间阻塞周期循环,
-/// 完成后立即检查下一个请求(恢复周期让位于执行)。
+/// `OPERATIONS_DIR/<id>.request.json`;独立 blocking task 逐次认领执行,
+/// 恢复循环继续检查安装锁与事务。
 fn execute_pending_requests() {
     let operations = match std::fs::read_dir(OPERATIONS_DIR) {
         Ok(operations) => operations,
@@ -315,14 +324,20 @@ async fn recovery_cycle(runtime: &InstallRuntime) {
         Err(_) => return,
     };
     let Some(unfinished) = unfinished else { return };
-    if matches!(
-        unfinished.phase,
-        transaction::Phase::AwaitingNetworkConfirmation
-            | transaction::Phase::Finalizing
-            | transaction::Phase::RollingBack
-    ) && unfinished.network_takeover.is_some()
+    if (unfinished.operation == transaction::Operation::Reinit
+        || matches!(
+            unfinished.phase,
+            transaction::Phase::AwaitingNetworkConfirmation
+                | transaction::Phase::Finalizing
+                | transaction::Phase::RollingBack
+        ))
+        && unfinished.network_takeover.is_some()
     {
-        // 网络接管待确认/回滚由 `lkit network confirm|rollback` 人工处理。
+        if let Err(error) =
+            crate::network::recovery::recover(&install_root, &unfinished, runtime).await
+        {
+            eprintln!("lkit daemon: network recovery failed; will retry: {error}");
+        }
         return;
     }
     let health = match runtime.health_options() {

@@ -25,7 +25,7 @@ lkit [--non-interactive] install [--version <VERSION>]
   的 flare 服务端在 Landscape 网络配置错误（含接管失败）时仍可用，psK 用 `lkit flare
   setup` 查看或设置，见[flare 协议](../flare/protocol.md)。
 - `--force` 不删除文件，只显示规范化安装根目录并要求用户自行清理。
-- `--takeover-network` 仅用于首次安装，要求 systemd 和交互终端。它让用户选择 WAN/LAN
+- `--takeover-network` 仅用于首次安装，要求受支持的服务后端、启用且运行中的 lkit daemon 和交互终端。它让用户选择 WAN/LAN
   接口，并在 Landscape 健康后进入待确认状态；完整行为见[网络接管](../network/takeover.md)。
   管理控制台的 Install 面板始终启用该模式（开关暂隐藏，见代码中的
   `TODO(network-takeover)`）；CLI 的 `--takeover-network` 仍为显式参数。

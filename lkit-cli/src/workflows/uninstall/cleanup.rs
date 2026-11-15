@@ -122,7 +122,12 @@ fn remove_path_if_present(path: &Path) -> Result<(), InstallError> {
 /// 探测失败时按无接管特征处理(警告是尽力而为,不应阻断卸载)。
 pub(crate) fn host_network_services_masked(manager: &dyn ServiceManager) -> bool {
     let Ok(systemd) = systemd::downcast(manager) else {
-        return false;
+        return crate::service::host_network::names(manager)
+            .iter()
+            .any(|name| {
+                crate::service::host_network::inspect(manager, name)
+                    .is_ok_and(|service| service.installed && !service.active)
+            });
     };
     NETWORK_SERVICE_UNITS.iter().any(|unit| {
         systemd::inspect_host_service(systemd, unit)

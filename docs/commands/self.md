@@ -101,6 +101,8 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 `remove` 不删除 `/usr/local/bin/lkit`(CLI 由安装脚本管理),不触碰任何 landscape
 安装根与 lkit 地盘元数据(`config.toml`、`backups/`、`transactions/` 保留)。
 
+存在未完成事务时 `self remove` 拒绝移除 daemon，须先完成事务恢复。
+
 ## daemon 进程
 
 `lkit daemon` 是常驻服务本体,固定读取 lkit 地盘 `/root/.lkit/`:
@@ -117,7 +119,8 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 - **恒常托管 flare 服务端**:Linux 上 daemon 启动即托管 Landscape Terrain
   (L2 防失联通道)服务端,`[flare]` 段缺失或无 psk 时生成随机 psk 并持久化;
   每周期对比配置指纹,变更时重启 flare 任务拾取新配置,见[flare 协议](../flare/protocol.md);
-- 网络接管待确认阶段仍由 `lkit network confirm|rollback` 人工处理,daemon 不代替确认;
+- 网络接管由 daemon 监测期限与主机重启并自动回滚；用户确认仍通过 `lkit network confirm`；
+  见[恢复契约](../network/daemon-recovery.md)；
 - CLI 命令持有安装锁期间 daemon 自动让行,不产生并发冲突。
 
 ## 退出码

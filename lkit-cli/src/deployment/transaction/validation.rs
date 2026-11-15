@@ -4,6 +4,12 @@ use super::super::plan::InstallError;
 use super::{Operation, Phase, RegistrationKind, TRANSACTION_SCHEMA_VERSION, TransactionFile};
 
 pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), InstallError> {
+    if let Some(network) = &transaction.network_takeover
+        && let Some(boot) = &network.boot_id
+        && uuid::Uuid::parse_str(boot).is_err()
+    {
+        return Err(corrupted("invalid network recovery boot id".into()));
+    }
     if !(1..=TRANSACTION_SCHEMA_VERSION).contains(&transaction.schema_version) {
         return Err(corrupted(format!(
             "unsupported transaction schema version {}",
@@ -472,7 +478,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 5;
+        transaction.schema_version = 6;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);
@@ -518,7 +524,7 @@ mod tests {
         let target = semver::Version::new(1, 2, 3);
         let mut transaction = TransactionFile::new_restore(&root, &from, &target).unwrap();
         assert_eq!(transaction.operation, Operation::Restore);
-        assert_eq!(transaction.schema_version, 4);
+        assert_eq!(transaction.schema_version, 5);
         assert!(validate_transaction(&transaction).is_ok());
 
         transaction.phase = Phase::Prepared;

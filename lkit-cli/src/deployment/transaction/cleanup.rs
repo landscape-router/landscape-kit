@@ -11,6 +11,15 @@ pub(crate) fn cleanup_failed_first_install(
     transaction: &TransactionFile,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    if transaction.network_takeover.is_some()
+        && manager.is_active(ManagedService::LandscapeRouter)?
+    {
+        manager.stop_and_wait(ManagedService::LandscapeRouter, &|| {
+            manager
+                .is_active(ManagedService::LandscapeRouter)
+                .is_ok_and(|active| !active)
+        })?;
+    }
     if let Some(before) = &transaction.systemd_before {
         let unit_origin = root
             .canonical
@@ -85,6 +94,13 @@ pub(crate) fn restore_uncommitted_network_systemd(
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
     validate_network_takeover_rollback(root, transaction)?;
+    if manager.is_active(ManagedService::LandscapeRouter)? {
+        manager.stop_and_wait(ManagedService::LandscapeRouter, &|| {
+            manager
+                .is_active(ManagedService::LandscapeRouter)
+                .is_ok_and(|active| !active)
+        })?;
+    }
     if let Some(before) = &transaction.systemd_before {
         let unit_origin = root
             .canonical

@@ -46,7 +46,7 @@
 
 ## NET-04
 
-**恢复 timer 与 boot rollback unit 在停止宿主网络服务前持久化并启动**
+**daemon 恢复元数据在停止宿主网络服务前持久化**
 
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
@@ -82,20 +82,20 @@
 - 测试层：CLI fixture E2E、QEMU/KVM
 - 状态：`部分覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[QEMU 网络接管](../../qemu-network-takeover.md)
-- 说明：覆盖手工 rollback、10 分钟 timer rollback 和确认前重启的 boot rollback；三条入口
+- 说明：覆盖手工 rollback、daemon 超时回滚 和确认前主机重启回滚；三条入口
   都必须恢复宿主网络、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
   `lkit install`。
-- 缺口：fixture 直接覆盖自动回滚入口和重装，QEMU 覆盖 boot rollback；真实 timer 到期和
+- 缺口：fixture 直接覆盖自动回滚入口和重装，QEMU 覆盖 boot rollback；真实确认期限到达和
   手工 systemd operation worker 尚未分别触发。
 
 ## NET-11
 
-**网络接管回滚清理失败时保留现场并进入 failed，不伪造 rolled_back**
+**网络接管回滚清理失败时保留现场并保持 rolling_back，不伪造 rolled_back**
 
 - 测试层：CLI fixture E2E、Rust 事务测试
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[事务与中断恢复](../../../deployment/transactions-and-recovery.md#未提交网络接管安装的回滚清理)
-- 说明：fixture 通过异常 `current` 链接注入清理失败，断言退出码 `6`、事务为 `failed` 且
+- 说明：fixture 通过异常 `current` 链接注入清理失败，断言退出码 `6`、事务为 `rolling_back` 且
   残留 data 未被删除。
 
 ## NET-12

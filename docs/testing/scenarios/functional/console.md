@@ -10,7 +10,7 @@
 - 说明：内存终端断言品牌、Navigation、Install root 和安装操作均已渲染，不要求测试进程
   连接真实终端；同时断言 Repository URL 默认隐藏、仅在选择 Custom HTTP 后显示，字段导航
   会跳过隐藏行，并验证所有安装字段都有随选择变化的说明。网络接管开关暂隐藏，不在
-  表单字段中；systemd 默认接管，OpenRC/SysVinit 明确使用普通安装。
+  表单字段中；systemd、OpenRC 和 SysVinit 均启用接管。
 
 ## UI-02
 
@@ -91,7 +91,7 @@
 - 说明：覆盖从 Install 表单进入无侧栏网络向导、WAN 配置面板（Static/DHCP client tab、
   静态字段与底部“确认并继续”按钮）、LAN 空集合的 WAN-only 计划，以及 LAN
   列表的 Up/Down、Space、Enter 语义。systemd 的 Install 面板启用网络接管，激活
-  “开始安装”进入向导；OpenRC/SysVinit 使用普通安装，不进入该流程。
+  “开始安装”进入向导；OpenRC/SysVinit 使用相同向导和 daemon 恢复契约。
   systemd worker 的安装页在下载阶段可停止，配置阶段
   忽略停止请求，结果页等待 Ctrl+C。安装/reinit 完成且存在待确认网络接管事务时，
   结果页底栏显示确认入口（`Enter Confirm takeover`），确认层正文说明断连后果与兜底
@@ -338,12 +338,12 @@
 
 ## UI-21
 
-**非 systemd 后端明确提供普通安装，不强制进入不受支持的网络接管流程**
+**受支持后端启用网络接管，显式普通安装请求不进入向导**
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`已覆盖`
 - 证据：[安装表单测试](../../../../lkit-cli/src/console/tests/install.rs)、[网络命令测试](../../../../lkit-cli/src/network/discovery.rs)、[控制台规格](../../../interaction/console.md)
-- 说明：后端输入为 OpenRC/SysVinit 时关闭自动接管，按钮和说明明确展示不接管网络；构建请求不携带 takeover 标记或计划；按 Enter 直接分发普通安装请求且不打开网络向导。systemd 保留向导。网络发现以假命令 runner 验证 PATH 命令选择与错误上下文，不在单测中启动真实 ip 或 daemon。
+- 说明：systemd、OpenRC/SysVinit 表单启用接管；显式设置普通安装时按 Enter 直接分发安装请求且不打开向导。未知后端保留普通安装文案，但仍受环境检查阻断。
 
 ## UI-20
 

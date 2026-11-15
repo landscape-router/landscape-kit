@@ -16,6 +16,9 @@ pub struct Network {
 
 #[derive(Debug, Subcommand)]
 pub enum NetworkAction {
+    /// Validate the Landscape service startup recovery barrier
+    #[command(hide = true)]
+    StartupCheck,
     /// Show a pending or committed network takeover transaction
     Status,
     /// Confirm the network takeover

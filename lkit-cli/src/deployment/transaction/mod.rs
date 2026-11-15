@@ -24,7 +24,7 @@ pub(crate) use self::cleanup::{
 };
 use self::file::{append_log, load_transaction_file, write_transaction};
 
-pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 4;
+pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,6 +134,8 @@ pub(crate) struct LegacyUnitBefore {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct NetworkTakeoverTransaction {
+    #[serde(default)]
+    pub boot_id: Option<String>,
     pub plan: crate::network::config::NetworkPlan,
     pub host_services: Vec<HostServiceBefore>,
     pub confirmation_deadline: DateTime<Utc>,
@@ -657,7 +659,7 @@ mod tests {
         let transaction = install_transaction(&root);
         assert_eq!(transaction.operation, Operation::Install);
         assert_eq!(transaction.phase, Phase::Preparing);
-        assert_eq!(transaction.schema_version, 4);
+        assert_eq!(transaction.schema_version, 5);
         assert_eq!(
             transaction.target_release.as_deref(),
             Some("releases/1.2.3")

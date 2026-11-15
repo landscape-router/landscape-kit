@@ -114,6 +114,9 @@ async fn recover_reinit<P: DocsProbe>(
             transaction.phase.key()
         )));
     }
+    if transaction.network_takeover.is_some() {
+        return crate::workflows::reinit::rollback_reinit(root, transaction, systemd, health).await;
+    }
     match transaction.phase {
         Phase::Preparing => {
             let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
@@ -574,6 +577,7 @@ mod tests {
         let mut transaction =
             TransactionFile::new_reinit(&root, &semver::Version::new(1, 2, 3)).unwrap();
         transaction.network_takeover = Some(NetworkTakeoverTransaction {
+            boot_id: None,
             plan: crate::network::config::NetworkPlan {
                 mode: crate::network::config::NetworkMode::WanDhcp { wan: "ens3".into() },
                 selected_macs: vec![crate::network::config::SelectedInterface {

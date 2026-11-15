@@ -17,9 +17,7 @@ use crate::interaction::credentials;
 use crate::network::config::NetworkPlan;
 use crate::service::manager::ServiceManagerKind;
 
-// TODO(network-takeover): 处理完不同发行版网络服务差异后恢复网络接管开关:
-// 只有实现可靠的网络接管与回滚后才能为更多后端启用该能力。
-// 当前 systemd 使用接管向导；OpenRC/SysVinit 明确提供普通安装。
+// Supported init backends use the daemon recovery contract.
 pub(crate) const FORM_FIELDS: usize = InstallField::ALL.len();
 
 /// 安装表单字段:声明顺序即表单次序,`StartInstallation` 恒为最后一个字段。
@@ -165,9 +163,8 @@ impl InstallForm {
             admin_user: "admin".into(),
             password: String::new(),
             password_confirmation: String::new(),
-            // Automatic takeover and its rollback timers require systemd.
-            // Other backends retain the supported ordinary-install path.
-            takeover_network: kind == Some(ServiceManagerKind::Systemd),
+            // Supported backends share daemon-managed network recovery.
+            takeover_network: kind.is_some(),
             selected: InstallField::Version,
             checks_selected: true,
             editing: false,

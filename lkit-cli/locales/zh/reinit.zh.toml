@@ -1,5 +1,4 @@
 reinit.requires_existing_installation = "reinit 需要一个已存在且状态有效的安装（install-state.json）"
-reinit.requires_systemd = "reinit 要求 systemd 服务管理器；该安装使用其他管理器"
 reinit.requires_network_takeover = "reinit 要求宿主网络服务已被 Landscape 接管（检测到 stop/disable/mask）；首次接管请使用 `lkit install --takeover-network`"
 reinit.blocked_by_pending_takeover = "网络接管事务 %{transaction_id} 处于 %{phase}；请先运行 `lkit network status`、`lkit network confirm` 或 `lkit network rollback`"
 reinit.enter_admin_password = "请输入重新初始化后的新管理员密码"

@@ -96,7 +96,7 @@ impl Default for ReinitPanel {
 pub(crate) fn reinit_eligible(app: &ConsoleApp) -> bool {
     let installed_systemd = matches!(
         &app.snapshot,
-        super::network_wizard::Snapshot::Installed { manager, .. } if *manager == "systemd"
+        super::network_wizard::Snapshot::Installed { manager, .. } if ["systemd", "openrc", "sysvinit"].contains(manager)
     );
     if !installed_systemd {
         return false;
@@ -105,7 +105,7 @@ pub(crate) fn reinit_eligible(app: &ConsoleApp) -> bool {
         return true;
     }
     crate::workflows::uninstall::host_network_services_masked(
-        &crate::service::systemd::Systemd::host(),
+        crate::deployment::runtime::host_manager().as_ref(),
     )
 }
 

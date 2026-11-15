@@ -38,6 +38,7 @@
 - [服务、进程与健康检查](service/runtime-and-health.md)
 - [并发任务与线程命名](deployment/concurrency.md)
 - [网络接管](network/takeover.md)
+- [daemon 网络接管恢复](network/daemon-recovery.md)
 - [宿主网络适配（hostnet）](network/hostnet.md)
 - [网络重配置(reinit)](network/reinit.md)
 - [网络出口与代理语义](network/proxy.md)：出站请求的代理遵循与回环直连规则。

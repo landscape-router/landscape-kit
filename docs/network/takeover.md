@@ -3,23 +3,23 @@
 ## 使用边界
 
 `lkit install --takeover-network` 是首次安装的显式破坏性模式，要求 root、真实可通信的
-systemd 和交互终端。网卡始终由用户选择，lkit 不按默认路由或接口名自动决定 WAN/LAN。
+服务管理器（systemd、OpenRC 或 SysVinit）、启用且运行中的 lkit daemon 和交互终端。网卡始终由用户选择，lkit 不按默认路由或接口名自动决定 WAN/LAN。
 无线、loopback 和虚拟接口不列入选择。不受支持的活动网络管理器
-（`systemd-networkd`、wicked 或 connman），或 SELinux 已加载/配置为 enabled/permissive
+（`systemd-networkd`、wicked、connman 或独立 dhcpcd），或 SELinux 已加载/配置为 enabled/permissive
 时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
 网络发现和部署运行时通过 PATH 调用完整 iproute2 的 `ip`，不假定它安装在
 `/usr/sbin/ip`。网络向导与后台部署使用同一命令选择；显式测试运行时仍可覆盖命令路径。
 调用失败时诊断包含命令和参数，而不只显示缺少文件的 I/O 错误。
-OpenRC/SysVinit 的控制台入口提供明确标注的普通安装，不启动仅支持 systemd 的
-接管／回滚流程，也不声称已经实现这些后端的自动网络接管。
+三个后端的控制台安装均进入网络向导。网络接管的恢复契约见
+[daemon 网络接管恢复](daemon-recovery.md)。
 
-接管支持 NetworkManager 和 Debian ifupdown 的 `networking.service`；不存在的 unit 保持
-未安装状态且不会执行服务操作。接管不会卸载 NetworkManager、ifupdown、firewalld、
-systemd-resolved 或其他软件包，也不收集 PPPoE 用户名、密码或 MTU。它保存这些宿主服务
-的原始状态，然后依次 stop、disable、mask；回滚按原始 installed、enable 和 active 状态
-恢复。
+systemd 支持 NetworkManager、Debian ifupdown、firewalld 和 systemd-resolved；
+OpenRC/SysVinit 支持 `NetworkManager`、`networking` 和 `firewalld` 服务脚本。
+不存在的服务不操作。服务状态无法可靠查询时在接管前失败。systemd 使用
+stop/disable/mask；OpenRC/SysVinit 停止服务并保存、移除其开机链接，回滚恢复原始
+runlevel、链接顺序及运行状态。接管不卸载软件包，不收集 PPPoE 凭据或 MTU。
 
 初始化配置的生成方式按目标 release 版本区分:≥ 0.25.1 时 lkit 调用目标 release 目录下
 `landscape-webserver config` 子命令生成(Landscape 的稳定部署接口,生成文件内嵌目标
@@ -68,17 +68,10 @@ zone type 为 `undefined`，只通过 controller（上游）关联到 `br_lan`�
 
 ## 确认与回滚
 
-停止宿主网络服务前，lkit 将自身复制为 root-only 恢复二进制，并安装三个事务专属 unit：
+停止宿主网络服务前，lkit 持久化服务状态、确认期限与主机启动标识，并检查 daemon
+具备恢复能力。确认窗口为 10 分钟，由 daemon 监测；新事务不创建专属恢复 unit。
 
-- 10 分钟确认期限的 persistent timer；
-- timer 调用的幂等 rollback service；
-- 未确认重启时在 Landscape 和 network-online 之前执行的 boot rollback service。
-
-恢复机制 arm 成功后才停止 systemd-resolved、firewalld、`networking.service` 和
-NetworkManager，其中 NetworkManager 在两者都存在时最后停止。Landscape 启动并通过健康
-检查后，安装状态仍不提交。用户可在任意可达主机的会话（推荐重新连接到管理地址，因为
-停止宿主网络服务会断开旧会话）运行 `lkit network confirm`。确认会
-检查接口 MAC、管理 IPv4/prefix、bridge 成员、Landscape PID 和健康。
-
-期限内未确认或确认前重启会清理未提交安装、恢复宿主服务状态并移除恢复 unit。恢复不
-依赖原安装进程或原 SSH 连接存活。
+Landscape 启动并通过健康检查后安装状态仍不提交。用户运行 `lkit network confirm`
+完成接口与健康复检后提交事务。期限内未确认或确认前主机重启触发自动回滚；daemon
+自身重启继续原期限。回滚失败保留 `rolling_back` 并重试。已接受确认的 `finalizing`
+继续提交。旧事务的 systemd 恢复 unit 在处理完成时清理。

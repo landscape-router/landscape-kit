@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
@@ -13,20 +13,15 @@ use crate::deployment::root::InstallRoot;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{lock, state, transaction};
 use crate::service::manager::{ManagedService, ServiceManager};
-use crate::service::{health, systemd};
+use crate::service::{health, host_network, systemd};
 
 use super::config::{NetworkMode, NetworkPlan};
 
-const HOST_SERVICES: [&str; 4] = [
-    "NetworkManager.service",
-    "networking.service",
-    "firewalld.service",
-    "systemd-resolved.service",
-];
-const UNKNOWN_NETWORK_MANAGERS: [&str; 3] = [
+const UNKNOWN_NETWORK_MANAGERS: [&str; 4] = [
     "systemd-networkd.service",
     "wicked.service",
     "connman.service",
+    "dhcpcd.service",
 ];
 
 pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
@@ -36,17 +31,22 @@ pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
         crate::service::manager::Availability::Available { .. }
     ) {
         return Err(InstallError::UnsupportedPlatform(
-            "network takeover requires a reachable systemd system manager".into(),
+            "network takeover requires a reachable service manager".into(),
         ));
     }
-    let systemd = systemd::downcast(manager)?;
+    require_recovery_daemon(runtime)?;
     if selinux_enabled(&runtime.selinux_fs_path, &runtime.selinux_config_path)? {
         return Err(InstallError::UnsupportedPlatform(
             "network takeover does not support systems where SELinux is loaded or enabled".into(),
         ));
     }
     for unit in UNKNOWN_NETWORK_MANAGERS {
-        let before = systemd::inspect_host_service(systemd, unit)?;
+        let name = if manager.kind() == crate::service::manager::ServiceManagerKind::Systemd {
+            unit
+        } else {
+            unit.trim_end_matches(".service")
+        };
+        let before = host_network::inspect(manager, name)?;
         if before.active {
             return Err(InstallError::Preflight(format!(
                 "unknown network manager {unit} is active; stop it before network takeover"
@@ -61,16 +61,17 @@ pub(crate) fn prepare_transaction(
     plan: &NetworkPlan,
     runtime: &InstallRuntime,
 ) -> Result<transaction::NetworkTakeoverTransaction, InstallError> {
-    let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
-    let host_services = HOST_SERVICES
+    let manager = runtime.service_manager.as_ref();
+    let host_services = host_network::names(manager)
         .iter()
-        .map(|unit| systemd::inspect_host_service(systemd, unit))
+        .map(|unit| host_network::inspect(manager, unit))
         .collect::<Result<Vec<_>, _>>()?;
     let stem = format!("lkit-network-{}", transaction_id);
     let timeout = ChronoDuration::from_std(runtime.network_confirm_timeout).map_err(|_| {
         InstallError::ParameterUsage("network confirmation timeout is too large".into())
     })?;
     Ok(transaction::NetworkTakeoverTransaction {
+        boot_id: Some(current_boot_id()?),
         plan: plan.clone(),
         host_services,
         confirmation_deadline: Utc::now() + timeout,
@@ -98,56 +99,50 @@ pub(crate) fn arm_recovery(
     network: &transaction::NetworkTakeoverTransaction,
     runtime: &InstallRuntime,
 ) -> Result<(), InstallError> {
-    let recovery = root.canonical.join(&network.recovery_binary);
-    if let Some(parent) = recovery.parent() {
-        std::fs::create_dir_all(parent).map_err(InstallError::Io)?;
-    }
-    std::fs::copy(
-        std::env::current_exe().map_err(InstallError::Io)?,
-        &recovery,
-    )
-    .map_err(InstallError::Io)?;
-    std::fs::set_permissions(&recovery, std::fs::Permissions::from_mode(0o700))
-        .map_err(InstallError::Io)?;
+    let _ = (root, network);
+    require_recovery_daemon(runtime)
+}
 
-    let runtime_arg = runtime
-        .test_runtime_path
-        .as_ref()
-        .map(|path| format!(" --test-runtime={}", unit_quote(path)))
-        .unwrap_or_default();
-    let rollback_command = format!(
-        "{} network rollback --automatic{}",
-        unit_quote(&recovery),
-        runtime_arg
-    );
-    let rollback = format!(
-        "[Unit]\nDescription=Rollback unconfirmed Landscape network takeover\nAfter=local-fs.target\n\n[Service]\nType=oneshot\nExecStart={rollback_command}\nRestart=on-failure\nRestartSec=10s\n"
-    );
-    let timer_seconds = runtime.network_confirm_timeout.as_secs().max(1);
-    let timer = format!(
-        "[Unit]\nDescription=Network takeover confirmation deadline\n\n[Timer]\nOnActiveSec={timer_seconds}s\nPersistent=true\nAccuracySec=1s\nUnit={}\n\n[Install]\nWantedBy=timers.target\n",
-        network.rollback_service
-    );
-    let boot = format!(
-        "[Unit]\nDescription=Rollback network takeover after unconfirmed reboot\nDefaultDependencies=no\nAfter=local-fs.target\nBefore=landscape-router.service network-online.target\n\n[Service]\nType=oneshot\nExecStart={rollback_command}\n\n[Install]\nWantedBy=multi-user.target\n"
-    );
-    let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
-    write_system_unit(systemd, &network.rollback_service, &rollback)?;
-    write_system_unit(systemd, &network.rollback_timer, &timer)?;
-    write_system_unit(systemd, &network.boot_rollback_service, &boot)?;
-    systemd::daemon_reload(systemd)?;
-    systemd::unit_command(systemd, "enable", &network.boot_rollback_service)?;
-    systemd::unit_command(systemd, "enable", &network.rollback_timer)?;
-    systemd::unit_command(systemd, "start", &network.rollback_timer)
+pub(crate) fn current_boot_id() -> Result<String, InstallError> {
+    let value =
+        std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map_err(InstallError::Io)?;
+    let value = value.trim();
+    uuid::Uuid::parse_str(value)
+        .map_err(|_| InstallError::Preflight("invalid host boot id".into()))?;
+    Ok(value.into())
+}
+
+fn require_recovery_daemon(runtime: &InstallRuntime) -> Result<(), InstallError> {
+    if runtime.test_runtime_path.is_some() {
+        return Ok(());
+    }
+    let manager = runtime.service_manager.as_ref();
+    let capability =
+        std::fs::read_to_string(layout::territory_run_dir().join("network-recovery-v1.pid"))
+            .unwrap_or_default();
+    let pid = manager.main_pid(ManagedService::LkitDaemon)?;
+    if capability.trim() != pid.to_string() || pid == 0 {
+        return Err(InstallError::Preflight(
+            "restart lkit with lkit self install to enable daemon network recovery".into(),
+        ));
+    }
+    if !manager.is_enabled(ManagedService::LkitDaemon)?
+        || !manager.is_active(ManagedService::LkitDaemon)?
+    {
+        return Err(InstallError::Preflight(
+            "network takeover requires an enabled, running lkit daemon; run lkit self install"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn stop_host_services(
     network: &transaction::NetworkTakeoverTransaction,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
-    let systemd = systemd::downcast(manager)?;
     for before in network.host_services.iter().rev() {
-        systemd::stop_disable_mask_host_service(systemd, before)?;
+        host_network::stop(manager, before)?;
     }
     Ok(())
 }
@@ -157,11 +152,10 @@ pub(crate) fn cleanup_failed_takeover(
     network: &transaction::NetworkTakeoverTransaction,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
-    let systemd = systemd::downcast(manager)?;
     for before in &network.host_services {
-        systemd::restore_host_service(systemd, before)?;
+        host_network::restore(manager, before)?;
     }
-    remove_recovery_units(root, network, systemd, false)
+    cleanup_recovery(root, network, manager, false)
 }
 
 pub(crate) fn write_pending_state(
@@ -192,6 +186,9 @@ pub(crate) async fn run_command(args: &Network) -> ExitCode {
 }
 
 async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
+    if matches!(args.action, NetworkAction::StartupCheck) {
+        return super::recovery::startup_check();
+    }
     let runtime = resolve_runtime(args)?;
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(crate::tr!(
@@ -213,6 +210,7 @@ async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
     let root = normalized;
     let _lock = lock::acquire_install_lock()?;
     match &args.action {
+        NetworkAction::StartupCheck => unreachable!(),
         NetworkAction::Status => status(&root),
         NetworkAction::Confirm => confirm(&root, &runtime).await,
         NetworkAction::Rollback { automatic } => rollback(&root, &runtime, *automatic).await,
@@ -264,7 +262,10 @@ fn status(root: &InstallRoot) -> Result<(), InstallError> {
     Ok(())
 }
 
-async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), InstallError> {
+pub(crate) async fn confirm(
+    root: &InstallRoot,
+    runtime: &InstallRuntime,
+) -> Result<(), InstallError> {
     let mut pending = transaction::find_unfinished(root)?.ok_or_else(|| {
         InstallError::ParameterUsage("no network takeover is awaiting confirmation".into())
     })?;
@@ -282,9 +283,14 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
             "pending transaction has no network takeover state".into(),
         )
     })?;
-    let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
+    let manager = runtime.service_manager.as_ref();
     if pending.phase == transaction::Phase::AwaitingNetworkConfirmation {
-        if Utc::now() > network.confirmation_deadline {
+        if Utc::now() >= network.confirmation_deadline
+            || network
+                .boot_id
+                .as_deref()
+                .is_some_and(|saved| current_boot_id().map_or(true, |boot| saved != boot))
+        {
             return Err(InstallError::ParameterUsage(
                 "network confirmation deadline has expired; wait for automatic rollback or run `lkit network rollback`"
                     .into(),
@@ -292,7 +298,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
         }
         verify_interfaces(&network.plan, runtime)?;
         super::discovery::verify_live(&network.plan, &runtime.ip_command)?;
-        let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
+        let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::HealthCheck(
                 "Landscape has no running MainPID".into(),
@@ -303,7 +309,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
             ports: &health_options.ports,
             expected_pid: pid,
             docs: &health_options.docs,
-            unit_state: Some(&(|| systemd.active_state(ManagedService::LandscapeRouter).ok())),
+            unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
             init_required: true,
             data_dir: &root.canonical.join("data"),
             startup_timeout: health_options.startup_timeout,
@@ -315,7 +321,7 @@ async fn confirm(root: &InstallRoot, runtime: &InstallRuntime) -> Result<(), Ins
         pending.updated_at = Utc::now();
         transaction::persist(root, &pending)?;
     }
-    remove_recovery_units(root, &network, systemd, false)?;
+    cleanup_recovery(root, &network, manager, false)?;
     let bytes = std::fs::read(layout::territory_relative(&network.pending_state))
         .map_err(InstallError::Io)?;
     let mut install_state: state::InstallState =
@@ -381,7 +387,7 @@ pub(crate) fn clear_selected_lan_addresses(
     Ok(())
 }
 
-async fn rollback(
+pub(crate) async fn rollback(
     root: &InstallRoot,
     runtime: &InstallRuntime,
     automatic: bool,
@@ -419,11 +425,10 @@ async fn rollback(
                     &pending,
                     runtime.service_manager.as_ref(),
                 )?;
-                let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
                 for before in &network.host_services {
-                    systemd::restore_host_service(systemd, before)?;
+                    host_network::restore(runtime.service_manager.as_ref(), before)?;
                 }
-                remove_recovery_units(root, &network, systemd, automatic)?;
+                cleanup_recovery(root, &network, runtime.service_manager.as_ref(), automatic)?;
             }
             transaction::Operation::Reinit => {
                 crate::workflows::reinit::rollback_reinit_inner(
@@ -433,8 +438,7 @@ async fn rollback(
                     &health,
                 )
                 .await?;
-                let systemd = systemd::downcast(runtime.service_manager.as_ref())?;
-                remove_recovery_units(root, &network, systemd, automatic)?;
+                cleanup_recovery(root, &network, runtime.service_manager.as_ref(), automatic)?;
             }
             other => {
                 return Err(InstallError::BlockedByTransaction(format!(
@@ -449,10 +453,7 @@ async fn rollback(
         Ok(())
     }
     .await;
-    if let Err(error) = result {
-        let _ = transaction::mark_phase(root, &pending, transaction::Phase::Failed);
-        return Err(error);
-    }
+    result?;
     transaction::mark_phase(root, &pending, transaction::Phase::RolledBack)?;
     println!(
         "network: {}",
@@ -507,32 +508,16 @@ fn remove_recovery_units(
     Ok(())
 }
 
-fn write_system_unit(
-    systemd: &systemd::Systemd,
-    name: &str,
-    content: &str,
+fn cleanup_recovery(
+    root: &InstallRoot,
+    network: &transaction::NetworkTakeoverTransaction,
+    manager: &dyn ServiceManager,
+    automatic: bool,
 ) -> Result<(), InstallError> {
-    let path = systemd.system_unit_dir.join(name);
-    if path.exists() {
-        return Err(InstallError::Systemd(format!(
-            "refusing to overwrite foreign recovery unit {}",
-            path.display()
-        )));
+    if network.boot_id.is_none() {
+        remove_recovery_units(root, network, systemd::downcast(manager)?, automatic)?;
     }
-    let tmp = systemd.system_unit_dir.join(format!(".{name}.tmp"));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o644)
-        .open(&tmp)
-        .map_err(InstallError::Io)?;
-    file.write_all(content.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(InstallError::Io)?;
-    std::fs::rename(&tmp, &path).map_err(|error| {
-        let _ = std::fs::remove_file(&tmp);
-        InstallError::Io(error)
-    })
+    Ok(())
 }
 
 fn write_private_json(path: &Path, value: &impl serde::Serialize) -> Result<(), InstallError> {
@@ -549,17 +534,6 @@ fn write_private_json(path: &Path, value: &impl serde::Serialize) -> Result<(), 
         .and_then(|()| file.sync_all())
         .map_err(InstallError::Io)?;
     std::fs::rename(&tmp, path).map_err(InstallError::Io)
-}
-
-fn unit_quote(path: &Path) -> String {
-    format!(
-        "\"{}\"",
-        path.display()
-            .to_string()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('%', "%%")
-    )
 }
 
 fn selinux_enabled(fs_path: &Path, config_path: &Path) -> Result<bool, InstallError> {
@@ -603,12 +577,6 @@ mod tests {
         std::fs::write(&config, b"SELINUX=disabled\n").unwrap();
         assert!(!selinux_enabled(&dir.join("missing"), &config).unwrap());
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn recovery_unit_command_keeps_test_runtime() {
-        let path = Path::new("/tmp/runtime file.json");
-        assert_eq!(unit_quote(path), "\"/tmp/runtime file.json\"");
     }
 
     #[test]

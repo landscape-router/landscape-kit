@@ -1,4 +1,5 @@
 pub(crate) mod health;
+pub(crate) mod host_network;
 pub(crate) mod manager;
 pub(crate) mod openrc;
 pub(crate) mod preflight;

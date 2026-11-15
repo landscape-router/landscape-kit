@@ -61,6 +61,8 @@ jobs:
             check::kernel::tests \
             commands::lkit_self::upgrade_tests \
             network::discovery::tests \
+            network::recovery::tests \
+            service::host_network::tests \
             mirror::apt::parse::tests \
             mirror::apt::apply_tests \
             mirror::dnf::apply_tests \

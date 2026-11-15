@@ -1,16 +1,16 @@
 # 网络重配置(reinit)
 
-`lkit reinit` 对已接管宿主网络的 systemd 安装重新收集 WAN/LAN 计划并重建配置。接口
+`lkit reinit` 对已接管宿主网络的 systemd、OpenRC 或 SysVinit 安装重新收集 WAN/LAN 计划并重建配置。接口
 发现、交互选择与确认机制复用[网络接管](takeover.md),差异只在本页描述。
 
 ## 使用边界
 
-- 只接受已提交、`service.manager == systemd` 且宿主网络服务已被接管的安装;未接管时
+- 只接受已提交、受支持服务后端 且宿主网络服务已被接管的安装;未接管时
   返回参数错误,reinit 不负责首次接管;
 - 网卡始终由用户重新选择,lkit 不按默认路由或接口名自动决定 WAN/LAN;无线、loopback
   和虚拟接口不列入选择;
-- reinit 不停止、不重新 disable/mask 宿主网络服务(它们维持已接管状态),但仍会 arm
-  恢复二进制、确认 timer 与 boot rollback(确认窗口与首次接管一致);
+- reinit 不停止、不重新 disable/mask 宿主网络服务(它们维持已接管状态),由 daemon 管理
+  确认期限与重启恢复(确认窗口与首次接管一致);
 - 与首次接管相同,reinit 不收集 PPPoE 用户名、密码或 MTU,不卸载任何软件包。
 
 ## 网络计划收集
@@ -67,7 +67,7 @@ reinit 只对新计划中选中的 LAN 物理接口执行 IPv4/IPv6 address flus
 - `lkit network status` 显示事务阶段、新管理地址与确认截止时间;
 - `lkit network confirm` 复核接口 MAC、管理 IPv4/prefix、`br_lan` 成员、Landscape
   PID 与健康后提交 state 并移除恢复 unit;
-- 10 分钟 timer 到期、确认前重启与手工 `lkit network rollback` 都进入同一幂等回滚:
+- 10 分钟确认期限到达、确认前重启与手工 `lkit network rollback` 都进入同一幂等回滚:
   停止 Landscape → 恢复事务目录中的旧 `data/` → 重启旧配置并健康检查 → 标记
   `rolled_back`;桥接现场随旧数据恢复,由 Landscape 按旧配置重新接管;
 - 确认与回滚入口接受 `Operation::Reinit` 事务,判定规则与首次接管相同(只接受

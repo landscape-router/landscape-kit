@@ -2,7 +2,7 @@
 
 ## 事务文件
 
-### Schema v4
+### Schema v5
 
 每次首次安装、同版本修复、版本切换、restore 或卸载创建:
 
@@ -22,7 +22,7 @@
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "transaction_id": "0198c3d2-0000-7000-8000-000000000001",
   "operation": "switch",
   "phase": "prepared",
@@ -236,7 +236,7 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
       release 内容与回滚前完全一致；
 - `rolling_back`：继续事务已经选择的回滚路径，不重新尝试目标版本；
 - `awaiting_network_confirmation` 或 `finalizing`：普通命令不自动处理，要求使用网络
-  子命令；超时 timer 或未确认重启执行同一幂等回滚入口；
+  子命令；daemon 对待确认事务监测期限和主机重启，对 finalizing 继续提交；
 - `committed`：不恢复；
 - `rolled_back`：不重复恢复；
 - `failed`：阻断新安装并要求人工诊断。
@@ -250,16 +250,16 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 或 `rolling_back`，不存在旧版本、`previous_current`、`.lkb` 或已提交的
 `state/install-state.json`，且事务记录的 canonical 安装根目录与当前真实目录一致。
 
-通过校验后，手工 rollback、10 分钟 timer rollback 和确认前重启触发的 boot rollback 都必须：
+通过校验后，手工 rollback、daemon 超时回滚和确认前主机重启触发的回滚 都必须：
 
-1. 恢复 Landscape systemd 注册、enabled/active 状态和 `/etc/resolv.conf`；
+1. 恢复 Landscape 服务注册、enabled/active 状态和 `/etc/resolv.conf`；
 2. 恢复事务快照中的宿主网络服务；
 3. 删除 `current`、目标 release、临时 current 链接、pending install state 和整个
    `<landscape-root>/data/`；
-4. 移除 recovery binary、timer 和 service，并将事务标记为 `rolled_back`。
+4. 清理旧事务遗留的 recovery binary、timer 和 service，并将事务标记为 `rolled_back`。
 
-任一恢复或清理步骤失败时不得标记 `rolled_back`，事务必须进入 `failed`，保留现场和日志供
-人工恢复。switch、repair 以及已经提交的安装不得使用整棵 `data/` 清理。
+任一恢复或清理步骤失败时不得标记 `rolled_back`，事务保持 `rolling_back`，由 daemon
+在后续周期重试。switch、repair 以及已经提交的安装不得使用整棵 `data/` 清理。
 
 ## 委托执行(daemon 托管)
 
@@ -317,7 +317,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 的宿主网络服务），发起会话可能因此在执行中断开——委托后即使前端进程消失，
 daemon 也会独立完成提交或回滚，事务不会停在半提交状态。控制台结果页的「确认
 网络接管」与阻塞屏的「确认执行」走同一条委托路径。`lkit network rollback
---automatic`（timer/boot 自动回滚）位于独立恢复路径，不委托。
+--automatic`（旧恢复 unit 兼容入口）位于独立恢复路径，不委托。
 
 CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
 （schema_version 2，含原始参数、最终环境与工作目录、结果路径、cancel 路径、
@@ -355,10 +355,10 @@ SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只�
   `130` 并清理运行时文件；停止失败时输出 warning、保留现场并提示操作可能仍在运行；
 - 手工 `lkit network rollback` 与 `lkit network confirm` 都委托给 daemon，避免
   NetworkManager/`networking.service` 恢复或 WAN 地址切换后当前 `br_lan` SSH 断开
-  而中止回滚/提交；timer/boot 自动回滚已经位于独立恢复路径，不再次委派；
+  而中止回滚/提交；daemon 自动回滚已经位于独立恢复路径，不再次委派；
 - 交互确认仍通过原终端完成，但 daemon 子进程不接管该终端；若终端在破坏性阶段前
   消失，确认读取失败并安全停止；
-- daemon 不配置自动重试，业务失败不会重复执行整条命令；
+- daemon 不重复执行失败的委托命令；网络回滚按持久化事务阶段重试；
 - 主机重启会终止 `/run` 中的请求与结果文件，不承诺跨重启自动继续；daemon 由 init
   系统自动拉起，未完成事务由 daemon 或下次 lkit 调用按本节事务阶段恢复；
 
@@ -373,10 +373,18 @@ SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只�
   不再依赖下一次 lkit 调用或委托进程存活；
 - daemon 恢复目标固定为 lkit 地盘：从 `/root/.lkit/` 下的状态与事务发现 landscape
   根，不绑定任何具体安装根；
-- 网络接管 `awaiting_network_confirmation` / `finalizing` / `rolling_back` 阶段
-  保持人工处理（`lkit network confirm|rollback`），daemon 不代替确认；
+- 网络接管待确认时监测期限与主机启动标识，提交中继续提交，回滚中继续回滚；
+  daemon 不代替用户确认，见[网络恢复契约](../network/daemon-recovery.md)；
 - 并发安全：CLI 命令整个操作期间持有安装锁，daemon 获取失败即跳过本周期；
   daemon 收到 `SIGTERM` 时先完成当前周期再退出，不中断进行中的恢复。
 
 `test-support` 运行时可选择 `execution: inline` 或 `daemon`。生产构建不提供该
 开关；凡进入本节 daemon 托管边界的命令都固定由 daemon 委托执行。
+
+### 网络恢复元数据
+
+Schema v5 用于 daemon 网络恢复；读取 v1 至 v4 时保留旧事务恢复语义。
+`network_takeover.boot_id` 保存接管时的主机启动标识，旧事务缺失时沿用其恢复 unit
+并按已有期限处理。OpenRC/SysVinit 的 `host_services[].enable_state` 保存 JSON
+形式的后端标识与开机链接快照；systemd 保留原 enable/mask 状态字符串。
+委托执行与恢复检查独立调度，修改安装现场仍由安装锁串行化。

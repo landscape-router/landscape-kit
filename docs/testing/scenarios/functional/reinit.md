@@ -2,14 +2,14 @@
 
 ## REI-01
 
-**reinit 拒绝未安装、非 systemd 或未接管的安装**
+**reinit 拒绝未安装、服务后端不受支持 或未接管的安装**
 
 - 测试层：CLI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../lkit-cli/src/commands/reinit.rs)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)
 - 说明：无有效状态返回参数错误（退出码 `2`，不写任何文件）；宿主网络服务未接管
   返回参数错误（退出码 `2`，不创建 reinit 事务、状态不动）。
-- 缺口：非 systemd manager（退出码 `2`）拒绝分支无命令层测试。
+- 说明：systemd、OpenRC 和 SysVinit 均使用 daemon 恢复契约。
 
 ## REI-02
 
@@ -70,7 +70,7 @@
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/)、[事务与中断恢复](../../../deployment/transactions-and-recovery.md)
 - 说明：E2E 断言手工 `lkit network rollback` 后事务 `rolled_back`、旧 `landscape_init.toml`
-  逐字节恢复、原数据库文件存在且恢复 unit 已移除；timer 到期与 boot rollback 入口与
+  逐字节恢复、原数据库文件存在且恢复 unit 已移除；daemon 期限到达与主机重启恢复 入口与
   首次接管共用同一回滚实现。
 
 ## REI-08
@@ -82,7 +82,7 @@
 - 证据：[reinit 工作流](../../../../lkit-cli/src/workflows/reinit.rs)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)
 - 说明：健康检查注入失败（base_url 指向不可达端口）→ 激活失败自动回滚；注入
   同时使回滚后的健康检查失败，验证 `RollbackFailed` 分支（退出码 `6`、事务标记
-  `failed`）：数据在健康检查前已恢复（`landscape_init.toml` 复原）、事务不进入
+  `rolling_back` 并重试）：数据在健康检查前已恢复（`landscape_init.toml` 复原）、事务不进入
   确认窗口。注入只作用于激活阶段时走 `RolledBack` 分支（退出码 `5`）。
 - 缺口：激活/健康检查失败自动回滚（退出码 `5`）与回滚失败（退出码 `6`）无 fixture
   注入场景；switch/restore 的同类回滚测试不覆盖 reinit。

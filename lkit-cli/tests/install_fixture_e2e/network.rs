@@ -79,10 +79,12 @@ fn network_takeover_confirms_from_any_ssh_session() {
     );
 
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
-    let timer_start = calls.find("\"start\",\"lkit-network-").unwrap();
+    assert!(!calls.contains("\"start\",\"lkit-network-"));
+    let pending = read_only_transaction(&harness.territory);
+    assert!(pending["network_takeover"]["boot_id"].as_str().is_some());
     let resolved_stop = calls.find("\"stop\",\"systemd-resolved.service\"").unwrap();
     let network_manager_stop = calls.find("\"stop\",\"NetworkManager.service\"").unwrap();
-    assert!(timer_start < resolved_stop);
+
     assert!(resolved_stop < network_manager_stop);
 
     let confirm = harness.network_command(&["confirm"]);
@@ -229,7 +231,7 @@ fn automatic_network_rollback_restores_host_services() {
 }
 
 #[test]
-fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
+fn network_rollback_failure_preserves_scene_for_retry() {
     if !e2e_enabled() {
         return;
     }
@@ -246,7 +248,7 @@ fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
     let rollback = harness.network_command(&["rollback", "--automatic"]);
     assert_eq!(rollback.status.code(), Some(6));
     let transaction = read_only_transaction(&harness.territory);
-    assert_eq!(transaction["phase"], "failed");
+    assert_eq!(transaction["phase"], "rolling_back");
     assert_eq!(
         std::fs::read_link(&current).unwrap(),
         PathBuf::from("releases/not-the-takeover-target")
@@ -258,6 +260,14 @@ fn network_rollback_failure_preserves_scene_and_marks_transaction_failed() {
             .join(format!("releases/{VERSION}"))
             .exists()
     );
+    std::fs::remove_file(&current).unwrap();
+    std::os::unix::fs::symlink(format!("releases/{VERSION}"), &current).unwrap();
+    assert_success(&harness.network_command(&["rollback", "--automatic"]));
+    assert_eq!(
+        read_only_transaction(&harness.territory)["phase"],
+        "rolled_back"
+    );
+    assert!(!harness.install_root.join("data").exists());
 }
 
 #[test]

@@ -9,14 +9,11 @@ use ratatui::backend::TestBackend;
 use ratatui::style::Color;
 
 #[test]
-fn non_systemd_backends_offer_plain_installation_without_a_takeover_plan() {
+fn unknown_backend_offers_plain_installation_without_a_takeover_plan() {
     let _daemon = DaemonTerritory::new("plain-install-backends", true);
     use crate::service::manager::ServiceManagerKind;
-    for kind in [
-        Some(ServiceManagerKind::Openrc),
-        Some(ServiceManagerKind::Sysvinit),
-        None,
-    ] {
+    {
+        let kind = None;
         let mut form = InstallForm::for_backend(kind);
         assert!(!form.takeover_network);
         form.password = "Secret123".into();
@@ -42,12 +39,11 @@ fn non_systemd_backends_offer_plain_installation_without_a_takeover_plan() {
 }
 
 #[test]
-fn openrc_plain_installation_is_clearly_labelled_before_submission() {
-    use crate::service::manager::ServiceManagerKind;
+fn unknown_backend_plain_installation_is_clearly_labelled_before_submission() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = ConsoleApp::new();
     app.menu_index = 1;
-    app.install = InstallForm::for_backend(Some(ServiceManagerKind::Openrc));
+    app.install = InstallForm::for_backend(None);
     app.install.checks_selected = false;
     app.install.selected = InstallField::StartInstallation;
     let mut terminal = Terminal::new(TestBackend::new(120, 28)).unwrap();
@@ -565,7 +561,7 @@ fn enter_on_start_installation_dispatches_the_install_command() {
 }
 
 #[test]
-fn non_systemd_enter_dispatches_without_opening_network_wizard() {
+fn explicitly_plain_install_dispatches_without_opening_network_wizard() {
     use crate::service::manager::ServiceManagerKind;
     let _daemon = DaemonTerritory::new("plain-install-enter", true);
     for kind in [ServiceManagerKind::Openrc, ServiceManagerKind::Sysvinit] {
@@ -574,6 +570,8 @@ fn non_systemd_enter_dispatches_without_opening_network_wizard() {
         app.focus = Focus::Panel;
         app.preflight.state = PreflightState::Complete(pass_preflight_report());
         app.install = InstallForm::for_backend(Some(kind));
+        assert!(app.install.takeover_network);
+        app.install.takeover_network = false;
         app.install.checks_selected = false;
         app.install.selected = InstallField::StartInstallation;
         app.install.password = "Secret123".into();

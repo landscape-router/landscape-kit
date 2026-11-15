@@ -154,13 +154,6 @@ pub async fn run(args: &Reinit) -> ExitCode {
         );
         return ExitCode::from(2);
     };
-    if state.service.manager != crate::deployment::state::StateServiceManager::Systemd {
-        eprintln!(
-            "reinit: {}",
-            crate::tr!(crate::keys::REINIT_REQUIRES_SYSTEMD)
-        );
-        return ExitCode::from(2);
-    }
     if !crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref())
     {
         eprintln!(

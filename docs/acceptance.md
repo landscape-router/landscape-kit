@@ -28,8 +28,7 @@
   [manager.md](service/manager.md)）；服务链接、启用、启动和健康检查成功。
 - 可能改变运行态的生产命令委托给全局常驻 daemon 执行；杀掉等待
   结果的 SSH/CLI 前端后，daemon 的子进程组仍能提交或回滚。
-- systemd 不可用时安装明确失败（退出码 `2`），不创建事务、不写文件；
-  不支持无 systemd 的部署。
+- 无受支持且可用的服务管理器时安装明确失败（退出码 `2`），不创建事务、不写文件。
 - 运行态验证固定检查 UDP `53`、TCP `6300`、TCP `6443` 和 `/api/docs`。
 - 按本文执行 180 秒启动等待和 10 秒稳定观察。
 
@@ -86,8 +85,8 @@
 
 ### 重新初始化
 
-- `lkit reinit` 只接受已提交、`service.manager == systemd` 且宿主网络服务已被接管的
-  安装;目标目录无有效状态、非 systemd 或未接管时返回参数错误,不隐式接管。
+- `lkit reinit` 只接受已提交、服务后端为 systemd、OpenRC 或 SysVinit 且宿主网络服务已被接管的
+  安装;目标目录无有效状态、后端不受支持或未接管时返回参数错误,不隐式接管。
 - 凭据与网络计划在交互中收集,破坏性计划确认先于任何修改;确认被拒或非交互缺少
   `--yes` 时不创建事务、不写任何文件、不停止服务。
 - reinit 默认在停止服务前创建保护 `.lkb`(备注 `reinit 前自动备份`、auto 为 true),
@@ -98,9 +97,9 @@
 - install 与 reinit 都不检查 `br_lan` 是否存在;桥接的创建、成员同步与清理由 Landscape
   按新配置处理。新选 LAN 接口执行地址 flush,WAN 不清理。
 - 健康检查通过后一律进入 `awaiting_network_confirmation`,arm 恢复二进制、10 分钟
-  timer 与 boot rollback,不直接提交;`lkit network confirm` 复核接口 MAC、管理地址、
+  daemon 确认期限与主机重启恢复,不直接提交;`lkit network confirm` 复核接口 MAC、管理地址、
   `br_lan` 成员、PID 与健康后提交。
-- 确认前重启、timer 到期与手工 rollback 走同一幂等回滚:停止服务 → 恢复旧 `data/` →
+- 确认前重启、确认期限到达与手工 rollback 走同一幂等回滚:停止服务 → 恢复旧 `data/` →
   重启旧配置并通过健康检查;回滚成功 `rolled_back`,失败 `failed` 并保留现场与保护
   备份。
 - 激活或健康检查失败但自动回滚成功返回 `5`;回滚失败返回 `6`。

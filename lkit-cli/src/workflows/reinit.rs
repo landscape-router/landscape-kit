@@ -10,9 +10,7 @@ use super::plan::InstallError;
 use super::restore::{restore_previous_data, write_file_atomic};
 use super::rollback;
 use super::root::InstallRoot;
-use super::state::{
-    self, InitStatus, InitializationState, InstallState, ServiceState, StateServiceManager,
-};
+use super::state::{self, InitStatus, InitializationState, InstallState, ServiceState};
 use super::transaction::{Phase, TransactionFile};
 use crate::deployment::layout;
 use crate::deployment::runtime::InstallRuntime;
@@ -75,6 +73,12 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         InstallError::CorruptedState(format!("invalid active version: {error}"))
     })?;
 
+    let definition =
+        std::fs::read_to_string(root.canonical.join("service/landscape-router.service"))
+            .map_err(InstallError::Io)?;
+    if runtime.test_runtime_path.is_none() && !definition.contains("network startup-check") {
+        return Err(InstallError::Preflight("refresh the Landscape service with lkit repair before reinit to install its recovery startup check".into()));
+    }
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
     confirm_reinit(options, args, state, network)?;
 
@@ -113,16 +117,25 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             transaction.transaction_id
         ));
         super::transaction::persist(root, &transaction)?;
-        hash_str(
-            &std::fs::read_to_string(root.canonical.join("service/landscape-router.service"))
-                .map_err(InstallError::Io)?,
-        )
+        hash_str(&definition)
     };
     rollback::write_state_snapshot(root, &transaction.transaction_id, state)?;
 
     // 停止服务前生成完整的新初始化配置(版本固定为当前活动版本)。
     let init_config = pipeline::build_init_config(root, &version, credentials, Some(network))?;
+    let takeover = crate::network::takeover::prepare_transaction(
+        &transaction.transaction_id,
+        network,
+        runtime,
+    )?;
+    transaction.network_takeover = Some(takeover);
+    super::transaction::persist(root, &transaction)?;
     super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
+    crate::network::takeover::arm_recovery(
+        root,
+        transaction.network_takeover.as_ref().unwrap(),
+        runtime,
+    )?;
     operation_progress(OperationPhase::Preparing, Some((1, 4)));
 
     let mut activated = false;
@@ -174,13 +187,6 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         super::health::observe_stable(&startup).await?;
 
         let new_state = build_reinit_state(root, state, &transaction, &version, Some(&unit_sha))?;
-        let takeover = crate::network::takeover::prepare_transaction(
-            &transaction.transaction_id,
-            network,
-            runtime,
-        )?;
-        transaction.network_takeover = Some(takeover);
-        super::transaction::persist(root, &transaction)?;
         let takeover = transaction.network_takeover.as_ref().ok_or_else(|| {
             InstallError::CorruptedTransaction("reinit network takeover state disappeared".into())
         })?;
@@ -200,7 +206,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
                 .map(|backup| backup.backup_id.clone()),
             pending_network_address: network.management_address().map(|address| address.address),
         }),
-        Err(error) if activated => {
+        Err(error) if activated || transaction.network_takeover.is_some() => {
             match rollback_reinit(root, &transaction, manager, options.health).await {
                 Ok(()) => Ok(ReinitOutcome::RolledBack { version }),
                 Err(rollback_error) => {
@@ -383,7 +389,7 @@ fn build_reinit_state(
             initialized_at: Some(Utc::now()),
         },
         service: ServiceState {
-            manager: StateServiceManager::Systemd,
+            manager: previous.service.manager,
             registered: true,
             enabled: true,
             verified: true,
@@ -410,10 +416,8 @@ pub(crate) async fn rollback_reinit<P: DocsProbe>(
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
     let result = rollback_reinit_inner(root, transaction, manager, health).await;
-    if result.is_err() {
-        let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
-    }
-    result
+    result?;
+    super::transaction::mark_phase(root, transaction, Phase::RolledBack)
 }
 
 /// reinit 回滚的实际工作,不标记阶段(供 `lkit network rollback` 在移除恢复 unit
@@ -441,6 +445,13 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     restore_previous_data(&data, &previous_data)?;
+    if transaction.network_takeover.is_some() {
+        std::fs::write(
+            tx_dir.join("restored-boot-id"),
+            crate::network::takeover::current_boot_id()?,
+        )
+        .map_err(InstallError::Io)?;
+    }
     manager.start(ManagedService::LandscapeRouter)?;
     let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
     if pid == 0 {
@@ -465,6 +476,5 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     restored.last_transaction_id = Some(transaction.transaction_id.clone());
     restored.committed_at = Some(Utc::now());
     super::state::write_state(root, &restored)?;
-    super::transaction::mark_phase(root, transaction, Phase::RolledBack)?;
     Ok(())
 }

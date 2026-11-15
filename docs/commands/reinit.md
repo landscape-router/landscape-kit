@@ -18,7 +18,7 @@ lkit [--non-interactive] reinit
   daemon worker 通过隐藏 `--network-plan-file` 提供计划,见 [daemon worker](../service/runtime-and-health.md));
 - 安装状态存在且已提交;lkit 地盘无有效状态时返回参数错误并提示先执行
   `lkit install`;
-- `service.manager == systemd`,且宿主网络服务已被接管(NetworkManager、
+- 服务后端为 systemd、OpenRC 或 SysVinit,且宿主网络服务已被接管(NetworkManager、
   `networking.service`、firewalld、systemd-resolved 处于 stop/disable/mask 状态);
   未接管的安装提示不支持,不回退、不隐式接管;
 - 无未完成事务;存在待确认的网络接管事务时阻断并提示使用 `lkit network status`、
@@ -45,12 +45,13 @@ reinit 是配置级重建,与 [restore](restore.md) 的数据库重建语义一�
 交互收集(凭据与网络计划)和破坏性计划确认必须先于任何修改完成:确认被拒绝或非交互
 模式缺少 `--yes` 时不创建事务、不写任何文件、不停止服务。
 
+服务定义必须包含 lkit 的启动恢复检查；旧定义先通过 `lkit repair` 刷新后再执行 reinit。
+
 ## 确认窗口(一律进入)
 
 服务健康检查通过后,reinit 不直接提交,而是进入 `awaiting_network_confirmation`:
 
-- lkit 将自身复制为 root-only 恢复二进制,并安装 10 分钟确认期限的 persistent timer、
-  timer 调用的幂等 rollback service 与未确认重启时的 boot rollback service;
+- 事务记录主机启动标识与 10 分钟确认期限，由 daemon 监测和自动回滚；
 - 提交 pending 安装状态,输出保护备份 ID、新管理地址与确认命令;
 - 用户从任意可达主机(推荐重新连接到新管理地址)运行 `lkit network confirm` 复核接口
   MAC、管理地址、`br_lan` 成员、Landscape PID 与健康后提交;
@@ -94,7 +95,7 @@ reinit 是配置级重建,与 [restore](restore.md) 的数据库重建语义一�
 
 ## 控制台
 
-管理控制台侧栏提供 Reinit 面板,入口与 CLI 等价:未安装、非 systemd 或宿主网络服务
-未接管时禁用。面板复用网络向导与凭据表单,确认摘要后由临时 systemd worker 执行,
+管理控制台侧栏提供 Reinit 面板,入口与 CLI 等价:未安装、服务后端不受支持或宿主网络服务
+未接管时禁用。面板复用网络向导与凭据表单,确认摘要后由daemon worker 执行,
 操作期间显示进度;进入 `awaiting_network_confirmation` 后显示待确认提示屏,与网络
 接管一致(可内联运行 `lkit network confirm`)。

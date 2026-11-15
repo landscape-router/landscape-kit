@@ -92,7 +92,7 @@ fn daemon_defers_while_the_install_lock_is_held() {
 /// DAE-03:网络接管待确认阶段保持人工处理——daemon 周期跳过
 /// `awaiting_network_confirmation` 事务,不代替用户确认、不触碰现场。
 #[test]
-fn daemon_never_acts_on_pending_network_confirmation() {
+fn daemon_waits_for_unexpired_network_confirmation() {
     if !e2e_enabled() {
         return;
     }
@@ -111,7 +111,7 @@ fn daemon_never_acts_on_pending_network_confirmation() {
             "selected_macs": [{"name": "ens3", "mac": "52:54:00:12:34:01"}],
         },
         "host_services": [],
-        "confirmation_deadline": chrono::Utc::now().to_rfc3339(),
+        "confirmation_deadline": (chrono::Utc::now() + chrono::Duration::minutes(10)).to_rfc3339(),
         "rollback_service": "lkit-network-tx-rollback.service",
         "rollback_timer": "lkit-network-tx-rollback.timer",
         "boot_rollback_service": "lkit-network-tx-boot-rollback.service",
@@ -137,7 +137,7 @@ fn daemon_never_acts_on_pending_network_confirmation() {
         serde_json::from_slice(&std::fs::read(&transaction_file).unwrap()).unwrap();
     assert_eq!(
         transaction["phase"], "awaiting_network_confirmation",
-        "daemon must never touch a transaction awaiting network confirmation"
+        "daemon must wait while a network confirmation deadline has not expired"
     );
     assert!(
         process_alive(daemon.id()),
@@ -240,4 +240,62 @@ fn terminate(daemon: &mut std::process::Child) {
 
 fn process_alive(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+#[test]
+fn daemon_rolls_back_expired_or_rebooted_network_takeover() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for reboot in [false, true] {
+        let harness = InstallHarness::new("daemon-network-recovery", "healthy", 30_000);
+        harness.seed_host_services();
+        let output = harness.run_takeover();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let file = std::fs::read_dir(harness.transactions_dir())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .unwrap();
+        let mut tx: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        if reboot {
+            tx["network_takeover"]["boot_id"] = uuid::Uuid::now_v7().to_string().into();
+            tx["network_takeover"]["confirmation_deadline"] = (chrono::Utc::now()
+                + chrono::Duration::minutes(10))
+            .to_rfc3339()
+            .into();
+        } else {
+            tx["network_takeover"]["confirmation_deadline"] = (chrono::Utc::now()
+                - chrono::Duration::seconds(1))
+            .to_rfc3339()
+            .into();
+        }
+        std::fs::write(&file, serde_json::to_vec_pretty(&tx).unwrap()).unwrap();
+        let mut daemon = harness
+            .command()
+            .args(["daemon", "--test-runtime"])
+            .arg(&harness.runtime_config)
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        wait_for(
+            || {
+                std::fs::read(&file)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                    .is_some_and(|tx| tx["phase"] == "rolled_back")
+            },
+            "daemon must finish automatic network rollback",
+        );
+        terminate(&mut daemon);
+        assert!(!harness.install_root.join("data").exists());
+        assert!(!harness.install_root.join("current").exists());
+    }
 }

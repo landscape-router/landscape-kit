@@ -157,3 +157,13 @@ Landscape 脚本通过 `use lkit.service` 与 `after lkit.service` 声明对 dae
 3. 状态 schema 演进处理:旧 lkit 读新状态按未知枚举值报损坏并提示;
 4. 按需新增测试 fixture(镜像 `lkit-test-init` 的多角色配置/call_log/state 模式,
    或 `lkit-test-systemctl`)。
+
+## 宿主网络服务与启动检查
+
+网络接管通过 `service::host_network` 调用各后端的服务状态与恢复操作。systemd 保存
+原 enable/mask 状态；OpenRC 保存各 runlevel 链接；SysVinit 保存 S/K 链接名称、顺序
+及目标。恢复按原运行状态启动或停止服务。
+
+三个后端渲染的 Landscape 启动入口均执行 `/usr/local/bin/lkit network startup-check`。
+服务启动检查与 daemon 进程存活依赖分开：已确认的 Landscape 不因 daemon 重启而停服。
+详细契约见[daemon 网络恢复](../network/daemon-recovery.md)。

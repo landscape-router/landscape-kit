@@ -518,6 +518,7 @@ fn pending_takeover_snapshot_is_detected_from_transaction() {
     let id = transaction.transaction_id.clone();
     transaction.network_takeover =
         Some(crate::deployment::transaction::NetworkTakeoverTransaction {
+            boot_id: None,
             plan: NetworkPlan {
                 mode: NetworkMode::RoutedLan {
                     wan: "ens3".into(),
@@ -586,6 +587,7 @@ fn pending_takeover_without_committed_state_is_detected_from_transaction() {
     let id = transaction.transaction_id.clone();
     transaction.network_takeover =
         Some(crate::deployment::transaction::NetworkTakeoverTransaction {
+            boot_id: None,
             plan: NetworkPlan {
                 mode: NetworkMode::RoutedLan {
                     wan: "ens3".into(),

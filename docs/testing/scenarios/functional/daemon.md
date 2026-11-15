@@ -29,7 +29,7 @@
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)
 - 说明：构造带 `network_takeover` 的 `awaiting_network_confirmation` 事务并启动
   daemon，多个周期后事务保持原阶段、安装现场不被触碰、daemon 存活；
-  恢复循环显式跳过 `awaiting_network_confirmation`/`finalizing`/`rolling_back`。
+  未到确认期限且未重启时等待；到期或主机重启回滚，提交中续做提交，回滚中重试。
 
 ## DAE-04
 
@@ -90,3 +90,22 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
 
 `delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底（`CANCEL_GRACE_POLLS`
 超时后强杀）仍无直接测试。
+
+## DAE-07
+
+**daemon 按确认期限与主机启动标识执行网络回滚**
+
+- 测试层：Rust 单元、Fixture E2E（CI）
+- 状态：`已覆盖`
+- 证据：[恢复决策](../../../../lkit-cli/src/network/recovery.rs)、[daemon fixture](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)、[恢复契约](../../../network/daemon-recovery.md)
+- 说明：覆盖截止时刻、同次启动继续等待、主机重启提前回滚、提交中续做和回滚重试决策。fixture 验证到期和模拟启动标识改变后清理未提交安装；本地不运行 fixture。
+
+## DAE-08
+
+**各 init 后端保存宿主服务启动状态并提供 Landscape 启动检查**
+
+- 测试层：Rust 单元、服务定义渲染
+- 状态：`部分覆盖`
+- 证据：[宿主服务快照](../../../../lkit-cli/src/service/host_network.rs)、[恢复契约](../../../network/daemon-recovery.md)
+- 缺口：OpenRC/SysVinit 真实重启后的网络恢复需虚拟机验收。
+- 说明：临时目录验证 OpenRC 多 runlevel 与 SysVinit S/K 链接顺序，以及拒绝越界快照。服务定义调用统一启动检查。
