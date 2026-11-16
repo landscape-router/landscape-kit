@@ -182,7 +182,7 @@ fn confirmation_pins_latest_and_default_source_across_configuration_changes() {
     std::fs::write(
         &config,
         format!(
-            "[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
+            "schema_version = 1\n[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
             next.base_url
         ),
     )
@@ -203,7 +203,7 @@ fn confirmation_pins_latest_and_default_source_across_configuration_changes() {
     std::fs::write(
         &config,
         format!(
-            "[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
+            "schema_version = 1\n[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
             changed.base_url
         ),
     )
