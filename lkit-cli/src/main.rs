@@ -106,7 +106,11 @@ async fn run_command(command: Commands, from_console: bool) -> ExitCode {
     let interrupt_result = if from_console
         && matches!(
             &command,
-            Commands::Update(_) | Commands::Restore(_) | Commands::Reinit(_) | Commands::Install(_)
+            Commands::Update(_)
+                | Commands::Restore(_)
+                | Commands::Reinit(_)
+                | Commands::Install(_)
+                | Commands::Uninstall(_)
         ) {
         interaction::presentation::InterruptGuard::install_console()
     } else {

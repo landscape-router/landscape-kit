@@ -87,7 +87,12 @@ impl OperationPresentation {
             Stage::Verifying | Stage::Finished => (OperationPhase::Verifying, 4),
         };
         self.phase = phase;
-        self.progress = Some((step, 4));
+        let total = if record.kind == crate::daemon_operations::Kind::Uninstall {
+            3
+        } else {
+            4
+        };
+        self.progress = Some((step.min(total), total));
         self.current = (record.stage == Stage::Downloading).then(|| DownloadState {
             id: 0,
             label: record.id.clone(),

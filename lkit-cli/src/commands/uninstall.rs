@@ -22,9 +22,58 @@ pub struct Uninstall {
     /// 控制台已确认卸载计划(内部参数,交互模式也跳过 tty 确认)
     #[arg(long, hide = true)]
     pub console_confirmed: bool,
+    #[arg(skip)]
+    pub(crate) confirmed: Option<UninstallConfirmation>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct UninstallConfirmation {
+    pub root: String,
+    pub request: crate::daemon_operations::UninstallRequest,
+}
+pub(crate) fn capture_confirmation(
+    allow_no_backup: bool,
+    keep_data: bool,
+) -> Result<UninstallConfirmation, plan::InstallError> {
+    let root = state::discover_landscape_root()?.ok_or_else(|| {
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::UNINSTALL_REQUIRES_EXISTING_INSTALLATION
+        ))
+    })?;
+    let installed = state::load_state(&root)?
+        .ok_or_else(|| plan::InstallError::ParameterUsage("missing installation".into()))?;
+    Ok(UninstallConfirmation {
+        root: root.canonical.to_string_lossy().into_owned(),
+        request: crate::daemon_operations::UninstallRequest {
+            from_version: installed.active_version.clone(),
+            state_identity: crate::daemon_operations::installation_identity(&installed)?,
+            allow_no_backup,
+            keep_data,
+        },
+    })
+}
+impl UninstallConfirmation {
+    fn validate(
+        &self,
+        args: &Uninstall,
+        installed: &state::InstallState,
+    ) -> Result<(), plan::InstallError> {
+        if self.root != installed.canonical_install_root
+            || self.request.from_version != installed.active_version
+            || self.request.state_identity
+                != crate::daemon_operations::installation_identity(installed)?
+            || self.request.allow_no_backup != args.allow_no_backup
+            || self.request.keep_data != args.keep_data
+        {
+            return Err(plan::InstallError::ParameterUsage(
+                "installation or uninstall options changed since confirmation".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub async fn run(args: &Uninstall) -> ExitCode {
@@ -61,21 +110,20 @@ async fn submit(args: &Uninstall) -> Result<u8, plan::InstallError> {
             "uninstall requires root".into(),
         ));
     }
-    if args.console_confirmed {
+    if args.console_confirmed && args.confirmed.is_none() {
         return Err(plan::InstallError::ParameterUsage(
-            "uninstall is available through the CLI confirmation flow".into(),
+            "uninstall requires a bound console confirmation".into(),
         ));
     }
-    let root = state::discover_landscape_root()?.ok_or_else(|| {
-        plan::InstallError::ParameterUsage(crate::tr!(
-            crate::keys::UNINSTALL_REQUIRES_EXISTING_INSTALLATION
-        ))
-    })?;
-    let installed = state::load_state(&root)?.ok_or_else(|| {
-        plan::InstallError::ParameterUsage(crate::tr!(
-            crate::keys::UNINSTALL_REQUIRES_EXISTING_INSTALLATION
-        ))
-    })?;
+    let context = match &args.confirmed {
+        Some(context) => context.clone(),
+        None => capture_confirmation(args.allow_no_backup, args.keep_data)?,
+    };
+    let root =
+        crate::deployment::root::normalize_install_root(std::path::Path::new(&context.root))?;
+    let installed = state::load_state(&root)?
+        .ok_or_else(|| plan::InstallError::ParameterUsage("missing installation".into()))?;
+    context.validate(args, &installed)?;
     let version = semver::Version::parse(&installed.active_version)
         .map_err(|e| plan::InstallError::CorruptedState(e.to_string()))?;
     crate::workflows::uninstall::confirm_plan(
@@ -83,7 +131,7 @@ async fn submit(args: &Uninstall) -> Result<u8, plan::InstallError> {
             yes: args.yes,
             allow_no_backup: args.allow_no_backup,
             keep_data: args.keep_data,
-            console_confirmed: false,
+            console_confirmed: args.confirmed.is_some(),
         },
         &version,
         crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref()),
@@ -91,12 +139,8 @@ async fn submit(args: &Uninstall) -> Result<u8, plan::InstallError> {
     )?;
     crate::daemon_operations::submit_uninstall_and_wait(
         root.canonical.to_string_lossy().into_owned(),
-        crate::daemon_operations::UninstallRequest {
-            from_version: installed.active_version.clone(),
-            state_identity: crate::daemon_operations::installation_identity(&installed)?,
-            allow_no_backup: args.allow_no_backup,
-            keep_data: args.keep_data,
-        },
+        context.request,
+        args.confirmed.is_some(),
     )
     .await
 }
@@ -278,6 +322,45 @@ mod tests {
         let command = <Uninstall as Args>::augment_args(Command::new("uninstall"));
         let matches = command.try_get_matches_from(args)?;
         Uninstall::from_arg_matches(&matches)
+    }
+
+    #[tokio::test]
+    async fn bare_console_confirmation_cannot_submit_an_operation() {
+        let args = parse(&["uninstall", "--console-confirmed", "--yes"]).unwrap();
+        assert_eq!(run(&args).await, ExitCode::from(2));
+    }
+    #[test]
+    fn confirmation_binds_installation_and_cleanup_options() {
+        let installed: state::InstallState = serde_json::from_value(serde_json::json!({
+            "schema_version":1, "layout_version":2, "install_root":"/fixture", "canonical_install_root":"/fixture",
+            "active_version":"1.2.3", "assets": {"webserver":{"architecture":"x86_64","sha256":"a".repeat(64),"size":1},
+            "static_archive":{"sha256":"b".repeat(64),"size":1}},
+            "initialization":{"status":"complete","lock_present":true,"initialized_at":null},
+            "service":{"manager":"systemd","registered":true,"enabled":true,"verified":true,"definition_path":"service/landscape-router.service","definition_sha256":"c".repeat(64)},
+            "last_transaction_id":null,"committed_at":null
+        })).unwrap();
+        let context = UninstallConfirmation {
+            root: "/fixture".into(),
+            request: crate::daemon_operations::UninstallRequest {
+                from_version: "1.2.3".into(),
+                state_identity: crate::daemon_operations::installation_identity(&installed)
+                    .unwrap(),
+                allow_no_backup: false,
+                keep_data: false,
+            },
+        };
+        let args = parse(&["uninstall", "--yes"]).unwrap();
+        assert!(context.validate(&args, &installed).is_ok());
+        for flag in ["--keep-data", "--allow-no-backup"] {
+            let changed = parse(&["uninstall", "--yes", flag]).unwrap();
+            assert!(context.validate(&changed, &installed).is_err());
+        }
+        let mut changed = installed.clone();
+        changed.service.enabled = false;
+        assert!(context.validate(&args, &changed).is_err());
+        let mut changed = context.clone();
+        changed.root = "/other".into();
+        assert!(changed.validate(&args, &installed).is_err());
     }
 
     #[test]

@@ -140,6 +140,7 @@ impl UpdateRepositoryMode {
 pub(crate) struct UninstallPanel {
     pub(crate) confirming: bool,
     pub(crate) masked: bool,
+    pub(crate) confirmation: Option<crate::commands::uninstall::UninstallConfirmation>,
 }
 
 /// Update 面板：当前版本 + 目标版本/仓库来源表单、后台目标解析与确认层。
@@ -513,17 +514,39 @@ impl ConsoleApp {
                     self.uninstall.confirming = false;
                     return Some(Some(self.uninstall_action()));
                 }
-                KeyCode::Esc => self.uninstall.confirming = false,
+                KeyCode::Esc => {
+                    self.uninstall.confirming = false;
+                    self.uninstall.confirmation = None;
+                }
                 _ => {}
             }
             return Some(None);
         }
         match key.code {
             KeyCode::Enter | KeyCode::Char(' ') => {
+                if self.uninstall.confirmation.is_none() {
+                    match crate::commands::uninstall::capture_confirmation(false, false) {
+                        Ok(context) => self.uninstall.confirmation = Some(context),
+                        Err(error) => {
+                            self.notice = super::notice::Notice::Error(error.to_string());
+                            return Some(None);
+                        }
+                    }
+                    let runtime = crate::deployment::runtime::InstallRuntime::production();
+                    #[cfg(feature = "test-support")]
+                    let runtime = super::test_runtime_path()
+                        .as_deref()
+                        .map(crate::deployment::runtime::InstallRuntime::from_test_file)
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(runtime);
+                    self.uninstall.masked =
+                        crate::workflows::uninstall::host_network_services_masked(
+                            runtime.service_manager.as_ref(),
+                        );
+                }
                 self.uninstall.confirming = true;
-                self.uninstall.masked = crate::workflows::uninstall::host_network_services_masked(
-                    &crate::service::systemd::Systemd::host(),
-                );
             }
             _ => {}
         }
@@ -537,8 +560,9 @@ impl ConsoleApp {
             allow_no_backup: false,
             keep_data: false,
             console_confirmed: true,
+            confirmed: self.uninstall.confirmation.clone(),
             #[cfg(feature = "test-support")]
-            test_runtime: None,
+            test_runtime: super::test_runtime_path(),
         });
         ConsoleAction::Command { command }
     }
@@ -797,7 +821,8 @@ pub(crate) fn render_uninstall_confirmation(frame: &mut Frame<'_>, app: &mut Con
     );
     super::render::begin_dialog(frame, area);
     let mut lines = Vec::new();
-    if let Snapshot::Installed { version, .. } = &app.snapshot {
+    if let Some(context) = &app.uninstall.confirmation {
+        let version = &context.request.from_version;
         lines.push(Line::raw(crate::tr!(
             crate::keys::CONSOLE_UNINSTALL_CONFIRM_PLAN,
             version = version

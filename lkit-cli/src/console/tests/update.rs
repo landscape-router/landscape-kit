@@ -266,6 +266,15 @@ fn uninstall_panel_renders_summary_and_opens_confirmation() {
     let mut app = ConsoleApp::new();
     app.focus = Focus::Panel;
     app.snapshot = installed_snapshot();
+    app.uninstall.confirmation = Some(crate::commands::uninstall::UninstallConfirmation {
+        root: "/fixture".into(),
+        request: crate::daemon_operations::UninstallRequest {
+            from_version: "1.2.3".into(),
+            state_identity: "a".repeat(64),
+            allow_no_backup: false,
+            keep_data: false,
+        },
+    });
 
     let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
     terminal
@@ -301,6 +310,7 @@ fn uninstall_panel_renders_summary_and_opens_confirmation() {
         !app.uninstall.confirming,
         "Esc must cancel the confirmation"
     );
+    assert!(app.uninstall.confirmation.is_none());
 }
 
 #[test]
@@ -309,6 +319,15 @@ fn uninstall_confirmation_builds_typed_command() {
     let mut app = ConsoleApp::new();
     app.focus = Focus::Panel;
     app.snapshot = installed_snapshot();
+    app.uninstall.confirmation = Some(crate::commands::uninstall::UninstallConfirmation {
+        root: "/fixture".into(),
+        request: crate::daemon_operations::UninstallRequest {
+            from_version: "1.2.3".into(),
+            state_identity: "a".repeat(64),
+            allow_no_backup: false,
+            keep_data: false,
+        },
+    });
 
     app.handle_uninstall_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let Some(Some(ConsoleAction::Command { command })) =
@@ -321,6 +340,10 @@ fn uninstall_confirmation_builds_typed_command() {
     };
     assert!(uninstall.yes);
     assert!(uninstall.console_confirmed);
+    assert_eq!(
+        uninstall.confirmed.unwrap().request.state_identity,
+        "a".repeat(64)
+    );
 }
 
 #[test]

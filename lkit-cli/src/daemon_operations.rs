@@ -972,9 +972,15 @@ fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, Inst
 pub(crate) async fn submit_uninstall_and_wait(
     root: String,
     args: UninstallRequest,
+    fullscreen: bool,
 ) -> Result<u8, InstallError> {
     crate::daemon::require_capability("uninstall-v1.pid")?;
-    wait_for_result(submit_uninstall(root, args)?, "uninstall-v1.pid", false).await
+    wait_for_result(
+        submit_uninstall(root, args)?,
+        "uninstall-v1.pid",
+        fullscreen,
+    )
+    .await
 }
 fn validate_restore(args: &RestoreRequest) -> Result<(), InstallError> {
     for hash in [&args.state_identity, &args.backup_sha256] {
@@ -1085,7 +1091,9 @@ async fn wait_for_result(
         "lkit: operation {} (query with `lkit operation status {}`)",
         record.id, record.id
     );
-    let command = if record.kind == Kind::Install {
+    let command = if record.kind == Kind::Uninstall {
+        "uninstall"
+    } else if record.kind == Kind::Install {
         "install"
     } else if record.kind == Kind::Reinit {
         "reinit"
