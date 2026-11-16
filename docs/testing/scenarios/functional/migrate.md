@@ -126,3 +126,7 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 - 状态：`已覆盖`
 - 证据：[迁移 fixture](../../../../lkit-cli/tests/install_fixture_e2e/migrate.rs) 的 `native_migration_requires_the_unmanaged_source_to_actually_exit`
 - 说明：没有 unit 托管的旧进程由用户停止。daemon 等待时不创建 current、不杀死旧进程；进程退出后完成迁移，超时则回滚新根并保留旧实例，回执说明失败原因。
+
+迁移 fixture 的准备等待预算包含前端源身份校验、daemon 复核与完整二进制备份，
+与生产源进程停止期限分开。运行在普通 CI 用户下的原生成功场景使用隔离 runtime，
+不因缺少 root 跳过；检查点等待失败输出持久化操作记录以区分执行失败与准备超时。

@@ -299,11 +299,6 @@ fn migrates_manual_deployment_through_native_daemon() {
     if !e2e_enabled() {
         return;
     }
-    // 持久化操作与 daemon 托管 flare 需要 root;非 root
-    // 环境(如宿主机误跑)跳过,CI 容器以 root 运行。
-    if unsafe { libc::geteuid() } != 0 {
-        return;
-    }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("migrate-daemon", "healthy", 20_000);
     let daemon_runtime = harness.daemon_runtime();
@@ -394,11 +389,12 @@ fn native_migration_recovers_crashes_without_replaying_the_source_operation() {
             child: migrate_command(&h, &source, &runtime).spawn().unwrap(),
         };
         assert!(
-            wait_for(50, || h
+            wait_for(MIGRATION_SETUP_WAIT_SECS, || h
                 .run_dir()
                 .join(format!("test-repair-{point}.reached"))
                 .exists()),
-            "checkpoint {point} not reached; {}",
+            "checkpoint {point} not reached; receipt: {:?}; service log: {}",
+            migration_record(&h),
             h.service_log()
         );
         let record = || -> serde_json::Value {
@@ -455,6 +451,22 @@ fn native_migration_recovers_crashes_without_replaying_the_source_operation() {
     }
 }
 
+// Includes frontend source hashing/export checks, daemon revalidation, and a
+// complete backup of the unstripped fixture binary on shared CI runners.
+// This is a test orchestration budget, not the source-stop/health deadline.
+const MIGRATION_SETUP_WAIT_SECS: u64 = 120;
+
+fn migration_record(h: &InstallHarness) -> Option<serde_json::Value> {
+    std::fs::read_dir(h.run_dir().join("operations"))
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|e| {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).ok()?).ok()
+        })
+        .find(|r| r["kind"] == "migrate")
+}
+
 fn wait_for(seconds: u64, mut predicate: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(seconds);
     loop {
@@ -497,8 +509,12 @@ fn native_migration_requires_the_unmanaged_source_to_actually_exit() {
                 })
                 .find(|r| r["kind"] == "migrate")
         };
-        assert!(wait_for(40, || record()
-            .is_some_and(|r| r["stage"] == "waiting_for_source_stop")));
+        assert!(
+            wait_for(MIGRATION_SETUP_WAIT_SECS, || record()
+                .is_some_and(|r| r["stage"] == "waiting_for_source_stop")),
+            "migration did not reach manual-stop stage: {:?}",
+            record()
+        );
         assert!(
             old.child.try_wait().unwrap().is_none(),
             "daemon must not kill the unmanaged source"
