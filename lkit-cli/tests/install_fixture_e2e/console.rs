@@ -527,7 +527,7 @@ fn console_reinit_refreshes_external_confirmation_and_automatic_rollback() {
         terminal
             .wait_until(|s| s.contains("WAN IPv4 mode"))
             .unwrap();
-        // Preserve the fixture's static WAN, then advance to the Continue row.
+        // Preserve the discovered WAN mode and advance to the Continue row.
         for _ in 0..3 {
             terminal.send(Key::Down).unwrap();
         }

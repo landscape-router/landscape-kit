@@ -72,6 +72,13 @@ pub(crate) async fn run_with_runtime(runtime: InstallRuntime) -> ExitCode {
 async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     let _instance_lock =
         crate::daemon_supervisor::instance_lock("daemon.lock").map_err(InstallError::Io)?;
+    // A published PID may be stopped immediately by the supervisor. Install
+    // handlers before publication, including the best-effort startup window.
+    unsafe {
+        let handler: extern "C" fn(libc::c_int) = handle_termination;
+        libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, handler as libc::sighandler_t);
+    }
     let runtime = std::sync::Arc::new(runtime);
     let pidfile = layout::territory_pidfile();
     std::fs::create_dir_all(
@@ -107,6 +114,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&switch_capability)?;
     let assets_capability = layout::territory_run_dir().join("asset-repair-v2.pid");
     write_pidfile(&assets_capability)?;
+    #[cfg(feature = "test-support")]
+    crate::workflows::operation_control::checkpoint("daemon-starting")?;
 
     // Best effort only: bpffs preparation must not disable the L2 recovery
     // channel or prevent Landscape's normal service startup.
@@ -124,13 +133,11 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     // drop shutdown 发送端,task 收到关闭通知后优雅退出。
     let mut flare = initial_flare();
 
-    unsafe {
-        let handler: extern "C" fn(libc::c_int) = handle_termination;
-        libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
-        libc::signal(libc::SIGINT, handler as libc::sighandler_t);
-    }
     let mut operation_task: Option<tokio::task::JoinHandle<()>> = None;
     loop {
+        if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+            break;
+        }
         recovery_cycle(&runtime).await;
         if !SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
             && operation_task

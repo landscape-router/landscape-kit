@@ -371,3 +371,43 @@ fn supervisor_restarts_a_crashed_daemon_and_honors_stop() {
         "no replacement after stopping during backoff"
     );
 }
+
+#[test]
+fn daemon_handles_stop_after_pid_publication_before_startup_finishes() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let h = InstallHarness::new("daemon-startup-stop", "healthy", 30_000);
+    std::fs::create_dir_all(h.run_dir()).unwrap();
+    let gate = h.run_dir().join("test-repair-daemon-starting.gate");
+    std::fs::write(&gate, b"pause").unwrap();
+    let mut daemon = h
+        .command()
+        .env("LKIT_TEST_REPAIR_CHECKPOINT", "daemon-starting")
+        .args(["daemon", "--test-runtime"])
+        .arg(&h.runtime_config)
+        .spawn()
+        .unwrap();
+    wait_for(
+        || {
+            h.run_dir()
+                .join("test-repair-daemon-starting.reached")
+                .exists()
+        },
+        "daemon must publish its PID before the startup pause",
+    );
+    assert!(h.run_dir().join("lkit.pid").exists());
+    assert_eq!(unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) }, 0);
+    std::thread::sleep(Duration::from_millis(200));
+    let still_running = daemon.try_wait().unwrap().is_none();
+    std::fs::remove_file(gate).unwrap();
+    let status = daemon.wait().unwrap();
+    assert!(
+        still_running,
+        "termination must be handled even during startup"
+    );
+    assert!(status.success());
+    assert!(!h.run_dir().join("lkit.pid").exists());
+    assert!(!h.run_dir().join("operations-v3.pid").exists());
+}

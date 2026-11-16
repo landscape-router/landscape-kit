@@ -54,6 +54,9 @@ impl InstallHarness {
                 r#"#!/bin/sh
 state=$(tr -d '\n' < '{}')
 case "$*" in
+  "-j -4 addr show dev ens3")
+    printf '%s\n' '[{{"ifname":"ens3","addr_info":[{{"family":"inet","local":"198.51.100.20","prefixlen":24,"scope":"global"}}]}}]'
+    ;;
   "-j -4 addr show dev br_lan")
     printf '%s\n' '[{{"ifname":"br_lan","addr_info":[{{"family":"inet","local":"192.168.10.1","prefixlen":24,"scope":"global"}}]}}]'
     ;;

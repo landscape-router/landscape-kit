@@ -150,7 +150,9 @@
 - 状态：`部分覆盖`
 - 证据：[能力标识](../../../../lkit-cli/src/daemon.rs)、[退避策略](../../../../lkit-cli/src/daemon_supervisor.rs)、[进程 fixture](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)、[systemd smoke](../../../../scripts/test-nspawn-systemd.sh)、[OpenRC 虚拟机](../../../../scripts/qemu/alpine/guest-tests.sh)
 - 说明：单元覆盖能力缺失／PID 不符、1s→3s→5s→10s 封顶、无限重试及 5 分钟稳定重置；
-  fixture 覆盖实际子进程崩溃、重复封顶拉起、主动停止与退避等待中停止。
+  fixture 覆盖实际子进程崩溃、重复封顶拉起、主动停止与退避等待中停止；
+  `daemon_handles_stop_after_pid_publication_before_startup_finishes` 在 PID 已发布、
+  启动准备尚未结束时发送 SIGTERM，验证干净退出与 PID／能力标记清理。
   systemd／OpenRC 场景检查监管进程保持不变而 daemon 子进程重新启动。
 - 缺口：SysVinit 真实虚拟机生命周期验收；本地不运行系统级测试，CI 执行结果单独判定。
 

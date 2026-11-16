@@ -1,5 +1,5 @@
 //! Init-independent daemon supervision. The init service owns this process;
-//! workers remain owned by the daemon and are not killed on a daemon restart.
+//! durable operations execute in the daemon and recover from their saved transactions.
 use crate::daemon::Daemon;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
