@@ -1,4 +1,4 @@
-//! Operation-scoped control for repair. The daemon runs each workflow on its own
+//! Operation-scoped control for durable workflows. The daemon runs each workflow on its own
 //! blocking thread with a current-thread async runtime; no process environment is used.
 use crate::deployment::{plan::InstallError, transaction::TransactionFile};
 use std::{cell::RefCell, future::Future};
@@ -17,6 +17,9 @@ impl Drop for Guard {
     fn drop(&mut self) {
         OPERATION.with(|slot| *slot.borrow_mut() = None);
     }
+}
+pub(crate) fn active() -> bool {
+    id().is_some()
 }
 fn id() -> Option<String> {
     OPERATION.with(|slot| slot.borrow().clone())
@@ -95,6 +98,20 @@ pub(crate) fn checkpoint(name: &str) -> Result<(), InstallError> {
             )));
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Ok(())
+}
+
+pub(crate) fn resolved_version(version: &str) -> Result<(), InstallError> {
+    if let Some(id) = id() {
+        crate::daemon_operations::resolve_switch_version(&id, version)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn message(message: &str) -> Result<(), InstallError> {
+    if let Some(id) = id() {
+        crate::daemon_operations::set_message(&id, message)?;
     }
     Ok(())
 }

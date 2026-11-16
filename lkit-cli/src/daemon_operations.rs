@@ -41,6 +41,7 @@ pub(crate) enum Kind {
     Static,
     #[serde(rename = "repair_binary")]
     Binary,
+    Switch,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +69,17 @@ pub(crate) struct AssetRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct SwitchRequest {
+    pub from_version: String,
+    pub state_identity: String,
+    pub target: String,
+    pub repository: Option<crate::deployment::plan::RepositoryChoice>,
+    pub accept_service_change: bool,
+    pub allow_no_backup: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Record {
     pub schema_version: u32,
     pub id: String,
@@ -78,6 +90,10 @@ pub(crate) struct Record {
     pub message: Option<String>,
     #[serde(default)]
     pub assets: Option<AssetRequest>,
+    #[serde(default)]
+    pub switch: Option<SwitchRequest>,
+    #[serde(default)]
+    pub resolved_version: Option<String>,
     #[serde(default)]
     pub stage: Stage,
     #[serde(default)]
@@ -149,16 +165,35 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=2).contains(&record.schema_version) || record.id != id {
+    if !(1..=3).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
         validate_id(id)?;
     }
-    if record.kind != Kind::Service && record.schema_version != 2 {
+    if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
     }
-    validate_request(record.kind, record.assets.as_ref())?;
+    if record.kind == Kind::Switch {
+        if record.schema_version != 3 || record.assets.is_some() {
+            return Err(error("invalid switch operation schema"));
+        }
+        validate_switch(
+            record
+                .switch
+                .as_ref()
+                .ok_or_else(|| error("missing switch parameters"))?,
+        )?;
+        if let Some(version) = &record.resolved_version {
+            crate::workflows::install::parse_stable_version(version)
+                .map_err(|e| InstallError::ParameterUsage(e.to_string()))?;
+        }
+    } else {
+        if record.switch.is_some() || record.resolved_version.is_some() {
+            return Err(error("unexpected switch payload"));
+        }
+        validate_request(record.kind, record.assets.as_ref())?;
+    }
     Ok(record)
 }
 fn validate_request(kind: Kind, assets: Option<&AssetRequest>) -> Result<(), InstallError> {
@@ -215,10 +250,44 @@ fn submit_request(
     kind: Kind,
     assets: Option<AssetRequest>,
 ) -> Result<Record, InstallError> {
-    validate_request(kind, assets.as_ref())?;
+    submit_operation(root, kind, assets, None)
+}
+fn validate_switch(args: &SwitchRequest) -> Result<(), InstallError> {
+    crate::deployment::plan::TargetVersion::parse(&args.target)?;
+    validate_request(
+        Kind::Binary,
+        Some(&AssetRequest {
+            version: args.from_version.clone(),
+            state_identity: args.state_identity.clone(),
+            repository: args.repository.clone(),
+            official: false,
+        }),
+    )
+}
+fn submit_operation(
+    root: String,
+    kind: Kind,
+    assets: Option<AssetRequest>,
+    switch: Option<SwitchRequest>,
+) -> Result<Record, InstallError> {
+    if kind == Kind::Switch {
+        validate_switch(
+            switch
+                .as_ref()
+                .ok_or_else(|| error("missing switch parameters"))?,
+        )?;
+        if assets.is_some() {
+            return Err(error("unexpected repair parameters"));
+        }
+    } else {
+        if switch.is_some() {
+            return Err(error("unexpected switch parameters"));
+        }
+        validate_request(kind, assets.as_ref())?;
+    }
     let _guard = queue_lock()?;
     let record = Record {
-        schema_version: 2,
+        schema_version: if kind == Kind::Switch { 3 } else { 2 },
         id: uuid::Uuid::now_v7().to_string(),
         kind,
         install_root: root,
@@ -226,6 +295,8 @@ fn submit_request(
         transaction_id: None,
         message: None,
         assets,
+        switch,
+        resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
         cancel_requested: false,
@@ -286,6 +357,16 @@ fn claim() -> Result<Option<Record>, InstallError> {
 fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bool {
     record.install_root == tx.canonical_install_root
         && match record.kind {
+            Kind::Switch => {
+                tx.operation == transaction::Operation::Switch
+                    && tx.schema_version == 8
+                    && tx.from_version.as_deref()
+                        == record
+                            .switch
+                            .as_ref()
+                            .map(|args| args.from_version.as_str())
+                    && tx.target_version == record.resolved_version
+            }
             Kind::Service => tx.operation == transaction::Operation::RepairService,
             Kind::Static => {
                 tx.operation == transaction::Operation::Repair
@@ -384,7 +465,11 @@ fn cleanup_cancel(
     let root = crate::deployment::root::normalize_install_root(std::path::Path::new(
         &record.install_root,
     ))?;
-    crate::workflows::repair::cleanup_preparing(&root, tx)?;
+    if record.kind == Kind::Switch {
+        crate::workflows::switch::cleanup_preparing(&root, tx)?;
+    } else {
+        crate::workflows::repair::cleanup_preparing(&root, tx)?;
+    }
     record.cancel_cleaned = true;
     Ok(())
 }
@@ -417,7 +502,10 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
         Ok(Some(Phase::RolledBack | Phase::Failed)) => Status::Failed,
         Ok(Some(_)) => Status::Recovering,
         Ok(None) => match result.as_ref() {
-            Some(Ok(())) if record.transaction_id.is_none() && record.kind == Kind::Service => {
+            Some(Ok(()))
+                if record.transaction_id.is_none()
+                    && matches!(record.kind, Kind::Service | Kind::Switch) =>
+            {
                 Status::Succeeded
             }
             Some(Err(_)) => Status::Failed,
@@ -441,7 +529,7 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
             Status::Succeeded => 0,
             Status::Cancelled => 130,
             _ if rolled_back => {
-                if record.kind == Kind::Binary {
+                if matches!(record.kind, Kind::Binary | Kind::Switch) {
                     5
                 } else {
                     1
@@ -489,12 +577,16 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
                 associate(record, tx)
             });
         }
-        let _control = crate::workflows::repair_control::enter(&record.id);
+        let _control = crate::workflows::operation_control::enter(&record.id);
         let executor = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(InstallError::Io)?;
-        let code = executor.block_on(crate::workflows::repair::run_assets(runtime, record))?;
+        let code = if record.kind == Kind::Switch {
+            executor.block_on(crate::workflows::switch::run_operation(runtime, record))?
+        } else {
+            executor.block_on(crate::workflows::repair::run_assets(runtime, record))?
+        };
         record.exit_code = Some(code);
         if code == 0 {
             Ok(())
@@ -517,8 +609,8 @@ fn execute_next(
         e.to_string()
     });
     #[cfg(feature = "test-support")]
-    if result.is_ok() && matches!(record.kind, Kind::Static | Kind::Binary) {
-        crate::workflows::repair_control::checkpoint("before-result")?;
+    if result.is_ok() && matches!(record.kind, Kind::Static | Kind::Binary | Kind::Switch) {
+        crate::workflows::operation_control::checkpoint("before-result")?;
     }
     reconcile(&mut record, Some(result))?;
     Ok(true)
@@ -554,6 +646,54 @@ pub(crate) async fn submit_and_wait(
         })
     };
     let record = submit_request(root.canonical.to_string_lossy().into_owned(), kind, assets)?;
+    wait_for_result(record, capability).await
+}
+
+pub(crate) async fn submit_switch_and_wait(
+    runtime: &InstallRuntime,
+    args: SwitchRequest,
+) -> Result<u8, InstallError> {
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
+        return Err(error("switch requires root"));
+    }
+    let capability = "switch-v1.pid";
+    crate::daemon::require_capability(capability)?;
+    let root =
+        state::discover_landscape_root()?.ok_or_else(|| error("no Landscape installation"))?;
+    let record = submit_operation(
+        root.canonical.to_string_lossy().into_owned(),
+        Kind::Switch,
+        None,
+        Some(args),
+    )?;
+    wait_for_result(record, capability).await
+}
+pub(crate) fn set_message(id: &str, message: &str) -> Result<(), InstallError> {
+    let _guard = queue_lock()?;
+    let mut record = read(id)?;
+    if record.status != Status::Running {
+        return Err(error("operation is not running"));
+    }
+    record.message = Some(message.into());
+    record.revision += 1;
+    save(&record)
+}
+pub(crate) fn resolve_switch_version(id: &str, version: &str) -> Result<(), InstallError> {
+    crate::workflows::install::parse_stable_version(version)
+        .map_err(|e| InstallError::ParameterUsage(e.to_string()))?;
+    let _guard = queue_lock()?;
+    let mut record = read(id)?;
+    if record.kind != Kind::Switch
+        || record.status != Status::Running
+        || record.resolved_version.is_some()
+    {
+        return Err(error("cannot resolve switch target"));
+    }
+    record.resolved_version = Some(version.into());
+    record.revision += 1;
+    save(&record)
+}
+async fn wait_for_result(record: Record, capability: &str) -> Result<u8, InstallError> {
     eprintln!(
         "lkit: operation {} (query with `lkit operation status {}`)",
         record.id, record.id

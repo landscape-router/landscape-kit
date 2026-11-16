@@ -5,11 +5,13 @@
 
 ## SW-01
 
-**运行中的 systemd 安装成功升级到更高版本**
+**daemon 执行受管安装的版本升级**
 
-- 测试层：Docker E2E
-- 状态：`已覆盖`
-- 证据：[成功切换](../lifecycle.md#成功切换-200)
+- 测试层：CI fixture E2E、Docker E2E
+- 状态：`部分覆盖`
+- 证据：[daemon switch fixture](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)、[成功切换](../lifecycle.md#成功切换-200)
+- 缺口：OpenRC／SysVinit 真实进程切换与恢复矩阵。
+- 说明：结构化操作关联 schema v8 事务；daemon 直接完成备份、停启、健康检查及结果保存。
 
 ## SW-02
 
@@ -28,14 +30,12 @@
 - 测试层：CLI fixture E2E
 - 状态：`已覆盖`
 - 证据：[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)
-- 说明：existing 路径在目标版本等于当前 active version 时不进入 switch 流水线，
-  直接验证当前安装并返回 `0`（与 `lkit update` 的"已是最新"一致），不创建
-  switch 事务、不下载资产、服务保持运行。`switch_version` 内部的
-  `SWITCH_TARGET_VERSION_ALREADY_ACTIVE` 是防御性保护，正常 CLI 路径不可达。
+- 说明：daemon 领取后解析目标，等于当前版本时验证安装并保存成功操作结果，不创建
+  switch 事务、不重启服务。显式仓库覆盖需要下载并校验来源后端，不能将不同资产视为同版本成功。
 
 ## SW-04
 
-**systemd 下切换执行完整停止、激活与健康检查**
+**切换执行完整停止、激活与健康检查**
 
 - 测试层：Rust workflow
 - 状态：`已覆盖`
@@ -106,3 +106,39 @@
   `static.zip` 摘要与 manifest 一致、Identity 编码时二进制摘要一致）后直接复用并跳过下载；
   不可信或残缺目录仍以 `ReleaseExists` 阻断且不修改。复用规则与首次安装
   [INS-11](install.md#ins-11) 相同，update 入口场景见 [UP-09](update.md#up-09)。
+
+## SW-12
+
+**排队请求绑定现场，下载取消不修改当前安装**
+
+- 测试层：隔离操作单元测试、CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[操作测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[daemon switch fixture](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)
+- 缺口：真实磁盘清理故障及交互终端 Ctrl+C 展示验证。
+- 说明：排队期间 state 改变时拒绝领取执行，不下载、不创建事务。前端断开不取消已接受
+  的下载；显式取消清理事务临时目录，保留既有 release、current 和服务状态。取消与
+  preparing 竞争在持久化操作锁下决定，进入激活后拒绝取消。
+
+## SW-13
+
+**激活与状态写入后崩溃时使用旧快照恢复**
+
+- 测试层：CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[daemon switch fixture](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)、[事务规则](../../../deployment/transactions-and-recovery.md#daemon-switch-事务)
+- 缺口：目标目录发布中途和服务 stop 中途的强杀矩阵。
+- 说明：有 `.lkb` 和显式无备份两种路径均在 current 切换后、state 写入后强杀 daemon；
+  重启恢复旧状态、current 和服务 active 状态。无备份路径保持旧服务停止，不从新 state
+  推断旧状态，也不承诺恢复 data。
+
+## SW-14
+
+**提交后补写结果及回滚失败阻断后续修改**
+
+- 测试层：隔离操作单元测试、CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[操作测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[daemon switch fixture](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)
+- 缺口：结果写入本身的磁盘故障与真实断电持久性验证。
+- 说明：事务提交后结果尚未保存时强杀，只补写成功结果，不重新下载或停启服务。
+  `.lkb` 损坏导致回滚失败时保持 recovering 和 rolling_back，后续修改请求保持排队；
+  修复备份后恢复旧版本并报告失败、退出码 `5`。

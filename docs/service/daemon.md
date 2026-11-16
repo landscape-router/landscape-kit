@@ -7,7 +7,7 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 业务操作的记录与业务事务分别管理：操作记录回答“用户的请求执行到哪里”，事务记录
 回答“安装现场如何安全提交或恢复”。daemon 存活不等于某个操作已经成功。
 
-`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
+`switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
 其他委托修改命令通过 worker 执行，两条入口共用串行调度和安装锁。外部服务管理
 工具是独立进程。`self install/upgrade/remove` 直接执行。
 
@@ -31,8 +31,8 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 
 操作记录位于 lkit 地盘 `run/operations/`，目录权限 `0700`、记录权限 `0600`，原子
 写入并同步到磁盘，可以跨主机启动保留。记录只包含受支持的操作类型、安装根、状态、事务关联和结果说明，
-操作记录写入 schema v2，不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
-`repair_static`、`repair_binary`，请求载荷按类型校验；未知类型、字段或不支持的
+repair 操作记录写入 schema v2，switch 写入 v3；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
+`repair_static`、`repair_binary`、`switch`，请求载荷按类型校验；未知类型、字段或不支持的
 协议版本在入队前拒绝。操作类型与业务事务中的 `operation` 不必同名：
 static／binary 对应 `repair` 事务，并分别校验 `static_backup`／`.lkb` 等恢复依据。
 
@@ -151,3 +151,16 @@ CLI 与真实 daemon 的交互、前端断开、强杀 daemon、重启和结果�
 [修复场景目录](../testing/scenarios/functional/repair.md)。
 工作流单元测试验证业务逻辑；同一业务场景的端到端测试通过 daemon 操作入口
 验证执行结果。排队取消、进度重连和中断不重放具有独立的操作生命周期场景。
+
+## switch 请求与执行上下文
+
+`switch` 使用操作 schema v3 和 `switch-v1.pid` 能力标记。参数为目标版本（精确 stable
+版本或 `latest`）、仓库选择、`accept_service_change`、`allow_no_backup`，并绑定提交时
+的活动版本与安装状态摘要。已解析目标版本独立持久化；事务关联必须匹配安装根、原版本
+和解析出的目标版本。CLI／TUI 只提交和观察，daemon 直接调用切换工作流。
+
+目标资源在事务临时根中下载、校验并应用自定义前端，现场缓存的可信目标版本复制复用。
+下载取消完成清理后才报告 cancelled；进入 preparing 后不接受取消。旧安装状态、服务
+定义和服务状态在停服务前保存，三个后端共用恢复规则。同版本校验成功可无切换事务；
+已提交事务只补写操作结果，恢复失败保留阻断状态，不启动后续修改请求。
+详见 [`lkit switch`](../commands/switch.md)。

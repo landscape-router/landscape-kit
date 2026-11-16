@@ -52,7 +52,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
     match command {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Software(_) | Commands::Operation(_) => false,
-        Commands::Repair(_) => false,
+        Commands::Repair(_) | Commands::Switch(_) => false,
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Flare(_) => false,
@@ -68,7 +68,6 @@ pub(crate) fn delegates(command: &Commands) -> bool {
             )
         }
         Commands::Install(_)
-        | Commands::Switch(_)
         | Commands::Update(_)
         | Commands::Restore(_)
         | Commands::Reinit(_)
@@ -405,7 +404,6 @@ mod tests {
     fn delegates_state_changing_commands() {
         for args in [
             &["install", "--version", "1.2.3"][..],
-            &["switch", "--version", "2.0.0"][..],
             &["update"][..],
             &["restore", "--backup", "x"][..],
             &["reinit"][..],
@@ -420,6 +418,7 @@ mod tests {
     #[test]
     fn does_not_delegate_read_only_commands() {
         for args in [
+            &["switch", "--version", "2.0.0"][..],
             &["repair", "service"][..],
             &["repair", "binary"][..],
             &["repair", "static"][..],

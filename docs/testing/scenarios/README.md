@@ -26,7 +26,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 首次安装 | `INS-01` 至 `INS-05`、`INS-07` 至 `INS-19` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-10` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-09` | [update.md](functional/update.md) |
-| 版本升级与切换 | `SW-01` 至 `SW-11` | [switch.md](functional/switch.md) |
+| 版本升级与切换 | `SW-01` 至 `SW-14` | [switch.md](functional/switch.md) |
 | 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-14` | [backup-and-restore.md](functional/backup-and-restore.md) |
 | 卸载 | `UNI-01` 至 `UNI-13` | [uninstall.md](functional/uninstall.md) |
 | 重新初始化 | `REI-01` 至 `REI-10` | [reinit.md](functional/reinit.md) |

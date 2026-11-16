@@ -179,7 +179,7 @@ async fn run_command(
         Commands::Install(args) => commands::install::run(&args).await,
         Commands::Migrate(args) => commands::migrate::run(&args, &interrupt, from_console).await,
         Commands::Network(args) => commands::network::run(&args).await,
-        Commands::Switch(args) => commands::switch::run(&args).await,
+        Commands::Switch(args) => commands::switch::run(&args, internal_worker).await,
         Commands::Update(args) => commands::update::run(&args).await,
         Commands::Repair(args) => commands::repair::run(&args, internal_worker).await,
         Commands::Restore(args) => commands::restore::run(&args).await,

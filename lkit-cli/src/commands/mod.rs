@@ -1,6 +1,6 @@
 pub mod backup;
 pub mod check;
-mod existing;
+pub(crate) mod existing;
 pub mod flare;
 pub mod frontend;
 pub mod install;

@@ -58,7 +58,7 @@ pub(crate) async fn build_release(
 /// 二进制摘要也必须与 manifest 一致(Zstd 传输编码的 manifest 摘要是压缩产物,
 /// 无法从解压后的二进制反推,只做存在性校验)。不可信或残缺目录返回
 /// `ReleaseExists`,不删除、不隔离、不覆盖。
-fn reuse_existing_release(
+pub(crate) fn reuse_existing_release(
     final_path: &Path,
     release: &Release,
 ) -> Result<Option<BuiltRelease>, InstallError> {

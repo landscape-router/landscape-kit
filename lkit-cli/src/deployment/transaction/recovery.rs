@@ -372,6 +372,9 @@ async fn recover_switch<P: DocsProbe>(
     systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
+    if transaction.schema_version == 8 {
+        return crate::workflows::switch::recover_native(root, transaction, systemd, health).await;
+    }
     match transaction.phase {
         Phase::Preparing => {
             // 尚未修改 current:清理本次目标 release,保持当前版本并标记 failed。

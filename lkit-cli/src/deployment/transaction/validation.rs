@@ -16,6 +16,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             transaction.schema_version
         )));
     }
+    if transaction.schema_version == 8 && transaction.operation != Operation::Switch {
+        return Err(corrupted("schema v8 is reserved for daemon switch".into()));
+    }
     if transaction.schema_version == 7 && transaction.operation != Operation::Repair {
         return Err(corrupted("schema v7 is reserved for asset repair".into()));
     }
@@ -508,7 +511,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 8;
+        transaction.schema_version = 9;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);

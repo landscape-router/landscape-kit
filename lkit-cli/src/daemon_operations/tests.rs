@@ -346,11 +346,11 @@ async fn cooperative_download_cancellation_drops_the_pending_future() {
     let f = Fixture::new();
     let record = queued_asset(&f, Kind::Static);
     claim().unwrap().unwrap();
-    let _control = crate::workflows::repair_control::enter(&record.id);
+    let _control = crate::workflows::operation_control::enter(&record.id);
     let (result, ()) = tokio::join!(
-        crate::workflows::repair_control::download(
-            std::future::pending::<Result<(), InstallError>>()
-        ),
+        crate::workflows::operation_control::download(std::future::pending::<
+            Result<(), InstallError>,
+        >()),
         async {
             tokio::task::yield_now().await;
             cancel(&record.id).unwrap();
@@ -376,4 +376,100 @@ fn committed_asset_transaction_is_reported_once_without_reexecuting() {
     assert_eq!(record.status, Status::Succeeded);
     assert_eq!(record.exit_code, Some(0));
     assert!(!execute_next(|_| panic!("must not execute committed repair")).unwrap());
+}
+
+fn queued_switch(f: &Fixture, target: &str) -> Record {
+    submit_operation(
+        f.dir.join("landscape").to_string_lossy().into_owned(),
+        Kind::Switch,
+        None,
+        Some(SwitchRequest {
+            from_version: "1.0.0".into(),
+            state_identity: "a".repeat(64),
+            target: target.into(),
+            repository: None,
+            accept_service_change: false,
+            allow_no_backup: false,
+        }),
+    )
+    .unwrap()
+}
+#[test]
+fn switch_request_binds_resolved_target_and_rejects_wrong_transactions() {
+    let f = Fixture::new();
+    let queued = queued_switch(&f, "latest");
+    let mut record = claim().unwrap().unwrap();
+    resolve_switch_version(&record.id, "2.0.0").unwrap();
+    assert!(resolve_switch_version(&record.id, "3.0.0").is_err());
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let mut tx = transaction::TransactionFile::new_switch(
+        &root,
+        &semver::Version::new(1, 0, 0),
+        &semver::Version::new(2, 0, 0),
+    )
+    .unwrap();
+    assert!(associate(&mut record, &tx).is_err());
+    tx.schema_version = 8;
+    tx.target_version = Some("3.0.0".into());
+    assert!(associate(&mut record, &tx).is_err());
+    tx.target_version = Some("2.0.0".into());
+    associate(&mut record, &tx).unwrap();
+    assert_eq!(read(&queued.id).unwrap().schema_version, 3);
+    assert_eq!(
+        read(&queued.id).unwrap().transaction_id,
+        Some(tx.transaction_id)
+    );
+}
+#[test]
+fn switch_download_cancel_cleans_staging_without_removing_cached_release() {
+    let f = Fixture::new();
+    let queued = queued_switch(&f, "2.0.0");
+    let mut record = claim().unwrap().unwrap();
+    resolve_switch_version(&record.id, "2.0.0").unwrap();
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let mut tx = transaction::TransactionFile::new_switch(
+        &root,
+        &semver::Version::new(1, 0, 0),
+        &semver::Version::new(2, 0, 0),
+    )
+    .unwrap();
+    tx.schema_version = 8;
+    associate(&mut record, &tx).unwrap();
+    transaction::begin(&root, &tx).unwrap();
+    let staging = layout::territory_transactions_dir().join(&tx.transaction_id);
+    std::fs::create_dir_all(&staging).unwrap();
+    let cached = root.canonical.join("releases/2.0.0");
+    std::fs::create_dir_all(&cached).unwrap();
+    std::fs::write(cached.join("keep"), b"cache").unwrap();
+    set_stage(&queued.id, Stage::Downloading).unwrap();
+    cancel(&queued.id).unwrap();
+    assert!(set_stage(&queued.id, Stage::Preparing).is_err());
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Cancelled);
+    assert_eq!(record.exit_code, Some(130));
+    assert!(!staging.exists());
+    assert_eq!(std::fs::read(cached.join("keep")).unwrap(), b"cache");
+}
+#[test]
+fn switch_committed_evidence_recovers_success_without_reexecution() {
+    let f = Fixture::new();
+    let queued = queued_switch(&f, "2.0.0");
+    let mut record = claim().unwrap().unwrap();
+    resolve_switch_version(&record.id, "2.0.0").unwrap();
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let mut tx = transaction::TransactionFile::new_switch(
+        &root,
+        &semver::Version::new(1, 0, 0),
+        &semver::Version::new(2, 0, 0),
+    )
+    .unwrap();
+    tx.schema_version = 8;
+    tx.no_backup = true;
+    tx.phase = transaction::Phase::Committed;
+    associate(&mut record, &tx).unwrap();
+    f.write_tx(&tx);
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(read(&queued.id).unwrap().status, Status::Succeeded);
+    assert_eq!(record.exit_code, Some(0));
+    assert!(!execute_next(|_| panic!("committed switch replayed")).unwrap());
 }

@@ -25,7 +25,7 @@ pub(crate) use self::cleanup::{
 use self::file::{append_log, load_transaction_file, write_transaction};
 
 pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 5;
-pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 7;
+pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 8;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

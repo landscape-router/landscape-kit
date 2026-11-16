@@ -204,10 +204,10 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   注销、文件删除并标记 `committed`。恢复再次失败时标记 `failed`，保留保护 `.lkb` 与
   事务现场供人工诊断；
 - `activating` 或 `verifying`：
-  - systemd 下 `no_backup: true` 的 `switch`：停止目标版本，恢复 `previous_current`、
+  - 受管后端下 `no_backup: true` 的 `switch`：停止目标版本，恢复 `previous_current`、
     unit 注册、enabled/active 状态和 `/etc/resolv.conf`，不重建 data；切换前服务已停止，
     因而恢复后保持停止；
-  - systemd 下有 `backup` 的 `switch`：停止目标版本，使用 `previous_current` 和 `.lkb`
+  - 受管后端下有 `backup` 的 `switch`：停止目标版本，使用 `previous_current` 和 `.lkb`
     恢复旧版本；
   - 后端 `repair` 且事务含 `.lkb`：按事务记录的受管后端停止修复后的版本，
     使用 `.lkb`、旧二进制和现场快照恢复修复前运行状态；
@@ -291,12 +291,12 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-以下清单列出保留 worker 协议的入口；repair 的直接执行协议单独定义：
+以下清单列出保留 worker 协议的入口；repair 和 switch 的直接执行协议单独定义：
 
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
 | `install` | `check` |
-| `switch` | `reconcile` |
+|  | `reconcile` |
 | `update` | `set-mirror` |
 |  | `software` |
 | `restore` | `backup` |
@@ -306,7 +306,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 | `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
 
-`repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+`switch` 与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
 由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
 `operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
@@ -416,7 +416,7 @@ binary、static 和初始化观测 repair 区分。
 未知版本或修复类型不得按普通 repair 清理。失败恢复数据在事务终结前不得删除。
 
 服务定义修复使用 schema v6、`operation: repair_service`；资产修复使用 schema v7、
-`operation: repair`；其他事务写 v5，读取支持 v1 至 v7。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
+`operation: repair`；daemon switch 使用 v8，其他事务写 v5，读取支持 v1 至 v8。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
 原定义、目标定义、原权限、服务状态、OpenRC／SysVinit 精确启动链接及安装状态。
 `preparing` 未修改定义，可标记失败；`prepared`、`activating`、`verifying` 与
 `rolling_back` 恢复原定义；`finalizing` 校验并续做提交。恢复遇到外部定义修改或
@@ -443,3 +443,19 @@ binary 备份完成后保存旧状态、服务事实和必要宿主文件；替�
 
 取消仅在操作层的下载窗口接受；事务处于 `preparing` 并不能单独证明允许取消。
 取消清理临时目录并终结事务后，操作记录才写入已清理凭据与 `cancelled`。
+
+### daemon switch 事务
+
+schema v8 专用于 daemon 直接执行的 switch。操作 schema v3 记录解析后的目标版本，
+事务关联同时核对安装根、from_version 和目标版本。状态快照无论是否创建 `.lkb` 都在
+prepared 前持久化；恢复依据是该快照，不能读取可能已经写成目标版本的现场 state。
+
+资产在 `transactions/<id>/target/` 内准备；可信的已有目标 release 先复制进该目录，
+自定义前端仅应用到副本。preparing 的取消或失败严格清理事务目录，不删除已有 release。
+prepared／stopping 先恢复服务和宿主快照，恢复成功后才终结事务。activating 前关闭取消，
+目标 release 在安装文件系统上复制、同步、发布，然后切换 current。已有目标目录在
+发布时保留为 `releases/.switch-<id>.previous`；发布临时目录与事务目录用于诊断。
+
+activating／verifying／rolling_back 按旧状态快照回滚；systemd、OpenRC、SysVinit 共用
+服务快照恢复。旧版本静态目录和归档保留，`.lkb` 用于恢复二进制及初始化数据。
+无备份回滚不恢复 data。恢复失败保持非终态、保留证据并阻止后续修改。

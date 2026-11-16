@@ -248,7 +248,8 @@ async fn run_installed_inner(
         .map(plan::RepositoryChoice::resolve)
         .transpose()?;
     same_version_install(
-        args,
+        args.accept_service_change,
+        true,
         &plan.root,
         &state,
         provider_override,
@@ -293,8 +294,9 @@ fn resolve_provider(
 /// 同版本检查:验证后端摘要、初始化状态与受管 unit;显式仓库覆盖必须提供
 /// 与当前安装完全相同的发布资产。
 /// 所有内容正常时不下载、不重启服务。
-async fn same_version_install(
-    args: &InstallRequest,
+pub(crate) async fn same_version_install(
+    accept_service_change: bool,
+    interactive: bool,
     root: &crate::deployment::root::InstallRoot,
     state: &crate::deployment::state::InstallState,
     provider_override: Option<crate::deployment::plan::ProviderSpec>,
@@ -304,7 +306,7 @@ async fn same_version_install(
     pipeline::check_initialization(root, state)?;
     let mut updated = state.clone();
 
-    if state.service.manager == StateServiceManager::Systemd {
+    if !interactive || state.service.manager == StateServiceManager::Systemd {
         let origin = root.canonical.join("service/landscape-router.service");
         let content = std::fs::read_to_string(&origin).map_err(plan::InstallError::Io)?;
         systemd.validate_definition(
@@ -315,7 +317,12 @@ async fn same_version_install(
         let actual = pipeline::hash_str(&content);
         let changed = state.service.definition_sha256.as_deref() != Some(actual.as_str());
         if changed {
-            if !args.accept_service_change {
+            if !accept_service_change {
+                if !interactive {
+                    return Err(plan::InstallError::ParameterUsage(
+                        "service definition changed; use --accept-service-change".into(),
+                    ));
+                }
                 let accepted = crate::interaction::interactive::confirm(&crate::tr!(
                     crate::keys::EXISTING_KEEP_MODIFIED_UNIT
                 ))?;
@@ -326,14 +333,14 @@ async fn same_version_install(
                 }
             }
             updated.service.definition_sha256 = Some(actual);
-        } else if args.accept_service_change {
+        } else if accept_service_change {
             eprintln!(
                 "install: {}",
                 crate::tr!(crate::keys::EXISTING_ACCEPT_SERVICE_CHANGE_IGNORED_UNIT)
             );
         }
         pipeline::verify_unit_ownership(root, systemd)?;
-    } else if args.accept_service_change {
+    } else if accept_service_change {
         eprintln!(
             "install: {}",
             crate::tr!(crate::keys::EXISTING_ACCEPT_SERVICE_CHANGE_IGNORED_NO_UNIT)

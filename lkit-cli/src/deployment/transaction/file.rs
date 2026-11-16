@@ -29,6 +29,9 @@ pub(super) fn write_transaction(
     file.write_all(&bytes).map_err(InstallError::Io)?;
     file.sync_all().map_err(InstallError::Io)?;
     std::fs::rename(&tmp, &path).map_err(InstallError::Io)?;
+    std::fs::File::open(&dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(InstallError::Io)?;
     Ok(())
 }
 

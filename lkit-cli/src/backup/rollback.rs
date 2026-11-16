@@ -67,7 +67,10 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
     let asset_repair = transaction.schema_version == 7
         && transaction.operation == super::transaction::Operation::Repair;
-    let is_systemd = asset_repair || snapshot.service.manager == StateServiceManager::Systemd;
+    let native_switch = transaction.schema_version == 8
+        && transaction.operation == super::transaction::Operation::Switch;
+    let managed = asset_repair || native_switch;
+    let is_systemd = managed || snapshot.service.manager == StateServiceManager::Systemd;
     if is_systemd {
         systemd.stop_and_wait(
             ManagedService::LandscapeRouter,
@@ -98,8 +101,8 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
     let from_version = transaction.from_version.as_deref().ok_or_else(|| {
         InstallError::CorruptedTransaction("switch transaction is missing from_version".into())
     })?;
-    if asset_repair {
-        // Repair only replaces the binary. Preserve the original static directory
+    if managed {
+        // Durable operations preserve the previous static assets. Repair only replaces the binary. Preserve the original static directory
         // and its exact archive bytes instead of rebuilding the entire release.
         let binary =
             std::fs::read(restore_dir.join("landscape-webserver")).map_err(InstallError::Io)?;
@@ -125,13 +128,13 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
 
     restore_current(root, &format!("releases/{from_version}"))?;
 
-    let state = if asset_repair {
+    let state = if managed {
         snapshot.clone()
     } else {
         build_restored_state(root, transaction, snapshot, &metadata, &restore_dir)?
     };
     if is_systemd {
-        if asset_repair {
+        if managed {
             let before = transaction.systemd_before.as_ref().ok_or_else(|| {
                 InstallError::CorruptedTransaction("missing repair service snapshot".into())
             })?;
@@ -168,13 +171,13 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             stable_duration: health.stable_duration,
         };
         if let Err(error) = health::wait_for_startup(&options).await {
-            if !asset_repair {
+            if !managed {
                 let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
             }
             return Err(error);
         }
         if let Err(error) = health::observe_stable(&options).await {
-            if !asset_repair {
+            if !managed {
                 let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
             }
             return Err(error);
@@ -200,7 +203,8 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
-    let is_systemd = previous.service.manager == StateServiceManager::Systemd;
+    let native_switch = transaction.schema_version == 8;
+    let is_systemd = native_switch || previous.service.manager == StateServiceManager::Systemd;
     let mut was_active = false;
     if is_systemd {
         systemd.stop_and_wait(
@@ -259,8 +263,10 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     }
 
     let mut restored = previous.clone();
-    restored.last_transaction_id = Some(transaction.transaction_id.clone());
-    restored.committed_at = Some(chrono::Utc::now());
+    if !native_switch {
+        restored.last_transaction_id = Some(transaction.transaction_id.clone());
+        restored.committed_at = Some(chrono::Utc::now());
+    }
     super::state::write_state(root, &restored)?;
     super::transaction::mark_phase(root, transaction, Phase::RolledBack)?;
     Ok(())

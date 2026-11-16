@@ -52,7 +52,7 @@ restore 不下载仓库资产，进度条表示阶段进度而非字节进度。
 
 ## 激活与提交
 
-restore 使用与 switch 相同的事务锁和 systemd operation worker。systemd 模式下：
+restore 使用全局安装事务锁，由 daemon 管理的 worker 执行。systemd 模式下：
 
 1. 记录恢复前的 `current`、state、unit、enabled/active 和 resolv.conf；
 2. 将当前 `data/` 原子移动到事务目录，作为中断恢复现场；
