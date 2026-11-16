@@ -391,7 +391,9 @@ fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
         };
         let mut pty = Pty::open();
         let mut command = h.command();
-        command.env("LKIT_LANG", "en");
+        command
+            .env("LKIT_LANG", "en")
+            .env("LKIT_TEST_CONSOLE_RUNTIME", &runtime);
         attach_pty(&mut command, &pty);
         let mut observer = ConsoleObserver(command.spawn().unwrap());
         pty.read_until("Landscape Kit", Duration::from_secs(10));

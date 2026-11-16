@@ -378,7 +378,7 @@ pub(crate) enum Snapshot {
 
 impl Snapshot {
     pub(crate) fn load() -> Self {
-        if unsafe { libc::geteuid() } != 0 {
+        if !crate::console::root_access_available() {
             return Self::RootRequired;
         }
         let result = (|| -> Result<Self, crate::deployment::plan::InstallError> {

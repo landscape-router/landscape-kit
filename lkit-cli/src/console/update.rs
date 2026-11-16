@@ -560,7 +560,7 @@ impl ConsoleApp {
             console_confirmed: true,
             confirmed,
             #[cfg(feature = "test-support")]
-            test_runtime: None,
+            test_runtime: crate::console::test_runtime_path(),
         });
         // Native dispatch carries the confirmation in memory, never through argv.
         let args = vec!["update".into()];

@@ -101,3 +101,20 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Console fixture runtime; absent from shipped builds.
+#[cfg(feature = "test-support")]
+pub(crate) fn test_runtime_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("LKIT_TEST_CONSOLE_RUNTIME").map(std::path::PathBuf::from)
+}
+pub(crate) fn root_access_available() -> bool {
+    if unsafe { libc::geteuid() } == 0 {
+        return true;
+    }
+    #[cfg(feature = "test-support")]
+    if let Some(path) = test_runtime_path() {
+        return crate::deployment::runtime::InstallRuntime::from_test_file(&path)
+            .is_ok_and(|runtime| runtime.allow_non_root);
+    }
+    false
+}
