@@ -13,7 +13,7 @@ systemd 只承担协议与进程托管的薄集成验证。
 | Docker 常用软件 E2E | `scripts/test-docker-software.sh` | Debian/Ubuntu/Fedora/Arch 官方镜像容器 | 相关 PR、`dev`、`main`、手动 | 官方源安装、仓库配置与服务启用契约；公共镜像映射仅离线验证 |
 | Alpine apk/OpenRC | `test-qemu-alpine.yml` | Alpine 容器 + x86_64 KVM 虚拟机 | 相关 PR、push、手动；镜像模式仅 `ci-mirror` push 复用 | [官方源安装、镜像模式边界与 OpenRC](alpine.md) |
 | flare 协议 E2E | `scripts/flare/e2e-docker.sh` 等 5 个脚本 | 普通 Docker 容器、L2 bridge 网络、`NET_RAW`/`NET_ADMIN` | 相关 PR、`dev`、`main`、手动 | Terrain 隧道握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启、多客户端、限速与锁死、daemon 托管连接 |
-| systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、systemd worker、前端断连 |
+| systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、daemon 原生操作、前端断连与崩溃恢复 |
 | QEMU 网络接管 | `scripts/test-qemu-network-takeover.sh` | GitHub-hosted x86_64 KVM、双 virtio 网卡 | 相关 PR、main、每周、手动 | 真实宿主网络服务、br_lan SSH 确认、未确认重启回滚 |
 | 真实 ifupdown 兼容 | `cargo test -p lkit-hostnet --test ifupdown_real` | Debian ifupdown 容器 | 相关 PR、`dev`/`main`、手动 | ifup/ifquery 脚本生成、备份恢复、命令失败回滚 |
 
@@ -96,8 +96,8 @@ nspawn 层配置 `preflight: skip` 和 `execution: daemon`，只验证真实 sys
 
 nspawn 不是上述功能矩阵的严格 systemd 重跑，也不是常规 PR 或发布门禁。它只抽样验证
 无法由 fake systemctl 证明的 systemd 兼容性契约，例如 unit 能被真实 manager 接受、
-MainPID 语义和临时 worker 在前端断开后的生命周期。该 smoke test 适合低频手动运行，
-或在 unit、systemd worker、systemctl 协议适配发生变化时运行；不要求每个业务场景都在
+MainPID 语义、前端断开后的原生操作完成及 daemon 崩溃恢复。该 smoke test 适合低频手动运行，
+或在 unit、daemon 执行协议、systemctl 协议适配发生变化时运行；不要求每个业务场景都在
 真实 systemd 下重复执行，避免把宿主环境波动和 rootfs 启动成本变成发布阻塞条件。
 
 QEMU 层覆盖 nspawn 无法验证的真实网卡接管。它要求 `/dev/kvm`，不使用 TCG fallback；

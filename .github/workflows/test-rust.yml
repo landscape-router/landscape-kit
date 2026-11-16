@@ -74,6 +74,7 @@ jobs:
             interaction::interactive::tests::durable_workflows_cannot_open_a_terminal \
             commands::install::tests \
             workflows::install::native::tests \
+            workflows::install::init_config::activation_tests \
             interaction::presentation::screens::install::tests \
             commands::reinit::tests \
             commands::reinit::native::tests \

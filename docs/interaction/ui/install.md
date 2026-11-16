@@ -13,7 +13,7 @@
 
 - 选中时:`FOCUS_SELECTED` 反色 + `> ` 标记 + 整行青色背景;
 - 状态标签颜色(`check_status_color`):
-  - 未运行 NotRun:灰;运行中 Running:青;worker 失败 Failed:红;
+  - 未运行 NotRun:灰;运行中 Running:青;后台线程 失败 Failed:红;
   - Pass 绿 / Warning 黄 / Error 红 / Unknown 品红;
 - 展开详情:组标题加粗、检查标题白字、reason 灰、suggestion 黄;
   详情底栏同时显示 `Ctrl+C Exit` 与 `Esc Close`;

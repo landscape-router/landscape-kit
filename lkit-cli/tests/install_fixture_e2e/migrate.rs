@@ -299,7 +299,7 @@ fn migrates_manual_deployment_through_native_daemon() {
     if !e2e_enabled() {
         return;
     }
-    // 委托写 /run/lkit/operations 且 daemon 托管 flare 需要 root;非 root
+    // 持久化操作与 daemon 托管 flare 需要 root;非 root
     // 环境(如宿主机误跑)跳过,CI 容器以 root 运行。
     if unsafe { libc::geteuid() } != 0 {
         return;

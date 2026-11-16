@@ -22,7 +22,7 @@
 
 **控制台二次确认立即准备和开机启用，失败或断开时保留安装门禁**
 
-- 测试层：Ratatui TestBackend、假 worker 通道
+- 测试层：Ratatui TestBackend、假后台线程通道
 - 状态：`已覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[交互测试](../../../../lkit-cli/src/console/tests/cgroup.rs)
 - 说明：Esc 取消、两个强制命令可见、不支持的主机不提供修复、成功刷新并关闭旧阻断框、其他错误继续阻断。测试不执行真实服务命令。
@@ -35,4 +35,4 @@
 - 状态：`部分覆盖`
 - 证据：[OpenRC 定义测试](../../../../lkit-cli/src/service/openrc.rs)、[Alpine 虚拟机测试入口](../../../../scripts/qemu/alpine/guest-tests.sh)、[启动顺序 fixture](../../../../scripts/qemu/alpine/router-fixture.c)
 - 说明：虚拟机断言 boot 注册缺失时检查阻断、恢复注册和真实重启后通过；Landscape fixture 要求 daemon 与 cgroups 已完成启动、CPU controller 可读。定义测试证明 daemon 不声明 cgroups 硬依赖。
-- 缺口：虚拟机通过系统命令设置注册；控制台确认到准备 worker 再到真实重启的完整链路尚未直接覆盖。脚本包含断言不等于本次 CI 已执行通过。
+- 缺口：虚拟机通过系统命令设置注册；控制台确认到准备后台线程再到真实重启的完整链路尚未直接覆盖。脚本包含断言不等于本次 CI 已执行通过。

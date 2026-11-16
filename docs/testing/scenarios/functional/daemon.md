@@ -33,13 +33,12 @@
 
 ## DAE-04
 
-**daemon 周期恢复覆盖 systemd 失败切换（`.lkb` 配置级回滚）**
+**daemon 恢复切换激活与提交阶段的崩溃**
 
-- 测试层：Rust workflow（`recover_switch`）、Fixture E2E 待补充
-- 状态：`部分覆盖`
-- 说明：`recover_interrupted` 的 switch 回滚语义已有 Rust 覆盖（仅 preparing 分支）；
-  daemon 作为其触发者与 CLI 复用同一代码路径，daemon 侧的完整失败切换现场
-  （activating 阶段 + `.lkb` 配置级回滚）待补充。
+- 测试层：CI Fixture E2E
+- 状态：`已覆盖`
+- 证据：[切换场景](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)，`daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup`
+- 说明：覆盖有／无保护备份的激活中断、state 写入后和结果保存前崩溃；重启按原事务回滚或补齐成功回执，保持原操作身份，不重新执行切换。
 
 ## DAE-05
 
@@ -76,20 +75,7 @@
   `/sys/fs/bpf`，验证错误日志之后 lflare 仍能建立会话。检查异常均为 warning，
   不增加安装阻断；服务定义不包含对 daemon 的硬依赖或 readiness 等待。
 
-## 委托端到端链路（worker）覆盖现状
 
-`daemon_worker` 的委托请求链路（CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
-单测只有 5 个薄用例（委托清单、worker flag 注入、凭据文件权限、完成消息）；fixture
-E2E 全部以 `--test-runtime` 内联执行，从不走真实委托。真实形态的端到端验证在
-[systemd-nspawn 兼容性 smoke](../systemd-smoke.md#sys-03)（`scripts/test-nspawn-systemd.sh`，
-仅 CI/手动运行）：编译好的 lkit 进入真实 systemd 容器，`self install` 由 systemd
-托管 daemon，CLI 以真实委托执行卸载——覆盖提交与结果回收（S-1）、前端断开后
-daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-3，uninstall
-无下载阶段，前端 Ctrl+C 按"仅 Downloading 可取消"契约被忽略）、daemon 未运行
-拒绝（S-4）、`LKIT_LANG` 转发（S-5）。
-
-`delegate()` 请求文件生命周期与 executor 的 SIGTERM→SIGKILL 兜底（`CANCEL_GRACE_POLLS`
-超时后强杀）仍无直接测试。
 
 ## DAE-07
 
@@ -195,3 +181,12 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
 - 状态：`covered`
 - 证据：[真实进程场景](../../../../lkit-cli/tests/install_fixture_e2e/repair_service.rs)、[CI 分片](../../../../.github/workflows/test-fixture-e2e.yml)
 - 说明：在安装锁下排队并关闭 CLI；释放锁后由 daemon 完成操作。fake systemctl 的父 PID 必须为 daemon PID；暂停 refresh 后强杀 daemon，重启完成回滚。终态重启后保持不变。
+
+## DAE-17
+
+**生命周期操作原生执行，前端只提交与观察**
+
+- 测试层：隔离单元、CI Fixture E2E、systemd-nspawn
+- 状态：`已覆盖`
+- 证据：[CLI 参数约束](../../../../lkit-cli/src/cli.rs)、[队列测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[终端隔离](../../../../lkit-cli/src/interaction/interactive.rs)、[业务 fixture](../../../../lkit-cli/tests/install_fixture_e2e/)、[真实 systemd 场景](../systemd-smoke.md#sys-03)
+- 说明：所有生命周期请求使用结构化参数，拒绝内部 worker 参数、迁移 resume 和网络计划文件传输参数。daemon 禁止读取终端；fixture 覆盖安装、重初始化、迁移、切换、修复、恢复、卸载及网络确认／回滚的持久化操作。真实 systemd 场景验证前端退出、daemon 崩溃恢复和运行中可执行路径被删除后继续执行。

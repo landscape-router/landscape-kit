@@ -47,7 +47,7 @@
 - 测试层：Rust 控制台测试
 - 状态：`已覆盖`
 - 证据：[`console::tests::software`](../../../../lkit-cli/src/console/tests/software.rs)
-- 说明：面板检测失败时显示错误且确认 Enter 不启动安装（无 worker 产生）；非 root
+- 说明：面板检测失败时显示错误且确认 Enter 不启动安装（无后台线程产生）；非 root
   （注入 `MockSoftwareOps::manual(false)`，不依赖测试进程 UID）确认 Enter 报权限错误、不启动安装；
   面板渲染显示发行版摘要与软件行。CLI 非 root 安装报错阻断、
   `--non-interactive` 无参数报参数使用错误。

@@ -35,11 +35,12 @@
 
 ## SS-04
 
-**`self install` 拒绝 systemd 不可用**
+**`self install` 在服务后端或受管 CLI 不可用时拒绝修改**
 
 - 测试层：Fixture E2E（`install_fixture_e2e::self_service`）
 - 状态：`已覆盖`
-- 说明：「systemctl 不可用」断言退出码 `2` 且不写任何文件。
+- 证据：[self fixture](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[后端准入 fixture](../../../../lkit-cli/tests/install_fixture_e2e/manager_backends.rs)
+- 说明：所选后端不可用，或缺少受管 CLI 时，退出码 `2` 且不写服务原件、不注册、不启动 daemon。OpenRC／SysVinit 准入测试隔离全局 CLI 路径；这些拒绝场景不代表后端生命周期覆盖。
 
 ## SS-05
 

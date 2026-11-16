@@ -292,7 +292,7 @@ release。恢复必须启动并通过完整健康检查后提交。
 时返回 `6`；激活失败触发内联自动回滚，回滚本身失败时事务标记 `failed` 返回 `6`。
 自动回滚固定按"停止 → 注册恢复 → 恢复 current/data → 启动并健康检查"顺序执行；
 同版本 restore 回滚时会把被替换的原 release 从事务目录移回，保证 release 内容与
-回滚前一致。恢复阶段沿用现有 systemd operation worker 和 phase 恢复规则，不能猜测
+回滚前一致。恢复阶段由 daemon 按持久化操作与事务 phase 恢复规则执行，不能猜测
 缺失的 state、`current` 或 service manager。恢复提交的 state 中：
 `active_version` 取备份 metadata，`webserver` 身份从解包二进制现场计算，
 `static_archive` 身份从备份内 `static.zip` 现场计算；`config.toml` 中的仓库

@@ -42,7 +42,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-12` | [self.md](functional/self.md) |
 | Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
-| daemon 自动恢复 | `DAE-01` 至 `DAE-16` | [daemon.md](functional/daemon.md) |
+| daemon 自动恢复 | `DAE-01` 至 `DAE-17` | [daemon.md](functional/daemon.md) |
 | Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-35` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
@@ -61,11 +61,8 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 1. [`SS-07`](functional/self.md#ss-07)：`lkit self upgrade` 的目标文件 rename 失败
    分支仍只有单元覆盖，尚未接入完整 fixture 场景；SS-05、SS-06、SS-08 已有本地
    Release fixture 的 e2e 覆盖；
-2. [`DAE-04`](functional/daemon.md#dae-04)：daemon 侧 switch 失败回滚完整现场
-   （activating 阶段 + `.lkb` 配置级回滚）；
-3. [`MIG-05`](functional/migrate.md#mig-05)：static.zip 缺失本地打包回退
-   （`fetch_static_zip` 下载成功/失败两分支零测试）；
-4. [`TX-03`](functional/reconcile-and-transactions.md#tx-03) 的 migrate/repair 恢复档、
+2. [`MIG-05`](functional/migrate.md#mig-05)：迁移现场 static 打包失败的直接断言；
+3. [`TX-03`](functional/reconcile-and-transactions.md#tx-03) 的 migrate/repair 恢复档、
    [`SEC-03`](functional/security-and-environment.md#sec-03) 的通用退出码 `6`、
    [`ENV-02`](functional/security-and-environment.md#env-02) 的命令级阻断级别、
    [`REC-02`](functional/reconcile-and-transactions.md#rec-02) 无

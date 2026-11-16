@@ -146,8 +146,8 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 说明：面板当前从侧栏隐藏（`Menu::ALL` 中 `Self::Uninstall` 注释保留），只经 CLI
   `lkit uninstall` 使用；面板渲染、确认层与委托的 Rust 单测保留并通过，重新启用后
   需补充 TUI 端到端场景。确认层展示版本、数据损失范围、保留物（lkit 地盘）与网络
-  接管警告；`--console-confirmed` 委托共享命令分发，systemd 模式经 worker 执行，成功
-  展示备份 ID 与保留物清单。
+  接管警告；确认上下文绑定根目录、版本、state 摘要和卸载选项，提交前重新校验；
+  daemon 原生执行，前端观察持久化回执并显示备份 ID 与保留物。裸确认标志不能绕过校验。
 
 ## UNI-14
 

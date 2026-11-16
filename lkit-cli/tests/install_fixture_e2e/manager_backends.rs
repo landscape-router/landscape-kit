@@ -6,12 +6,9 @@ use super::support::{E2E_LOCK, LKIT, e2e_enabled, write_json};
 
 const INIT_FIXTURE: &str = env!("CARGO_BIN_EXE_lkit-test-init");
 
-/// `lkit self` 的服务管理器固定为 systemd(docs/commands/self.md):daemon 是
-/// 全局单例(`lkit.service`),unit 原件在 `/usr/local/lib/lkit/lkit.service`。
-/// 在只有 OpenRC/sysvinit 的宿主上 `self install` 必须拒绝(退出码 `2`,
-/// "请求 systemd 但不可用"),且不遗留注册、原件或 daemon pidfile。
-/// 这两条用例复用 OpenRC 与 sysvinit 的 fixture 世界,验证固定 systemd 语义
-/// 在非 systemd 后端上的边界。
+/// Validate prerequisites before writes: a host running systemd rejects the
+/// selected OpenRC/SysVinit backend; other hosts reject the missing managed CLI.
+/// These negative cases do not establish backend lifecycle coverage.
 struct InitWorld {
     world: TestWorld,
     /// lkit 地盘(fixture 世界的 territory/),`self install` 经 `LKIT_TERRITORY`
@@ -133,6 +130,9 @@ fn assert_rejected_without_writes(harness: &InitWorld) {
     let output = Command::new(LKIT)
         .env(lkit_test_fixture::INIT_CONFIG_ENV, &harness.init_config)
         .env("LKIT_TERRITORY", &harness.territory)
+        .env("LKIT_GLOBAL_DIR", harness.world.path("host/usr/local"))
+        .env("LKIT_LANG", "en")
+        .arg("--non-interactive")
         .args(["self", "install", "--test-runtime"])
         .arg(&harness.runtime_config)
         .output()
@@ -140,21 +140,24 @@ fn assert_rejected_without_writes(harness: &InitWorld) {
     assert_eq!(
         output.status.code(),
         Some(2),
-        "self install on a non-systemd host must be a usage error\nstdout:\n{}\nstderr:\n{}",
+        "self install with unmet prerequisites must be a usage error\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !harness
-            .world
-            .path("host/usr/local/lib/lkit/lkit.service")
-            .exists(),
-        "the global unit origin must not be written"
+        stderr.contains("missing or not executable")
+            || stderr.contains("no supported service manager is available"),
+        "{stderr}"
     );
-    assert!(
-        !harness.world.path("host/etc/init.d/lkit.service").exists(),
-        "no registration may be left behind"
+    assert!(!harness.world.path("host/usr/local/lib/lkit").exists());
+    assert_eq!(
+        std::fs::read_dir(harness.world.path("host/etc/init.d"))
+            .unwrap()
+            .count(),
+        0
     );
+
     assert!(
         !harness.territory.join("run/lkit.pid").exists(),
         "no daemon may be started"
@@ -162,7 +165,7 @@ fn assert_rejected_without_writes(harness: &InitWorld) {
 }
 
 #[test]
-fn self_install_rejects_hosts_without_systemd_openrc() {
+fn self_install_validates_prerequisites_before_writing_openrc() {
     if !e2e_enabled() {
         return;
     }
@@ -172,7 +175,7 @@ fn self_install_rejects_hosts_without_systemd_openrc() {
 }
 
 #[test]
-fn self_install_rejects_hosts_without_systemd_sysvinit() {
+fn self_install_validates_prerequisites_before_writing_sysvinit() {
     if !e2e_enabled() {
         return;
     }

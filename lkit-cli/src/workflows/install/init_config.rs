@@ -7,7 +7,6 @@ use serde::Serialize;
 use super::super::credentials::Credentials;
 use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
-use crate::deployment::layout;
 
 pub(crate) fn parse_stable_version(
     value: &str,
@@ -20,13 +19,20 @@ pub(crate) fn activate_current(
     version: &semver::Version,
 ) -> Result<(), InstallError> {
     let current = root.canonical.join("current");
-    let tmp_link = layout::territory_run_dir().join(".current.tmp");
-    std::fs::create_dir_all(tmp_link.parent().expect("run dir has a parent"))
-        .map_err(InstallError::Io)?;
-    let _ = std::fs::remove_file(&tmp_link);
+    // Rename must stay on the installation filesystem, which may differ from
+    // the daemon territory. A unique sibling also avoids touching stale files.
+    let tmp_link = root
+        .canonical
+        .join(format!(".current-{}.tmp", uuid::Uuid::now_v7()));
     std::os::unix::fs::symlink(format!("releases/{version}"), &tmp_link)
         .map_err(InstallError::Io)?;
-    std::fs::rename(&tmp_link, &current).map_err(InstallError::Io)?;
+    if let Err(error) = std::fs::rename(&tmp_link, &current) {
+        let _ = std::fs::remove_file(&tmp_link);
+        return Err(InstallError::Io(error));
+    }
+    std::fs::File::open(&root.canonical)
+        .and_then(|directory| directory.sync_all())
+        .map_err(InstallError::Io)?;
     Ok(())
 }
 
@@ -219,5 +225,68 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("cannot run"), "{error}");
         std::fs::remove_dir_all(root.canonical).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    struct TempDir(std::path::PathBuf);
+    impl TempDir {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("lkit-activation-{}", uuid::Uuid::now_v7()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn activation_uses_only_the_installation_filesystem() {
+        let temp = TempDir::new();
+        let territory = temp.path().join("unavailable-territory");
+        std::fs::write(&territory, b"not a directory").unwrap();
+        let _territory = crate::deployment::layout::test_territory(&territory);
+        let path = temp.path().join("installation");
+        std::fs::create_dir(&path).unwrap();
+        let root = InstallRoot {
+            install_root: path.clone(),
+            canonical: path,
+        };
+        std::os::unix::fs::symlink("releases/1.0.0", root.canonical.join("current")).unwrap();
+        activate_current(&root, &semver::Version::new(2, 0, 0)).unwrap();
+        assert_eq!(
+            std::fs::read_link(root.canonical.join("current")).unwrap(),
+            std::path::Path::new("releases/2.0.0")
+        );
+        assert_eq!(std::fs::read_dir(&root.canonical).unwrap().count(), 1);
+        assert_eq!(std::fs::read(territory).unwrap(), b"not a directory");
+    }
+
+    #[test]
+    fn failed_activation_preserves_current_and_removes_temporary_link() {
+        let temp = TempDir::new();
+        let _territory = crate::deployment::layout::test_territory(temp.path());
+        let root = InstallRoot {
+            install_root: temp.path().to_path_buf(),
+            canonical: temp.path().to_path_buf(),
+        };
+        std::fs::create_dir(root.canonical.join("current")).unwrap();
+        std::fs::write(root.canonical.join("current/keep"), b"keep").unwrap();
+        assert!(activate_current(&root, &semver::Version::new(2, 0, 0)).is_err());
+        assert_eq!(
+            std::fs::read(root.canonical.join("current/keep")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(std::fs::read_dir(&root.canonical).unwrap().count(), 1);
     }
 }

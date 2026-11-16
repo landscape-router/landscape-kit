@@ -175,13 +175,13 @@
 
 ## RST-13
 
-**控制台发起的 restore 以 TUI 确认为唯一确认，不再出现 `/dev/tty` 二次确认**
+**控制台恢复确认绑定安装身份与备份内容**
 
-- 测试层：Rust workflow、Rust 单元（console）
-- 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`console_confirmed_skips_interactive_confirmations`（lkit-cli/src/workflows/restore/mod.rs）、`backup_restore_flow_builds_restore_command`（lkit-cli/src/console/tests/backup.rs，断言 `console_confirmed` 与 `--console-confirmed` 参数）
-- 说明：交互模式下 `console_confirmed` 使恢复工作流跳过恢复计划与 minimal scope 的 tty 确认（worker 是独立进程，无法读取 TUI 输入，继续交互确认会阻塞），恢复正常提交；控制台覆盖层同时展示 minimal scope 数据损失警告，`--backup`/`--yes`/`--console-confirmed` 均传入分发参数。
-- 缺口：真实 systemd worker 内的无 tty 阻塞路径未单独做 E2E 断言（Docker E2E 恢复用例均带 `--non-interactive`）。
+- 测试层：Rust 单元、CI Fixture E2E
+- 状态：`部分覆盖`
+- 证据：[恢复入口](../../../../lkit-cli/src/commands/restore.rs)、[控制台测试](../../../../lkit-cli/src/console/tests/backup.rs)、[原生恢复 fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)
+- 说明：TUI 展示数据损失范围并传递类型化确认上下文；提交时验证安装身份、备份 ID 与摘要，备份被替换则拒绝。裸 `--console-confirmed` 不能绕过确认；daemon 不打开终端。
+- 缺口：真实终端中的完整 TUI 恢复操作链路。
 
 ## BKP-08
 
@@ -189,7 +189,7 @@
 
 - 测试层：Rust 单元（console）
 - 状态：`已覆盖`
-- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（lkit-cli/src/console/tests/backup.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 worker、进度弹窗显示阶段文案）
+- 证据：[交互控制台](../../../interaction/console.md)、`backup_create_runs_in_console_with_progress_dialog`（lkit-cli/src/console/tests/backup.rs，断言创建对话框渲染、备注逐字符输入、Enter 启动控制台内创建 后台线程、进度弹窗显示阶段文案）
 - 说明：Enter 打开创建对话框（标题、minimal scope 说明——"将创建 minimal 配置级快照，
   包含恢复所需的最小文件集"、备注输入行带光标、Enter 创建/Esc 取消）；最多 256 字符、
   Enter 提交走与 CLI 相同的备注校验，空备注直接创建。提交后在 TUI 内后台执行与 CLI
@@ -209,13 +209,13 @@
 
 ## RST-14
 
-**委托 restore 全屏页显示操作标题与步骤进度条，结果文案按操作独立**
+**原生 restore 全屏页显示持久化阶段与独立结果文案**
 
-- 测试层：Rust 单元（presentation/screens）、Rust workflow
-- 状态：`已覆盖`
-- 证据：[激活与提交](../../../commands/restore.md)、`renders_step_progress_gauge_for_stepped_operations`、`renders_restore_result_with_its_own_title_not_install_wording`、`restore_in_progress_hint_is_not_installation_wording`（lkit-cli/src/interaction/presentation/screens/restore.rs，断言 restore 页显示 `Restore complete`/`The operation is in progress` 且不含 `Installation` 文案）、restore 工作流在准备/停止服务/激活/验证阶段发送 `operation_progress` 事件（lkit-cli/src/workflows/restore/mod.rs）、`operation_screen` 按子命令选择操作页面组件（lkit-cli/src/interaction/presentation/screens/mod.rs）
-- 说明：restore 不发字节下载进度，全屏页按 systemd 4 步（准备 1/4 → 停止服务 2/4 → 激活 3/4 → 初始化与健康检查 4/4）渲染步骤 Gauge，标题为"正在恢复 Landscape"；每个委托操作（install/switch/update/repair/restore/reinit）在 `screens/` 下有一个完全独立的页面文件（布局、进行中标题、完成/失败/取消结果页标题与状态框、底栏提示全部各自实现，不复用安装文案），命令行结束提示同样按操作输出（如 `restore: Restore complete`）；install 的字节进度条不受影响。
-- 缺口：真实 worker 进程到全屏页的事件链路未单独 E2E 断言（Docker E2E 在无控制台终端下运行）。
+- 测试层：Rust 单元（presentation/screens）、CI Fixture E2E
+- 状态：`部分覆盖`
+- 证据：[恢复规格](../../../commands/restore.md)、[操作观察器](../../../../lkit-cli/src/interaction/presentation/operation.rs)、[恢复页面](../../../../lkit-cli/src/interaction/presentation/screens/restore.rs)、[原生恢复 fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)
+- 说明：前端观察持久化操作记录，映射准备、停止服务、激活和健康检查四步进度；恢复页独立显示进行中、成功与失败标题。页面单元验证步骤 Gauge 和结果措辞；fixture 验证原生恢复提交及崩溃后的原操作回执。
+- 缺口：真实终端中的 daemon 记录到全屏恢复页的完整显示链路。
 
 ## BKP-10
 

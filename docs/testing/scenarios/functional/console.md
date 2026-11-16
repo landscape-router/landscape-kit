@@ -108,7 +108,7 @@
 - 状态：`已覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：NotRun/Running 时焦点停留在检查汇总并提示等待；Pass 和 warning 可进入表单；
-  Error、unknown 和 worker 失败通过处理弹窗阻断所有进入表单、开始安装和网络向导的路径。
+  Error、unknown 和后台线程失败通过处理弹窗阻断所有进入表单、开始安装和网络向导的路径。
   弹窗支持 Enter 查看详情、Esc 关闭、R 重跑，无强制跳过入口；进入表单后重跑变为阻断状态时，
   “开始安装”与网络向导入口激活前同样复查。
 
@@ -149,7 +149,7 @@
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`部分覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
-- 缺口：真实控制台与 daemon 的端到端衔接、进度重连及显式取消；确认上下文和观察页按键已有隔离单元覆盖；见 [UP-08](update.md#up-08) 和 [UP-11](update.md#up-11)。
+- 说明：[PTY fixture](../../../../lkit-cli/tests/install_fixture_e2e/console.rs) 的 `console_update_submits_once_and_obeys_detach_and_cancellation_boundaries` 验证真实控制台单次提交、断开观察与下载取消边界；确认上下文和观察页按键另有隔离单元覆盖。
 - 说明：已安装时 Update 菜单可选，未安装/非 root/状态不可读时置灰且导航跳过。面板顶部
   显示当前版本，字段为目标版本（默认 latest，`TargetVersion` 校验）、仓库来源（config.toml
   有效时首项为“当前来源”，损坏时显示错误且只留显式选项）与自定义 URL。激活“开始更新”后
@@ -157,8 +157,7 @@
   显示错误；升级才显示确认层（`当前 <X> → 目标 <Y>`，Y 为解析出的真实版本），Enter 构建
   携带精确版本、具体来源、原活动版本和状态摘要的已确认请求，Esc 取消。
   确认标记不替代上下文；字段变化使确认失效，分发与 daemon 不重新解析 latest。
-- 缺口：真实网络解析与 原生全屏更新页的执行链路依赖安装现场，控制台单测覆盖状态机、
-  渲染与请求构建；`--console-confirmed` 跳过 tty 由命令层测试覆盖。
+- 缺口：真实公网仓库与异常网络下的完整 TUI 更新链路；fixture 使用本地仓库。
 
 ## UI-13
 
@@ -304,14 +303,14 @@
   spawn 部分（后台线程 + `Receiver` 返回），真实实现 `Real*Ops` 原样搬入，
   面板持有 `Arc<dyn XOps>` 字段；门禁校验（root 检查、host 非空）留在面板层
   不进 trait。`#[cfg(test)] Mock*Ops` 把 channel sender 收进 `Mutex`，测试经
-  `*_sender()` 以 take 语义取得后直接注入消息（drop sender 即模拟 worker
+  `*_sender()` 以 take 语义取得后直接注入消息（drop sender 即模拟 后台线程
   退出后的 `Disconnected`）。两层测试建立在这条接缝上：
   （1）`console::tests::ops` 的 9 个流程测试驱动完整状态机——安装确认层→
   Phase 推进→取消层→`Done(Err)` 清理→重装 `Done(Ok)`、非 root 拒绝、备份
   列表 成功/失败/断流 三态、创建进度与校验、预检回填、基础包、换源探测+刷新、
   更新解析升级/同版本分支、daemon 部署；（2）25 张流程/夹具驱动快照（连同
   [`UI-17`](#ui-17) 的 18 张静态屏共 43 张）把「进行中/成功瞬间」与全部
-  对话框逐字符钉进 `snapshots/*.snap`——worker 推进中才出现的瞬态：安装
+  对话框逐字符钉进 `snapshots/*.snap`——后台线程 推进中才出现的瞬态：安装
   确认层与进度（Installing packages + Gauge）、基础包进度、换源探测结果
   回填（含 unavailable/unknown 标注）、备份创建进度（0% Gauge）与校验后的
   详情页（底栏 verified）、更新确认层（1.2.3 → 1.3.0）、daemon 部署确认
@@ -323,7 +322,7 @@
   不回填它们）。瞬态屏直接摆字段摆不出，驱动方式与流程测试一致（注入
   mock → 按键/start → 通道注入 → poll → 渲染）。注意 mock sender 必须
   绑定变量活过 `poll`：临时值语句尾即 drop，`poll` 下一条消息就是
-  `Disconnected`，会走 worker 退出清理分支（清 run 并触发真实主机状态
+  `Disconnected`，会走后台线程退出清理分支（清 run 并触发真实主机状态
   刷新，破坏快照确定性）。
 - 缺口：快照不含颜色（沿 [`UI-17`](#ui-17)，色彩断言由 cell 前景色测试承担）；
   瞬态的持续时间与节奏不在静态快照的表达能力内。
@@ -353,7 +352,7 @@
   门禁影响（由不变量测试 `navigation_walks_reachable_panels_in_process`
   锁定）。测试把 app 直接摆进门禁态——含残留列表行（列表曾成功后现场翻转）
   与会话中途状态刷新两种现场——逐键断言「什么都没发生」：Enter 不打开
-  备份详情/创建弹窗、不进入版本编辑、不启动解析 worker，R/D 不打开恢复/
+  备份详情/创建弹窗、不进入版本编辑、不启动解析 后台线程，R/D 不打开恢复/
   删除确认层。Overview 的部署/查看 psk/flare 三个弹窗都读写仅 root 可
   访问的地盘配置，RootRequired 世界（左栏已在提示需要 root）动作键不
   打开弹窗，直接给 root 错误提示（键处理见 `handle_overview_key`）。

@@ -293,10 +293,10 @@ machine_shell_bg() {
 machine_dump() {
   local label="$1"
   echo "===== MACHINE DUMP: $label ====="
-  machine_shell 'echo "--- s3.exit:"; cat /tmp/s3.exit 2>/dev/null; echo "--- s3.out:"; cat /tmp/s3.out 2>/dev/null; echo "--- s3.err:"; cat /tmp/s3.err 2>/dev/null; echo "--- result.json:"; cat /run/lkit/operations/*.result.json 2>/dev/null; echo "--- stdout.log:"; cat /run/lkit/operations/*.stdout.log 2>/dev/null; echo "--- stderr.log:"; cat /run/lkit/operations/*.stderr.log 2>/dev/null' || true
+  machine_shell 'echo "--- observer output:"; cat /tmp/s3.out /tmp/s3.err 2>/dev/null; echo "--- operation records:"; cat /root/.lkit/run/operations/*.json 2>/dev/null' || true
   machine_shell 'echo "--- transactions:"; for f in /root/.lkit/transactions/*.json; do [ -e "$f" ] || continue; echo "== $f"; cat "$f"; echo; done' || true
   machine_shell 'echo "--- state:"; cat /root/.lkit/state/install-state.json 2>/dev/null || echo "absent"' || true
-  machine_shell 'echo "--- operations:"; ls -la /run/lkit/operations/ 2>/dev/null || echo "none"' || true
+  machine_shell 'echo "--- operations:"; ls -la /root/.lkit/run/operations/ 2>/dev/null || echo "none"' || true
   machine_shell 'echo "--- lkit.service:"; systemctl is-active lkit.service; journalctl -u lkit.service -n 40 --no-pager 2>/dev/null | tail -40' || true
   machine_shell 'echo "--- landscape-router:"; systemctl is-active landscape-router.service' || true
   machine_shell 'echo "--- run dir:"; ls -la /root/.lkit/run/ 2>/dev/null || echo "none"' || true

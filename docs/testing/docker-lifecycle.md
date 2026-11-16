@@ -38,9 +38,9 @@ Docker 中的 `lkit` 以 `test-support` 构建，所有管理命令显式传入�
 unit、调用 systemctl 协议、停止和启动真实 fixture 进程、检查 MainPID/端口/API，
 并按事务回滚。
 
-`execution: inline` 避免要求 fake systemctl 再模拟 lkit 自己的临时 worker unit。
-生产运行时始终执行完整 preflight；会改变 systemd 或 Landscape 运行态的生产命令由
-systemd worker 托管，且生产二进制不提供 `--test-runtime`。
+`execution: inline` 用于隔离验证工作流；`execution: daemon` 用于验证前端提交、
+daemon 原生执行、断连与崩溃恢复。生产运行时执行完整 preflight，由 daemon 执行
+持久化操作；生产二进制不提供 `--test-runtime`。
 
 fake systemctl 的配置不固定 `landscape_config`，因此每次 start 都由 unit 的 `--web`
 路径读取当前 release 的 `static/lkit-fixture.json`。调用序列追加到 root-only JSONL
