@@ -75,10 +75,10 @@ async fn rollback_restore_inner<P: DocsProbe>(
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
+    restore_replaced_release_if_same_version(root, transaction)?;
     if previous_data.exists() || data.exists() {
         // 原现场存在(previous-data 未消费),或上次回滚已经恢复 data
         // (previous-data 已消费、data 在):两种情况下都只做幂等恢复。
-        restore_replaced_release_if_same_version(root, transaction)?;
         let previous_current = transaction.previous_current.as_deref().ok_or_else(|| {
             InstallError::CorruptedTransaction(
                 "restore transaction is missing previous_current".into(),

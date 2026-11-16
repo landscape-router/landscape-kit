@@ -450,7 +450,7 @@ fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
                 .unwrap();
         }
         terminal.send(Key::Ctrl('c')).unwrap();
-        assert!(!terminal.wait_exit().unwrap().success());
+        assert_eq!(terminal.wait_exit().unwrap().code(), Some(130));
         assert!(
             !terminal.screen().alternate_screen(),
             "observer must leave alternate screen"

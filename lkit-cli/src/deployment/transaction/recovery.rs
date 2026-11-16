@@ -161,11 +161,26 @@ fn recover_uninstall(
             Ok(())
         }
         Phase::Prepared | Phase::Stopping | Phase::Activating => {
+            if transaction.schema_version == 10 {
+                let snapshot = crate::backup::rollback::read_state_snapshot(
+                    root,
+                    &transaction.transaction_id,
+                )?;
+                if snapshot.service.manager != systemd.kind() {
+                    return Err(InstallError::Preflight(
+                        "uninstall recovery backend mismatch".into(),
+                    ));
+                }
+            }
             crate::workflows::uninstall::complete_uninstall(root, transaction, systemd)?;
             transaction::mark_phase(root, transaction, Phase::Committed)?;
             crate::workflows::uninstall::cleanup_runtime_dirs(root)?;
             // 与正常卸载完成路径一致:最终标记后清理本根事务与日志。
-            let _ = transaction::purge_root(root);
+            if transaction.schema_version == 10 {
+                transaction::purge_root_except(root, Some(&transaction.transaction_id))?;
+            } else {
+                let _ = transaction::purge_root(root);
+            }
             Ok(())
         }
         phase => Err(InstallError::BlockedByTransaction(format!(

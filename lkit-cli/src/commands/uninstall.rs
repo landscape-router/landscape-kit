@@ -1,5 +1,4 @@
 #[cfg(feature = "test-support")]
-#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -28,7 +27,84 @@ pub struct Uninstall {
     pub test_runtime: Option<PathBuf>,
 }
 
-pub async fn run(args: &Uninstall) -> ExitCode {
+pub async fn run(args: &Uninstall, internal_worker: bool) -> ExitCode {
+    if internal_worker {
+        eprintln!("uninstall requires the native daemon protocol");
+        return ExitCode::FAILURE;
+    }
+    let native = native_execution(args);
+    match native {
+        Ok(true) => {
+            return match submit(args).await {
+                Ok(code) => ExitCode::from(code),
+                Err(error) => {
+                    eprintln!("uninstall: {error}");
+                    exit_code(&error)
+                }
+            };
+        }
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("uninstall: {error}");
+            return exit_code(&error);
+        }
+    }
+    run_inline(args).await
+}
+fn native_execution(_args: &Uninstall) -> Result<bool, plan::InstallError> {
+    #[cfg(feature = "test-support")]
+    if let Some(path) = &_args.test_runtime {
+        return InstallRuntime::test_uses_daemon(path);
+    }
+    Ok(true)
+}
+async fn submit(args: &Uninstall) -> Result<u8, plan::InstallError> {
+    let runtime = resolve_runtime(args)?;
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
+        return Err(plan::InstallError::ParameterUsage(
+            "uninstall requires root".into(),
+        ));
+    }
+    if args.console_confirmed {
+        return Err(plan::InstallError::ParameterUsage(
+            "uninstall is available through the CLI confirmation flow".into(),
+        ));
+    }
+    let root = state::discover_landscape_root()?.ok_or_else(|| {
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::UNINSTALL_REQUIRES_EXISTING_INSTALLATION
+        ))
+    })?;
+    let installed = state::load_state(&root)?.ok_or_else(|| {
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::UNINSTALL_REQUIRES_EXISTING_INSTALLATION
+        ))
+    })?;
+    let version = semver::Version::parse(&installed.active_version)
+        .map_err(|e| plan::InstallError::CorruptedState(e.to_string()))?;
+    crate::workflows::uninstall::confirm_plan(
+        &UninstallArgs {
+            yes: args.yes,
+            allow_no_backup: args.allow_no_backup,
+            keep_data: args.keep_data,
+            console_confirmed: false,
+        },
+        &version,
+        crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref()),
+        &crate::interaction::interactive::confirm,
+    )?;
+    crate::daemon_operations::submit_uninstall_and_wait(
+        root.canonical.to_string_lossy().into_owned(),
+        crate::daemon_operations::UninstallRequest {
+            from_version: installed.active_version.clone(),
+            state_identity: crate::daemon_operations::installation_identity(&installed)?,
+            allow_no_backup: args.allow_no_backup,
+            keep_data: args.keep_data,
+        },
+    )
+    .await
+}
+async fn run_inline(args: &Uninstall) -> ExitCode {
     let runtime = match resolve_runtime(args) {
         Ok(runtime) => runtime,
         Err(error) => {

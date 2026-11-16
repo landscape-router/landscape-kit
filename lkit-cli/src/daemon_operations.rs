@@ -43,6 +43,7 @@ pub(crate) enum Kind {
     Binary,
     Switch,
     Restore,
+    Uninstall,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +94,15 @@ pub(crate) struct RestoreRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct UninstallRequest {
+    pub from_version: String,
+    pub state_identity: String,
+    pub allow_no_backup: bool,
+    pub keep_data: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Record {
     pub schema_version: u32,
     pub id: String,
@@ -107,6 +117,8 @@ pub(crate) struct Record {
     pub switch: Option<SwitchRequest>,
     #[serde(default)]
     pub restore: Option<RestoreRequest>,
+    #[serde(default)]
+    pub uninstall: Option<UninstallRequest>,
     #[serde(default)]
     pub resolved_version: Option<String>,
     #[serde(default)]
@@ -180,7 +192,7 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=4).contains(&record.schema_version) || record.id != id {
+    if !(1..=5).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
@@ -188,6 +200,26 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     }
     if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
+    }
+    if record.kind == Kind::Uninstall {
+        if record.schema_version != 5
+            || record.assets.is_some()
+            || record.switch.is_some()
+            || record.restore.is_some()
+            || record.resolved_version.is_some()
+        {
+            return Err(error("invalid uninstall operation schema"));
+        }
+        validate_uninstall(
+            record
+                .uninstall
+                .as_ref()
+                .ok_or_else(|| error("missing uninstall parameters"))?,
+        )?;
+        return Ok(record);
+    }
+    if record.uninstall.is_some() {
+        return Err(error("unexpected uninstall payload"));
     }
     if record.kind == Kind::Restore {
         if record.schema_version != 4
@@ -331,6 +363,7 @@ fn submit_operation(
         assets,
         switch,
         restore: None,
+        uninstall: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -401,6 +434,14 @@ fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bo
                             .as_ref()
                             .map(|args| args.from_version.as_str())
                     && tx.target_version == record.resolved_version
+            }
+            Kind::Uninstall => {
+                tx.operation == transaction::Operation::Uninstall
+                    && tx.schema_version == 10
+                    && record.uninstall.as_ref().is_some_and(|args| {
+                        tx.from_version.as_deref() == Some(&args.from_version)
+                            && tx.uninstall_keep_data == args.keep_data
+                    })
             }
             Kind::Restore => {
                 tx.operation == transaction::Operation::Restore
@@ -625,7 +666,9 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
             .enable_all()
             .build()
             .map_err(InstallError::Io)?;
-        let code = if record.kind == Kind::Restore {
+        let code = if record.kind == Kind::Uninstall {
+            executor.block_on(crate::workflows::uninstall::run_operation(runtime, record))?
+        } else if record.kind == Kind::Restore {
             executor.block_on(crate::workflows::restore::run_operation(runtime, record))?
         } else if record.kind == Kind::Switch {
             executor.block_on(crate::workflows::switch::run_operation(runtime, record))?
@@ -657,7 +700,7 @@ fn execute_next(
     if result.is_ok()
         && matches!(
             record.kind,
-            Kind::Static | Kind::Binary | Kind::Switch | Kind::Restore
+            Kind::Static | Kind::Binary | Kind::Switch | Kind::Restore | Kind::Uninstall
         )
     {
         crate::workflows::operation_control::checkpoint("before-result")?;
@@ -718,6 +761,51 @@ pub(crate) async fn submit_switch_and_wait(
     )?;
     wait_for_result(record, capability, false).await
 }
+fn validate_uninstall(args: &UninstallRequest) -> Result<(), InstallError> {
+    if args.state_identity.len() != 64
+        || !args.state_identity.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(error("invalid uninstall installation identity"));
+    }
+    crate::workflows::install::parse_stable_version(&args.from_version)
+        .map_err(|e| error(e.to_string()))?;
+    Ok(())
+}
+fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, InstallError> {
+    validate_uninstall(&args)?;
+    let _guard = queue_lock()?;
+    let record = Record {
+        schema_version: 5,
+        id: uuid::Uuid::now_v7().to_string(),
+        kind: Kind::Uninstall,
+        install_root: root,
+        status: Status::Queued,
+        transaction_id: None,
+        message: None,
+        assets: None,
+        switch: None,
+        restore: None,
+        uninstall: Some(args),
+        resolved_version: None,
+        stage: Stage::Checking,
+        revision: 1,
+        cancel_requested: false,
+        cancel_cleaned: false,
+        cancellable: true,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        exit_code: None,
+    };
+    save(&record)?;
+    Ok(record)
+}
+pub(crate) async fn submit_uninstall_and_wait(
+    root: String,
+    args: UninstallRequest,
+) -> Result<u8, InstallError> {
+    crate::daemon::require_capability("uninstall-v1.pid")?;
+    wait_for_result(submit_uninstall(root, args)?, "uninstall-v1.pid", false).await
+}
 fn validate_restore(args: &RestoreRequest) -> Result<(), InstallError> {
     for hash in [&args.state_identity, &args.backup_sha256] {
         if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -750,6 +838,7 @@ fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallE
         assets: None,
         switch: None,
         restore: Some(args),
+        uninstall: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -900,7 +989,11 @@ async fn wait_for_result(
                 screen.finish();
             }
             if let Some(message) = current.message {
-                eprintln!("lkit: {message}");
+                if current.kind == Kind::Uninstall && code == 0 {
+                    println!("uninstall: {message}");
+                } else {
+                    eprintln!("lkit: {message}");
+                }
             }
             return Ok(code);
         }

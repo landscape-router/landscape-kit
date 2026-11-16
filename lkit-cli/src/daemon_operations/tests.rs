@@ -499,3 +499,37 @@ fn restore_payload_rejects_unbound_inputs_and_queued_cancel_needs_no_backup_io()
     assert!(!temp.join("selected.lkb").exists());
     let _ = std::fs::remove_dir_all(temp);
 }
+
+#[test]
+fn uninstall_receipt_binds_keep_data_and_survives_installation_state_removal() {
+    let temp =
+        std::env::temp_dir().join(format!("lkit-uninstall-request-{}", uuid::Uuid::now_v7()));
+    let _guard = layout::test_territory(&temp);
+    let root = crate::deployment::root::normalize_install_root(&temp.join("install")).unwrap();
+    let request = UninstallRequest {
+        from_version: "1.2.3".into(),
+        state_identity: "a".repeat(64),
+        allow_no_backup: true,
+        keep_data: true,
+    };
+    let record = submit_uninstall(root.canonical.display().to_string(), request).unwrap();
+    let mut claimed = claim().unwrap().unwrap();
+    assert_eq!(record.id, claimed.id);
+    let mut tx =
+        transaction::TransactionFile::new_uninstall(&root, &semver::Version::new(1, 2, 3)).unwrap();
+    tx.schema_version = 10;
+    tx.no_backup = true;
+    assert!(
+        associate_id(&record.id, &tx).is_err(),
+        "keep-data mismatch must fail before mutation"
+    );
+    tx.uninstall_keep_data = true;
+    associate_id(&record.id, &tx).unwrap();
+    transaction::begin(&root, &tx).unwrap();
+    transaction::mark_phase(&root, &tx, transaction::Phase::Committed).unwrap();
+    transaction::purge_root_except(&root, Some(&tx.transaction_id)).unwrap();
+    reconcile(&mut claimed, None).unwrap();
+    assert_eq!(read(&record.id).unwrap().status, Status::Succeeded);
+    assert!(!layout::territory_state_path().exists());
+    let _ = std::fs::remove_dir_all(temp);
+}

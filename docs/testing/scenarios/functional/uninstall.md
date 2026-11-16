@@ -98,9 +98,9 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 状态：`已覆盖`
 - 证据：[中断恢复](../../../deployment/transactions-and-recovery.md)、
   `recovers_interrupted_uninstall_by_forward_completion`（lkit-cli/src/deployment/transaction/recovery.rs）
-- 说明：在 `stopping` 或 `activating` 阶段中断（恢复共用同一前向完成分支），下次任意
-  lkit 命令继续完成注销、删除与提交；`preparing` 阶段中断标记 `failed` 并保留现场。
-- 缺口：恢复再次失败（标记 `failed` 并保留 `.lkb` 与事务现场）的分支无专门用例。
+- 说明：在 `stopping` 或 `activating` 阶段中断（恢复共用同一前向完成分支），daemon 重启后
+  继续完成注销、删除与提交；`preparing` 阶段中断标记 `failed` 并保留现场。
+- 缺口：恢复再次失败（保留未完成事务并重试）的分支无专门用例。
 
 ## UNI-10
 
@@ -111,7 +111,7 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
 - 证据：[`lkit uninstall`](../../../commands/uninstall.md#执行与提交)、
   Docker E2E S7/S2（scripts/docker/lifecycle/run-scenarios.sh：卸载后安装 latest 根与 export 根）
 - 说明：`install-state.json` 不存在后 `lkit install` 按 FirstInstall 处理并成功；卸载
-  完成路径同时清理本安装的事务与日志。
+  完成路径清理历史事务与日志，保留本次卸载的提交依据。
 
 ## UNI-11
 
@@ -148,3 +148,13 @@ daemon 不属于卸载范围(见 [`lkit self`](self.md))。
   需补充 TUI 端到端场景。确认层展示版本、数据损失范围、保留物（lkit 地盘）与网络
   接管警告；`--console-confirmed` 委托共享命令分发，systemd 模式经 worker 执行，成功
   展示备份 ID 与保留物清单。
+
+## UNI-14
+
+**daemon 原生卸载与 keep-data 中断恢复**
+
+- 测试层：隔离单元、CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[uninstall fixture](../../../../lkit-cli/tests/install_fixture_e2e/uninstall.rs)、[操作回执校验](../../../../lkit-cli/src/daemon_operations/tests.rs)
+- 说明：停止阶段、安装 state 删除后和结果写回前注入 daemon 崩溃。恢复保持 data 内容、原操作 ID 和原事务 ID；committed 回执保留并可查询，领取后的取消被拒绝。
+- 缺口：三种服务后端的恢复失败重试矩阵。

@@ -44,10 +44,7 @@ fn deactivate_service(
             }),
         )?;
     }
-    let origin = root
-        .canonical
-        .join("service")
-        .join(manager.service_name(service));
+    let origin = root.canonical.join("service/landscape-router.service");
     match manager.query_registration(service)? {
         SystemRegistration::Symlink { target } => {
             let origin_canonical = origin.canonicalize().map_err(InstallError::Io)?;

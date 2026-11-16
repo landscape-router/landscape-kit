@@ -1,4 +1,8 @@
 mod cleanup;
+mod native;
+use super::operation_control as control;
+use crate::daemon_operations::Stage;
+pub(crate) use native::run_operation;
 
 use super::artifacts::WEBSERVER_BINARY;
 use super::backup;
@@ -63,17 +67,27 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
     options: &UninstallOptions<'_, P>,
 ) -> Result<UninstallOutcome, InstallError> {
     validate_args(args)?;
-    let is_systemd = state.service.manager == StateServiceManager::Systemd;
+    let native = control::active();
+    let is_systemd = native || state.service.manager == StateServiceManager::Systemd;
     let version = pipeline::parse_stable_version(&state.active_version).map_err(|error| {
         InstallError::CorruptedState(format!("invalid active version: {error}"))
     })?;
     let masked_host_network = host_network_services_masked(manager);
 
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
-    confirm_uninstall(options, args, &version, masked_host_network)?;
+    confirm_plan(args, &version, masked_host_network, options.confirm)?;
 
     let mut transaction = TransactionFile::new_uninstall(root, &version)?;
+    control::phase(Stage::Preparing)?;
+    if native {
+        transaction.schema_version = 10;
+        transaction.uninstall_keep_data = args.keep_data;
+        control::associate(&transaction)?;
+    }
     super::transaction::begin(root, &transaction)?;
+    if native {
+        super::rollback::write_state_snapshot(root, &transaction.transaction_id, state)?;
+    }
 
     // 保护备份失败时保持现场不变;`--allow-no-backup` 才允许继续。
     if let Err(error) = create_protection_backup(root, state, &mut transaction, options).await {
@@ -114,6 +128,9 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
     let result: Result<(), InstallError> = async {
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
+            control::phase(Stage::Stopping)?;
+            #[cfg(feature = "test-support")]
+            control::checkpoint("uninstall-stopping")?;
             operation_progress(OperationPhase::Stopping, Some((2, steps)));
             deactivate(manager, root)?;
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
@@ -133,7 +150,12 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             OperationPhase::Activating,
             Some((if is_systemd { 3 } else { 2 }, steps)),
         );
+        control::phase(Stage::Activating)?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("uninstall-activating")?;
         remove_managed_contents(root, args)?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("uninstall-state-removed")?;
         Ok(())
     }
     .await;
@@ -144,7 +166,11 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             cleanup_runtime_dirs(root)?;
             // 卸载完成后本根的事务与日志不再有现场价值;新安装不应关注上一个
             // 安装的残留(backups/、config.toml 与 run/ 保留,见卸载语义)。
-            let _ = super::transaction::purge_root(root);
+            if native {
+                super::transaction::purge_root_except(root, Some(&transaction.transaction_id))?;
+            } else {
+                let _ = super::transaction::purge_root(root);
+            }
             Ok(UninstallOutcome::Committed {
                 version,
                 backup_id: transaction
@@ -154,7 +180,9 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             })
         }
         Err(error) => {
-            let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+            if !native {
+                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+            }
             Err(error)
         }
     }
@@ -175,7 +203,7 @@ pub(crate) fn complete_uninstall(
         &UninstallArgs {
             yes: true,
             allow_no_backup: transaction.backup.is_none(),
-            keep_data: false,
+            keep_data: transaction.uninstall_keep_data,
             console_confirmed: true,
         },
     )
@@ -187,11 +215,11 @@ fn validate_args(_args: &UninstallArgs) -> Result<(), InstallError> {
 
 /// 交互模式确认卸载计划与数据损失范围;检测到网络接管特征时追加警告确认。
 /// 非交互模式必须显式 `--yes`。
-fn confirm_uninstall<P: DocsProbe>(
-    options: &UninstallOptions<'_, P>,
+pub(crate) fn confirm_plan(
     args: &UninstallArgs,
     version: &semver::Version,
     masked_host_network: bool,
+    confirm: &dyn Fn(&str) -> Result<bool, InstallError>,
 ) -> Result<(), InstallError> {
     if args.console_confirmed {
         return Ok(());
@@ -204,7 +232,7 @@ fn confirm_uninstall<P: DocsProbe>(
         }
         return Ok(());
     }
-    let accepted = (options.confirm)(&crate::tr!(
+    let accepted = confirm(&crate::tr!(
         crate::keys::UNINSTALL_CONFIRM_PLAN,
         version = version
     ))?;
@@ -213,14 +241,14 @@ fn confirm_uninstall<P: DocsProbe>(
             "user refused the uninstall plan".into(),
         ));
     }
-    let accepted = (options.confirm)(&crate::tr!(crate::keys::UNINSTALL_CONFIRM_DATA_LOSS))?;
+    let accepted = confirm(&crate::tr!(crate::keys::UNINSTALL_CONFIRM_DATA_LOSS))?;
     if !accepted {
         return Err(InstallError::UserRefused(
             "user refused the uninstall plan".into(),
         ));
     }
     if masked_host_network {
-        let accepted = (options.confirm)(&crate::tr!(crate::keys::UNINSTALL_CONFIRM_HOST_NETWORK))?;
+        let accepted = confirm(&crate::tr!(crate::keys::UNINSTALL_CONFIRM_HOST_NETWORK))?;
         if !accepted {
             return Err(InstallError::UserRefused(
                 "user refused the uninstall plan".into(),

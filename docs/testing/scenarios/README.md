@@ -28,7 +28,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 版本更新 | `UP-01` 至 `UP-11` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-14` | [switch.md](functional/switch.md) |
 | 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-17` | [backup-and-restore.md](functional/backup-and-restore.md) |
-| 卸载 | `UNI-01` 至 `UNI-13` | [uninstall.md](functional/uninstall.md) |
+| 卸载 | `UNI-01` 至 `UNI-14` | [uninstall.md](functional/uninstall.md) |
 | 重新初始化 | `REI-01` 至 `REI-10` | [reinit.md](functional/reinit.md) |
 | 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-09` | [repair.md](functional/repair.md) |
@@ -74,8 +74,7 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 **委托端到端链路**（daemon worker：CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
 由 systemd-nspawn 兼容性 smoke 在真实 systemd 下覆盖：委托提交与结果回收、
-前端断开后 daemon 独立完成、cancel 文件驱动的取消 + daemon 恢复（uninstall
-无下载阶段，前端 Ctrl+C 按"仅 Downloading 可取消"契约被忽略）、daemon 未运行
+前端断开后 daemon 独立完成、cancel 文件驱动的取消 + daemon 恢复、daemon 未运行
 拒绝、`LKIT_LANG` 转发（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
 `migrate` 的委托链路（前台前置检查 → `--resume` 切换 → 结果回收）另由 fixture
 E2E 直接覆盖（[`MIG-07`](functional/migrate.md#mig-07)，

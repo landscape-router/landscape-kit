@@ -52,9 +52,11 @@ pub(crate) fn delegates(command: &Commands) -> bool {
     match command {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Software(_) | Commands::Operation(_) => false,
-        Commands::Repair(_) | Commands::Switch(_) | Commands::Update(_) | Commands::Restore(_) => {
-            false
-        }
+        Commands::Repair(_)
+        | Commands::Switch(_)
+        | Commands::Update(_)
+        | Commands::Restore(_)
+        | Commands::Uninstall(_) => false,
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Flare(_) => false,
@@ -69,7 +71,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
                 NetworkAction::Confirm | NetworkAction::Rollback { automatic: false }
             )
         }
-        Commands::Install(_) | Commands::Reinit(_) | Commands::Uninstall(_) => true,
+        Commands::Install(_) | Commands::Reinit(_) => true,
     }
 }
 
@@ -403,7 +405,6 @@ mod tests {
         for args in [
             &["install", "--version", "1.2.3"][..],
             &["reinit"][..],
-            &["uninstall", "--yes"][..],
             &["network", "rollback"][..],
             &["network", "confirm"][..],
         ] {
@@ -415,6 +416,7 @@ mod tests {
     fn does_not_delegate_read_only_commands() {
         for args in [
             &["restore", "--backup", "x"][..],
+            &["uninstall", "--yes"][..],
             &["update"][..],
             &["switch", "--version", "2.0.0"][..],
             &["repair", "service"][..],

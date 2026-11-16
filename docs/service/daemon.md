@@ -7,7 +7,7 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 业务操作的记录与业务事务分别管理：操作记录回答“用户的请求执行到哪里”，事务记录
 回答“安装现场如何安全提交或恢复”。daemon 存活不等于某个操作已经成功。
 
-`restore`、`switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
+`uninstall`、`restore`、`switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
 `update` 在前端解析和确认后提交同一 `switch` 操作。其他委托修改命令通过 worker 执行，两条入口共用串行调度和安装锁。外部服务管理
 工具是独立进程。`self install/upgrade/remove` 直接执行。
 
@@ -31,8 +31,8 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 
 操作记录位于 lkit 地盘 `run/operations/`，目录权限 `0700`、记录权限 `0600`，原子
 写入并同步到磁盘，可以跨主机启动保留。记录只包含受支持的操作类型、安装根、状态、事务关联和结果说明，
-repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
-`repair_static`、`repair_binary`、`switch`、`restore`，请求载荷按类型校验；未知类型、字段或不支持的
+repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4，uninstall 写入 v5；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
+`repair_static`、`repair_binary`、`switch`、`restore`、`uninstall`，请求载荷按类型校验；未知类型、字段或不支持的
 协议版本在入队前拒绝。操作类型与业务事务中的 `operation` 不必同名：
 static／binary 对应 `repair` 事务，并分别校验 `static_backup`／`.lkb` 等恢复依据。
 
@@ -181,3 +181,13 @@ restore 只允许取消排队操作，领取后不允许取消；Ctrl+C 退出�
 事务采用 schema v9，创建前持久化操作关联。准备阶段清理，停止阶段恢复原服务状态，
 激活阶段回滚到旧 release、data 和服务状态；恢复失败保持未完成状态并阻止新操作。
 已提交事务只补写结果，不重复执行 restore。
+
+## 卸载操作
+
+`uninstall` 使用 schema v5 和 `uninstall-v1.pid` 能力标记。请求绑定安装根、版本、完整
+状态摘要、`allow_no_backup` 和 `keep_data`。daemon 持锁后复核身份与服务所有权，
+直接执行卸载工作流。只允许取消排队操作，退出观察不停止卸载。
+
+v10 卸载事务持久化 `uninstall_keep_data`；停止阶段之后中断时前向完成，保留相同清理
+选项。恢复失败保持未完成并重试。完成后即使安装 state 已删除，也以保留的 committed
+卸载事务核实成功并补写结果；不通过“根目录不存在”猜测成功。

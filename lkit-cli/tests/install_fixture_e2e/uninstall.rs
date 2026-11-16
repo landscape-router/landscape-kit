@@ -13,10 +13,12 @@ fn uninstalls_an_existing_installation_through_full_cli() {
     let config_path = harness.config_path();
     std::fs::write(&config_path, b"[repository]\n").unwrap();
 
+    let runtime = harness.daemon_runtime();
+    let _daemon = harness.spawn_daemon(&runtime);
     let output = harness
         .command()
         .args(["uninstall", "--non-interactive", "--yes", "--test-runtime"])
-        .arg(&harness.runtime_config)
+        .arg(&runtime)
         .output()
         .unwrap();
     assert!(
@@ -80,14 +82,14 @@ fn uninstalls_an_existing_installation_through_full_cli() {
         .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
         .collect();
     assert!(
-        leftover_transactions.is_empty(),
-        "transactions of the uninstalled root must be purged, found: {leftover_transactions:?}"
+        leftover_transactions.len() == 1,
+        "only the committed uninstall receipt must remain, found: {leftover_transactions:?}"
     );
 
     let again = harness
         .command()
         .args(["uninstall", "--non-interactive", "--yes", "--test-runtime"])
-        .arg(&harness.runtime_config)
+        .arg(&runtime)
         .output()
         .unwrap();
     assert_eq!(
@@ -192,4 +194,102 @@ fn uninstall_rejects_corrupted_installation_state() {
         harness.install_root.join("current").exists(),
         "the installation must be untouched"
     );
+}
+
+#[test]
+fn native_uninstall_preserves_keep_data_across_crashes_and_retains_its_receipt() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for point in [
+        "uninstall-stopping",
+        "uninstall-state-removed",
+        "before-result",
+    ] {
+        let h = InstallHarness::new("uninstall-native-crash", "healthy", 30_000);
+        assert_success(&h.run());
+        let marker = h.install_root.join("data/keep-me");
+        std::fs::write(&marker, b"keep across recovery").unwrap();
+        let runtime = h.daemon_runtime();
+        let gate = h.run_dir().join(format!("test-repair-{point}.gate"));
+        std::fs::write(&gate, b"pause").unwrap();
+        let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, point);
+        struct Observer(std::process::Child);
+        impl Drop for Observer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let observer = Observer(
+            h.command()
+                .args([
+                    "uninstall",
+                    "--yes",
+                    "--non-interactive",
+                    "--keep-data",
+                    "--test-runtime",
+                ])
+                .arg(&runtime)
+                .spawn()
+                .unwrap(),
+        );
+        let wait = |condition: &mut dyn FnMut() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(50);
+            while !condition() {
+                assert!(std::time::Instant::now() < deadline, "uninstall timed out");
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        wait(&mut || {
+            h.run_dir()
+                .join(format!("test-repair-{point}.reached"))
+                .exists()
+        });
+        let record = || -> serde_json::Value {
+            let files: Vec<_> = std::fs::read_dir(h.run_dir().join("operations"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|e| e == "json"))
+                .collect();
+            assert_eq!(files.len(), 1);
+            serde_json::from_slice(&std::fs::read(files[0].path()).unwrap()).unwrap()
+        };
+        let before = record();
+        assert!(
+            !h.command()
+                .args(["operation", "cancel", before["id"].as_str().unwrap()])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(observer);
+        daemon.crash();
+        std::fs::remove_file(gate).unwrap();
+        let _daemon = h.spawn_daemon(&runtime);
+        wait(&mut || record()["status"] == "succeeded");
+        assert!(!h.state_path().exists());
+        assert!(!h.install_root.join("releases").exists());
+        assert_eq!(std::fs::read(&marker).unwrap(), b"keep across recovery");
+        assert_eq!(record()["transaction_id"], before["transaction_id"]);
+        let tx: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(h.transactions_dir().join(format!(
+                "{}.json",
+                before["transaction_id"].as_str().unwrap()
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(tx["schema_version"], 10);
+        assert_eq!(tx["uninstall_keep_data"], true);
+        assert_eq!(tx["phase"], "committed");
+        assert_success(
+            &h.command()
+                .args(["operation", "status", before["id"].as_str().unwrap()])
+                .output()
+                .unwrap(),
+        );
+    }
 }

@@ -193,7 +193,7 @@ async fn run_command(
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::SetMirror(args) => commands::set_mirror::run(&args),
         Commands::Software(args) => commands::software::run(&args),
-        Commands::Uninstall(args) => commands::uninstall::run(&args).await,
+        Commands::Uninstall(args) => commands::uninstall::run(&args, internal_worker).await,
         Commands::Self_(args) => commands::lkit_self::run(&args).await,
         Commands::Flare(args) => commands::flare::run(&args).await,
         Commands::Frontend(args) => commands::frontend::run(&args),

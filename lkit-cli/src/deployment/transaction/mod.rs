@@ -25,7 +25,7 @@ pub(crate) use self::cleanup::{
 use self::file::{append_log, load_transaction_file, write_transaction};
 
 pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 5;
-pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 9;
+pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 10;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -169,6 +169,8 @@ pub(crate) struct TransactionFile {
     /// 本事务没有 `.lkb` 配置快照,失败回滚不能恢复之前的数据。
     #[serde(default)]
     pub no_backup: bool,
+    #[serde(default)]
+    pub uninstall_keep_data: bool,
     pub static_backup: Option<StaticBackupRef>,
     pub systemd_before: Option<ServiceBefore>,
     pub resolv_conf_backup: Option<String>,
@@ -204,6 +206,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -238,6 +241,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -274,6 +278,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -322,6 +327,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -358,6 +364,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -393,6 +400,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -429,6 +437,7 @@ impl TransactionFile {
             backup: None,
             restore_backup: None,
             no_backup: false,
+            uninstall_keep_data: false,
             static_backup: None,
             systemd_before: None,
             resolv_conf_backup: None,
@@ -498,6 +507,13 @@ pub(crate) fn persist(
 /// `canonical_install_root` 过滤本根,不触碰其他根的历史。`backups/`、
 /// `config.toml` 与 `run/` 不属于清理范围。幂等,单个文件删除失败不中止。
 pub(crate) fn purge_root(root: &InstallRoot) -> Result<(), InstallError> {
+    purge_root_except(root, None)
+}
+
+pub(crate) fn purge_root_except(
+    root: &InstallRoot,
+    retained: Option<&str>,
+) -> Result<(), InstallError> {
     let dir = layout::territory_transactions_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Ok(());
@@ -520,7 +536,10 @@ pub(crate) fn purge_root(root: &InstallRoot) -> Result<(), InstallError> {
             Some(canonical) => Path::new(canonical) == root.canonical,
             None => false,
         };
-        if !matches {
+        if !matches
+            || retained
+                .is_some_and(|id| value.get("transaction_id").and_then(|v| v.as_str()) == Some(id))
+        {
             continue;
         }
         if let Some(log_path) = value.get("log_path").and_then(|value| value.as_str()) {

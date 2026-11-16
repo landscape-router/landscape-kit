@@ -16,6 +16,14 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             transaction.schema_version
         )));
     }
+    if transaction.schema_version == 10 && transaction.operation != Operation::Uninstall {
+        return Err(corrupted("schema v10 requires uninstall".into()));
+    }
+    if transaction.uninstall_keep_data
+        && (transaction.schema_version != 10 || transaction.operation != Operation::Uninstall)
+    {
+        return Err(corrupted("keep-data requires native uninstall".into()));
+    }
     if transaction.schema_version == 9 && transaction.operation != Operation::Restore {
         return Err(corrupted("schema v9 requires restore".into()));
     }
@@ -514,7 +522,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 10;
+        transaction.schema_version = 11;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);

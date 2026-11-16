@@ -165,7 +165,7 @@ lkit 地盘。
 - 不记录密码、初始化 TOML 内容、API token、Authorization header、证书私钥或 URL query/fragment；
 - 日志写入失败时不得开始或继续修改运行状态；
 - 日志随事务保留（位于 lkit 地盘，卸载 landscape 不删除；卸载完成后本根的
-  事务与日志一起清理，见[卸载语义](../commands/uninstall.md)），失败恢复输出
+  历史事务与日志可以清理，本次卸载提交依据保留，见[卸载语义](../commands/uninstall.md)），失败恢复输出
   必须引用该路径；
 - 在 lkit 地盘和事务尚未创建前发生的错误只输出到终端，不另行落盘。
 
@@ -173,7 +173,7 @@ lkit 地盘。
 
 Schema v2 相对 v1 新增 `stopping`。Schema v3 新增网络接管字段以及
 `awaiting_network_confirmation`、`finalizing`。Schema v4 新增 `restore` operation 和
-`restore_backup` 字段。卸载 operation 不新增字段，新事务仍写 v4。读取器兼容 v1/v2/v3；
+`restore_backup` 字段。uninstall 使用 v10 记录 `uninstall_keep_data`，该布尔值决定正常清理与中断恢复是否保留 data。读取器兼容 v1/v2/v3；
 v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating”的窗口，恢复时按可能已经
 停止处理。
 
@@ -183,7 +183,7 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 - 同一台主机只能存在一个未结束事务（lkit 地盘全局唯一）；
 - `committed` 和 `rolled_back` 是正常终态；
 - `failed` 是异常终态，阻断新事务；
-- 历史事务文件保留用于审计；卸载成功会清理本安装根的事务与日志（见
+- 历史事务文件保留用于审计；卸载成功可清理本安装根的历史事务与日志，保留本次提交依据（见
   [卸载语义](../commands/uninstall.md)），其他根的历史不受影响；
 
 事务文件无法读取、JSON 无法解析、Schema 不支持、必填字段缺失、阶段非法或路径逃逸
@@ -201,8 +201,8 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   重新执行卸载；
 - `uninstall` 的 `prepared`、`stopping` 或 `activating`：采用**前向完成**语义，不恢复
   systemd 或已提交状态；按 `systemd_before` 查询当前状态后继续完成 stop/disable/
-  注销、文件删除并标记 `committed`。恢复再次失败时标记 `failed`，保留保护 `.lkb` 与
-  事务现场供人工诊断；
+  注销、文件删除并标记 `committed`。恢复再次失败时保留未完成阶段、保护 `.lkb` 与
+  事务现场，由 daemon 重试并阻止后续修改；
 - `activating` 或 `verifying`：
   - 受管后端下 `no_backup: true` 的 `switch`：停止目标版本，恢复 `previous_current`、
     unit 注册、enabled/active 状态和 `/etc/resolv.conf`，不重建 data；切换前服务已停止，
@@ -291,7 +291,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-以下清单列出保留 worker 协议的入口；repair、switch 和 update 的结构化操作协议单独定义：
+以下清单列出保留 worker 协议的入口；repair、switch、update、restore 和 uninstall 的结构化操作协议单独定义：
 
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
@@ -299,14 +299,14 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 |  | `reconcile` |
 |  | `set-mirror` |
 |  | `software` |
-| `restore` | `backup` |
+|  | `backup` |
 | `reinit` | `self` |
-| `uninstall` | `daemon` |
+|  | `daemon` |
 | `network confirm` | `network status` |
 | `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
 
-`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+`restore`、`uninstall`、`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
 由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
 `operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
@@ -470,3 +470,10 @@ state 的后端执行，恢复时必须与原后端匹配。
 `activating`／`verifying`／`rolling_back` 恢复旧 release、current、data 与原服务状态。
 清理或恢复失败时保留未完成阶段，daemon 重试并阻止后续修改。`committed` 只补写操作
 结果；不会重新创建备份或导入目标。观察者断开不改变事务。
+
+### 原生 uninstall 事务（Schema v10）
+
+卸载事务记录 `uninstall_keep_data`，并在创建前关联持久化卸载请求。停止前保存安装
+state 快照与服务状态；恢复必须匹配原服务后端。进入 stopping 后按同一事务前向完成，
+删除安装状态后仍可从未完成事务发现根。正常提交与重启恢复均保留本次 committed 事务
+和日志，操作以此补写成功回执；历史清理不得删除这一提交依据。

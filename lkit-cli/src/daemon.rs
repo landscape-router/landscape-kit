@@ -92,6 +92,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&operations_capability)?;
     let operations_v2 = layout::territory_run_dir().join("operations-v2.pid");
     write_pidfile(&operations_v2)?;
+    let uninstall_capability = layout::territory_run_dir().join("uninstall-v1.pid");
+    write_pidfile(&uninstall_capability)?;
     let restore_capability = layout::territory_run_dir().join("restore-v1.pid");
     write_pidfile(&restore_capability)?;
     let switch_capability = layout::territory_run_dir().join("switch-v1.pid");
@@ -160,6 +162,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         let _ = task.await;
     }
     drop(flare);
+    let _ = std::fs::remove_file(&uninstall_capability);
     let _ = std::fs::remove_file(&restore_capability);
     let _ = std::fs::remove_file(&switch_capability);
     let _ = std::fs::remove_file(&assets_capability);
