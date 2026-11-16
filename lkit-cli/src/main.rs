@@ -118,12 +118,15 @@ async fn run_command(
     let internal_migrate = !internal_worker
         && matches!(&command, Commands::Migrate(_))
         && daemon_worker::migrate_delegates(&command);
-    let interrupt_result =
-        if from_console && matches!(&command, Commands::Update(_) | Commands::Restore(_)) {
-            interaction::presentation::InterruptGuard::install_console()
-        } else {
-            interaction::presentation::InterruptGuard::install(delegated || internal_migrate)
-        };
+    let interrupt_result = if from_console
+        && matches!(
+            &command,
+            Commands::Update(_) | Commands::Restore(_) | Commands::Reinit(_)
+        ) {
+        interaction::presentation::InterruptGuard::install_console()
+    } else {
+        interaction::presentation::InterruptGuard::install(delegated || internal_migrate)
+    };
     let interrupt = match interrupt_result {
         Ok(interrupt) => interrupt,
         Err(error) => {
@@ -195,7 +198,14 @@ async fn run_command(
         Commands::Update(args) => commands::update::run(&args, internal_worker).await,
         Commands::Repair(args) => commands::repair::run(&args, internal_worker).await,
         Commands::Restore(args) => commands::restore::run(&args, internal_worker).await,
-        Commands::Reinit(args) => commands::reinit::run(&args).await,
+        Commands::Reinit(args) => {
+            if internal_worker {
+                eprintln!("reinit requires the native daemon protocol");
+                ExitCode::from(2)
+            } else {
+                commands::reinit::run(&args).await
+            }
+        }
         Commands::Backup(args) => commands::backup::run(&args).await,
         Commands::Reconcile(args) => commands::reconcile::run(&args).await,
         Commands::SetMirror(args) => commands::set_mirror::run(&args),

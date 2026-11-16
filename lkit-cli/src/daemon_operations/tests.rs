@@ -687,3 +687,119 @@ fn network_payload_validation_and_queued_cancel_do_not_change_transaction() {
         before
     );
 }
+
+fn reinit_request(f: &Fixture) -> ReinitRequest {
+    ReinitRequest {
+        from_version: "1.0.0".into(),
+        state_identity: "a".repeat(64),
+        admin_user: "admin".into(),
+        network: network_tx(f).network_takeover.unwrap().plan,
+        allow_no_backup: false,
+    }
+}
+
+#[test]
+fn reinit_password_is_private_consumed_once_and_removed_on_cancel_or_interruption() {
+    let f = Fixture::new();
+    let record = reinit::submit(
+        f.dir.join("landscape").to_string_lossy().into_owned(),
+        reinit_request(&f),
+        "Secret123",
+    )
+    .unwrap();
+    let orphan = reinit::input_path(&uuid::Uuid::now_v7().to_string()).unwrap();
+    std::fs::write(&orphan, "orphan").unwrap();
+    reinit::cleanup_orphan_inputs().unwrap();
+    assert!(!orphan.exists());
+    let secret = reinit::input_path(&record.id).unwrap();
+    assert_eq!(
+        std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        !std::fs::read_to_string(path(&record.id).unwrap())
+            .unwrap()
+            .contains("Secret123")
+    );
+    let mut record = claim().unwrap().unwrap();
+    assert_eq!(
+        reinit::take_password(&record, unsafe { libc::geteuid() }).unwrap(),
+        "Secret123"
+    );
+    assert!(!secret.exists());
+    assert!(reinit::take_password(&record, unsafe { libc::geteuid() }).is_err());
+    reconcile(&mut record, None).unwrap();
+    for cancel_it in [true, false] {
+        let mut record = reinit::submit(
+            f.dir.join("landscape").to_string_lossy().into_owned(),
+            reinit_request(&f),
+            "Secret123",
+        )
+        .unwrap();
+        let secret = reinit::input_path(&record.id).unwrap();
+        if cancel_it {
+            cancel(&record.id).unwrap();
+        } else {
+            record = claim().unwrap().unwrap();
+            reconcile(&mut record, None).unwrap();
+        }
+        assert!(!secret.exists());
+    }
+}
+
+#[test]
+fn reinit_waits_for_network_confirmation_and_updates_the_original_receipt_after_resolution() {
+    for outcome in [
+        transaction::Phase::Committed,
+        transaction::Phase::RolledBack,
+    ] {
+        let f = Fixture::new();
+        let request = reinit_request(&f);
+        let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+        reinit::submit(
+            root.canonical.to_string_lossy().into_owned(),
+            request,
+            "Secret123",
+        )
+        .unwrap();
+        let mut record = claim().unwrap().unwrap();
+        let mut tx =
+            transaction::TransactionFile::new_reinit(&root, &semver::Version::new(1, 0, 0))
+                .unwrap();
+        tx.schema_version = 11;
+        tx.no_backup = true;
+        tx.network_takeover = network_tx(&f).network_takeover;
+        associate(&mut record, &tx).unwrap();
+        tx.phase = transaction::Phase::AwaitingNetworkConfirmation;
+        f.write_tx(&tx);
+        reconcile(&mut record, Some(Ok(()))).unwrap();
+        assert_eq!(
+            record.status,
+            Status::AwaitingConfirmation,
+            "{:?}",
+            record.message
+        );
+        assert!(cancel(&record.id).is_err());
+        f.submit();
+        assert!(claim().unwrap().is_none());
+        let confirm = submit_network(
+            record.install_root.clone(),
+            Kind::NetworkConfirm,
+            tx.transaction_id.clone(),
+        )
+        .unwrap();
+        assert_eq!(claim_kind(true).unwrap().unwrap().id, confirm.id);
+        tx.phase = outcome;
+        f.write_tx(&tx);
+        reconcile(&mut record, None).unwrap();
+        assert_eq!(
+            record.exit_code,
+            Some(if outcome == transaction::Phase::Committed {
+                0
+            } else {
+                5
+            })
+        );
+        assert!(record.status.terminal());
+    }
+}

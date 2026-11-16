@@ -409,3 +409,121 @@ fn reinit_rollback_restores_previous_data() {
         "the rollback must remove the recovery units"
     );
 }
+
+#[test]
+fn native_reinit_recovers_activation_and_releases_the_queue_for_network_confirmation() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for point in ["reinit-activated", "reinit-awaiting"] {
+        let h = InstallHarness::new("reinit-native-crash", "healthy", 10_000);
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&h.runtime_config).unwrap()).unwrap();
+        config["network_confirm_timeout_ms"] = 180_000.into();
+        write_json(&h.runtime_config, &config);
+        h.seed_host_services();
+        assert_success(&h.run_takeover());
+        assert_success(&h.network_command(&["confirm"]));
+        std::fs::write(h.install_root.join("data/original-marker"), b"original").unwrap();
+        let runtime = h.daemon_runtime();
+        let gate = h.run_dir().join(format!("test-repair-{point}.gate"));
+        std::fs::write(&gate, b"pause").unwrap();
+        let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, point);
+        let mut pty = Pty::open();
+        pty.master
+            .write_all(b"1\n1\n\n\n\nyes\nyes\nyes\n")
+            .unwrap();
+        struct Observer(std::process::Child);
+        impl Drop for Observer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let observer = Observer(
+            h.command()
+                .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+                .args(["reinit", "--admin-user", "admin", "--password-file"])
+                .arg(&h.password)
+                .arg("--test-runtime")
+                .arg(&runtime)
+                .spawn()
+                .unwrap(),
+        );
+        let wait = |condition: &mut dyn FnMut() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(50);
+            while !condition() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "reinit timed out at {point}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        wait(&mut || {
+            h.run_dir()
+                .join(format!("test-repair-{point}.reached"))
+                .exists()
+        });
+        let reinit_record = || -> serde_json::Value {
+            std::fs::read_dir(h.run_dir().join("operations"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .map(|e| {
+                    serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).unwrap())
+                        .unwrap()
+                })
+                .find(|r| r["kind"] == "reinit")
+                .unwrap()
+        };
+        let before = reinit_record();
+        assert!(!before.to_string().contains("Secret123"));
+        assert!(
+            !h.run_dir()
+                .join("operations")
+                .join(format!("{}.password", before["id"].as_str().unwrap()))
+                .exists()
+        );
+        let before_tx = transaction_of_operation(&h.territory, "reinit");
+        assert_eq!(before_tx["schema_version"], 11);
+        assert!(
+            !h.command()
+                .args(["operation", "cancel", before["id"].as_str().unwrap()])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(observer);
+        daemon.crash();
+        std::fs::remove_file(gate).unwrap();
+        let _daemon = h.spawn_daemon(&runtime);
+        if point == "reinit-activated" {
+            wait(&mut || reinit_record()["status"] == "failed");
+            assert_eq!(reinit_record()["exit_code"], 5);
+            assert_eq!(
+                std::fs::read(h.install_root.join("data/original-marker")).unwrap(),
+                b"original"
+            );
+        } else {
+            wait(&mut || reinit_record()["status"] == "awaiting_confirmation");
+            assert_eq!(
+                transaction_of_operation(&h.territory, "reinit")["network_takeover"]["confirmation_deadline"],
+                before_tx["network_takeover"]["confirmation_deadline"]
+            );
+            assert_success(
+                &h.command()
+                    .args(["network", "confirm", "--test-runtime"])
+                    .arg(&runtime)
+                    .output()
+                    .unwrap(),
+            );
+            wait(&mut || reinit_record()["status"] == "succeeded");
+            assert_eq!(reinit_record()["exit_code"], 0);
+        }
+        assert_eq!(reinit_record()["id"], before["id"]);
+        assert_eq!(reinit_record()["transaction_id"], before["transaction_id"]);
+    }
+}

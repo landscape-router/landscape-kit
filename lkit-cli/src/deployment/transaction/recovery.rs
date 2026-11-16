@@ -523,10 +523,7 @@ fn restore_pre_activation_systemd(
     let Some(before) = transaction.systemd_before.as_ref() else {
         return Ok(());
     };
-    let unit_origin = root
-        .canonical
-        .join("service")
-        .join(systemd.service_name(ManagedService::LandscapeRouter));
+    let unit_origin = root.canonical.join("service/landscape-router.service");
     systemd.restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
 }
 

@@ -417,7 +417,7 @@ impl Snapshot {
                 None => Self::NotInstalled,
                 Some(installed) => Self::Installed {
                     version: installed.active_version,
-                    manager: "systemd",
+                    manager: installed.service.manager.key(),
                     initialized: installed.initialization.status == state::InitStatus::Complete,
                 },
             })

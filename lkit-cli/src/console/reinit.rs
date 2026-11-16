@@ -73,6 +73,7 @@ pub(crate) struct ReinitPanel {
     pub(crate) selected: ReinitField,
     pub(crate) editing: bool,
     pub(crate) confirming: bool,
+    pub(crate) confirmation: Option<crate::commands::reinit::ReinitConfirmation>,
 }
 
 impl Default for ReinitPanel {
@@ -87,6 +88,7 @@ impl Default for ReinitPanel {
             selected: ReinitField::AdminUser,
             editing: false,
             confirming: false,
+            confirmation: None,
         }
     }
 }
@@ -207,6 +209,15 @@ impl ConsoleApp {
                             self.notice = Notice::Error(error);
                             return Some(None);
                         }
+                        if self.reinit.confirmation.is_none() {
+                            match crate::commands::reinit::capture_confirmation() {
+                                Ok(context) => self.reinit.confirmation = Some(context),
+                                Err(error) => {
+                                    self.notice = Notice::Error(error.to_string());
+                                    return Some(None);
+                                }
+                            }
+                        }
                         self.reinit.confirming = true;
                     }
                 },
@@ -226,9 +237,10 @@ impl ConsoleApp {
             yes: true,
             console_confirmed: true,
             network_plan: self.reinit.plan.clone(),
+            confirmed: self.reinit.confirmation.clone(),
             network_plan_file: None,
             #[cfg(feature = "test-support")]
-            test_runtime: None,
+            test_runtime: super::test_runtime_path(),
         });
         let args = vec![
             "reinit".into(),

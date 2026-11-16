@@ -1,3 +1,6 @@
+#[path = "reinit_native.rs"]
+mod native;
+pub(crate) use native::{ReinitConfirmation, capture_confirmation};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -33,6 +36,8 @@ pub struct Reinit {
     /// Network plan captured by the full-screen console. Never populated by CLI parsing.
     #[arg(skip)]
     pub(crate) network_plan: Option<NetworkPlan>,
+    #[arg(skip)]
+    pub(crate) confirmed: Option<ReinitConfirmation>,
     /// Root-only network plan file created for an internal daemon worker.
     #[arg(long, value_name = "PATH", hide = true)]
     pub(crate) network_plan_file: Option<PathBuf>,
@@ -61,6 +66,17 @@ impl std::fmt::Debug for Reinit {
 }
 
 pub async fn run(args: &Reinit) -> ExitCode {
+    let native = true;
+    #[cfg(feature = "test-support")]
+    let native = args.test_runtime.as_deref().map_or(native, |p| {
+        InstallRuntime::test_uses_daemon(p).unwrap_or(false)
+    });
+    if native {
+        return native::run(args).await;
+    }
+    run_inline(args).await
+}
+async fn run_inline(args: &Reinit) -> ExitCode {
     let runtime = match resolve_runtime(args) {
         Ok(runtime) => runtime,
         Err(error) => {

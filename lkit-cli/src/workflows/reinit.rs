@@ -1,4 +1,6 @@
+mod native;
 use chrono::Utc;
+pub(crate) use native::run_operation;
 
 use super::artifacts::{WEBSERVER_BINARY, hash_str};
 use super::backup;
@@ -80,10 +82,15 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         return Err(InstallError::Preflight("Landscape service definition lacks the recovery startup check; run `lkit repair service` before reinit".into()));
     }
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
-    confirm_reinit(options, args, state, network)?;
+    confirm_reinit(options.confirm, args, state, network)?;
 
     let mut transaction = super::transaction::TransactionFile::new_reinit(root, &version)?;
+    if super::operation_control::active() {
+        transaction.schema_version = 11;
+        super::operation_control::associate(&transaction)?;
+    }
     super::transaction::begin(root, &transaction)?;
+    rollback::write_state_snapshot(root, &transaction.transaction_id, state)?;
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
     // 保护备份失败时保持现场不变;`--allow-no-backup` 才允许继续。
@@ -119,7 +126,6 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         super::transaction::persist(root, &transaction)?;
         hash_str(&definition)
     };
-    rollback::write_state_snapshot(root, &transaction.transaction_id, state)?;
 
     // 停止服务前生成完整的新初始化配置(版本固定为当前活动版本)。
     let init_config = pipeline::build_init_config(root, &version, credentials, Some(network))?;
@@ -141,6 +147,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
     let mut activated = false;
     let result: Result<(), InstallError> = async {
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
+        super::operation_control::phase(crate::daemon_operations::Stage::Stopping)?;
         operation_progress(OperationPhase::Stopping, Some((2, 4)));
         manager.stop_and_wait(
             ManagedService::LandscapeRouter,
@@ -152,6 +159,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             }),
         )?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
+        super::operation_control::phase(crate::daemon_operations::Stage::Activating)?;
         operation_progress(OperationPhase::Activating, Some((3, 4)));
         activated = true;
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
@@ -163,9 +171,12 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             init_config.as_bytes(),
             0o600,
         )?;
+        #[cfg(feature = "test-support")]
+        super::operation_control::checkpoint("reinit-activated")?;
         crate::network::takeover::clear_selected_lan_addresses(network, &runtime.ip_command)?;
         manager.start(ManagedService::LandscapeRouter)?;
         super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
+        super::operation_control::phase(crate::daemon_operations::Stage::Verifying)?;
         operation_progress(OperationPhase::Verifying, Some((4, 4)));
         let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
@@ -193,6 +204,8 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         crate::network::takeover::write_pending_state(root, takeover, &new_state)?;
         crate::network::takeover::arm_recovery(root, takeover, runtime)?;
         super::transaction::mark_phase(root, &transaction, Phase::AwaitingNetworkConfirmation)?;
+        #[cfg(feature = "test-support")]
+        super::operation_control::checkpoint("reinit-awaiting")?;
         Ok(())
     }
     .await;
@@ -228,10 +241,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
             if !activated {
                 let mut systemd_restored = true;
                 if let Some(before) = &transaction.systemd_before {
-                    let unit_origin = root
-                        .canonical
-                        .join("service")
-                        .join(manager.service_name(ManagedService::LandscapeRouter));
+                    let unit_origin = root.canonical.join("service/landscape-router.service");
                     let restore_error = manager
                         .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
                         .and_then(|()| {
@@ -253,13 +263,13 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
                         );
                     }
                 }
-                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
                 if !systemd_restored {
                     return Ok(ReinitOutcome::RollbackFailed {
                         version,
                         reason: error.to_string(),
                     });
                 }
+                super::transaction::mark_phase(root, &transaction, Phase::Failed)?;
             }
             Err(error)
         }
@@ -268,8 +278,8 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
 
 /// 交互模式确认破坏性计划:清空范围、保护备份、网络确认窗口与断线风险;
 /// 非交互模式必须显式 `--yes`。
-fn confirm_reinit<P: DocsProbe>(
-    options: &ReinitOptions<'_, P>,
+pub(crate) fn confirm_reinit(
+    confirm: &dyn Fn(&str) -> Result<bool, InstallError>,
     args: &ReinitArgs,
     state: &InstallState,
     network: &NetworkPlan,
@@ -291,7 +301,7 @@ fn confirm_reinit<P: DocsProbe>(
     } else {
         lan.join(", ")
     };
-    let accepted = (options.confirm)(&crate::tr!(
+    let accepted = (confirm)(&crate::tr!(
         crate::keys::REINIT_CONFIRM_PLAN,
         version = state.active_version,
         wan = network.wan(),
@@ -303,15 +313,14 @@ fn confirm_reinit<P: DocsProbe>(
         ));
     }
     if !args.allow_no_backup {
-        let accepted =
-            (options.confirm)(&crate::tr!(crate::keys::REINIT_CONFIRM_PROTECTION_BACKUP))?;
+        let accepted = (confirm)(&crate::tr!(crate::keys::REINIT_CONFIRM_PROTECTION_BACKUP))?;
         if !accepted {
             return Err(InstallError::UserRefused(
                 "user refused the reinit protection backup".into(),
             ));
         }
     }
-    let accepted = (options.confirm)(&crate::tr!(crate::keys::REINIT_CONFIRM_NETWORK_WINDOW))?;
+    let accepted = (confirm)(&crate::tr!(crate::keys::REINIT_CONFIRM_NETWORK_WINDOW))?;
     if !accepted {
         return Err(InstallError::UserRefused(
             "user refused the reinit network confirmation window".into(),
@@ -434,6 +443,12 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
+    let snapshot = rollback::read_state_snapshot(root, &transaction.transaction_id)?;
+    if transaction.schema_version == 11 && snapshot.service.manager != manager.kind() {
+        return Err(InstallError::Preflight(
+            "reinit recovery backend mismatch".into(),
+        ));
+    }
     let before = transaction.systemd_before.as_ref().ok_or_else(|| {
         InstallError::CorruptedTransaction("reinit is missing original service state".into())
     })?;
@@ -498,7 +513,6 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
             "restored service must remain stopped".into(),
         ));
     }
-    let snapshot = rollback::read_state_snapshot(root, &transaction.transaction_id)?;
     let mut restored = snapshot.clone();
     restored.service.enabled = before.enabled;
     restored.last_transaction_id = Some(transaction.transaction_id.clone());

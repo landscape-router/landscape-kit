@@ -291,7 +291,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-以下清单列出保留 worker 协议的入口；repair、switch、update、restore、uninstall 和 network confirm/rollback 的结构化操作协议单独定义：
+以下清单列出保留 worker 协议的入口；repair、switch、update、restore、uninstall、reinit 和 network confirm/rollback 的结构化操作协议单独定义：
 
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
@@ -300,13 +300,13 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 |  | `set-mirror` |
 |  | `software` |
 |  | `backup` |
-| `reinit` | `self` |
+|  | `self` |
 |  | `daemon` |
 |  | `network status` |
 |  | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
 
-`network confirm/rollback`、`restore`、`uninstall`、`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+`reinit`、`network confirm/rollback`、`restore`、`uninstall`、`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
 由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
 `operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
@@ -477,3 +477,10 @@ state 的后端执行，恢复时必须与原后端匹配。
 state 快照与服务状态；恢复必须匹配原服务后端。进入 stopping 后按同一事务前向完成，
 删除安装状态后仍可从未完成事务发现根。正常提交与重启恢复均保留本次 committed 事务
 和日志，操作以此补写成功回执；历史清理不得删除这一提交依据。
+
+### 原生 reinit 事务（Schema v11）
+
+事务固定当前版本，在创建前关联结构化操作，并在修改服务和数据前保存原安装状态。
+凭据只用于生成新初始化配置，恢复不重新读取输入文件。网络恢复依据完整时，进入
+确认窗口前的中断回滚原数据；待确认阶段保留原期限，接受确认后继续提交。
+恢复使用原安装记录的服务后端，后端不匹配时保留现场并拒绝修改。

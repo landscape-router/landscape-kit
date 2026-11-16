@@ -485,7 +485,10 @@ pub(crate) async fn rollback(
     Ok(())
 }
 
-fn verify_interfaces(plan: &NetworkPlan, runtime: &InstallRuntime) -> Result<(), InstallError> {
+pub(crate) fn verify_interfaces(
+    plan: &NetworkPlan,
+    runtime: &InstallRuntime,
+) -> Result<(), InstallError> {
     let (interfaces, _) = super::discovery::discover(&runtime.sys_class_net, &runtime.ip_command)?;
     for selected in &plan.selected_macs {
         let current = interfaces

@@ -63,7 +63,8 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         // migrate 不整体委托:前台先执行前置检查,再内部委托切换阶段。
         Commands::Migrate(_) => false,
         Commands::Network(_) => false,
-        Commands::Install(_) | Commands::Reinit(_) => true,
+        Commands::Install(_) => true,
+        Commands::Reinit(_) => false,
     }
 }
 
@@ -392,14 +393,13 @@ mod tests {
 
     #[test]
     fn delegates_state_changing_commands() {
-        for args in [&["install", "--version", "1.2.3"][..], &["reinit"][..]] {
-            assert!(delegates_for(args), "expected delegation for {args:?}");
-        }
+        assert!(delegates_for(&["install", "--version", "1.2.3"]));
     }
 
     #[test]
     fn does_not_delegate_read_only_commands() {
         for args in [
+            &["reinit"][..],
             &["restore", "--backup", "x"][..],
             &["uninstall", "--yes"][..],
             &["update"][..],

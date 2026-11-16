@@ -49,6 +49,9 @@ impl OperationScreen for ReinitScreen {
         ])
         .areas(frame.area());
         let header_text = match result {
+            Some(OperationResult::Success) if takeover_pending => {
+                crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)
+            }
             Some(OperationResult::Success) => crate::tr!(crate::keys::PRESENTATION_REINIT_COMPLETE),
             Some(OperationResult::Failed) => crate::tr!(crate::keys::PRESENTATION_REINIT_FAILED),
             Some(OperationResult::Cancelled) => {
@@ -104,6 +107,9 @@ impl OperationScreen for ReinitScreen {
             );
         } else {
             let status = match result {
+                Some(OperationResult::Success) if takeover_pending => {
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
+                }
                 Some(OperationResult::Success) => {
                     crate::tr!(crate::keys::PRESENTATION_OPERATION_FINISHED_SUCCESSFULLY)
                 }
@@ -163,7 +169,7 @@ impl OperationScreen for ReinitScreen {
         } else if phase == OperationPhase::Downloading {
             crate::tr!(crate::keys::PRESENTATION_CTRL_C_STOP_ESC_OPTIONS)
         } else {
-            crate::tr!(crate::keys::PRESENTATION_OPERATION_IN_PROGRESS_STOP_IGNORED)
+            crate::tr!(crate::keys::PRESENTATION_OBSERVE_OPERATION_HINT)
         };
         let footer_text = if notice.is_empty() {
             hint
@@ -210,6 +216,14 @@ mod tests {
         step_progress: Option<(u8, u8)>,
         result: Option<OperationResult>,
     ) -> String {
+        render_pending(phase, step_progress, result, false)
+    }
+    fn render_pending(
+        phase: OperationPhase,
+        step_progress: Option<(u8, u8)>,
+        result: Option<OperationResult>,
+        pending: bool,
+    ) -> String {
         let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
         terminal
             .draw(|frame| {
@@ -222,7 +236,7 @@ mod tests {
                     "",
                     false,
                     result,
-                    false,
+                    pending,
                 )
             })
             .unwrap();
@@ -233,6 +247,19 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn pending_reinit_is_not_presented_as_committed() {
+        let content = render_pending(
+            OperationPhase::Verifying,
+            None,
+            Some(OperationResult::Success),
+            true,
+        );
+        assert!(content.contains("Network takeover awaiting confirmation"));
+        assert!(!content.contains("Reinit complete"));
+        assert!(!content.contains("The operation finished successfully"));
     }
 
     #[test]
@@ -255,7 +282,7 @@ mod tests {
         let content = render(OperationPhase::Verifying, None, None);
         assert!(content.contains("Reinitializing Landscape"));
         assert!(
-            content.contains("The operation is in progress; stop requests are ignored"),
+            content.contains("stop watching"),
             "the reinit page hint must not reuse the installation wording"
         );
         assert!(!content.contains("Installation is in progress"));

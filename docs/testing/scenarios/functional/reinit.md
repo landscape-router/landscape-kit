@@ -106,5 +106,17 @@
 - 状态：`已覆盖`
 - 证据：[控制台测试](../../../../lkit-cli/src/console/tests/reinit.rs)
 - 说明：覆盖面板可用性门禁、向导完成进入凭据步骤、凭据编辑与确认层、结构化
-  `Reinit` 请求构建（`--console-confirmed`、`--yes`、密码与网络计划经委托通道传递）、
+  `Reinit` 请求构建（`--console-confirmed`、`--yes`、确认时安装身份、密码与网络计划经结构化操作传递）、
   Esc 取消。
+
+## REI-11
+
+**原生 reinit 的凭据交接、激活中断与等待网络确认**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[操作测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[reinit fixture](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)、[reinit 契约](../../../commands/reinit.md)
+- 说明：密码不进入操作 JSON，独立文件权限为 `0600`，读取后、排队取消和认领中断时
+  删除；操作等待确认时阻挡普通请求但允许绑定事务的确认。CI 在替换数据后和进入确认
+  窗口后分别断开观察者并强杀 daemon，验证原数据回滚、确认期限不变和原操作结果更新。
+- 缺口：原生链路的真实 TUI 端到端及 OpenRC／SysVinit 故障注入尚未单独覆盖。

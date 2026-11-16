@@ -1,7 +1,9 @@
 //! Durable, typed operations executed by the daemon without an lkit child.
+pub(crate) mod reinit;
 use crate::deployment::{
     layout, lock, plan::InstallError, runtime::InstallRuntime, state, transaction,
 };
+pub(crate) use reinit::{ReinitRequest, submit_reinit_and_wait};
 use serde::{Deserialize, Serialize};
 use std::os::{
     fd::AsRawFd,
@@ -19,6 +21,7 @@ pub(crate) enum Status {
     Queued,
     Running,
     Recovering,
+    AwaitingConfirmation,
     Succeeded,
     Failed,
     Interrupted,
@@ -46,6 +49,7 @@ pub(crate) enum Kind {
     Uninstall,
     NetworkConfirm,
     NetworkRollback,
+    Reinit,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +128,8 @@ pub(crate) struct Record {
     #[serde(default)]
     pub network_transaction: Option<String>,
     #[serde(default)]
+    pub reinit: Option<ReinitRequest>,
+    #[serde(default)]
     pub resolved_version: Option<String>,
     #[serde(default)]
     pub stage: Stage,
@@ -196,7 +202,7 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=6).contains(&record.schema_version) || record.id != id {
+    if !(1..=7).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
@@ -204,6 +210,13 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     }
     if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
+    }
+    if record.kind == Kind::Reinit {
+        reinit::validate_record(&record)?;
+        return Ok(record);
+    }
+    if record.reinit.is_some() {
+        return Err(error("unexpected reinit payload"));
     }
     if is_network(record.kind) {
         if record.schema_version != 6
@@ -393,6 +406,7 @@ fn submit_operation(
         restore: None,
         uninstall: None,
         network_transaction: None,
+        reinit: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -412,6 +426,7 @@ pub(crate) fn cancel(id: &str) -> Result<Record, InstallError> {
     match record.status {
         Status::Cancelled => return Ok(record),
         Status::Queued => {
+            reinit::remove_input(&record)?;
             record.status = Status::Cancelled;
             record.stage = Stage::Finished;
             record.cancel_cleaned = true;
@@ -440,7 +455,10 @@ fn claim_kind(network: bool) -> Result<Option<Record>, InstallError> {
     let _guard = queue_lock()?;
     let records = list()?;
     if records.iter().any(|r| {
-        matches!(r.status, Status::Running | Status::Recovering) && (!network || is_network(r.kind))
+        matches!(
+            r.status,
+            Status::Running | Status::Recovering | Status::AwaitingConfirmation
+        ) && (!network || is_network(r.kind))
     }) {
         return Ok(None);
     }
@@ -459,6 +477,14 @@ fn claim_kind(network: bool) -> Result<Option<Record>, InstallError> {
 fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bool {
     record.install_root == tx.canonical_install_root
         && match record.kind {
+            Kind::Reinit => {
+                tx.operation == transaction::Operation::Reinit
+                    && tx.schema_version == 11
+                    && record
+                        .reinit
+                        .as_ref()
+                        .is_some_and(|args| tx.from_version.as_deref() == Some(&args.from_version))
+            }
             Kind::NetworkConfirm | Kind::NetworkRollback => {
                 record.network_transaction.as_deref() == Some(&tx.transaction_id)
                     && tx.network_takeover.is_some()
@@ -602,6 +628,7 @@ fn cleanup_cancel(
 
 /// Reconcile durable evidence, never replay the workflow after a crash.
 fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<(), InstallError> {
+    reinit::remove_input(record)?;
     let exit_code = record.exit_code;
     {
         let _guard = queue_lock()?;
@@ -624,6 +651,9 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
     let rolled_back = matches!(evidence, Ok(Some(Phase::RolledBack)));
     record.status = match evidence {
         Ok(_) if record.cancel_cleaned => Status::Cancelled,
+        Ok(Some(Phase::AwaitingNetworkConfirmation)) if record.kind == Kind::Reinit => {
+            Status::AwaitingConfirmation
+        }
         Ok(Some(Phase::AwaitingNetworkConfirmation)) if is_network(record.kind) => {
             if result.is_some() {
                 Status::Failed
@@ -664,7 +694,10 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
             Status::Succeeded => 0,
             Status::Cancelled => 130,
             _ if rolled_back => {
-                if matches!(record.kind, Kind::Binary | Kind::Switch | Kind::Restore) {
+                if matches!(
+                    record.kind,
+                    Kind::Binary | Kind::Switch | Kind::Restore | Kind::Reinit
+                ) {
                     5
                 } else {
                     1
@@ -685,18 +718,24 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
         Err(InstallError::LockBusy) => return Ok(false),
         Err(e) => return Err(e),
     };
+    reinit::cleanup_orphan_inputs()?;
     for mut record in list()? {
-        if matches!(record.status, Status::Running | Status::Recovering) {
+        if matches!(
+            record.status,
+            Status::Running | Status::Recovering | Status::AwaitingConfirmation
+        ) {
             reconcile(&mut record, None)?;
         }
     }
     if let Some(record) = claim_kind(true)? {
         return execute_record(record, |record| execute_network(runtime, record));
     }
-    if list()?
-        .iter()
-        .any(|r| matches!(r.status, Status::Running | Status::Recovering))
-    {
+    if list()?.iter().any(|r| {
+        matches!(
+            r.status,
+            Status::Running | Status::Recovering | Status::AwaitingConfirmation
+        )
+    }) {
         return Ok(true);
     }
     let Some(root) = state::discover_landscape_root()? else {
@@ -720,7 +759,9 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
             .enable_all()
             .build()
             .map_err(InstallError::Io)?;
-        let code = if record.kind == Kind::Uninstall {
+        let code = if record.kind == Kind::Reinit {
+            executor.block_on(crate::workflows::reinit::run_operation(runtime, record))?
+        } else if record.kind == Kind::Uninstall {
             executor.block_on(crate::workflows::uninstall::run_operation(runtime, record))?
         } else if record.kind == Kind::Restore {
             executor.block_on(crate::workflows::restore::run_operation(runtime, record))?
@@ -853,6 +894,7 @@ fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, Inst
         restore: None,
         uninstall: Some(args),
         network_transaction: None,
+        reinit: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -907,6 +949,7 @@ fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallE
         restore: Some(args),
         uninstall: None,
         network_transaction: None,
+        reinit: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -979,7 +1022,9 @@ async fn wait_for_result(
         "lkit: operation {} (query with `lkit operation status {}`)",
         record.id, record.id
     );
-    let command = if record.kind == Kind::Restore {
+    let command = if record.kind == Kind::Reinit {
+        "reinit"
+    } else if record.kind == Kind::Restore {
         "restore"
     } else {
         "update"
@@ -1033,24 +1078,39 @@ async fn wait_for_result(
             displayed = Some(progress);
         }
         if current.status.terminal()
+            || current.status == Status::AwaitingConfirmation
             || (current.status == Status::Recovering && current.exit_code == Some(6))
         {
-            let code = current
-                .exit_code
-                .unwrap_or(if current.status == Status::Succeeded {
+            let code = current.exit_code.unwrap_or(
+                if matches!(
+                    current.status,
+                    Status::Succeeded | Status::AwaitingConfirmation
+                ) {
                     0
                 } else {
                     1
-                });
+                },
+            );
             if let Some(screen) = &mut presentation {
                 screen.capture_log(&format!("Operation {}: {:?}", record.id, current.status));
-                screen.show_result(code, false);
+                screen.show_result(code, current.status == Status::AwaitingConfirmation);
                 while screen.is_full_screen() {
-                    if matches!(
-                        screen.poll_action().map_err(error)?,
-                        Some(PresentationAction::Close)
-                    ) {
-                        break;
+                    match screen.poll_action().map_err(error)? {
+                        Some(PresentationAction::Close) => break,
+                        Some(PresentationAction::ConfirmTakeover) => {
+                            screen.finish();
+                            let tx = current
+                                .transaction_id
+                                .clone()
+                                .ok_or_else(|| error("missing network transaction"))?;
+                            return Box::pin(submit_network_and_wait(
+                                current.install_root.clone(),
+                                Kind::NetworkConfirm,
+                                tx,
+                            ))
+                            .await;
+                        }
+                        _ => {}
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
@@ -1110,6 +1170,7 @@ fn submit_network(
         restore: None,
         uninstall: None,
         network_transaction: Some(transaction_id),
+        reinit: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,

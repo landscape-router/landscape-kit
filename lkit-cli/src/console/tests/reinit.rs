@@ -16,6 +16,11 @@ fn reinit_ready_app() -> ConsoleApp {
     app.menu_index = 6;
     app.focus = Focus::Panel;
     app.snapshot = installed_snapshot();
+    app.reinit.confirmation = Some(crate::commands::reinit::ReinitConfirmation {
+        root: "/fixture/landscape".into(),
+        from_version: "1.2.3".into(),
+        state_identity: "a".repeat(64),
+    });
     app
 }
 
@@ -175,6 +180,10 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
     let Commands::Reinit(reinit) = command else {
         panic!("expected reinit request");
     };
+    assert_eq!(
+        reinit.confirmed.as_ref().unwrap().state_identity,
+        "a".repeat(64)
+    );
     assert!(reinit.console_confirmed);
     assert!(reinit.yes);
     assert!(reinit.network_plan.is_some());
