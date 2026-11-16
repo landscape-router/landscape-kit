@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::plan::InstallError;
 
 const TTY_PATH: &str = "/dev/tty";
-pub(crate) const DAEMON_WORKER_TTY_ENV: &str = "LKIT_INTERNAL_DAEMON_TTY";
+#[cfg(feature = "test-support")]
+const TEST_TTY_ENV: &str = "LKIT_TEST_TTY";
 static NON_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
@@ -30,23 +31,24 @@ pub(crate) fn is_non_interactive() -> bool {
 }
 
 /// 所有交互输入输出只通过终端设备,不读取 stdin,避免消费管道数据。
-/// 通常使用 `/dev/tty`; daemon worker 通过 `LKIT_INTERNAL_DAEMON_TTY` 直接
-/// 打开前端传入的原终端设备,避免争用 controlling terminal。
+/// 生产环境使用 `/dev/tty`，隔离测试可注入测试终端。
 pub(crate) struct Tty {
     file: File,
 }
 
 impl Tty {
     pub(crate) fn open() -> Result<Self, InstallError> {
-        if is_non_interactive() {
+        if is_non_interactive() || crate::workflows::operation_control::active() {
             return Err(InstallError::NonInteractive(
                 "interactive terminal access is disabled by --non-interactive".into(),
             ));
         }
-        let path = std::env::var_os(DAEMON_WORKER_TTY_ENV)
-            .filter(|path| !path.is_empty())
+        let path = PathBuf::from(TTY_PATH);
+        #[cfg(feature = "test-support")]
+        let path = std::env::var_os(TEST_TTY_ENV)
+            .filter(|p| !p.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(TTY_PATH));
+            .unwrap_or(path);
         let file = File::options()
             .read(true)
             .write(true)
@@ -221,9 +223,10 @@ impl Tty {
     }
 
     fn write_prompt(&mut self, prompt: &str) -> Result<(), InstallError> {
-        // Delegated commands share stderr with preflight messages so the
-        // frontend observes warnings and prompts in their original order.
-        let result = if std::env::var_os(DAEMON_WORKER_TTY_ENV).is_some() {
+        let test_tty = false;
+        #[cfg(feature = "test-support")]
+        let test_tty = test_tty || std::env::var_os(TEST_TTY_ENV).is_some();
+        let result = if test_tty {
             let mut stderr = std::io::stderr().lock();
             stderr
                 .write_all(prompt.as_bytes())
@@ -287,6 +290,12 @@ pub(crate) fn read_password(prompt: &str) -> Result<String, InstallError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn durable_workflows_cannot_open_a_terminal() {
+        let _operation = crate::workflows::operation_control::enter("test-no-terminal");
+        assert!(super::Tty::open().is_err());
+    }
+
     use std::io::{Read, Write};
 
     use super::*;

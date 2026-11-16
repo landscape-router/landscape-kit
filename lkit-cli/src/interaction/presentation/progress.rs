@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -10,14 +9,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, Paragraph};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 
-use super::events::{DownloadState, DownloadStatus, PresentationEvent, event_file, write_event};
+use super::model::{DownloadState, DownloadStatus};
 
 const PROGRESS_REFRESH: Duration = Duration::from_millis(100);
 const PROGRESS_HEIGHT: u16 = 2;
 static NEXT_PROGRESS_ID: AtomicU64 = AtomicU64::new(1);
 
 enum ProgressOutput {
-    Events(File),
     Interactive(InteractiveDownload),
     Hidden,
 }
@@ -40,16 +38,17 @@ impl DownloadProgress {
             elapsed_millis: 0,
             status: DownloadStatus::Downloading,
         };
-        let output = event_file()
-            .map(ProgressOutput::Events)
-            .or_else(|| {
-                (std::io::stderr().is_terminal()
-                    && !crate::interaction::interactive::is_non_interactive())
-                .then(|| InteractiveDownload::new().ok())
-                .flatten()
+        let output = if !crate::workflows::operation_control::active()
+            && std::io::stderr().is_terminal()
+            && !crate::interaction::interactive::is_non_interactive()
+        {
+            InteractiveDownload::new()
+                .ok()
                 .map(ProgressOutput::Interactive)
-            })
-            .unwrap_or(ProgressOutput::Hidden);
+                .unwrap_or(ProgressOutput::Hidden)
+        } else {
+            ProgressOutput::Hidden
+        };
         let mut progress = Self {
             state,
             output,
@@ -92,12 +91,6 @@ impl DownloadProgress {
         self.state.elapsed_millis = now.duration_since(self.started).as_millis() as u64;
         crate::workflows::operation_control::progress(self.state.position, self.state.total);
         match &mut self.output {
-            ProgressOutput::Events(file) => write_event(
-                file,
-                &PresentationEvent::Download {
-                    state: self.state.clone(),
-                },
-            ),
             ProgressOutput::Interactive(renderer) => {
                 let _ = renderer.render(&self.state);
             }
@@ -185,7 +178,8 @@ impl StepProgress {
             position: 0,
             status: StepStatus::Running,
         };
-        let output = (std::io::stderr().is_terminal()
+        let output = (!crate::workflows::operation_control::active()
+            && std::io::stderr().is_terminal()
             && !crate::interaction::interactive::is_non_interactive())
         .then(|| InteractiveDownload::new().ok())
         .flatten()

@@ -127,11 +127,9 @@ daemon 的 init 入口为 `lkit daemon --supervise`，三个后端使用相同�
 
 ### 命令会话隔离
 
-生产模式下，需要改变 systemd 或 Landscape 运行态的完整 lkit 命令委托给全局常驻
-daemon（`lkit daemon`）执行。调用进程只负责写入请求文件、转发日志并等待结果；
-SSH 会话断开不会向 daemon 的子进程组传播退出。子进程不取得前端 controlling
-terminal；需要确认时，worker 子进程直接打开原终端设备。具体文件、结果语义、清理
-与重启边界见[事务与中断恢复](../deployment/transactions-and-recovery.md#委托执行daemon-托管)。
+业务修改由常驻 daemon 领取结构化请求后直接执行。CLI/TUI 在提交前完成确认，
+提交后读取持久化操作记录；前端断线只停止观察。daemon 不启动 lkit worker，不打开
+前端终端。生命周期、查询及恢复规则见[事务与中断恢复](../deployment/transactions-and-recovery.md#daemon-原生执行)。
 
 ### unit 路径与内容
 

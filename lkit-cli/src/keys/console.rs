@@ -129,8 +129,6 @@ pub(crate) const CONSOLE_START_PLAIN_INSTALLATION_BUTTON: &str =
 pub(crate) const CONSOLE_START_PLAIN_INSTALLATION_HELP: &str =
     "console.start_plain_installation_help";
 pub(crate) const CONSOLE_DAEMON_NOT_RUNNING_NOTICE: &str = "console.daemon_not_running_notice";
-pub(crate) const CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE: &str =
-    "console.daemon_spawn_unavailable_notice";
 pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_RUNNING: &str =
     "console.overview_lkit_daemon_running";
 pub(crate) const CONSOLE_OVERVIEW_LKIT_DAEMON_NOT_RUNNING: &str =

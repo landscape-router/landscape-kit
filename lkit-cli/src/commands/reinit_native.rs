@@ -28,7 +28,7 @@ pub(super) async fn run(args: &Reinit) -> ExitCode {
     }
 }
 async fn submit(args: &Reinit) -> Result<u8, plan::InstallError> {
-    if args.network_plan_file.is_some() || (args.console_confirmed && args.confirmed.is_none()) {
+    if args.console_confirmed && args.confirmed.is_none() {
         return Err(plan::InstallError::ParameterUsage(
             "reinit requires a bound console confirmation; internal plan files are unsupported"
                 .into(),
@@ -110,7 +110,6 @@ mod tests {
             yes: true,
             console_confirmed: true,
             network_plan: None,
-            network_plan_file: None,
             confirmed: None,
             #[cfg(feature = "test-support")]
             test_runtime: None,

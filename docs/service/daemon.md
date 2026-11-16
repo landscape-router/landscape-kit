@@ -7,9 +7,13 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 业务操作的记录与业务事务分别管理：操作记录回答“用户的请求执行到哪里”，事务记录
 回答“安装现场如何安全提交或恢复”。daemon 存活不等于某个操作已经成功。
 
-`uninstall`、`restore`、`switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
-`update` 在前端解析和确认后提交同一 `switch` 操作。其他委托修改命令通过 worker 执行，两条入口共用串行调度和安装锁。外部服务管理
-工具是独立进程。`self install/upgrade/remove` 直接执行。
+`install`、`reinit`、`migrate`、`uninstall`、`restore`、`switch`、网络确认／手工回滚和
+三类 `repair` 由 daemon 直接调用工作流。`update` 在前端解析和确认后提交 `switch`。
+操作共用串行调度和安装锁，业务执行不启动另一个 lkit 进程。外部服务管理工具是
+独立进程；`self install/upgrade/remove` 直接执行。
+
+前端通过存活 PID 与对应能力标记判断 daemon 是否可接收操作，不要求 daemon 的
+可执行文件路径仍可用于启动子进程。请求不传递终端、原始参数、工作目录或会话环境。
 
 ## 操作状态
 
@@ -32,8 +36,8 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 
 操作记录位于 lkit 地盘 `run/operations/`，目录权限 `0700`、记录权限 `0600`，原子
 写入并同步到磁盘，可以跨主机启动保留。记录只包含受支持的操作类型、安装根、状态、事务关联和结果说明，
-repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4，uninstall 写入 v5，网络确认／手工回滚写入 v6；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
-`repair_static`、`repair_binary`、`switch`、`restore`、`uninstall`、`network_confirm`、`network_rollback`，请求载荷按类型校验；未知类型、字段或不支持的
+repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4，uninstall 写入 v5，网络确认／手工回滚写入 v6，reinit 写入 v7，install 写入 v8，migrate 写入 v9；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
+`repair_static`、`repair_binary`、`switch`、`restore`、`uninstall`、`network_confirm`、`network_rollback`、`reinit`、`install`、`migrate`，请求载荷按类型校验；未知类型、字段或不支持的
 协议版本在入队前拒绝。操作类型与业务事务中的 `operation` 不必同名：
 static／binary 对应 `repair` 事务，并分别校验 `static_backup`／`.lkb` 等恢复依据。
 

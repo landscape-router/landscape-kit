@@ -135,7 +135,6 @@ impl ConsoleApp {
                 #[cfg(feature = "test-support")]
                 test_runtime: None,
             }),
-            args: vec!["network".into(), "confirm".into()],
         }
     }
 

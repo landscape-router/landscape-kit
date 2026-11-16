@@ -1079,7 +1079,7 @@ async fn wait_for_result(
     full_screen: bool,
 ) -> Result<u8, InstallError> {
     use crate::interaction::presentation::{
-        PresentationAction, WorkerPresentation, operation_screen,
+        OperationPresentation, PresentationAction, operation_screen,
     };
     eprintln!(
         "lkit: operation {} (query with `lkit operation status {}`)",
@@ -1095,7 +1095,7 @@ async fn wait_for_result(
         "update"
     };
     let mut presentation = full_screen
-        .then(|| WorkerPresentation::new(true, operation_screen(&[command.into()])))
+        .then(|| OperationPresentation::new(true, operation_screen(command)))
         .filter(|screen| screen.is_full_screen());
     if let Some(screen) = &mut presentation {
         screen.capture_log(&format!("Operation {}", record.id));

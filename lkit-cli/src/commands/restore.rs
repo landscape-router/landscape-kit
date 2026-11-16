@@ -61,11 +61,7 @@ pub(crate) fn confirmed_backup(
     })
 }
 
-pub async fn run(args: &Restore, internal_worker: bool) -> ExitCode {
-    if internal_worker {
-        eprintln!("restore: requires the native daemon protocol");
-        return ExitCode::FAILURE;
-    }
+pub async fn run(args: &Restore) -> ExitCode {
     if args.console_confirmed && args.confirmed.is_none() {
         eprintln!("restore: missing restore confirmation context");
         return ExitCode::from(2);
@@ -320,25 +316,4 @@ fn resolve_runtime(args: &Restore) -> Result<InstallRuntime, plan::InstallError>
 #[cfg(not(feature = "test-support"))]
 fn resolve_runtime(_args: &Restore) -> Result<InstallRuntime, plan::InstallError> {
     Ok(InstallRuntime::production())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn stale_worker_cannot_execute_restore() {
-        let mut args = Restore {
-            backup: None,
-            file: None,
-            allow_no_backup: false,
-            yes: false,
-            console_confirmed: false,
-            confirmed: None,
-            #[cfg(feature = "test-support")]
-            test_runtime: None,
-        };
-        assert_eq!(run(&args, true).await, ExitCode::FAILURE);
-        args.console_confirmed = true;
-        assert_eq!(run(&args, false).await, ExitCode::from(2));
-    }
 }

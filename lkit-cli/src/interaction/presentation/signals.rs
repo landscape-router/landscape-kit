@@ -4,12 +4,8 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 
-use super::screens::{InstallScreen, OperationResult};
-use super::worker::WorkerPresentation;
-
 const SIGINT_MODE_NONE: u8 = 0;
 const SIGINT_MODE_DIRECT: u8 = 1;
-const SIGINT_MODE_DELEGATED: u8 = 2;
 const SIGINT_MODE_CONSOLE: u8 = 3;
 const TERMINAL_RESTORE: &[u8] = b"\x1b[0m\x1b[?25h\r\n";
 const CONSOLE_RESTORE: &[u8] = b"\x1b[0m\x1b[?25h\x1b[2J\x1b[H\x1b[?1049l\r\n";
@@ -36,13 +32,8 @@ pub(crate) struct InterruptGuard {
 }
 
 impl InterruptGuard {
-    pub(crate) fn install(delegated: bool) -> Result<Self, String> {
-        let mode = if delegated {
-            SIGINT_MODE_DELEGATED
-        } else {
-            SIGINT_MODE_DIRECT
-        };
-        Self::install_mode(mode)
+    pub(crate) fn install() -> Result<Self, String> {
+        Self::install_mode(SIGINT_MODE_DIRECT)
     }
 
     pub(crate) fn install_console() -> Result<Self, String> {
@@ -83,10 +74,6 @@ impl InterruptGuard {
 
     pub(crate) fn requested(&self) -> bool {
         SIGINT_RECEIVED.load(Ordering::SeqCst)
-    }
-
-    pub(crate) fn clear_request(&self) {
-        SIGINT_RECEIVED.store(false, Ordering::SeqCst);
     }
 }
 
@@ -162,13 +149,4 @@ extern "C" fn handle_sigint(_signal: libc::c_int) {
             libc::_exit(130);
         }
     }
-}
-
-pub(crate) fn show_cancelled_screen(interrupt: &InterruptGuard) -> Result<(), String> {
-    let mut presentation = WorkerPresentation::new(true, Box::new(InstallScreen));
-    presentation.result = Some(OperationResult::Cancelled);
-    presentation.render_screen();
-    presentation.wait_for_close(interrupt)?;
-    presentation.finish();
-    Ok(())
 }

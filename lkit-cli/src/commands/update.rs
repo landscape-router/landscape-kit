@@ -35,11 +35,7 @@ pub struct Update {
 
 /// 交互式版本更新:选择读取渠道、解析目标版本、确认后委托 switch 流水线执行。
 /// 确认发生在创建事务和备份之前,拒绝时零副作用。
-pub async fn run(args: &Update, internal_worker: bool) -> ExitCode {
-    if internal_worker {
-        eprintln!("lkit: update requires frontend confirmation and the daemon operation protocol");
-        return ExitCode::FAILURE;
-    }
+pub async fn run(args: &Update) -> ExitCode {
     let result = if args.console_confirmed {
         match args.confirmed.as_ref() {
             Some(resolved) => execute_confirmed(args, resolved).await,
@@ -346,10 +342,9 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn stale_worker_and_bare_confirmation_flag_fail_without_io() {
-        assert_eq!(run(&args(), true).await, ExitCode::FAILURE);
+    async fn bare_confirmation_flag_fails_without_io() {
         let mut args = args();
         args.console_confirmed = true;
-        assert_eq!(run(&args, false).await, ExitCode::from(2));
+        assert_eq!(run(&args).await, ExitCode::from(2));
     }
 }

@@ -127,13 +127,8 @@ async fn first_install_impl<P: DocsProbe>(
     }
     super::transaction::begin(root, &transaction)?;
     let result: Result<(Release, bool), InstallError> = async {
-        crate::interaction::presentation::operation_phase(
-            crate::interaction::presentation::OperationPhase::Downloading,
-        );
         let built = build_release(root, &release).await?;
-        crate::interaction::presentation::operation_phase(
-            crate::interaction::presentation::OperationPhase::Applying,
-        );
+
         let init_config = build_init_config(root, &release.version, credentials, network)?;
         write_init_config(root, &init_config)?;
         let before = capture_before(manager, ManagedService::LandscapeRouter)?;

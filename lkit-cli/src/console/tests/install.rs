@@ -24,15 +24,12 @@ fn unknown_backend_offers_plain_installation_without_a_takeover_plan() {
         form.install_dir = root.join("landscape").display().to_string();
         let ConsoleAction::Command {
             command: Commands::Install(request),
-            args,
         } = form.command().unwrap()
         else {
             panic!("expected an ordinary install request");
         };
         assert!(!request.takeover_network);
         assert!(request.network_plan.is_none());
-        assert!(request.network_plan_file.is_none());
-        assert!(!args.iter().any(|arg| arg == "--takeover-network"));
         std::fs::remove_dir_all(root).unwrap();
     }
     assert!(InstallForm::for_backend(Some(ServiceManagerKind::Systemd)).takeover_network);
@@ -349,7 +346,7 @@ fn install_form_builds_cli_and_domain_request() {
         checks_selected: false,
         editing: false,
     };
-    let ConsoleAction::Command { command, args } = form.command().unwrap() else {
+    let ConsoleAction::Command { command } = form.command().unwrap() else {
         panic!("expected install command");
     };
     let Commands::Install(install) = command else {
@@ -363,9 +360,6 @@ fn install_form_builds_cli_and_domain_request() {
     assert!(!format!("{install:?}").contains("Secret123"));
     assert_eq!(install.interactive_password.as_deref(), Some("Secret123"));
     assert!(install.password_file.is_none());
-    assert_eq!(args[0], "install");
-    assert!(args.windows(2).any(|pair| pair == ["--version", "1.2.3"]));
-    assert!(args.iter().all(|argument| !argument.contains("Secret123")));
 }
 
 #[test]
@@ -377,62 +371,42 @@ fn install_form_defaults_to_network_takeover() {
         ..InstallForm::default()
     };
     assert!(form.takeover_network);
-    let ConsoleAction::Command { command, args } = form.command().unwrap() else {
+    let ConsoleAction::Command { command } = form.command().unwrap() else {
         panic!("expected install command");
     };
     let Commands::Install(install) = command else {
         panic!("expected install request");
     };
     assert!(install.takeover_network);
-    assert!(args.iter().any(|argument| argument == "--takeover-network"));
 }
 
 #[test]
-fn install_form_maps_repository_modes_to_cli_flags() {
+fn install_form_maps_repository_modes_to_typed_parameters() {
     let _daemon = DaemonTerritory::new("install-repositories", true);
     let base = InstallForm {
         password: "Secret123".into(),
         password_confirmation: "Secret123".into(),
         ..InstallForm::default()
     };
-    for (mode, repository, expected) in [
-        (RepositoryMode::Default, None, Vec::<&str>::new()),
+    for (mode, repository) in [
+        (RepositoryMode::Default, None),
+        (RepositoryMode::Github, Some(Some("github".into()))),
+        (RepositoryMode::Mirror, Some(None)),
         (
-            RepositoryMode::Github,
-            Some(Some("github".into())),
-            vec!["--repository", "github"],
+            RepositoryMode::Custom,
+            Some(Some("https://example.invalid/".into())),
         ),
-        (RepositoryMode::Mirror, Some(None), vec!["--repository"]),
     ] {
         let mut form = base.clone();
         form.repository = mode;
-        let ConsoleAction::Command { command, args } = form.command().unwrap() else {
-            panic!("expected install command");
-        };
-        let Commands::Install(install) = command else {
+        form.repository_url = "https://example.invalid/".into();
+        let ConsoleAction::Command {
+            command: Commands::Install(install),
+        } = form.command().unwrap()
+        else {
             panic!("expected install request");
         };
         assert_eq!(install.repository, repository);
-        for pair in expected.chunks(2) {
-            if pair.len() == 1 {
-                assert!(
-                    args.iter().any(|argument| argument == pair[0]),
-                    "{mode:?} must forward {:?}, got {args:?}",
-                    pair[0]
-                );
-            } else {
-                assert!(
-                    args.windows(2).any(|window| window == pair),
-                    "{mode:?} must forward {pair:?}, got {args:?}"
-                );
-            }
-        }
-        if expected.is_empty() {
-            assert!(
-                !args.iter().any(|argument| argument == "--repository"),
-                "{mode:?} must not forward --repository, got {args:?}"
-            );
-        }
     }
 }
 
@@ -582,14 +556,11 @@ fn explicitly_plain_install_dispatches_without_opening_network_wizard() {
         assert!(app.network_wizard.is_none());
         let ConsoleAction::Command {
             command: Commands::Install(request),
-            args,
         } = action
         else {
             panic!("expected install command");
         };
         assert!(!request.takeover_network);
         assert!(request.network_plan.is_none());
-        assert!(request.network_plan_file.is_none());
-        assert!(!args.iter().any(|arg| arg == "--takeover-network"));
     }
 }

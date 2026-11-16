@@ -5,12 +5,6 @@ async fn submit(args: &Migrate) -> Result<u8, plan::InstallError> {
             "migration requires an uninstalled Landscape".into(),
         ));
     }
-    if args.resume_transaction.is_some() || args.console_confirmed {
-        return Err(plan::InstallError::ParameterUsage(
-            "migration requires a freshly confirmed source; internal resume flags are unsupported"
-                .into(),
-        ));
-    }
     let runtime = resolve_runtime(args)?;
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(plan::InstallError::UnsupportedPlatform(
@@ -33,7 +27,6 @@ async fn submit(args: &Migrate) -> Result<u8, plan::InstallError> {
         yes: args.yes,
         console_confirmed: false,
         repository: super::super::manage::repository_override(&args.repository),
-        resume_transaction: None,
     };
     let request = crate::workflows::migrate::native::inspect(&runtime, &workflow).await?;
     crate::workflows::migrate::native::validate_root(&root, &request.source.source)?;

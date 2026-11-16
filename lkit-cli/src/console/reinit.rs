@@ -238,18 +238,10 @@ impl ConsoleApp {
             console_confirmed: true,
             network_plan: self.reinit.plan.clone(),
             confirmed: self.reinit.confirmation.clone(),
-            network_plan_file: None,
             #[cfg(feature = "test-support")]
             test_runtime: super::test_runtime_path(),
         });
-        let args = vec![
-            "reinit".into(),
-            "--yes".into(),
-            "--console-confirmed".into(),
-            "--admin-user".into(),
-            self.reinit.admin_user.clone(),
-        ];
-        ConsoleAction::Command { command, args }
+        ConsoleAction::Command { command }
     }
 }
 

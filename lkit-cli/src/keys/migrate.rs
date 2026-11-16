@@ -14,7 +14,6 @@ pub(crate) const MIGRATE_CHECKING_EXPORT_API: &str = "migrate.checking_export_ap
 pub(crate) const MIGRATE_EXPORT_API_SUPPORTED: &str = "migrate.export_api_supported";
 pub(crate) const MIGRATE_CREATING_BACKUP: &str = "migrate.creating_backup";
 pub(crate) const MIGRATE_BACKUP_CREATED: &str = "migrate.backup_created";
-pub(crate) const MIGRATE_HANDING_OVER: &str = "migrate.handing_over";
 pub(crate) const MIGRATE_INTERRUPTED_BEFORE_SWITCH: &str = "migrate.interrupted_before_switch";
 pub(crate) const MIGRATE_STOPPING_OLD_INSTANCE: &str = "migrate.stopping_old_instance";
 pub(crate) const MIGRATE_REBUILDING_INSTALLATION: &str = "migrate.rebuilding_installation";
@@ -22,7 +21,6 @@ pub(crate) const MIGRATE_STARTING_MANAGED_SERVICE: &str = "migrate.starting_mana
 pub(crate) const MIGRATE_VERIFYING_HEALTH: &str = "migrate.verifying_health";
 pub(crate) const MIGRATE_TX_FAILED_MARK_WARNING: &str = "migrate.tx_failed_mark_warning";
 pub(crate) const MIGRATE_OLD_INSTANCE_STILL_RUNNING: &str = "migrate.old_instance_still_running";
-pub(crate) const MIGRATE_PREPARED_LEFT_BEHIND: &str = "migrate.prepared_left_behind";
 pub(crate) const MIGRATE_CANCELLED_DURING_SWITCH: &str = "migrate.cancelled_during_switch";
 pub(crate) const MIGRATE_CANCELLED_ROLLED_BACK: &str = "migrate.cancelled_rolled_back";
 

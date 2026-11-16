@@ -21,7 +21,7 @@
 - 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
 - 说明：覆盖精确版本、自定义 HTTP 仓库、安装根目录、管理员、双重掩码密码和 service
   manager；断言密码不出现在 Debug 或 CLI args，并在离开控制台后进入共享命令分发与
-  systemd worker 判断。
+  daemon 操作 判断。
 
 ## UI-03
 
@@ -92,7 +92,7 @@
   静态字段与底部“确认并继续”按钮）、LAN 空集合的 WAN-only 计划，以及 LAN
   列表的 Up/Down、Space、Enter 语义。systemd 的 Install 面板启用网络接管，激活
   “开始安装”进入向导；OpenRC/SysVinit 使用相同向导和 daemon 恢复契约。
-  systemd worker 的安装页在下载阶段可停止，配置阶段
+  daemon 操作 的安装页在下载阶段可停止，配置阶段
   忽略停止请求，结果页等待 Ctrl+C。安装/reinit 完成且存在待确认网络接管事务时，
   结果页底栏显示确认入口（`Enter Confirm takeover`），确认层正文说明断连后果与兜底
   语句（`lkit network confirm` / `lkit network rollback`）；确认后退出全屏页内联执行
@@ -140,7 +140,7 @@
   列表行单行展示、备注恒排最后且按剩余长度截断，完整备注进详情页。恢复确认层 Enter 前必须通过校验
   （未校验先启动并提示校验中，失败弹损坏框），通过才提交；`--yes` 由控制台确认层覆盖。
 - 缺口：真实备份文件的列表加载与损坏条目标记依赖安装现场，测试通过注入 metadata 覆盖
-  渲染与按键路径；后台 verify 与恢复委托 worker 的端到端执行未自动化。
+  渲染与按键路径；后台 verify 与原生恢复操作 的端到端执行未自动化。
 
 ## UI-12
 
@@ -157,7 +157,7 @@
   显示错误；升级才显示确认层（`当前 <X> → 目标 <Y>`，Y 为解析出的真实版本），Enter 构建
   携带精确版本、具体来源、原活动版本和状态摘要的已确认请求，Esc 取消。
   确认标记不替代上下文；字段变化使确认失效，分发与 daemon 不重新解析 latest。
-- 缺口：真实网络解析与 worker 全屏更新页的执行链路依赖安装现场，控制台单测覆盖状态机、
+- 缺口：真实网络解析与 原生全屏更新页的执行链路依赖安装现场，控制台单测覆盖状态机、
   渲染与请求构建；`--console-confirmed` 跳过 tty 由命令层测试覆盖。
 
 ## UI-13
@@ -175,7 +175,7 @@
   （不限制 SSH 会话来源）。`rolling_back` 阶段“确认执行”不可用，只留“稍后”。
 - 缺口：PTY E2E 在非 root 环境跳过（快照显示 RootRequired），阻塞屏的完整端到端路径
   只在 root 环境验证（本地可经 [`UI-18`](#ui-18) 的 docker 隔离脚本以 root 运行）；
-  确认执行的委托 worker 全屏路径与 QEMU 现场未自动化。
+  确认执行的原生操作全屏路径与 QEMU 现场未自动化。
 
 ## UI-14
 
@@ -183,7 +183,7 @@
 
 - 测试层：Rust 单元、Ratatui TestBackend
 - 状态：`部分覆盖`
-- 证据：[`lkit check` 规格](../../../check.md)、[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[daemon_worker 测试](../../../../lkit-cli/src/daemon_worker/mod.rs)
+- 证据：[`lkit check` 规格](../../../check.md)、[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)、[daemon 能力测试](../../../../lkit-cli/src/daemon.rs)
 - 说明：`lkit check` 与 Install 面板部署前检查包含 `service.lkit_daemon` 项：daemon
   运行中为 `pass`；root 下未运行为 `error` 并建议 `lkit self install`（控制台未部署
   daemon 前无法进入安装表单）；非 root 未运行只报 `warning`。进入控制台时 root 下
@@ -209,22 +209,12 @@
 
 ## UI-15
 
-**激活“开始安装”与网络向导确认摘要前复查 daemon，未运行或无法 spawn worker 不退出控制台**
+**开始安装与网络向导提交前复查 daemon**
 
-- 测试层：Rust 单元
-- 状态：`部分覆盖`
-- 证据：[控制台规格](../../../interaction/console.md)、[控制台测试](../../../../lkit-cli/src/console/)
-- 说明：root 下 daemon 未运行（含检查结果过时的情况）时，“开始安装”与网络向导
-  确认摘要不再退出 TUI 委托，而是留在面板内提示“lkit 常驻服务未运行;请用
-  `lkit self install` 部署”，避免用户填写完所有安装参数、退出控制台后才得到
-  `the lkit daemon is not running` 错误（CLI 命令模式仍由 `delegate()` 以退出码 `2`
-  拒绝，见 [`SYS-03`](../systemd-smoke.md#sys-03)）。daemon 在运行但无法 spawn
-  worker（其可执行文件被删除/替换，`/proc/<pid>/exe` 不可用）时同样在进入控制台与
-  激活安装前阻断并提示恢复文件后重启常驻服务，命令模式由 `delegate()` 以退出码 `2`
-  拒绝，不再无限等待；`worker_executable_available` 对 `" (deleted)"` 后缀与文件
-  可执行性的判定有单元测试覆盖（见 [`S-4b`](../../nspawn-systemd.md)）。
-- 缺口：root 分支依赖真实 euid 与地盘 pidfile，标准单测只覆盖非 root（不阻断）
-  路径；root 环境的 TUI 现场行为与 nspawn smoke 的 S-4b 待运行验证。
+- 测试层：隔离 Rust 单元测试
+- 状态：`已覆盖`
+- 证据：[控制台规格](../../../interaction/console.md)、[安装表单测试](../../../../lkit-cli/src/console/tests/install.rs)、[daemon 能力校验](../../../../lkit-cli/src/daemon.rs)
+- 说明：daemon 未运行时留在控制台提示部署；正式提交校验对应能力标记。检查不依赖可执行文件能否启动子进程。表单直接构造类型化参数，密码不进入 Debug 输出或命令行。
 
 ## UI-16
 

@@ -207,7 +207,7 @@ fn backup_restore_flow_builds_restore_command() {
     let action = app
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
-    let ConsoleAction::Command { command, args } = action else {
+    let ConsoleAction::Command { command } = action else {
         panic!("expected restore command");
     };
     let Commands::Restore(restore) = command else {
@@ -219,7 +219,6 @@ fn backup_restore_flow_builds_restore_command() {
         restore.console_confirmed,
         "the console must mark the restore as confirmed so no TTY prompt appears"
     );
-    assert_eq!(args, ["restore"]);
     let context = restore.confirmed.unwrap();
     assert_eq!(context.request.backup_sha256, "b".repeat(64));
     assert_eq!(context.request.state_identity, "a".repeat(64));

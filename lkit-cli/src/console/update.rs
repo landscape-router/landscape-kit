@@ -540,12 +540,7 @@ impl ConsoleApp {
             #[cfg(feature = "test-support")]
             test_runtime: None,
         });
-        let args = vec![
-            "uninstall".into(),
-            "--yes".into(),
-            "--console-confirmed".into(),
-        ];
-        ConsoleAction::Command { command, args }
+        ConsoleAction::Command { command }
     }
 
     /// 确认层 Enter：构建带 `--console-confirmed` 的结构化 `Update` 请求。
@@ -563,8 +558,7 @@ impl ConsoleApp {
             test_runtime: crate::console::test_runtime_path(),
         });
         // Native dispatch carries the confirmation in memory, never through argv.
-        let args = vec!["update".into()];
-        ConsoleAction::Command { command, args }
+        ConsoleAction::Command { command }
     }
 }
 

@@ -38,9 +38,7 @@ pub struct Reinit {
     pub(crate) network_plan: Option<NetworkPlan>,
     #[arg(skip)]
     pub(crate) confirmed: Option<ReinitConfirmation>,
-    /// Root-only network plan file created for an internal daemon worker.
-    #[arg(long, value_name = "PATH", hide = true)]
-    pub(crate) network_plan_file: Option<PathBuf>,
+
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -189,26 +187,15 @@ async fn run_inline(args: &Reinit) -> ExitCode {
             return exit_code(&error);
         }
     };
-    let network_plan = match (&args.network_plan, &args.network_plan_file) {
-        (Some(plan), None) => plan.clone(),
-        (None, Some(path)) => match crate::daemon_worker::read_network_plan(path) {
-            Ok(plan) => plan,
-            Err(error) => {
-                eprintln!("reinit: {error}");
-                return ExitCode::from(2);
-            }
-        },
-        (None, None) => match collect_network_plan(&runtime) {
+    let network_plan = match &args.network_plan {
+        Some(plan) => plan.clone(),
+        None => match collect_network_plan(&runtime) {
             Ok(plan) => plan,
             Err(error) => {
                 eprintln!("reinit: {error}");
                 return exit_code(&error);
             }
         },
-        (Some(_), Some(_)) => {
-            eprintln!("reinit: internal network plans cannot be combined");
-            return ExitCode::from(2);
-        }
     };
     let data_dir = normalized.canonical.join("data");
     let options = ReinitOptions {

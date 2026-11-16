@@ -140,7 +140,7 @@ fn update_confirmation_builds_console_confirmed_command() {
     let action = app
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
-    let ConsoleAction::Command { command, args } = action else {
+    let ConsoleAction::Command { command } = action else {
         panic!("expected update command");
     };
     let Commands::Update(update) = command else {
@@ -155,7 +155,6 @@ fn update_confirmation_builds_console_confirmed_command() {
         update.console_confirmed,
         "the console must mark the update as confirmed so no TTY prompt appears"
     );
-    assert_eq!(args, vec!["update"]);
     assert_eq!(update.confirmed.unwrap(), resolved("1.2.3", "1.2.4"));
 }
 
@@ -174,14 +173,12 @@ fn update_dispatch_uses_resolved_context_not_mutable_form_fields() {
         app.update.repository_url = "https://changed.example/".into();
         let ConsoleAction::Command {
             command: Commands::Update(update),
-            args,
         } = app.update_action()
         else {
             panic!("expected update");
         };
         assert_eq!(update.confirmed, Some(resolved("1.2.3", "1.2.4")));
         assert_eq!(update.version.as_deref(), Some("1.2.4"));
-        assert_eq!(args, vec!["update"]);
     }
 }
 #[test]
@@ -307,22 +304,23 @@ fn uninstall_panel_renders_summary_and_opens_confirmation() {
 }
 
 #[test]
-fn uninstall_confirmation_builds_delegated_command() {
+fn uninstall_confirmation_builds_typed_command() {
     let _language = LanguageGuard::set(Language::En);
     let mut app = ConsoleApp::new();
     app.focus = Focus::Panel;
     app.snapshot = installed_snapshot();
 
     app.handle_uninstall_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    let Some(Some(ConsoleAction::Command { command, args })) =
+    let Some(Some(ConsoleAction::Command { command })) =
         app.handle_uninstall_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
     else {
         panic!("confirming Enter must dispatch the uninstall command");
     };
-    assert!(matches!(command, Commands::Uninstall(_)));
-    assert!(args.contains(&"uninstall".into()));
-    assert!(args.contains(&"--yes".into()));
-    assert!(args.contains(&"--console-confirmed".into()));
+    let Commands::Uninstall(uninstall) = command else {
+        panic!("expected uninstall");
+    };
+    assert!(uninstall.yes);
+    assert!(uninstall.console_confirmed);
 }
 
 #[test]

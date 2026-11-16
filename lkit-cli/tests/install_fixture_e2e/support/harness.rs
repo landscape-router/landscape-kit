@@ -358,7 +358,7 @@ esac
         let mut pty = Pty::open();
         pty.master.write_all(b"1\n1\n\n\n\n").unwrap();
         self.command()
-            .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+            .env("LKIT_TEST_TTY", &pty.slave_path)
             .args([
                 "install",
                 "--takeover-network",

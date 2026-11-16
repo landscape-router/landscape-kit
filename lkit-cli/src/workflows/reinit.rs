@@ -17,7 +17,6 @@ use super::transaction::{Phase, TransactionFile};
 use crate::deployment::layout;
 use crate::deployment::runtime::InstallRuntime;
 use crate::interaction::credentials::Credentials;
-use crate::interaction::presentation::{OperationPhase, operation_progress};
 use crate::network::config::NetworkPlan;
 
 /// reinit 运行参数。
@@ -142,13 +141,12 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         transaction.network_takeover.as_ref().unwrap(),
         runtime,
     )?;
-    operation_progress(OperationPhase::Preparing, Some((1, 4)));
 
     let mut activated = false;
     let result: Result<(), InstallError> = async {
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
         super::operation_control::phase(crate::daemon_operations::Stage::Stopping)?;
-        operation_progress(OperationPhase::Stopping, Some((2, 4)));
+
         manager.stop_and_wait(
             ManagedService::LandscapeRouter,
             &(|| {
@@ -160,7 +158,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         )?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         super::operation_control::phase(crate::daemon_operations::Stage::Activating)?;
-        operation_progress(OperationPhase::Activating, Some((3, 4)));
+
         activated = true;
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         rollback::move_data_aside(&root.canonical.join("data"), &tx_dir.join("previous-data"))?;
@@ -177,7 +175,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         manager.start(ManagedService::LandscapeRouter)?;
         super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
         super::operation_control::phase(crate::daemon_operations::Stage::Verifying)?;
-        operation_progress(OperationPhase::Verifying, Some((4, 4)));
+
         let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(

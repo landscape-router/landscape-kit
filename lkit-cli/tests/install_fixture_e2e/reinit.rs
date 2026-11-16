@@ -17,7 +17,7 @@ fn run_reinit(harness: &InstallHarness, password: &Path) -> Output {
             &harness.world.systemctl_config,
         )
         .env("LKIT_TERRITORY", &harness.territory)
-        .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+        .env("LKIT_TEST_TTY", &pty.slave_path)
         .args(["reinit", "--admin-user", "admin", "--password-file"])
         .arg(password)
         .args(["--test-runtime"])
@@ -224,7 +224,7 @@ fn reinit_refused_confirmation_leaves_no_side_effects() {
             &harness.world.systemctl_config,
         )
         .env("LKIT_TERRITORY", &harness.territory)
-        .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+        .env("LKIT_TEST_TTY", &pty.slave_path)
         .args(["reinit", "--admin-user", "admin", "--password-file"])
         .arg(&new_password)
         .args(["--test-runtime"])
@@ -315,7 +315,7 @@ fn reinit_rolls_back_when_activation_health_check_fails() {
             &harness.world.systemctl_config,
         )
         .env("LKIT_TERRITORY", &harness.territory)
-        .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+        .env("LKIT_TEST_TTY", &pty.slave_path)
         .args(["reinit", "--admin-user", "admin", "--password-file"])
         .arg(&new_password)
         .args(["--test-runtime"])
@@ -443,7 +443,7 @@ fn native_reinit_recovers_activation_and_releases_the_queue_for_network_confirma
         }
         let observer = Observer(
             h.command()
-                .env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+                .env("LKIT_TEST_TTY", &pty.slave_path)
                 .args(["reinit", "--admin-user", "admin", "--password-file"])
                 .arg(&h.password)
                 .arg("--test-runtime")

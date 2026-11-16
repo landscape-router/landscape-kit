@@ -23,14 +23,6 @@ impl OperationScreen for MigrateScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "migrate"
-    }
-
-    fn cancellable_during_switch(&self) -> bool {
-        true
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,

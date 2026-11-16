@@ -21,10 +21,6 @@ impl OperationScreen for UpdateScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "update"
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,

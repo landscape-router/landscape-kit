@@ -15,7 +15,6 @@ use super::root::InstallRoot;
 use super::state::{InstallState, StateArchitecture, StateServiceManager};
 use super::transaction::{Phase, TransactionFile};
 use crate::deployment::layout;
-use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 pub(crate) use self::cleanup::{cleanup_runtime_dirs, host_network_services_masked};
 use self::cleanup::{deactivate, remove_managed_contents};
@@ -122,16 +121,13 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
         super::transaction::persist(root, &transaction)?;
     }
 
-    let steps = if is_systemd { 3 } else { 2 };
-    operation_progress(OperationPhase::Preparing, Some((1, steps)));
-
     let result: Result<(), InstallError> = async {
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             control::phase(Stage::Stopping)?;
             #[cfg(feature = "test-support")]
             control::checkpoint("uninstall-stopping")?;
-            operation_progress(OperationPhase::Stopping, Some((2, steps)));
+
             deactivate(manager, root)?;
         } else if !crate::interaction::interactive::is_non_interactive() && !args.console_confirmed
         {
@@ -146,10 +142,7 @@ pub(crate) async fn uninstall_installation<P: DocsProbe>(
             }
         }
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
-        operation_progress(
-            OperationPhase::Activating,
-            Some((if is_systemd { 3 } else { 2 }, steps)),
-        );
+
         control::phase(Stage::Activating)?;
         #[cfg(feature = "test-support")]
         control::checkpoint("uninstall-activating")?;

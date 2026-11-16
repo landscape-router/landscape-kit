@@ -28,13 +28,7 @@ pub struct Repair {
     pub test_runtime: Option<PathBuf>,
 }
 
-pub async fn run(args: &Repair, internal_worker: bool) -> ExitCode {
-    if internal_worker {
-        eprintln!(
-            "lkit: repair requires the structured daemon operation protocol; submit the command again"
-        );
-        return ExitCode::FAILURE;
-    }
+pub async fn run(args: &Repair) -> ExitCode {
     if (args.target == RepairTarget::Service && (args.repository.is_some() || args.official))
         || (args.target == RepairTarget::Binary && args.official)
     {
@@ -140,26 +134,4 @@ fn inline_runtime(_args: &Repair) -> Result<bool, crate::deployment::plan::Insta
             .map(|uses| !uses);
     }
     Ok(false)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn worker_repair_requests_fail_without_resubmitting() {
-        for target in [
-            RepairTarget::Static,
-            RepairTarget::Binary,
-            RepairTarget::Service,
-        ] {
-            let args = Repair {
-                target,
-                repository: None,
-                official: false,
-                #[cfg(feature = "test-support")]
-                test_runtime: None,
-            };
-            assert_eq!(run(&args, true).await, ExitCode::FAILURE);
-        }
-    }
 }

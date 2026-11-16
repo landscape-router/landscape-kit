@@ -214,16 +214,10 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   - `install`：没有旧版本和 `.lkb`，执行首次安装失败清理；仅 systemd 环境恢复服务注册和 `/etc/resolv.conf`，不得调用 `.lkb` 回滚；
   - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，并恢复原版本归档与安装状态，
     不重建 Landscape data；
-- `migrate`（手工部署迁移）按阶段恢复：
-  - `preparing`：尚未停止旧实例，标记 `failed`；迁移 `.lkb` 保留在 `backups/`；
-  - `prepared` 或 `stopping`：旧 unit 可能已停止，幂等恢复旧 unit（`legacy_unit` 记录的
-    unit 文件放回原位或 `unmask`，按 enabled/active 状态恢复），再按 `systemd_before`
-    恢复受管 unit 状态并标记 `failed`；`prepared` 阶段前台与 worker 的交接事务
-    通常还没停止任何东西，恢复为无操作；
-  - `activating`、`verifying` 或 `rolling_back`：执行与失败相同的回滚——注销并停止新
-    受管 unit、恢复 `/etc/resolv.conf`、恢复旧 unit、删除新根内容（`data/`、`service/`、
-    `state/`、目标 release 与 `current`），标记 `rolled_back`；回滚失败标记 `failed`；
-    前台实例场景 `legacy_unit` 为 `None`，不自动重启旧实例；
+- `migrate`（手工部署迁移）：安装状态包含相同事务 ID、版本及后端时确认提交；
+  准备阶段未停止旧实例时标记失败。停止、激活和验证阶段恢复旧 unit、清理未提交新根，
+  成功标记 `rolled_back`；恢复失败保持 `rolling_back`，由 daemon 重试。
+  `legacy_unit` 为空的前台进程由用户自行重启，源目录保持不变。
   - `restore` 按阶段恢复：
     - `preparing`：尚未改变运行状态，清理事务目录并标记 `failed`；
     - `prepared` 或 `stopping`：`current` 和数据尚未激活，按 `systemd_before` 幂等恢复
@@ -268,110 +262,30 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 任一恢复或清理步骤失败时不得标记 `rolled_back`，事务保持 `rolling_back`，由 daemon
 在后续周期重试。switch、repair 以及已经提交的安装不得使用整棵 `data/` 清理。
 
-## 委托执行(daemon 托管)
+## daemon 原生执行
 
-生产运行时中，任何可能注册、停止、启动或注销服务（含网络接管）的命令，在进入
-部署检查和事务前先委托给全局常驻 daemon（`lkit daemon`）执行。委托前提是
-daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命令明确失败
-（退出码 `2`）并提示运行 `lkit self install`。daemon 由 init 系统
-托管（systemd / OpenRC / sysvinit 受管服务），因此不再依赖临时 systemd unit。
+生产环境的 install、reinit、migrate、switch/update、restore、uninstall、repair 和
+网络确认／手工回滚由常驻 daemon 接收结构化请求并直接执行。CLI/TUI 负责只读解析、
+确认和展示，业务执行及事务恢复不依赖前端进程。daemon 由 systemd、OpenRC 或
+SysVinit 托管；迁移旧 systemd unit 的命令要求 systemd。
 
-委托前提在更早的位置也有检查，避免用户填写完参数后才失败：
+提交前校验 daemon 存活和对应协议能力。控制台提前展示 daemon 状态并在开始安装前
+复查；缺失时提示 `lkit self install`。无需启动同一可执行文件的子进程，因此进程仍在
+运行但磁盘上的 lkit 已被升级替换时，已支持的操作仍可执行。
 
-- `lkit check` 与控制台 Install 面板的部署前检查包含 `service.lkit_daemon` 检查项：
-  root 下 daemon 未运行时报告 `error` 并建议 `lkit self install`（控制台未部署
-  daemon 前无法进入安装表单），非 root 会话报告 `warning`；
-- 控制台进入时底栏与 Overview 面板常驻显示 daemon 运行状态；Overview 面板在
-  daemon 未运行时提供“部署 daemon”动作行，确认后在 TUI 内后台执行
-  `lkit self install`（与 CLI 相同的 root 检查、安装锁与 systemd 语义），
-  不退出控制台、不另起 lkit 进程；
-- 控制台激活“开始安装”与网络向导确认摘要时重新检查委托前置条件，未运行时留在
-  面板内提示，不退出控制台。
+请求保存在 `<territory>/run/operations/`，权限 0600、目录 0700，使用原子写入和磁盘
+同步。请求只保存支持的类型与绑定身份；密码使用独立受限文件，领取、取消或恢复时
+清理。记录不包含终端、原始 argv、环境变量、工作目录或任意命令执行指令。
 
-### 委托命令清单
+daemon 在安装锁下串行调用工作流。操作及事务 ID 的关联在业务事务创建前持久化。
+CLI/TUI 观察同一记录；Ctrl+C、SIGHUP 或断线只停止观察，不发送进程组终止信号。
+排队请求可以取消；支持暂存下载的操作仅在下载阶段接受取消，切换及恢复阶段拒绝。
+`operation status/list/cancel` 不等待安装锁。操作与事务可跨主机启动保留；恢复只
+根据持久化证据提交或回滚，不重放无法证明结果的用户请求。
 
-委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-以下清单列出保留 worker 协议的入口；install、repair、switch、update、restore、uninstall、reinit 和 network confirm/rollback 的结构化操作协议单独定义：
-
-| 委托给 daemon 执行 | 直接执行 |
-|---|---|
-|  | `check` |
-|  | `reconcile` |
-|  | `set-mirror` |
-|  | `software` |
-|  | `backup` |
-|  | `self` |
-|  | `daemon` |
-|  | `network status` |
-|  | `migrate` 的前置检查阶段 |
-|  | `network rollback --automatic` 之外的自动回滚路径 |
-
-`install`、`reinit`、`network confirm/rollback`、`restore`、`uninstall`、`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
-由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
-`operation status/list/cancel` 直接访问操作记录，不等待安装锁。
-
-`migrate` 是唯一的**部分委托**命令：`delegates` 不包含它，`commands::migrate::run`
-在发起进程内先执行前置检查（源目录校验、运行实例识别、export API 支持检查、
-迁移 `.lkb` 创建、计划确认），把事务标记 `prepared` 后，root 下以内部参数
-`--resume <事务 id>` 委托 daemon worker 只执行切换阶段（停止旧实例、重建、
-接管、提交）。这样用户能看到迁移进度；切换仍在 daemon 保护下完成。委托条件
-（root、非 test-runtime）与整体委托一致，见 `daemon_worker::migrate_delegates`。
-
-委托命令在以下两种情形改为直接执行（内联）：
-
-- 调用者不是 root（`geteuid() != 0`）；
-- 命令携带 `--test-runtime`（仅 test-support 构建存在；测试与容器脚本用它
-  注入 fake systemd/运行时，绕过 daemon 依赖）。
-
-`lkit network confirm` 与手工 `lkit network rollback` 提交绑定事务 ID 的持久化操作，由 daemon 直接执行：两者都会
-切换/恢复宿主网络（confirm 清除 WAN 继承地址、rollback 恢复被 stop/disable/mask
-的宿主网络服务），发起会话可能因此在执行中断开——委托后即使前端进程消失，
-daemon 也会独立完成提交或回滚，事务不会停在半提交状态。控制台结果页的「确认
-网络接管」与阻塞屏的「确认执行」走同一条结构化操作路径。`lkit network rollback
---automatic`（旧恢复 unit 兼容入口）位于独立恢复路径，不委托。
-
-CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`
-（schema_version 2，含原始参数、最终环境与工作目录、结果路径、cancel 路径、
-原始终端设备路径、展示事件路径与凭据路径）；目录固定为 `0700`。daemon 每个周期
-（2 秒）扫描并认领请求，以同一 lkit 可执行文件在独立进程组中执行。执行器在
-原始参数前注入内部 worker 标记（`--internal-daemon-worker`），委托子命令因此
-内联执行、不再二次委托——否则 daemon 等待子进程、子进程又等待 daemon 认领
-自己写下的请求文件，形成死锁。
-
-请求文件可能短暂包含仓库环境凭据，因此不得复制到事务日志、lkit 地盘或 landscape
-安装根目录。stdout/stderr
-写入同目录日志，仍在连接的前端持续转发；结果使用 root-only JSON 原子提交到
-`<id>.result.json`。下载进度另写入同目录的 root-only `<id>.presentation.jsonl`，
-只包含资产显示名称、字节数、耗时和状态，不包含 URL、凭据或初始化配置。前端 stderr
-为终端时使用 Ratatui inline viewport 消费这些事件；非交互前端消费但不渲染。前端保持
-连接时，在读取结果、日志和展示事件后删除这些文件；前端已经消失时，daemon 仍继续
-执行，但结果、stdout/stderr 与展示事件可能保留到主机重启或管理员手工清理。不得将
-这些运行时残留描述为已完整自动清理。
-
-Ratatui Install 面板收集的密码不进入原始参数、环境或 request JSON。需要委托时，前端在
-同一 root-only operations 目录创建 `<id>.credential`，权限固定为 `0600`，内部子命令只
-接收该路径。daemon 完成或前端成功取消后删除；停止失败时保留，避免仍在执行的命令
-读取失败。该文件与其他 `/run` 残留一样最迟在主机重启时消失。
-
-子进程以 `setpgid(0, 0)` 建立独立进程组并以 `O_NOCTTY` 打开原始终端设备，不取得
-SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只有请求损坏、无法启动
-子进程或无法写结果等基础设施错误才令请求失败并保留日志供诊断。
-
-这提供以下边界：
-
-- SSH、终端或调用 lkit 的前端进程消失后，daemon 的子进程组不受影响，继续完成提交
-  或自动回滚；
-- 前端收到显式 Ctrl+C 时先恢复原始终端属性和光标，再写 `<id>.cancel` 文件；daemon
-  对子进程组发送 SIGTERM，约 5 秒（25 轮 × 200ms）内未退出则 SIGKILL。前端返回
-  `130` 并清理运行时文件；停止失败时输出 warning、保留现场并提示操作可能仍在运行；
-- 手工 `lkit network rollback` 与 `lkit network confirm` 都委托给 daemon，避免
-  NetworkManager/`networking.service` 恢复或 WAN 地址切换后当前 `br_lan` SSH 断开
-  而中止回滚/提交；daemon 自动回滚已经位于独立恢复路径，不再次委派；
-- 交互确认仍通过原终端完成，但 daemon 子进程不接管该终端；若终端在破坏性阶段前
-  消失，确认读取失败并安全停止；
-- daemon 不重复执行失败的委托命令；网络回滚按持久化事务阶段重试；
-- 主机重启会终止 `/run` 中的请求与结果文件，不承诺跨重启自动继续；daemon 由 init
-  系统自动拉起，未完成事务由 daemon 或下次 lkit 调用按本节事务阶段恢复；
+`check`、`reconcile`、`backup`、`self`、`set-mirror`、`software`、`frontend`、
+`flare` 与只读操作查询直接执行。自动网络恢复属于 daemon 恢复循环，不再次入队。
+`test-support` 的隔离运行时可选择内联测试路径，生产环境没有前端执行回退。
 
 ### daemon 自动恢复
 
@@ -386,11 +300,11 @@ SSH 的 controlling terminal。业务命令的退出码写入结果 JSON；只�
   根，不绑定任何具体安装根；
 - 网络接管待确认时监测期限与主机启动标识，提交中继续提交，回滚中继续回滚；
   daemon 不代替用户确认，见[网络恢复契约](../network/daemon-recovery.md)；
-- 并发安全：CLI 命令整个操作期间持有安装锁，daemon 获取失败即跳过本周期；
+- 并发安全：业务工作流和直接修改命令持有安装锁，恢复循环获取失败即跳过本周期；
   daemon 收到 `SIGTERM` 时先完成当前周期再退出，不中断进行中的恢复。
 
 `test-support` 运行时可选择 `execution: inline` 或 `daemon`。生产构建不提供该
-开关；凡进入本节 daemon 托管边界的命令都固定由 daemon 委托执行。
+开关；凡进入本节 daemon 托管边界的命令都固定由 daemon 原生执行。
 
 ### 网络恢复元数据
 
@@ -398,7 +312,7 @@ Schema v5 用于 daemon 网络恢复；读取 v1 至 v4 时保留旧事务恢复
 `network_takeover.boot_id` 保存接管时的主机启动标识，旧事务缺失时沿用其恢复 unit
 并按已有期限处理。OpenRC/SysVinit 的 `host_services[].enable_state` 保存 JSON
 形式的后端标识与开机链接快照；systemd 保留原 enable/mask 状态字符串。
-委托执行与恢复检查独立调度，修改安装现场仍由安装锁串行化。
+操作执行与恢复检查独立调度，修改安装现场仍由安装锁串行化。
 
 ## 服务定义修复事务
 

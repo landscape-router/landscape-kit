@@ -49,10 +49,7 @@ use widgets::{Focus, Menu};
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ConsoleAction {
     Quit,
-    Command {
-        command: Commands,
-        args: Vec<String>,
-    },
+    Command { command: Commands },
 }
 
 pub(crate) fn run() -> Result<ConsoleAction, String> {
@@ -61,18 +58,8 @@ pub(crate) fn run() -> Result<ConsoleAction, String> {
     }
     let mut terminal = ConsoleTerminal::start()?;
     let mut app = ConsoleApp::new();
-    // 进入控制台即检查 daemon:root 下 daemon 未运行或无法 spawn worker 时
-    // 提前在底栏提示,避免用户填写完安装参数、退出控制台委托时才失败。
-    match crate::daemon_worker::delegation_block() {
-        Some(crate::daemon_worker::DelegationBlock::DaemonNotRunning) => {
-            app.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
-        }
-        Some(crate::daemon_worker::DelegationBlock::WorkerSpawnUnavailable) => {
-            app.notice = Notice::Info(crate::tr!(
-                crate::keys::CONSOLE_DAEMON_SPAWN_UNAVAILABLE_NOTICE
-            ));
-        }
-        None => {}
+    if unsafe { libc::geteuid() } == 0 && !crate::daemon::is_running() {
+        app.notice = Notice::Info(crate::tr!(crate::keys::CONSOLE_DAEMON_NOT_RUNNING_NOTICE));
     }
     loop {
         app.update();

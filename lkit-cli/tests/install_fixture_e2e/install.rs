@@ -195,7 +195,7 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     update_tty.master.write_all(b"\n").unwrap();
     let blocked = harness
         .command()
-        .env("LKIT_INTERNAL_DAEMON_TTY", &update_tty.slave_path)
+        .env("LKIT_TEST_TTY", &update_tty.slave_path)
         .arg("update")
         .arg("--test-runtime")
         .arg(&harness.runtime_config)
@@ -579,7 +579,7 @@ fn native_install_recovers_without_existing_state_and_keeps_the_original_operati
         let mut pty = Pty::open();
         pty.master.write_all(b"1\n1\n\n\n\n").unwrap();
         let mut cmd = h.command();
-        cmd.env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+        cmd.env("LKIT_TEST_TTY", &pty.slave_path)
             .args([
                 "install",
                 "--version",

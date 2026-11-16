@@ -27,11 +27,7 @@ pub struct Uninstall {
     pub test_runtime: Option<PathBuf>,
 }
 
-pub async fn run(args: &Uninstall, internal_worker: bool) -> ExitCode {
-    if internal_worker {
-        eprintln!("uninstall requires the native daemon protocol");
-        return ExitCode::FAILURE;
-    }
+pub async fn run(args: &Uninstall) -> ExitCode {
     let native = native_execution(args);
     match native {
         Ok(true) => {

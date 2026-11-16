@@ -665,7 +665,7 @@ fn pending_takeover_enter_confirm_executes_network_confirm() {
     let action = app
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter on confirm must return an action");
-    let ConsoleAction::Command { command, args } = action else {
+    let ConsoleAction::Command { command } = action else {
         panic!("expected a command action");
     };
     assert!(matches!(
@@ -675,12 +675,6 @@ fn pending_takeover_enter_confirm_executes_network_confirm() {
             ..
         })
     ));
-    assert_eq!(args[0], "network");
-    assert_eq!(args[1], "confirm");
-    assert!(
-        !args.iter().any(|argument| argument == "--install-dir"),
-        "network confirm must not forward --install-dir"
-    );
 }
 
 #[test]

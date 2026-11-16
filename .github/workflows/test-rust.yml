@@ -65,12 +65,13 @@ jobs:
             network::recovery::tests \
             commands::update::tests \
             console::tests::update \
-            interaction::presentation::worker::tests \
+            interaction::presentation::operation::tests \
             console::tests::backup \
             console::tests::ops \
             workflows::migrate::native::tests \
             workflows::migrate::rollback::recovery_tests \
             commands::migrate::tests \
+            interaction::interactive::tests::durable_workflows_cannot_open_a_terminal \
             commands::install::tests \
             workflows::install::native::tests \
             interaction::presentation::screens::install::tests \
@@ -81,13 +82,9 @@ jobs:
             deployment::transaction::validation::tests \
             commands::network::tests \
             commands::uninstall::tests \
-            commands::restore::tests \
             workflows::restore::native::tests \
-            commands::switch::tests \
             workflows::switch::tests \
-            commands::repair::tests \
             daemon_operations::tests \
-            daemon_worker::tests \
             daemon_supervisor::tests \
             daemon::tests::capability_requires_the_live_daemon_pid_and_matching_marker \
             workflows::repair::tests \

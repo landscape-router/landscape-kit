@@ -21,10 +21,6 @@ impl OperationScreen for RestoreScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "restore"
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,

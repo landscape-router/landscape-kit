@@ -13,7 +13,6 @@ use super::state::{InstallState, StateServiceManager};
 use super::transaction::{BackupRef, Phase, TransactionFile};
 use crate::daemon_operations::Stage;
 use crate::deployment::layout;
-use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 mod backup;
 mod native;
@@ -211,15 +210,13 @@ async fn restore_prepared<P: DocsProbe>(
         return Err(error);
     }
     super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
-    let steps = if is_systemd { 4 } else { 2 };
-    operation_progress(OperationPhase::Preparing, Some((1, steps)));
 
     let mut activated = false;
     let result: Result<(), InstallError> = async {
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             control::phase(Stage::Stopping)?;
-            operation_progress(OperationPhase::Stopping, Some((2, steps)));
+
             manager.stop_and_wait(
                 ManagedService::LandscapeRouter,
                 &(|| {
@@ -242,10 +239,7 @@ async fn restore_prepared<P: DocsProbe>(
             }
         }
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
-        operation_progress(
-            OperationPhase::Activating,
-            Some((if is_systemd { 3 } else { 2 }, steps)),
-        );
+
         control::phase(Stage::Activating)?;
         activated = true;
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
@@ -279,7 +273,7 @@ async fn restore_prepared<P: DocsProbe>(
             manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
             control::phase(Stage::Verifying)?;
-            operation_progress(OperationPhase::Verifying, Some((4, steps)));
+
             let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
                 return Err(InstallError::Systemd(

@@ -23,11 +23,7 @@ pub struct Switch {
     pub test_runtime: Option<PathBuf>,
 }
 
-pub async fn run(args: &Switch, internal_worker: bool) -> ExitCode {
-    if internal_worker {
-        eprintln!("lkit: switch requires the structured daemon protocol; submit again");
-        return ExitCode::FAILURE;
-    }
+pub async fn run(args: &Switch) -> ExitCode {
     match native_runtime(args) {
         Ok(Some(runtime)) => {
             return match submit(args, &runtime).await {
@@ -103,20 +99,4 @@ async fn submit(
         },
     )
     .await
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn stale_worker_is_rejected_without_resubmission() {
-        let args = Switch {
-            version: "2.0.0".into(),
-            repository: None,
-            accept_service_change: false,
-            allow_no_backup: false,
-            #[cfg(feature = "test-support")]
-            test_runtime: None,
-        };
-        assert_eq!(run(&args, true).await, ExitCode::FAILURE);
-    }
 }

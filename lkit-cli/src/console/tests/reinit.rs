@@ -172,7 +172,7 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
     assert!(content.contains("Confirm reinit"));
     assert!(content.contains("lkit network confirm"));
 
-    let Some(ConsoleAction::Command { command, args }) =
+    let Some(ConsoleAction::Command { command }) =
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
     else {
         panic!("confirming Enter must dispatch the reinit command");
@@ -193,10 +193,6 @@ fn reinit_credentials_edit_and_confirmation_builds_command() {
         "the console password must be forwarded through the credential channel"
     );
     assert_eq!(reinit.admin_user.as_deref(), Some("adminro"));
-    assert!(args.contains(&"reinit".into()));
-    assert!(args.contains(&"--yes".into()));
-    assert!(args.contains(&"--console-confirmed".into()));
-    assert!(args.contains(&"--admin-user".into()));
 }
 
 #[test]

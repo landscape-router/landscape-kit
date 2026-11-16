@@ -16,7 +16,7 @@ async fn submit(args: &Install) -> Result<u8, plan::InstallError> {
             "Landscape is already installed; uninstall it before installing again".into(),
         ));
     }
-    if args.network_plan_file.is_some() || (args.network_plan.is_some() && !args.takeover_network) {
+    if args.network_plan.is_some() && !args.takeover_network {
         return Err(plan::InstallError::ParameterUsage(
             "install requires a structured takeover plan; internal plan files are unsupported"
                 .into(),

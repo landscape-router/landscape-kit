@@ -41,9 +41,7 @@ pub struct Install {
     /// Network plan captured by the full-screen console. Never populated by CLI parsing.
     #[arg(skip)]
     pub(crate) network_plan: Option<NetworkPlan>,
-    /// Root-only network plan file created for an internal daemon worker.
-    #[arg(long, value_name = "PATH", hide = true)]
-    pub(crate) network_plan_file: Option<PathBuf>,
+
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -80,22 +78,7 @@ pub async fn run(args: &Install) -> ExitCode {
     run_inline(args).await
 }
 async fn run_inline(args: &Install) -> ExitCode {
-    let network_plan = match (&args.network_plan, &args.network_plan_file) {
-        (Some(plan), None) => Some(plan.clone()),
-        (None, Some(path)) => match crate::daemon_worker::read_network_plan(path) {
-            Ok(plan) => Some(plan),
-            Err(error) => {
-                eprintln!("install: {error}");
-                return ExitCode::from(2);
-            }
-        },
-        (None, None) => None,
-        (Some(_), Some(_)) => {
-            eprintln!("install: internal network plans cannot be combined");
-            return ExitCode::from(2);
-        }
-    };
-    super::manage::run_request(&args.request(network_plan)).await
+    super::manage::run_request(&args.request(args.network_plan.clone())).await
 }
 impl Install {
     fn request(&self, network_plan: Option<NetworkPlan>) -> InstallRequest {
@@ -147,7 +130,6 @@ mod tests {
             force: false,
             takeover_network: false,
             network_plan: None,
-            network_plan_file: None,
             #[cfg(feature = "test-support")]
             test_runtime: None,
         }

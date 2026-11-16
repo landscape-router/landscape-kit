@@ -8,8 +8,6 @@ use crate::keys;
 #[derive(Debug, Parser)]
 #[command(name = "lkit", version)]
 pub(crate) struct Cli {
-    #[arg(long, hide = true)]
-    pub(crate) internal_daemon_worker: bool,
     /// Do not open a terminal or prompt for input
     #[arg(long, global = true)]
     pub(crate) non_interactive: bool,
@@ -385,6 +383,32 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::Cli;
+
+    #[test]
+    fn rejects_removed_worker_transport_arguments() {
+        for args in [
+            vec!["lkit", "--internal-daemon-worker", "install"],
+            vec![
+                "lkit",
+                "migrate",
+                "--from",
+                "/source",
+                "--resume",
+                "transaction",
+            ],
+            vec![
+                "lkit",
+                "migrate",
+                "--from",
+                "/source",
+                "--console-confirmed",
+            ],
+            vec!["lkit", "install", "--network-plan-file", "/plan"],
+            vec!["lkit", "reinit", "--network-plan-file", "/plan"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
 
     #[test]
     fn reports_package_version() {

@@ -1,6 +1,4 @@
-use std::fs::File;
-use std::io::{IsTerminal, Read, Stdout};
-use std::path::Path;
+use std::io::{IsTerminal, Stdout};
 use std::time::Duration;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
@@ -20,16 +18,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::events::{DownloadState, DownloadStatus, OperationPhase, PresentationEvent};
-use super::progress::InteractiveDownload;
+use super::model::{DownloadState, DownloadStatus, OperationPhase};
 use super::screens::{InstallScreen, OperationResult, OperationScreen};
-use super::signals::InterruptGuard;
 
-pub(crate) struct WorkerPresentation {
-    events: Option<File>,
-    pending: String,
+pub(crate) struct OperationPresentation {
     current: Option<DownloadState>,
-    renderer: Option<InteractiveDownload>,
     screen: Option<FullScreenOperation>,
     operation: Box<dyn OperationScreen>,
     phase: OperationPhase,
@@ -53,20 +46,10 @@ pub(crate) enum PresentationAction {
     ConfirmTakeover,
 }
 
-/// 结果页等待关闭的结果：普通关闭或确认网络接管。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CloseOutcome {
-    Closed,
-    ConfirmTakeover,
-}
-
-impl WorkerPresentation {
+impl OperationPresentation {
     pub(crate) fn new(full_screen: bool, operation: Box<dyn OperationScreen>) -> Self {
         Self {
-            events: None,
-            pending: String::new(),
             current: None,
-            renderer: None,
             screen: full_screen
                 .then(FullScreenOperation::start)
                 .and_then(Result::ok),
@@ -122,42 +105,6 @@ impl WorkerPresentation {
         self.render_screen();
     }
 
-    pub(crate) fn operation(&self) -> &dyn OperationScreen {
-        self.operation.as_ref()
-    }
-
-    pub(crate) fn drain(&mut self, path: &Path) -> Result<(), String> {
-        if self.events.is_none() {
-            self.events = File::open(path).ok();
-        }
-        let Some(events) = self.events.as_mut() else {
-            return Ok(());
-        };
-        events
-            .read_to_string(&mut self.pending)
-            .map_err(|error| format!("read presentation events {}: {error}", path.display()))?;
-        while let Some(newline) = self.pending.find('\n') {
-            let line = self.pending[..newline].to_string();
-            self.pending.drain(..=newline);
-            if line.is_empty() {
-                continue;
-            }
-            let event: PresentationEvent = serde_json::from_str(&line)
-                .map_err(|error| format!("parse presentation event: {error}"))?;
-            self.apply(event);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn before_log(&mut self) {
-        if self.screen.is_some() {
-            return;
-        }
-        if let Some(renderer) = self.renderer.take() {
-            renderer.finish();
-        }
-    }
-
     pub(crate) fn capture_log(&mut self, content: &str) -> bool {
         if self.screen.is_none() {
             return false;
@@ -179,15 +126,7 @@ impl WorkerPresentation {
         if self.result.is_some() {
             return false;
         }
-        self.durable_cancellable.unwrap_or(
-            self.phase == OperationPhase::Downloading || self.operation.cancellable_during_switch(),
-        )
-    }
-
-    /// 取消请求后是否继续等待 worker 收尾（迁移切换的回滚），而不是立即
-    /// 以 Interrupted 结束。
-    pub(crate) fn cancel_waits_for_worker(&self) -> bool {
-        self.operation.cancellable_during_switch()
+        self.durable_cancellable.unwrap_or(false)
     }
 
     pub(crate) fn cancel_requested(&mut self) {
@@ -318,68 +257,9 @@ impl WorkerPresentation {
         self.render_screen();
     }
 
-    pub(crate) fn wait_for_close(
-        &mut self,
-        interrupt: &InterruptGuard,
-    ) -> Result<CloseOutcome, String> {
-        if self.screen.is_none() {
-            return Ok(CloseOutcome::Closed);
-        }
-        loop {
-            if interrupt.requested() {
-                interrupt.clear_request();
-                break;
-            }
-            match self.poll_action()? {
-                Some(PresentationAction::Close) => break,
-                Some(PresentationAction::ConfirmTakeover) => {
-                    return Ok(CloseOutcome::ConfirmTakeover);
-                }
-                Some(PresentationAction::Stop) | None => {}
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        Ok(CloseOutcome::Closed)
-    }
-
     pub(crate) fn finish(&mut self) {
-        self.before_log();
         self.current = None;
         self.screen = None;
-    }
-
-    fn apply(&mut self, event: PresentationEvent) {
-        match event {
-            PresentationEvent::Download { state } => {
-                let finished = !matches!(state.status, DownloadStatus::Downloading);
-                self.current = Some(state);
-                if self.screen.is_none()
-                    && std::io::stderr().is_terminal()
-                    && !crate::interaction::interactive::is_non_interactive()
-                {
-                    if self.renderer.is_none() {
-                        self.renderer = InteractiveDownload::new().ok();
-                    }
-                    if let (Some(renderer), Some(state)) = (&mut self.renderer, &self.current) {
-                        let _ = renderer.render(state);
-                    }
-                }
-                if finished {
-                    self.before_log();
-                    self.current = None;
-                }
-            }
-            PresentationEvent::Phase { phase, step, total } => {
-                self.phase = phase;
-                self.progress = match (step, total) {
-                    (Some(step), Some(total)) if total > 0 => Some((step, total)),
-                    _ => None,
-                };
-                self.confirming_stop = false;
-                self.notice.clear();
-            }
-        }
-        self.render_screen();
     }
 
     pub(super) fn render_screen(&mut self) {
@@ -516,7 +396,7 @@ mod tests {
         }))
         .unwrap();
         let mut screen =
-            WorkerPresentation::new(false, Box::new(super::super::screens::UpdateScreen));
+            OperationPresentation::new(false, Box::new(super::super::screens::UpdateScreen));
         screen.observe_operation(&record);
         assert!(screen.is_cancellable());
         assert_eq!(
@@ -551,28 +431,10 @@ mod tests {
     }
 
     #[test]
-    fn only_download_phase_is_cancellable() {
-        let mut presentation = WorkerPresentation::new(false, Box::new(InstallScreen));
-        assert!(!presentation.is_cancellable());
-        presentation.apply(PresentationEvent::Phase {
-            phase: OperationPhase::Downloading,
-            step: None,
-            total: None,
-        });
-        assert!(presentation.is_cancellable());
-        presentation.apply(PresentationEvent::Phase {
-            phase: OperationPhase::Applying,
-            step: None,
-            total: None,
-        });
-        assert!(!presentation.is_cancellable());
-    }
-
-    #[test]
     fn language_key_switches_inside_full_screen() {
         let previous = crate::i18n::current();
         crate::i18n::configure(crate::i18n::Language::En);
-        let mut presentation = WorkerPresentation::new(false, Box::new(InstallScreen));
+        let mut presentation = OperationPresentation::new(false, Box::new(InstallScreen));
 
         presentation.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
 
@@ -584,12 +446,8 @@ mod tests {
     fn language_key_does_not_interfere_with_stop_or_close() {
         let previous = crate::i18n::current();
         crate::i18n::configure(crate::i18n::Language::En);
-        let mut presentation = WorkerPresentation::new(false, Box::new(InstallScreen));
-        presentation.apply(PresentationEvent::Phase {
-            phase: OperationPhase::Downloading,
-            step: None,
-            total: None,
-        });
+        let mut presentation = OperationPresentation::new(false, Box::new(InstallScreen));
+        presentation.durable_cancellable = Some(true);
 
         assert_eq!(
             presentation.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)),

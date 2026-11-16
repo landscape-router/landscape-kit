@@ -21,10 +21,6 @@ impl OperationScreen for ReinitScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "reinit"
-    }
-
     fn takeover_confirmable(&self) -> bool {
         true
     }

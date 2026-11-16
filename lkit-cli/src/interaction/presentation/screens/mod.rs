@@ -36,17 +36,9 @@ pub(crate) trait OperationScreen {
     fn result_key(&self, result: OperationResult) -> &'static str;
     /// 停止请求被忽略时的底栏提示键。
     fn stop_ignored_key(&self) -> &'static str;
-    /// 命令行结束提示的前缀（子命令名，与 zh 文案保持一致）。
-    fn announce_prefix(&self) -> &'static str;
     /// 该操作完成后是否可能产生待确认的网络接管（install/reinit 为 true，
     /// 其余操作网络已在首次安装时接管，不复用确认窗口）。
     fn takeover_confirmable(&self) -> bool {
-        false
-    }
-    /// 切换阶段（applying/verifying，非下载期）是否允许取消。迁移的切换
-    /// 完全由事务保护（取消即回滚恢复旧实例），允许取消且前台会等待
-    /// worker 的回滚收尾；其余操作切换期不可取消。
-    fn cancellable_during_switch(&self) -> bool {
         false
     }
     /// 渲染整个操作页（完整独立实现）。
@@ -65,17 +57,17 @@ pub(crate) trait OperationScreen {
     );
 }
 
-/// 根据委托参数中的子命令名选择操作页面组件，缺省为安装组件。
-pub(crate) fn operation_screen(args: &[String]) -> Box<dyn OperationScreen> {
-    match args.first().map(String::as_str) {
-        Some("install") => Box::new(install::InstallScreen),
-        Some("migrate") => Box::new(migrate::MigrateScreen),
-        Some("switch") => Box::new(switch::SwitchScreen),
-        Some("update") => Box::new(update::UpdateScreen),
-        Some("repair") => Box::new(repair::RepairScreen),
-        Some("restore") => Box::new(restore::RestoreScreen),
-        Some("reinit") => Box::new(reinit::ReinitScreen),
-        Some("uninstall") => Box::new(uninstall::UninstallScreen),
+/// 根据操作名选择页面组件，缺省为安装组件。
+pub(crate) fn operation_screen(command: &str) -> Box<dyn OperationScreen> {
+    match command {
+        "install" => Box::new(install::InstallScreen),
+        "migrate" => Box::new(migrate::MigrateScreen),
+        "switch" => Box::new(switch::SwitchScreen),
+        "update" => Box::new(update::UpdateScreen),
+        "repair" => Box::new(repair::RepairScreen),
+        "restore" => Box::new(restore::RestoreScreen),
+        "reinit" => Box::new(reinit::ReinitScreen),
+        "uninstall" => Box::new(uninstall::UninstallScreen),
         _ => Box::new(install::InstallScreen),
     }
 }

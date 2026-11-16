@@ -2,11 +2,10 @@ use super::model::{CheckResult, Status};
 
 /// lkit 全局常驻 daemon 的运行状态检查。
 ///
-/// root 会话的安装与生命周期命令都委托给 daemon,daemon 未运行意味着这些
-/// 命令必然失败;非 root 会话内联执行,不依赖 daemon。
+/// root 会话的安装与生命周期操作依赖 daemon；非 root 检查报告警告。
 pub fn run() -> Vec<CheckResult> {
     let root = unsafe { libc::geteuid() } == 0;
-    let running = crate::daemon_worker::daemon_is_running();
+    let running = crate::daemon::is_running();
     vec![lkit_daemon(root, running)]
 }
 

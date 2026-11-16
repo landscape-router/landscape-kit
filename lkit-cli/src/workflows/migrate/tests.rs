@@ -285,7 +285,6 @@ fn migrate_args(source: &Path) -> MigrateArgs {
         yes: true,
         console_confirmed: false,
         repository: None,
-        resume_transaction: None,
     }
 }
 
@@ -380,7 +379,6 @@ async fn migrate_requires_yes_in_non_interactive() {
         yes: false,
         console_confirmed: false,
         repository: None,
-        resume_transaction: None,
     };
     assert!(matches!(
         migrate_version(&install_root, &systemd, &args, &options).await,
@@ -571,84 +569,6 @@ fn systemd_environment(root: &TempRoot, source: &Path, ports: &FixturePorts) -> 
         _managed: ManagedInstanceGuard { state_dir },
         _systemctl_env: systemctl_env,
     }
-}
-
-/// 前台 `prepare_migration` 把事务标记为 prepared 后,daemon worker 以事务 id
-/// 认领并只执行切换阶段(`resume_migrate_switch`):前置检查不触碰运行态,
-/// 切换在同一事务内完成接管与提交。
-#[tokio::test]
-async fn prepared_migration_resumes_the_switch_phase_in_the_worker() {
-    let _guard = interactive_guard().await;
-    interactive::configure(true);
-    let _reset = NonInteractiveGuard;
-    let root = TempRoot::new("prepare-resume");
-    let _territory = territory_guard(&root);
-    let old_ports = FixturePorts::unique();
-    let new_ports = FixturePorts::unique();
-    let (source, _static_dir, _old_instance) =
-        spawn_manual_install(&root, &old_ports, Scenario::Healthy).await;
-
-    let install_root = new_root(&root.join("install"));
-    let environment = systemd_environment(&root, &source, &new_ports);
-    let options = MigrateOptions {
-        export_base_url: format!("https://127.0.0.1:{}", old_ports.https),
-        managed_uid: unsafe { libc::geteuid() },
-        confirm: &YES,
-        health: &health(&new_ports),
-        probe_ports: &old_ports.checks(),
-        interrupted: &NO_INTERRUPT,
-    };
-
-    // 前台阶段:只做前置检查、API 检查与备份,不触碰旧实例运行态。
-    let prepared = prepare_migration(
-        &install_root,
-        &environment.systemd,
-        &migrate_args(&source),
-        &options,
-    )
-    .await
-    .unwrap();
-    let tx = find_unfinished(&install_root).unwrap().unwrap();
-    assert_eq!(tx.phase, crate::deployment::transaction::Phase::Prepared);
-    assert!(tx.backup.is_some(), "the migration backup must be recorded");
-    assert!(
-        environment.legacy_unit.is_file(),
-        "pre-checks must not touch the legacy unit"
-    );
-    assert!(
-        !install_root.canonical.join("releases").exists(),
-        "pre-checks must not create the managed release"
-    );
-
-    // worker 恢复路径:以事务 id 认领,只执行切换阶段。
-    let mut args = migrate_args(&source);
-    args.resume_transaction = Some(prepared.transaction_id);
-    let outcome = resume_migrate_switch(&install_root, &environment.systemd, &args, &options)
-        .await
-        .unwrap();
-    let MigrateOutcome::Committed { version, .. } = outcome else {
-        panic!(
-            "expected committed, got {outcome:?}\nfixture log:\n{}",
-            std::fs::read_to_string(root.join("fixture.log")).unwrap_or_default()
-        );
-    };
-    assert_eq!(version.to_string(), EXPORT_VERSION);
-    let state = installed_state(&install_root);
-    assert_eq!(state.service.manager, StateServiceManager::Systemd);
-    assert!(state.service.verified);
-    assert_eq!(state.initialization.status, InitStatus::Complete);
-    assert!(
-        !environment.legacy_unit.exists(),
-        "the switch must take over the legacy unit"
-    );
-    assert!(find_unfinished(&install_root).unwrap().is_none());
-
-    let systemctl = Command::new(systemctl_fixture())
-        .env(SYSTEMCTL_CONFIG_ENV, &environment.systemctl_config)
-        .args(["stop", "landscape-router.service"])
-        .output()
-        .unwrap();
-    assert!(systemctl.status.success());
 }
 
 /// 旧部署 unit 以普通文件直接写在受管注册路径(旧安装器形态)时,所有权保护
@@ -955,60 +875,6 @@ fn installed_state_file_exists(install_root: &InstallRoot) -> bool {
         .ok()
         .flatten()
         .is_some()
-}
-
-/// resume 要求事务 id 精确匹配当前未完成事务;未知 id 拒绝继续,
-/// 已准备好的事务保持 prepared 可被正确 id 续跑。
-#[tokio::test]
-async fn resume_rejects_an_unknown_prepared_transaction() {
-    let _guard = interactive_guard().await;
-    interactive::configure(true);
-    let _reset = NonInteractiveGuard;
-    let root = TempRoot::new("resume-unknown");
-    let _territory = territory_guard(&root);
-    let old_ports = FixturePorts::unique();
-    let new_ports = FixturePorts::unique();
-    let (source, _static_dir, _old_instance) =
-        spawn_manual_install(&root, &old_ports, Scenario::Healthy).await;
-
-    let install_root = new_root(&root.join("install"));
-    let environment = systemd_environment(&root, &source, &new_ports);
-    let options = MigrateOptions {
-        export_base_url: format!("https://127.0.0.1:{}", old_ports.https),
-        managed_uid: unsafe { libc::geteuid() },
-        confirm: &YES,
-        health: &health(&new_ports),
-        probe_ports: &old_ports.checks(),
-        interrupted: &NO_INTERRUPT,
-    };
-    let prepared = prepare_migration(
-        &install_root,
-        &environment.systemd,
-        &migrate_args(&source),
-        &options,
-    )
-    .await
-    .unwrap();
-
-    let mut args = migrate_args(&source);
-    args.resume_transaction = Some("unknown-transaction".into());
-    assert!(matches!(
-        resume_migrate_switch(&install_root, &environment.systemd, &args, &options).await,
-        Err(InstallError::BlockedByTransaction(_))
-    ));
-    let tx = find_unfinished(&install_root).unwrap().unwrap();
-    assert_eq!(
-        tx.transaction_id, prepared.transaction_id,
-        "the prepared transaction must remain untouched"
-    );
-
-    // 正确 id 仍可续跑,失败后的 abort 是干净的错误(回滚路径不进入)。
-    let mut args = migrate_args(&source);
-    args.resume_transaction = Some(prepared.transaction_id);
-    assert!(matches!(
-        resume_migrate_switch(&install_root, &environment.systemd, &args, &options).await,
-        Ok(MigrateOutcome::Committed { .. })
-    ));
 }
 
 #[tokio::test]

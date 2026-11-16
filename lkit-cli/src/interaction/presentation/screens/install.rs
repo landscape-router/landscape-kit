@@ -21,10 +21,6 @@ impl OperationScreen for InstallScreen {
         crate::keys::PRESENTATION_INSTALLATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "install"
-    }
-
     fn takeover_confirmable(&self) -> bool {
         true
     }

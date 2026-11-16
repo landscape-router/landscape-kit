@@ -21,10 +21,6 @@ impl OperationScreen for RepairScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "repair"
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,

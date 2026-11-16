@@ -284,7 +284,6 @@ impl ConsoleApp {
             #[cfg(feature = "test-support")]
             test_runtime: crate::console::test_runtime_path(),
         });
-        let args = vec!["restore".into()];
-        ConsoleAction::Command { command, args }
+        ConsoleAction::Command { command }
     }
 }

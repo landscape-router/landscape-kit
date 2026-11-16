@@ -164,7 +164,6 @@ pub(crate) async fn run_operation(
         yes: true,
         console_confirmed: true,
         repository: Some(args.repository.clone()),
-        resume_transaction: None,
     };
     let options = MigrateOptions {
         export_base_url: runtime.export_base_url.clone(),

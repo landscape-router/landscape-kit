@@ -1,7 +1,5 @@
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Once;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -42,31 +40,8 @@ pub(crate) fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// daemon worker 以 SIGTERM 取消迁移切换(见 daemon_worker 的 cancel 流程)。
-/// 安装处理器把信号转成回滚请求,而不是默认终止进程;进程组 SIGKILL 兜底
-/// 仍然存在,回滚通常在宽限期内完成。
-static SIGTERM_REQUESTED: AtomicBool = AtomicBool::new(false);
-static SIGTERM_HANDLER_INSTALLED: Once = Once::new();
-
-extern "C" fn handle_sigterm(_signal: libc::c_int) {
-    SIGTERM_REQUESTED.store(true, Ordering::SeqCst);
-}
-
-pub(crate) fn install_sigterm_handler() {
-    SIGTERM_HANDLER_INSTALLED.call_once(|| unsafe {
-        let handler = handle_sigterm as *const () as libc::sighandler_t;
-        libc::signal(libc::SIGTERM, handler);
-    });
-}
-
-pub(crate) fn sigterm_requested() -> bool {
-    SIGTERM_REQUESTED.load(Ordering::SeqCst)
-}
-
-/// 取消是否已请求:前台 ^C(`interrupted`,内联路径)或 daemon SIGTERM
-/// (委托 worker)任一触发即进入回滚。
 fn cancel_requested<P: DocsProbe>(options: &MigrateOptions<'_, P>) -> bool {
-    (options.interrupted)() || sigterm_requested()
+    (options.interrupted)()
 }
 
 /// 切换阶段取消检查:在安全点调用,取消后由 `migrate_switch_outcome` 回滚,
@@ -87,12 +62,10 @@ pub(crate) struct MigrateArgs {
     pub config_dir: PathBuf,
     /// 非交互模式必须显式 `--yes`。
     pub yes: bool,
-    /// 交互控制台已确认迁移计划(worker 进程无法读取 TUI 输入)。
+    /// 确认已经在提交请求前完成。
     pub console_confirmed: bool,
     /// 仅用于 static.zip 缺失时从发布仓库下载;None 按 配置 > 官方 GitHub 解析。
     pub repository: Option<RepositoryChoice>,
-    /// 前台已准备好的迁移事务 id(daemon worker 恢复路径专用)。
-    pub resume_transaction: Option<String>,
 }
 
 /// migrate 运行参数(测试可注入)。
@@ -104,13 +77,11 @@ pub(crate) struct MigrateOptions<'a, P: DocsProbe> {
     /// 固定端口探测参数:用于识别运行中的旧实例。生产与 `health.ports` 相同,
     /// 测试可注入不同端口。
     pub probe_ports: &'a [super::health::PortCheck],
-    /// 前台阶段的中断轮询:委托式 Ctrl+C 只置位标志不退出进程,迁移流程在
-    /// 步骤之间检查以中止(测试注入恒 false 的探针)。
+    /// 隔离内联测试的中断探针；daemon 执行期间不接受前端取消。
     pub interrupted: &'a dyn Fn() -> bool,
 }
 
-/// 前台前置检查完成后的交接现场:事务已标记 `prepared`,切换阶段
-/// (停止旧实例、重建、接管)由内联执行或 daemon worker 以事务 id 续跑。
+/// 迁移备份完成后的内存现场，供同一工作流继续切换。
 #[derive(Debug)]
 pub(crate) struct PreparedMigration {
     pub transaction_id: String,
@@ -140,8 +111,7 @@ pub(crate) enum MigrateOutcome {
 /// 从非 lkit 手工部署迁移:先创建迁移 `.lkb`(旧版本,不升级),确认后停止旧实例,
 /// 从备份重建 release/data/current,注册并启动受管服务,提交状态。
 /// 整条流程在当前进程内联执行(非 root 或测试 runtime 的前台路径)。
-/// root 下由命令层拆分:前置检查在前台(`prepare_migration`),切换阶段委托
-/// daemon worker 以 `resume_migrate_switch` 续跑。
+/// 生产入口由 native 模块执行并关联持久化操作。
 pub(crate) async fn migrate_version<P: DocsProbe>(
     root: &InstallRoot,
     manager: &dyn ServiceManager,
@@ -151,26 +121,6 @@ pub(crate) async fn migrate_version<P: DocsProbe>(
     // 旧部署识别与 unit 操作是 systemd 专属能力;不可用时代理到前台进程确认路径。
     let systemd = systemd::downcast(manager)?;
     let prepared = prepare_migration(root, manager, args, options).await?;
-    migrate_switch_outcome(root, systemd, args, options, &prepared).await
-}
-
-/// worker 恢复路径:认领前台标记为 `prepared` 的迁移事务,重新识别运行实例,
-/// 只执行切换阶段(停止旧实例、重建、接管、提交),失败回滚。
-pub(crate) async fn resume_migrate_switch<P: DocsProbe>(
-    root: &InstallRoot,
-    manager: &dyn ServiceManager,
-    args: &MigrateArgs,
-    options: &MigrateOptions<'_, P>,
-) -> Result<MigrateOutcome, InstallError> {
-    let systemd = systemd::downcast(manager)?;
-    let transaction = load_prepared_transaction(root, args.resume_transaction.as_deref())?;
-    let source = validate_source_dir(&args.config_dir)?;
-    let instance = identify_running_instance(&source, options.probe_ports)?;
-    let prepared = PreparedMigration {
-        transaction_id: transaction.transaction_id.clone(),
-        source,
-        instance,
-    };
     migrate_switch_outcome(root, systemd, args, options, &prepared).await
 }
 
@@ -250,9 +200,7 @@ async fn prepare_migration_bound<P: DocsProbe>(
 
     let result: Result<(), InstallError> = async {
         // ---- preparing:迁移备份 ----
-        crate::interaction::presentation::operation_phase(
-            crate::interaction::presentation::OperationPhase::Downloading,
-        );
+
         let architecture = Architecture::host().ok_or_else(|| {
             InstallError::UnsupportedPlatform(crate::tr!(
                 crate::keys::INSTALL_ONLY_X86_64_AND_AARCH64_SUPPORTED
@@ -434,8 +382,7 @@ async fn migrate_switch_outcome_bound<P: DocsProbe>(
             })?;
             match rollback_migrate(root, &latest, systemd) {
                 Ok(()) => {
-                    // 回滚成功也要给出原始失败原因:委托路径下这条 stderr
-                    // 会流回前端,内联路径直接打印,用户都能看到失败点。
+                    // 原始错误已保存至操作回执，内联测试同时输出诊断。
                     eprintln!("migrate: {error}");
                     if cancel_requested(options) {
                         Ok(MigrateOutcome::Cancelled { version })
@@ -535,7 +482,7 @@ async fn run_migrate_switch<P: DocsProbe>(
         crate::tr!(crate::keys::MIGRATE_STOPPING_OLD_INSTANCE)
     );
     // preempt 已停止并移走旧 unit 时不再重复扫描:再次扫描只会得到空结果,
-    // 被误判为前台实例并在 worker 里触发无法交互完成的确认。
+    // 被误判为前台实例。
     if transaction.legacy_unit.is_none() {
         let legacy = stop_legacy_instance(
             root,
@@ -562,9 +509,7 @@ async fn run_migrate_switch<P: DocsProbe>(
     super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
     transaction.phase = Phase::Activating;
     super::operation_control::phase(crate::daemon_operations::Stage::Activating)?;
-    crate::interaction::presentation::operation_phase(
-        crate::interaction::presentation::OperationPhase::Applying,
-    );
+
     eprintln!(
         "migrate: {}",
         crate::tr!(crate::keys::MIGRATE_REBUILDING_INSTALLATION)
@@ -675,7 +620,7 @@ fn confirm_instance_stopped<P: DocsProbe>(
     Ok(())
 }
 
-/// 健康检查等待期间响应取消(前台 ^C / worker SIGTERM),避免卡满
+/// 隔离内联测试的健康检查等待支持中断探针，避免卡满
 /// `startup_timeout` 才回滚。
 async fn wait_for_health<P: DocsProbe>(
     startup: &super::health::StartupOptions<'_, P>,

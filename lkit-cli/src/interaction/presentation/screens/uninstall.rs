@@ -21,10 +21,6 @@ impl OperationScreen for UninstallScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
-    fn announce_prefix(&self) -> &'static str {
-        "uninstall"
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,

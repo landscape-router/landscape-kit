@@ -280,7 +280,7 @@ pub(crate) fn begin_dialog(frame: &mut Frame<'_>, area: Rect) {
 
 fn render_header(frame: &mut Frame<'_>, app: &ConsoleApp, area: Rect) {
     let (badge, color) = app.snapshot.badge();
-    let (daemon_badge, daemon_color) = if crate::daemon_worker::daemon_is_running() {
+    let (daemon_badge, daemon_color) = if crate::daemon::is_running() {
         (
             crate::tr!(crate::keys::CONSOLE_HEADER_DAEMON_RUNNING),
             Color::Green,
@@ -541,7 +541,7 @@ impl Drop for VersionPin {
 /// ratatui 词级换行后行数与预留高度不一致导致内容被截断。
 fn overview_lkit_lines(focused: bool, wrap_width: u16) -> Vec<Line<'static>> {
     let version = lkit_version();
-    let running = crate::daemon_worker::daemon_is_running();
+    let running = crate::daemon::is_running();
     let muted = Style::default().fg(Color::DarkGray);
     let wrapped = |text: String, style: Style| -> Vec<Line<'static>> {
         super::widgets::wrap_to_width(wrap_width, &text)

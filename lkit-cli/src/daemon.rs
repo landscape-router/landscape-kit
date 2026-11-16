@@ -1,10 +1,8 @@
 //! lkit 常驻服务。
 //!
 //! 常驻服务承担三件事:
-//! 1. **操作执行**:服务修复通过持久化结构化操作直接执行;其余委托命令由 CLI 写入
-//!    [`OPERATIONS_DIR`](OPERATIONS_DIR) 的
-//!    root-only 请求文件,daemon 周期扫描并执行,CLI 轮询结果。daemon 由 init
-//!    系统启动,天然脱离用户会话,SSH 断开不会中止进行中的事务;
+//! 1. **操作执行**:领取持久化结构化请求并直接调用业务工作流。安装锁保证串行，
+//!    前端断开不影响执行；操作记录保存结果并供 CLI/TUI 观察。
 //! 2. **周期中断恢复**:CLI 进程因 SSH 断开、崩溃等原因消失后,遗留的未完成
 //!    事务由 daemon 自动接管并执行与 CLI 相同的恢复语义
 //!    ([`crate::deployment::transaction::recover_interrupted`]);
@@ -34,7 +32,6 @@ use clap::Args;
 use crate::deployment::plan::InstallError;
 use crate::deployment::runtime::InstallRuntime;
 use crate::deployment::{layout, lock, state, transaction};
-use crate::interaction::presentation::OPERATIONS_DIR;
 
 /// 每个恢复周期之间的基础间隔。
 pub(crate) const DAEMON_CYCLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -130,21 +127,23 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
         libc::signal(libc::SIGINT, handler as libc::sighandler_t);
     }
-    let mut worker: Option<tokio::task::JoinHandle<()>> = None;
+    let mut operation_task: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         recovery_cycle(&runtime).await;
         if !SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
-            && worker.as_ref().is_none_or(|task| task.is_finished())
+            && operation_task
+                .as_ref()
+                .is_none_or(|task| task.is_finished())
         {
-            if let Some(task) = worker.take() {
+            if let Some(task) = operation_task.take() {
                 let _ = task.await;
             }
             let runtime = runtime.clone();
-            worker =
+            operation_task =
                 Some(tokio::task::spawn_blocking(
                     move || match crate::daemon_operations::process_one(&runtime) {
                         Ok(true) => {}
-                        Ok(false) => execute_pending_requests(),
+                        Ok(false) => {}
                         Err(error) => {
                             eprintln!("lkit daemon: operation scheduling failed: {error}")
                         }
@@ -166,7 +165,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
             break;
         }
     }
-    if let Some(task) = worker {
+    if let Some(task) = operation_task {
         let _ = task.await;
     }
     drop(flare);
@@ -335,34 +334,6 @@ fn spawn_flare_from(
     None
 }
 
-/// 扫描并执行委托请求。请求文件由 CLI 写入
-/// `OPERATIONS_DIR/<id>.request.json`;独立 blocking task 逐次认领执行,
-/// 恢复循环继续检查安装锁与事务。
-fn execute_pending_requests() {
-    let operations = match std::fs::read_dir(OPERATIONS_DIR) {
-        Ok(operations) => operations,
-        Err(_) => return,
-    };
-    let mut requests: Vec<std::path::PathBuf> = operations
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().ends_with(".request.json"))
-        })
-        .collect();
-    requests.sort();
-    for request in requests.into_iter().take(1) {
-        if request.parent() != Some(std::path::Path::new(OPERATIONS_DIR)) {
-            continue;
-        }
-        let exit_code = crate::daemon_worker::execute_request(&request);
-        if exit_code != 0 {
-            eprintln!("lkit daemon: delegated operation exited with {exit_code}");
-        }
-    }
-}
-
 /// 单个恢复周期:以非阻塞方式获取安装锁,存在未完成事务时执行
 /// `recover_interrupted`(与 CLI 相同的恢复语义)。
 async fn recovery_cycle(runtime: &InstallRuntime) {
@@ -484,6 +455,13 @@ fn write_pidfile(pidfile: &Path) -> Result<(), InstallError> {
     file.sync_all().map_err(InstallError::Io)?;
     std::fs::rename(&tmp, pidfile).map_err(InstallError::Io)?;
     Ok(())
+}
+
+pub(crate) fn is_running() -> bool {
+    std::fs::read_to_string(layout::territory_pidfile())
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .is_some_and(process_alive)
 }
 
 pub(crate) fn process_alive(pid: u32) -> bool {

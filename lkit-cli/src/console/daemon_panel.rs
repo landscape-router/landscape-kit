@@ -112,7 +112,7 @@ impl ConsoleApp {
     /// Overview 是否可执行 daemon 部署:daemon 未运行时显示「部署」动作行。
     /// 非 root 会话也能看到动作行,确认后得到与 CLI 相同的 root 权限错误提示。
     pub(super) fn daemon_deploy_available(&self) -> bool {
-        !crate::daemon_worker::daemon_is_running()
+        !crate::daemon::is_running()
     }
 
     /// 打开「部署 daemon」确认弹窗:预填既有急救恢复码(通常为空,留空自动
