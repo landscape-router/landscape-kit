@@ -236,7 +236,17 @@ esac
     /// 启动常驻 daemon 子进程(测试 runtime 注入 fake systemd),等待地盘
     /// pidfile 出现后返回;drop 时终止进程并清理 pidfile。
     pub(crate) fn spawn_daemon(&self, runtime: &Path) -> DaemonGuard {
+        self.spawn_daemon_with_repair_pause(runtime, false)
+    }
+    pub(crate) fn spawn_daemon_with_repair_pause(
+        &self,
+        runtime: &Path,
+        pause: bool,
+    ) -> DaemonGuard {
         let mut child = self.command();
+        if pause {
+            child.env("LKIT_TEST_PAUSE_REPAIR_VERIFY", "1");
+        }
         child
             .arg("daemon")
             .arg("--test-runtime")
@@ -245,7 +255,7 @@ esac
             .stderr(std::process::Stdio::null());
         let child = child.spawn().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !std::fs::read_to_string(self.run_dir().join("operations-v1.pid"))
+        while !std::fs::read_to_string(self.run_dir().join("asset-repair-v2.pid"))
             .is_ok_and(|pid| pid.trim() == child.id().to_string())
         {
             assert!(

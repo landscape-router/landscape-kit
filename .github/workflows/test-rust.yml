@@ -67,6 +67,7 @@ jobs:
             daemon_worker::tests \
             daemon_supervisor::tests \
             daemon::tests::capability_requires_the_live_daemon_pid_and_matching_marker \
+            workflows::repair::tests \
             workflows::repair_service::tests \
             service::host_network::tests \
             service::sysvinit::tests \

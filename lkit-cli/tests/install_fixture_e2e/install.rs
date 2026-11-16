@@ -145,6 +145,8 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
 
     std::fs::write(&config_path, b"not valid toml [[[").unwrap();
     let original_bytes = std::fs::read(&config_path).unwrap();
+    let daemon_runtime = harness.daemon_runtime();
+    let _daemon = harness.spawn_daemon(&daemon_runtime);
 
     // 普通 reconcile 不读取配置,损坏配置不影响它。
     let reconcile = harness
@@ -169,7 +171,11 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
             .command()
             .args(&args)
             .arg("--test-runtime")
-            .arg(&harness.runtime_config)
+            .arg(if args[0] == "repair" {
+                &daemon_runtime
+            } else {
+                &harness.runtime_config
+            })
             .output()
             .unwrap();
         assert_eq!(
@@ -235,7 +241,7 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
         .arg("--repository")
         .arg(&harness.repository.base_url)
         .arg("--test-runtime")
-        .arg(&harness.runtime_config)
+        .arg(&daemon_runtime)
         .output()
         .unwrap();
     assert!(

@@ -124,6 +124,8 @@ fn repair_static_restores_custom_frontend_then_official_flag() {
     )
     .unwrap();
     assert_success(&harness.run());
+    let runtime = harness.daemon_runtime();
+    let _daemon = harness.spawn_daemon(&runtime);
 
     let index = harness.install_root.join("current/static/index.html");
     std::fs::write(&index, "<h1>tampered</h1>").unwrap();
@@ -135,7 +137,7 @@ fn repair_static_restores_custom_frontend_then_official_flag() {
         .arg("--repository")
         .arg(&harness.repository.base_url)
         .arg("--test-runtime")
-        .arg(&harness.runtime_config)
+        .arg(&runtime)
         .output()
         .unwrap();
     assert_success(&repair);
@@ -145,6 +147,30 @@ fn repair_static_restores_custom_frontend_then_official_flag() {
         "repair static must restore the active custom frontend"
     );
 
+    let unavailable = RepositoryServer::start(std::collections::HashMap::new());
+    std::fs::write(
+        harness.config_path(),
+        frontend_preset_config(&harness.repository.base_url, &unavailable.base_url),
+    )
+    .unwrap();
+    let failed = harness
+        .command()
+        .args([
+            "repair",
+            "static",
+            "--repository",
+            &harness.repository.base_url,
+            "--test-runtime",
+        ])
+        .arg(&runtime)
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("--official"));
+    assert_eq!(
+        std::fs::read_to_string(&index).unwrap(),
+        "<h1>Custom frontend</h1>"
+    );
     std::fs::write(&index, "<h1>tampered again</h1>").unwrap();
     let official = harness
         .command()
@@ -154,10 +180,28 @@ fn repair_static_restores_custom_frontend_then_official_flag() {
         .arg("--repository")
         .arg(&harness.repository.base_url)
         .arg("--test-runtime")
-        .arg(&harness.runtime_config)
+        .arg(&runtime)
         .output()
         .unwrap();
     assert_success(&official);
+    let operations = harness
+        .command()
+        .args(["operation", "list"])
+        .output()
+        .unwrap();
+    assert_success(&operations);
+    let records: Vec<serde_json::Value> = serde_json::from_slice(&operations.stdout).unwrap();
+    assert_eq!(records.len(), 3);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["status"] == "failed")
+            .count(),
+        1
+    );
+    for record in records {
+        assert!(record["transaction_id"].is_string());
+    }
     assert_eq!(
         std::fs::read_to_string(&index).unwrap(),
         official_index(),

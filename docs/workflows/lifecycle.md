@@ -56,7 +56,11 @@ rollback 和手工
 
 ### 4. Repair 阶段转换
 
-需要替换后端的 repair 使用以下阶段边界：
+repair 使用[daemon 操作管理](../service/daemon.md)的结构化请求与持久化结果。
+操作与事务的关联先于事务创建；操作阶段独立于事务阶段。下载取消窗口在导出、备份
+和任何活动资产修改前关闭。恢复不重新提交工作流，也不重新解析资产来源。
+
+需要替换后端的 repair 按安装记录的服务管理后端使用以下阶段边界：
 
 1. `preparing`：下载并校验原始可信后端，导出配置并创建 `.lkb`；
 2. `.lkb`、修复后端和修复前二进制完整落盘；记录 `systemd_before`，完成 `/etc/resolv.conf` 备份并写入 `resolv_conf_backup`，然后更新为 `prepared`；
@@ -67,11 +71,13 @@ rollback 和手工
 
 `lkit repair static` 不停止 Landscape，也不创建 `.lkb`：
 
-- `preparing` 时下载发布静态包并备份当前 `static/`；
+- `preparing` 时下载并校验选定来源的静态包；结束下载取消窗口后，备份当前
+  `static/`、版本目录中的 `static.zip`（或记录不存在）和安装状态；
 - 备份和目标静态目录准备完成后更新为 `prepared`；
-- 替换静态目录前更新为 `activating`；
+- 修改版本归档或替换静态目录前更新为 `activating`，不在备份前刷新 `static.zip`；
 - 静态文件由运行中的 Landscape 热加载，替换完成后直接提交状态，不执行 `/api/docs` 探测或任何运行态检查；
-- 替换失败时恢复原静态目录，更新为 `rolled_back`；恢复失败则为 `failed`。
+- 提交前失败或中断时恢复静态目录、版本归档和旧安装状态，更新为 `rolled_back`；
+  恢复失败保留失败现场和阻断依据，不能只恢复其中一项后报告完成。
 
 ### 5. 版本切换准备
 
@@ -112,9 +118,9 @@ rollback 和手工
 
 成功状态必须最后提交。
 
-上述会改变 systemd 或 Landscape 运行态的生产路径在进入流程前已经由临时 operation
-unit 托管；CLI 等待进程退出不会中止事务 worker。主机重启后的处理仍依赖下次调用
-执行阶段恢复。
+生产修复工作流由 daemon 直接执行，其他委托入口由 daemon 管理 worker。
+CLI 等待进程退出不会中止已接受的操作。daemon 按持久化事务恢复中断现场；修复
+事务提交后补写操作结果，不能因前端未收到结果而重新执行。
 
 ### 8. 手工备份与恢复
 

@@ -90,6 +90,7 @@ impl DownloadProgress {
             return;
         }
         self.state.elapsed_millis = now.duration_since(self.started).as_millis() as u64;
+        crate::workflows::repair_control::progress(self.state.position, self.state.total);
         match &mut self.output {
             ProgressOutput::Events(file) => write_event(
                 file,

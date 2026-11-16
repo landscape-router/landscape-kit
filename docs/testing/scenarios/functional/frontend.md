@@ -57,11 +57,14 @@
 
 ## FE-06
 
-**repair static 意图驱动与 --official**
+**repair static 按来源意图修复与显式选择官方页面**
 
 - 测试层：单元 + e2e fixture
-- 状态：`已覆盖`
+- 状态：`部分覆盖`
 - 证据：[`lkit repair`](../../../commands/repair.md)、`repair_static_restores_custom_frontend_then_official_flag`（lkit-cli/tests/install_fixture_e2e/frontend.rs）
 - 说明：激活源非官方时 `repair static` 重新拉取自定义前端；否则恢复官方页面并
   更新 state 身份、刷新版本目录 `static.zip`；`--official` 无条件恢复官方并提示
-  下次 switch/update 会重新应用自定义；源不可达时交互询问回退官方。
+  下次 switch/update 会重新应用自定义。
+  自定义源不可达时操作失败并提示 `--official`，daemon 不读取终端或隐式回退。
+  用户明确选择官方后以新 ID 提交，原操作保持失败；配置中的自定义源不被修改。
+- 缺口：交互控制台内显式选择官方修复的确认流程；CLI fixture 覆盖来源失败结果、显式官方请求与独立操作 ID。

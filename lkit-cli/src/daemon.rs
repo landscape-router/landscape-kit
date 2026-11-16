@@ -90,6 +90,10 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&service_capability)?;
     let operations_capability = layout::territory_run_dir().join("operations-v1.pid");
     write_pidfile(&operations_capability)?;
+    let operations_v2 = layout::territory_run_dir().join("operations-v2.pid");
+    write_pidfile(&operations_v2)?;
+    let assets_capability = layout::territory_run_dir().join("asset-repair-v2.pid");
+    write_pidfile(&assets_capability)?;
 
     // Best effort only: bpffs preparation must not disable the L2 recovery
     // channel or prevent Landscape's normal service startup.
@@ -152,6 +156,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         let _ = task.await;
     }
     drop(flare);
+    let _ = std::fs::remove_file(&assets_capability);
+    let _ = std::fs::remove_file(&operations_v2);
     let _ = std::fs::remove_file(&operations_capability);
     let _ = std::fs::remove_file(&service_capability);
     let _ = std::fs::remove_file(&recovery_capability);

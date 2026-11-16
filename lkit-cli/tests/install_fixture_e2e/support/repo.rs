@@ -14,6 +14,13 @@ pub(crate) struct RepositoryServer {
 
 impl RepositoryServer {
     pub(crate) fn start(files: HashMap<String, Vec<u8>>) -> Self {
+        Self::start_gated(files, None)
+    }
+
+    pub(crate) fn start_gated(
+        files: HashMap<String, Vec<u8>>,
+        gate: Option<(String, Arc<std::sync::atomic::AtomicBool>)>,
+    ) -> Self {
         let files = Arc::new(files);
         let requests = Arc::new(Mutex::new(Vec::new()));
         let request_log = requests.clone();
@@ -29,6 +36,16 @@ impl RepositoryServer {
                 let request = String::from_utf8_lossy(&request[..size]);
                 let path = request.split_whitespace().nth(1).unwrap_or("/");
                 request_log.lock().unwrap().push(path.to_string());
+                if let Some((suffix, released)) = &gate
+                    && path.ends_with(suffix)
+                {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                    while !released.load(std::sync::atomic::Ordering::SeqCst)
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                }
                 let (status, reason, body) = match files.get(path) {
                     Some(body) => (200, "OK", body.as_slice()),
                     None => (404, "Not Found", &[][..]),

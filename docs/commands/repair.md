@@ -24,10 +24,38 @@ lkit repair service
   `SHASUM256sum.txt`）严格一致；官方路径成功后更新 state 中的 static archive 身份
   并刷新版本目录 `static.zip`（恢复备份/手工替换造成的身份漂移）。binary repair
   对比解压后的后端身份；不一致则拒绝。成功后不写入、不修改 `config.toml`。
-- 官方路径的前端源不可达时：交互环境询问是否回退官方页面，非交互环境报错并提示
-  使用 `--official`。
+- 自定义前端源不可达时，本次操作失败并提示使用 `--official`。交互前端可在用户
+  确认后提交新的官方修复请求；daemon 不读取终端，也不隐式回退。
 
 自定义前端包的格式、发布协议与校验规则见[前端开发规范](../frontend/developer.md)。
+
+## 执行、查询与取消
+
+三种修复都由 daemon 直接执行，CLI／TUI 只提交结构化参数并展示持久化状态，不创建
+lkit worker。daemon 必须支持对应操作类型；缺失或版本不匹配时拒绝提交，不能改为
+前端内联执行。安装锁被占用或存在阻断事务时保持排队，领取后重新验证现场。
+static／binary 请求绑定提交时的活动版本；排队期间版本变化会使请求失败。
+
+提交后输出操作 ID。`lkit operation status <id>` 查询当前阶段、下载进度、可取消
+状态及结果，`lkit operation list` 列举记录；前端断开后记录仍保留，重新查询不重放
+操作。CLI 的 Ctrl+C 结束等待，不取消 daemon 工作流。
+
+`lkit operation cancel <id>` 可以取消排队请求；static／binary 在下载阶段还允许
+协作取消，完成临时文件清理后才报告取消成功。开始准备、备份、停服务或修改文件后
+拒绝取消；service 领取后不允许取消。取消与阶段切换的竞争由 daemon 裁定，前端
+展示的进度不构成修改许可。完整规则见[daemon 操作管理](../service/daemon.md)。
+
+## 资产修复与恢复
+
+static 修复不停止服务。修改前保存静态目录、原 `static.zip` 及旧安装状态；恢复
+必须让这些对象保持一致，不能只恢复页面而保留新归档或新摘要。不创建 `.lkb`，不
+重建 Landscape data。binary 修复按安装记录的 systemd、OpenRC 或 SysVinit 后端
+管理服务；无法管理受管实例或无法完成导出与保护备份时，在修改前失败，不等待人工
+停进程。激活失败使用 `.lkb`、旧二进制、旧状态和服务快照恢复，并执行相应健康验证。
+
+两种资产修复提交前中断按各自事务恢复；事务已经提交但操作结果未写入时补写成功，
+不重新执行。恢复失败保留诊断现场和阻断依据。详见
+[Repair 阶段转换](../workflows/lifecycle.md#4-repair-阶段转换)。
 
 ## 服务定义修复
 
@@ -36,13 +64,7 @@ lkit repair service
 后端、不下载资产、不修改 Landscape 配置和数据、不创建 `.lkb`，不接受仓库参数。
 `repair static` 和 `repair binary` 不承担服务定义迁移。
 
-命令要求已提交的安装、可用的匹配后端和支持操作管理的运行中 daemon。
-CLI 输出操作 ID 后等待结果；daemon 直接执行工作流，不创建 lkit worker。
-安装锁被占用或存在未完成事务时保持排队，取得锁后重新验证现场。
-前端断开不取消操作；使用 `lkit operation status <id>` 查询、`lkit operation list`
-列举，`lkit operation cancel <id>` 仅取消尚未领取的请求。
-执行和恢复中的操作不能取消。记录跨重启保留，恢复依据及状态见
-[daemon 操作管理](../service/daemon.md)。
+命令要求已提交的安装、可用的匹配后端和支持服务修复操作的运行中 daemon。
 写入前验证安装状态中的定义摘要及系统注册链接；定义被手工修改、注册指向外部路径
 或身份无法验证时拒绝覆盖，并报告冲突路径。
 

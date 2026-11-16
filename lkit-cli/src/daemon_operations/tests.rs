@@ -205,3 +205,175 @@ fn rejects_traversal_and_corrupt_records_without_claiming_other_work() {
     std::fs::write(path(&record.id).unwrap(), b"broken").unwrap();
     assert!(claim().is_err());
 }
+
+fn asset_request() -> AssetRequest {
+    AssetRequest {
+        version: "1.2.3".into(),
+        state_identity: "a".repeat(64),
+        repository: None,
+        official: false,
+    }
+}
+fn queued_asset(f: &Fixture, kind: Kind) -> Record {
+    submit_request(
+        f.dir.join("landscape").to_string_lossy().into_owned(),
+        kind,
+        Some(asset_request()),
+    )
+    .unwrap()
+}
+fn preparing_asset(f: &Fixture, record: &mut Record) -> transaction::TransactionFile {
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let mut tx = transaction::TransactionFile::new_repair_static(&root).unwrap();
+    tx.schema_version = 7;
+    associate(record, &tx).unwrap();
+    transaction::begin(&root, &tx).unwrap();
+    tx
+}
+#[test]
+fn typed_requests_validate_payloads_and_preserve_repository_choices() {
+    use crate::deployment::plan::RepositoryChoice;
+    let f = Fixture::new();
+    assert!(submit_request(f.dir.to_string_lossy().into_owned(), Kind::Binary, None).is_err());
+    assert!(validate_request(Kind::Service, Some(&asset_request())).is_err());
+    let mut invalid = asset_request();
+    invalid.official = true;
+    assert!(validate_request(Kind::Binary, Some(&invalid)).is_err());
+    for choice in [
+        None,
+        Some(RepositoryChoice::Mirror),
+        Some(RepositoryChoice::Github(
+            "landscape-router/landscape".into(),
+        )),
+        Some(RepositoryChoice::Http(
+            "https://example.com/repository".into(),
+        )),
+    ] {
+        let request = AssetRequest {
+            repository: choice.clone(),
+            ..asset_request()
+        };
+        let record = submit_request(
+            f.dir.to_string_lossy().into_owned(),
+            Kind::Static,
+            Some(request),
+        )
+        .unwrap();
+        assert_eq!(read(&record.id).unwrap().assets.unwrap().repository, choice);
+    }
+    assert!(
+        serde_json::from_str::<AssetRequest>(
+            r#"{"version":"1.2.3","repository":null,"official":false,"argv":["shell"]}"#
+        )
+        .is_err()
+    );
+}
+#[test]
+fn cancellation_wins_before_preparation_and_cannot_be_overwritten() {
+    let f = Fixture::new();
+    queued_asset(&f, Kind::Static);
+    let mut record = claim().unwrap().unwrap();
+    let tx = preparing_asset(&f, &mut record);
+    set_stage(&record.id, Stage::Downloading).unwrap();
+    let accepted = cancel(&record.id).unwrap();
+    assert!(accepted.cancel_requested);
+    assert_eq!(accepted.status, Status::Running);
+    assert!(set_stage(&record.id, Stage::Preparing).is_err());
+    let dir = layout::territory_transactions_dir().join(&tx.transaction_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("partial"), "partial").unwrap();
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Cancelled);
+    assert_eq!(record.exit_code, Some(130));
+    assert!(record.cancel_cleaned);
+    assert!(!dir.exists());
+    assert_eq!(cancel(&record.id).unwrap().status, Status::Cancelled);
+    assert!(!execute_next(|_| panic!("cancelled request must not execute")).unwrap());
+}
+#[test]
+fn preparation_wins_before_cancel_and_terminal_progress_is_immutable() {
+    let f = Fixture::new();
+    queued_asset(&f, Kind::Static);
+    let mut record = claim().unwrap().unwrap();
+    set_stage(&record.id, Stage::Downloading).unwrap();
+    set_progress(&record.id, 5, 10).unwrap();
+    let downloading = read(&record.id).unwrap();
+    assert_eq!(downloading.downloaded_bytes, 5);
+    assert!(downloading.cancellable);
+    set_stage(&record.id, Stage::Preparing).unwrap();
+    assert!(cancel(&record.id).is_err());
+    reconcile(
+        &mut record,
+        Some(Err("download complete; preflight rejected".into())),
+    )
+    .unwrap();
+    let before = std::fs::read(path(&record.id).unwrap()).unwrap();
+    set_progress(&record.id, 10, 10).unwrap();
+    assert!(set_stage(&record.id, Stage::Downloading).is_err());
+    assert_eq!(std::fs::read(path(&record.id).unwrap()).unwrap(), before);
+    assert!(record.revision > downloading.revision);
+}
+#[test]
+fn interrupted_cancel_retries_cleanup_and_cannot_hide_modified_transactions() {
+    let f = Fixture::new();
+    queued_asset(&f, Kind::Static);
+    let mut record = claim().unwrap().unwrap();
+    let mut tx = preparing_asset(&f, &mut record);
+    set_stage(&record.id, Stage::Downloading).unwrap();
+    cancel(&record.id).unwrap();
+    let dir = layout::territory_transactions_dir().join(&tx.transaction_id);
+    std::fs::write(&dir, "cannot remove as directory").unwrap();
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Recovering);
+    assert!(!record.cancel_cleaned);
+    assert!(claim().unwrap().is_none());
+    std::fs::remove_file(&dir).unwrap();
+    tx.phase = transaction::Phase::Activating;
+    tx.static_backup = Some(transaction::StaticBackupRef {
+        path: format!("transactions/{}/static-backup", tx.transaction_id),
+        target: "releases/1.2.3/static".into(),
+    });
+    f.write_tx(&tx);
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Recovering);
+    tx.phase = transaction::Phase::Preparing;
+    f.write_tx(&tx);
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Cancelled);
+}
+#[tokio::test]
+async fn cooperative_download_cancellation_drops_the_pending_future() {
+    let f = Fixture::new();
+    let record = queued_asset(&f, Kind::Static);
+    claim().unwrap().unwrap();
+    let _control = crate::workflows::repair_control::enter(&record.id);
+    let (result, ()) = tokio::join!(
+        crate::workflows::repair_control::download(
+            std::future::pending::<Result<(), InstallError>>()
+        ),
+        async {
+            tokio::task::yield_now().await;
+            cancel(&record.id).unwrap();
+        }
+    );
+    assert!(result.is_err());
+    assert!(set_stage(&record.id, Stage::Preparing).is_err());
+}
+
+#[test]
+fn committed_asset_transaction_is_reported_once_without_reexecuting() {
+    let f = Fixture::new();
+    queued_asset(&f, Kind::Static);
+    let mut record = claim().unwrap().unwrap();
+    let mut tx = preparing_asset(&f, &mut record);
+    tx.static_backup = Some(transaction::StaticBackupRef {
+        path: format!("transactions/{}/static-backup", tx.transaction_id),
+        target: "releases/1.2.3/static".into(),
+    });
+    tx.phase = transaction::Phase::Committed;
+    f.write_tx(&tx);
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Succeeded);
+    assert_eq!(record.exit_code, Some(0));
+    assert!(!execute_next(|_| panic!("must not execute committed repair")).unwrap());
+}

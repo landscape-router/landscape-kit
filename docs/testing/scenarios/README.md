@@ -31,7 +31,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 卸载 | `UNI-01` 至 `UNI-13` | [uninstall.md](functional/uninstall.md) |
 | 重新初始化 | `REI-01` 至 `REI-10` | [reinit.md](functional/reinit.md) |
 | 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
-| 修复 | `REP-01` 至 `REP-06` | [repair.md](functional/repair.md) |
+| 修复 | `REP-01` 至 `REP-09` | [repair.md](functional/repair.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
 | 初始化系统与 Cgroup 准备 | `INIT-01` 至 `INIT-04` | [init.md](functional/init.md) |
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-04` | [security-and-environment.md](functional/security-and-environment.md) |

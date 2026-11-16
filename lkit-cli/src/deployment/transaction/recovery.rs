@@ -222,6 +222,9 @@ async fn recover_repair<P: DocsProbe>(
     systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
+    if transaction.schema_version == 7 {
+        return crate::workflows::repair::recover_assets(root, transaction, systemd, health).await;
+    }
     match transaction.phase {
         Phase::Preparing => {
             let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));

@@ -54,7 +54,8 @@ pub(crate) struct ProviderSpec {
     pub location: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RepositoryChoice {
     /// GitHub 仓库 `owner/repo`。无显式来源时用 `DEFAULT_REPOSITORY`,
     /// 配置文件解析出的来源保留其 location。

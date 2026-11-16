@@ -209,9 +209,11 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
     因而恢复后保持停止；
   - systemd 下有 `backup` 的 `switch`：停止目标版本，使用 `previous_current` 和 `.lkb`
     恢复旧版本；
-  - systemd 下的 `repair` 且事务含 `.lkb`：停止修复后的版本，使用 `.lkb` 恢复修复前运行状态；
+  - 后端 `repair` 且事务含 `.lkb`：按事务记录的受管后端停止修复后的版本，
+    使用 `.lkb`、旧二进制和现场快照恢复修复前运行状态；
   - `install`：没有旧版本和 `.lkb`，执行首次安装失败清理；仅 systemd 环境恢复服务注册和 `/etc/resolv.conf`，不得调用 `.lkb` 回滚；
-  - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，不重建 Landscape data；
+  - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，并恢复原版本归档与安装状态，
+    不重建 Landscape data；
 - `migrate`（手工部署迁移）按阶段恢复：
   - `preparing`：尚未停止旧实例，标记 `failed`；迁移 `.lkb` 保留在 `backups/`；
   - `prepared` 或 `stopping`：旧 unit 可能已停止，幂等恢复旧 unit（`legacy_unit` 记录的
@@ -289,14 +291,14 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-权威定义是 `daemon_worker::delegates`（lkit-cli 源码），本清单与之保持一致：
+以下清单列出保留 worker 协议的入口；repair 的直接执行协议单独定义：
 
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
 | `install` | `check` |
 | `switch` | `reconcile` |
 | `update` | `set-mirror` |
-| `repair static/binary` | `software` |
+|  | `software` |
 | `restore` | `backup` |
 | `reinit` | `self` |
 | `uninstall` | `daemon` |
@@ -304,7 +306,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 | `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
 
-`repair service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+`repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
 由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
 `operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
@@ -413,11 +415,31 @@ binary、static 和初始化观测 repair 区分。
 支持该格式和对应恢复能力；不支持时在写事务前拒绝，提示先升级并重启 daemon。
 未知版本或修复类型不得按普通 repair 清理。失败恢复数据在事务终结前不得删除。
 
-服务定义修复使用 schema v6、`operation: repair_service`；普通事务继续写 v5，读取支持
-v1 至 v6。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
+服务定义修复使用 schema v6、`operation: repair_service`；资产修复使用 schema v7、
+`operation: repair`；其他事务写 v5，读取支持 v1 至 v7。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
 原定义、目标定义、原权限、服务状态、OpenRC／SysVinit 精确启动链接及安装状态。
 `preparing` 未修改定义，可标记失败；`prepared`、`activating`、`verifying` 与
 `rolling_back` 恢复原定义；`finalizing` 校验并续做提交。恢复遇到外部定义修改或
 注册链接冲突时拒绝覆盖并保留事务。运行中的 daemon 通过 `service-repair-v1.pid`
 声明支持该恢复类型，标识 PID 必须与实际 daemon 的存活 PID 一致。服务修复提交入口还要求
-`operations-v1.pid`，防止将新格式请求提交给只支持 worker 的 daemon。
+`operations-v2.pid`。static／binary 修复入口要求 `asset-repair-v2.pid`；
+能力标识的 PID 必须与存活 daemon 一致。
+
+
+## 资产修复事务
+
+static／binary 修复写入 schema v7，操作记录使用 schema v2，事务创建前保存操作与
+事务 ID 的关联。binary 事务记录相同的 `from_version` 和 `target_version`；static
+通过 `static_backup` 标识备份和目标目录。两者的准备阶段均允许尚未形成完整备份。
+
+static 的 `transactions/<id>/static-snapshot.json` 使用格式版本 1，记录安装状态、
+静态目录摘要，以及原 `static.zip` 的存在性、摘要和权限。快照及文件同步完成后才
+进入 `prepared`；刷新归档和替换页面均位于 `activating`。恢复先核验快照归属与摘要，
+再恢复页面、归档和安装状态，成功标记 `rolled_back`。原归档不存在时恢复为不存在。
+
+binary 备份完成后保存旧状态、服务事实和必要宿主文件；替换失败用 `.lkb` 恢复
+数据和原二进制，保持静态目录及归档不变。恢复保留安装记录中的后端和开机启用状态。
+恢复失败保持 `rolling_back`，阻断后续修改，保留诊断材料供 daemon 重试。
+
+取消仅在操作层的下载窗口接受；事务处于 `preparing` 并不能单独证明允许取消。
+取消清理临时目录并终结事务后，操作记录才写入已清理凭据与 `cancelled`。

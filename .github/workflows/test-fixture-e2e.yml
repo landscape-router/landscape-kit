@@ -95,6 +95,8 @@ jobs:
             filter: "network::"
           - domain: reinit
             filter: "reinit::"
+          - domain: repair
+            filter: "repair::"
           - domain: repair-service
             filter: "repair_service::"
           - domain: self

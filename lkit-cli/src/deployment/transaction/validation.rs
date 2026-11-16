@@ -16,6 +16,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             transaction.schema_version
         )));
     }
+    if transaction.schema_version == 7 && transaction.operation != Operation::Repair {
+        return Err(corrupted("schema v7 is reserved for asset repair".into()));
+    }
     if transaction.schema_version == 1 && transaction.phase == Phase::Stopping {
         return Err(corrupted(
             "transaction phase stopping requires schema version 2".into(),
@@ -248,7 +251,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 && transaction.target_version.is_none()
                 && transaction.previous_current.is_none()
                 && transaction.target_release.is_none();
-            if !observation
+            if (!observation || transaction.schema_version == 7)
                 && has_backup == has_static_backup
                 && !matches!(transaction.phase, Phase::Preparing | Phase::Failed)
             {
@@ -505,7 +508,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 7;
+        transaction.schema_version = 8;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);

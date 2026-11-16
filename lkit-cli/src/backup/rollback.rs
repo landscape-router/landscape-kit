@@ -65,7 +65,9 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
-    let is_systemd = snapshot.service.manager == StateServiceManager::Systemd;
+    let asset_repair = transaction.schema_version == 7
+        && transaction.operation == super::transaction::Operation::Repair;
+    let is_systemd = asset_repair || snapshot.service.manager == StateServiceManager::Systemd;
     if is_systemd {
         systemd.stop_and_wait(
             ManagedService::LandscapeRouter,
@@ -96,7 +98,23 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
     let from_version = transaction.from_version.as_deref().ok_or_else(|| {
         InstallError::CorruptedTransaction("switch transaction is missing from_version".into())
     })?;
-    rebuild_release_from_backup(root, &tx_dir, from_version, &restore_dir)?;
+    if asset_repair {
+        // Repair only replaces the binary. Preserve the original static directory
+        // and its exact archive bytes instead of rebuilding the entire release.
+        let binary =
+            std::fs::read(restore_dir.join("landscape-webserver")).map_err(InstallError::Io)?;
+        write_file_atomic(
+            &root
+                .canonical
+                .join("releases")
+                .join(from_version)
+                .join("landscape-webserver"),
+            &binary,
+            0o755,
+        )?;
+    } else {
+        rebuild_release_from_backup(root, &tx_dir, from_version, &restore_dir)?;
+    }
     let geo_tmp_source = restore_dir.join("geo_tmp");
     if geo_tmp_source.is_dir() {
         copy_tree(&geo_tmp_source, &data.join("geo_tmp"))?;
@@ -107,14 +125,32 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
 
     restore_current(root, &format!("releases/{from_version}"))?;
 
-    let state = build_restored_state(root, transaction, snapshot, &metadata, &restore_dir)?;
+    let state = if asset_repair {
+        snapshot.clone()
+    } else {
+        build_restored_state(root, transaction, snapshot, &metadata, &restore_dir)?
+    };
     if is_systemd {
-        systemd.register(
-            ManagedService::LandscapeRouter,
-            &root.canonical.join("service/landscape-router.service"),
-        )?;
-        systemd.enable(ManagedService::LandscapeRouter)?;
-        systemd.start(ManagedService::LandscapeRouter)?;
+        if asset_repair {
+            let before = transaction.systemd_before.as_ref().ok_or_else(|| {
+                InstallError::CorruptedTransaction("missing repair service snapshot".into())
+            })?;
+            if let Some(backup) = &transaction.resolv_conf_backup {
+                resolv::restore(systemd.resolv_conf(), &layout::territory_relative(backup))?;
+            }
+            systemd.restore_before(
+                ManagedService::LandscapeRouter,
+                before,
+                &root.canonical.join("service/landscape-router.service"),
+            )?;
+        } else {
+            systemd.register(
+                ManagedService::LandscapeRouter,
+                &root.canonical.join("service/landscape-router.service"),
+            )?;
+            systemd.enable(ManagedService::LandscapeRouter)?;
+            systemd.start(ManagedService::LandscapeRouter)?;
+        }
         let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
@@ -132,11 +168,15 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             stable_duration: health.stable_duration,
         };
         if let Err(error) = health::wait_for_startup(&options).await {
-            let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
+            if !asset_repair {
+                let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
+            }
             return Err(error);
         }
         if let Err(error) = health::observe_stable(&options).await {
-            let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
+            if !asset_repair {
+                let _ = super::transaction::mark_phase(root, transaction, Phase::Failed);
+            }
             return Err(error);
         }
     }

@@ -15,3 +15,6 @@ pub(crate) use crate::interaction::{credentials, interactive};
 pub(crate) use crate::release::{artifacts, repository};
 pub(crate) use crate::service::{health, manager, preflight, process, resolv, systemd};
 pub(crate) use install as pipeline;
+
+pub(crate) mod repair_control;
+pub(crate) mod repair_snapshot;

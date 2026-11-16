@@ -29,42 +29,57 @@ pub struct Repair {
 }
 
 pub async fn run(args: &Repair, internal_worker: bool) -> ExitCode {
-    if args.target == RepairTarget::Service {
-        // A request queued by an older binary must not make its worker wait
-        // for the daemon that is currently waiting for that same worker.
-        if internal_worker {
-            eprintln!(
-                "lkit: legacy service repair request rejected; run `lkit repair service` again to submit a durable operation"
-            );
+    if internal_worker {
+        eprintln!(
+            "lkit: repair requires the structured daemon operation protocol; submit the command again"
+        );
+        return ExitCode::FAILURE;
+    }
+    if (args.target == RepairTarget::Service && (args.repository.is_some() || args.official))
+        || (args.target == RepairTarget::Binary && args.official)
+    {
+        eprintln!("lkit: invalid options for repair target");
+        return ExitCode::from(2);
+    }
+    let runtime = match resolve_runtime(args) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("lkit: {error}");
             return ExitCode::FAILURE;
         }
-        if args.repository.is_some() || args.official {
-            eprintln!("lkit: repair service does not accept repository or official options");
-            return ExitCode::from(2);
+    };
+    let inline = match inline_runtime(args) {
+        Ok(inline) => inline,
+        Err(error) => {
+            eprintln!("lkit: {error}");
+            return ExitCode::FAILURE;
         }
-        let runtime = {
-            #[cfg(feature = "test-support")]
-            if let Some(path) = &args.test_runtime {
-                match crate::deployment::runtime::InstallRuntime::from_test_file(path) {
-                    Ok(runtime) => {
-                        if !crate::deployment::runtime::InstallRuntime::test_uses_daemon(path)
-                            .unwrap_or(false)
-                        {
-                            return service_result(crate::workflows::repair_service::run(&runtime));
-                        }
-                        return service_result(
-                            crate::daemon_operations::submit_and_wait(&runtime).await,
-                        );
-                    }
-                    Err(error) => {
-                        eprintln!("lkit: {error}");
-                        return ExitCode::FAILURE;
-                    }
-                }
-            }
-            crate::deployment::runtime::InstallRuntime::production()
+    };
+    if !inline {
+        use crate::daemon_operations::Kind;
+        let kind = match args.target {
+            RepairTarget::Service => Kind::Service,
+            RepairTarget::Static => Kind::Static,
+            RepairTarget::Binary => Kind::Binary,
         };
-        return service_result(crate::daemon_operations::submit_and_wait(&runtime).await);
+        return match crate::daemon_operations::submit_and_wait(
+            &runtime,
+            kind,
+            super::manage::repository_override(&args.repository),
+            args.official,
+        )
+        .await
+        {
+            Ok(code) => ExitCode::from(code),
+            Err(error) => {
+                eprintln!("lkit repair: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    #[cfg(feature = "test-support")]
+    if args.target == RepairTarget::Service {
+        return service_result(crate::workflows::repair_service::run(&runtime));
     }
     let binary = args.target == RepairTarget::Binary;
     if binary && args.official {
@@ -98,6 +113,7 @@ pub async fn run(args: &Repair, internal_worker: bool) -> ExitCode {
     .await
 }
 
+#[cfg(feature = "test-support")]
 fn service_result(result: Result<(), crate::deployment::plan::InstallError>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -108,18 +124,42 @@ fn service_result(result: Result<(), crate::deployment::plan::InstallError>) -> 
     }
 }
 
+fn resolve_runtime(
+    _args: &Repair,
+) -> Result<crate::deployment::runtime::InstallRuntime, crate::deployment::plan::InstallError> {
+    #[cfg(feature = "test-support")]
+    if let Some(path) = &_args.test_runtime {
+        return crate::deployment::runtime::InstallRuntime::from_test_file(path);
+    }
+    Ok(crate::deployment::runtime::InstallRuntime::production())
+}
+fn inline_runtime(_args: &Repair) -> Result<bool, crate::deployment::plan::InstallError> {
+    #[cfg(feature = "test-support")]
+    if let Some(path) = &_args.test_runtime {
+        return crate::deployment::runtime::InstallRuntime::test_uses_daemon(path)
+            .map(|uses| !uses);
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn legacy_worker_service_request_fails_without_resubmitting() {
-        let args = Repair {
-            target: RepairTarget::Service,
-            repository: None,
-            official: false,
-            #[cfg(feature = "test-support")]
-            test_runtime: None,
-        };
-        assert_eq!(run(&args, true).await, ExitCode::FAILURE);
+    async fn worker_repair_requests_fail_without_resubmitting() {
+        for target in [
+            RepairTarget::Static,
+            RepairTarget::Binary,
+            RepairTarget::Service,
+        ] {
+            let args = Repair {
+                target,
+                repository: None,
+                official: false,
+                #[cfg(feature = "test-support")]
+                test_runtime: None,
+            };
+            assert_eq!(run(&args, true).await, ExitCode::FAILURE);
+        }
     }
 }

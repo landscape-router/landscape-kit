@@ -52,7 +52,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
     match command {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
         Commands::Software(_) | Commands::Operation(_) => false,
-        Commands::Repair(args) => args.target != crate::commands::repair::RepairTarget::Service,
+        Commands::Repair(_) => false,
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Flare(_) => false,
@@ -407,7 +407,6 @@ mod tests {
             &["install", "--version", "1.2.3"][..],
             &["switch", "--version", "2.0.0"][..],
             &["update"][..],
-            &["repair", "binary"][..],
             &["restore", "--backup", "x"][..],
             &["reinit"][..],
             &["uninstall", "--yes"][..],
@@ -422,6 +421,8 @@ mod tests {
     fn does_not_delegate_read_only_commands() {
         for args in [
             &["repair", "service"][..],
+            &["repair", "binary"][..],
+            &["repair", "static"][..],
             &["operation", "list"][..],
             &["check"][..],
             &["reconcile"][..],

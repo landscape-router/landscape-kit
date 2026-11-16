@@ -9,6 +9,7 @@ use super::health::{DocsProbe, StartupOptions};
 use super::manager::{ManagedService, ServiceManager};
 use super::pipeline::{self, SwitchOptions};
 use super::plan::InstallError;
+use super::repair_control as control;
 use super::repository::{Architecture, Release, ReleaseProvider};
 use super::rollback;
 use super::root::InstallRoot;
@@ -16,6 +17,7 @@ use super::state::{
     ArchiveAsset, InitStatus, InstallState, StateArchitecture, StateServiceManager,
 };
 use super::transaction::{Phase, StaticBackupRef, TransactionFile};
+use crate::daemon_operations::Stage;
 use crate::deployment::layout;
 
 #[derive(Debug)]
@@ -67,9 +69,9 @@ pub(crate) async fn repair_static(
     } else {
         crate::deployment::config::resolve_active_frontend_lenient()
     };
-    let release = provider.release(&active, architecture).await?;
-
     let mut transaction = TransactionFile::new_repair_static(root)?;
+    transaction.schema_version = 7;
+    control::associate(&transaction)?;
     super::transaction::begin(root, &transaction)?;
     let live_static = root.canonical.join("current/static");
     let mut activated = false;
@@ -79,49 +81,32 @@ pub(crate) async fn repair_static(
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         let new_static = tx_dir.join("static");
         let backup_dir = tx_dir.join("static-backup");
-        // 自定义前端源解析失败时:交互环境询问回退官方,非交互环境报错并提示
-        // `--official`。前端源本身已宽容解析(配置损坏按官方处理),此处只处理
-        // 源不可达/元数据非法。
-        let mut official_restored = custom_source.is_none();
-        if let Some(source) = custom_source.as_ref() {
-            match crate::frontend::fetch_from_source(source, &active, &tx_dir).await {
-                Ok(()) => {}
-                Err(error) => {
-                    let fallback = if crate::interaction::interactive::is_non_interactive() {
-                        false
-                    } else {
-                        crate::interaction::interactive::confirm(&format!(
-                            "{error}\nfall back to the official frontend pages?"
-                        ))?
-                    };
-                    if !fallback {
-                        return Err(InstallError::FrontendSource(format!(
-                            "{error}; use `lkit repair static --official` to restore the official frontend pages"
-                        )));
-                    }
-                    eprintln!(
-                        "repair: {}",
-                        crate::tr!(crate::keys::REPAIR_STATIC_FALLBACK_OFFICIAL)
-                    );
-                    pipeline::fetch_static_asset(&release, &tx_dir).await?;
-                    official_restored = true;
-                }
+        let (release, official_restored) = control::download(async {
+            let release = provider.release(&active, architecture).await?;
+            if let Some(source) = custom_source.as_ref() {
+                crate::frontend::fetch_from_source(source, &active, &tx_dir).await.map_err(|error| {
+                    InstallError::FrontendSource(format!("{error}; use `lkit repair static --official` to restore the official frontend pages"))
+                })?;
+            } else {
+                pipeline::fetch_static_asset(&release, &tx_dir).await?;
             }
-        } else {
-            pipeline::fetch_static_asset(&release, &tx_dir).await?;
-        }
-        if official_restored {
-            refresh_version_static_zip(root, &state.active_version, &tx_dir.join("static.zip"))?;
-        }
+            Ok((release, custom_source.is_none()))
+        }).await?;
+        control::phase(Stage::Preparing)?;
         rollback::copy_tree_into(&live_static, &backup_dir)?;
         transaction.static_backup = Some(StaticBackupRef {
             path: format!("transactions/{}/static-backup", transaction.transaction_id),
             target: format!("releases/{}/static", state.active_version),
         });
+        super::repair_snapshot::save(root, &transaction, state)?;
         super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
 
+        control::phase(Stage::Activating)?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         activated = true;
+        if official_restored {
+            refresh_version_static_zip(root, &state.active_version, &tx_dir.join("static.zip"))?;
+        }
         let replaced = tx_dir.join("static-replaced");
         std::fs::rename(&live_static, &replaced).map_err(InstallError::Io)?;
         std::fs::rename(&new_static, &live_static).map_err(|error| {
@@ -152,17 +137,12 @@ pub(crate) async fn repair_static(
     match result {
         Ok(()) => Ok(()),
         Err(error) if activated => {
-            if let Err(restore_error) = restore_static(&live_static, &tx_dir(root, &transaction)) {
-                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
-                return Err(InstallError::Io(std::io::Error::other(format!(
-                    "{error}; additionally restoring the previous static pages failed: {restore_error}"
-                ))));
-            }
-            let _ = super::transaction::mark_phase(root, &transaction, Phase::RolledBack);
+            control::phase(Stage::RollingBack)?;
+            super::repair_snapshot::restore(root, &transaction)?;
             Err(error)
         }
         Err(error) => {
-            let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+            cleanup_preparing(root, &transaction)?;
             Err(error)
         }
     }
@@ -203,11 +183,11 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
 ) -> Result<RepairOutcome, InstallError> {
     let architecture = architecture_from_state(state);
     let active = parse_active_version(state)?;
-    let release = provider.release(&active, architecture).await?;
     pipeline::check_initialization(root, state)?;
-    let is_systemd = state.service.manager == StateServiceManager::Systemd;
 
     let mut transaction = TransactionFile::new_repair_binary(root, &active)?;
+    transaction.schema_version = 7;
+    control::associate(&transaction)?;
     super::transaction::begin(root, &transaction)?;
     let mut activated = false;
 
@@ -216,7 +196,13 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         let new_binary_dir = tx_dir.join("new-binary");
         std::fs::create_dir_all(&new_binary_dir).map_err(InstallError::Io)?;
-        let built = pipeline::fetch_webserver_asset(&release, &new_binary_dir).await?;
+        let built = control::download(async {
+            let release = provider.release(&active, architecture).await?;
+            let built = pipeline::fetch_webserver_asset(&release, &new_binary_dir).await?;
+            Ok(built)
+        })
+        .await?;
+        control::phase(Stage::Preparing)?;
         verify_backend_identity(&built, state)?;
         let current_binary = root
             .canonical
@@ -249,7 +235,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
         )?;
         transaction.backup = Some(backup_ref);
 
-        let unit_sha = if is_systemd {
+        let unit_sha = {
             transaction.systemd_before = Some(super::pipeline::capture_before(
                 manager,
                 ManagedService::LandscapeRouter,
@@ -266,13 +252,13 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             Some(hash_str(
                 &std::fs::read_to_string(origin).map_err(InstallError::Io)?,
             ))
-        } else {
-            None
         };
         rollback::write_state_snapshot(root, &transaction.transaction_id, state)?;
         super::transaction::mark_phase(root, &transaction, Phase::Prepared)?;
 
-        if is_systemd {
+        super::repair_snapshot::sync_tree(&tx_dir)?;
+        control::phase(Stage::Stopping)?;
+        {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             manager.stop_and_wait(
                 ManagedService::LandscapeRouter,
@@ -283,21 +269,14 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
                         .unwrap_or(true)
                 }),
             )?;
-        } else {
-            let accepted = (options.confirm)(
-                "stop your Landscape instance with your own process manager, then confirm",
-            )?;
-            if !accepted {
-                return Err(InstallError::UserRefused(
-                    "user refused to stop the running instance".into(),
-                ));
-            }
         }
+        control::phase(Stage::Activating)?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         activated = true;
         replace_binary(&current_binary, &new_binary_dir.join(WEBSERVER_BINARY))?;
 
-        if is_systemd {
+        {
+            control::phase(Stage::Verifying)?;
             manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
             let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
@@ -318,14 +297,14 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             };
             health_wait_and_observe(&startup).await?;
         }
-        let new_state = pipeline::build_switched_state(
-            root,
-            &release,
-            &built,
-            state,
-            &transaction.transaction_id,
-            unit_sha,
-        );
+        let mut new_state = state.clone();
+        new_state.assets.webserver.sha256 = built.webserver_sha256;
+        new_state.assets.webserver.size = built.webserver_size;
+        new_state.service.definition_sha256 = unit_sha;
+        new_state.service.verified = true;
+        new_state.service.enabled = transaction.systemd_before.as_ref().unwrap().enabled;
+        new_state.last_transaction_id = Some(transaction.transaction_id.clone());
+        new_state.committed_at = Some(Utc::now());
         super::state::write_state(root, &new_state)?;
         super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
         Ok(())
@@ -334,7 +313,8 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
 
     match result {
         Ok(()) => Ok(RepairOutcome::Committed),
-        Err(error) if is_systemd && activated => {
+        Err(error) if activated => {
+            control::phase(Stage::RollingBack)?;
             match rollback::rollback_switch(root, &transaction, state, manager, options.health)
                 .await
             {
@@ -347,6 +327,8 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
                             rollback_error = rollback_error
                         )
                     );
+                    // Leave recoverable evidence; failed recovery must block new modifications.
+                    super::transaction::mark_phase(root, &transaction, Phase::RollingBack)?;
                     Ok(RepairOutcome::RollbackFailed {
                         reason: error.to_string(),
                     })
@@ -354,8 +336,9 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
             }
         }
         Err(error) => {
-            if !activated {
-                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+            let durable = crate::deployment::transaction::find_unfinished(root)?;
+            if let Some(tx) = durable {
+                recover_assets(root, &tx, manager, options.health).await?;
             }
             Err(error)
         }
@@ -440,11 +423,167 @@ fn tx_dir(_root: &InstallRoot, transaction: &TransactionFile) -> std::path::Path
     layout::territory_transactions_dir().join(&transaction.transaction_id)
 }
 
+/// Caller holds the install lock; no interactive frontend state is consulted.
+pub(crate) async fn run_assets(
+    runtime: &crate::deployment::runtime::InstallRuntime,
+    record: &crate::daemon_operations::Record,
+) -> Result<u8, InstallError> {
+    use crate::daemon_operations::Kind;
+    let root = crate::deployment::root::normalize_install_root(Path::new(&record.install_root))?;
+    let installed = super::state::load_state(&root)?
+        .ok_or_else(|| InstallError::Preflight("missing installation".into()))?;
+    let args = record
+        .assets
+        .as_ref()
+        .ok_or_else(|| InstallError::ParameterUsage("missing repair parameters".into()))?;
+    if installed.active_version != args.version
+        || crate::daemon_operations::installation_identity(&installed)? != args.state_identity
+    {
+        return Err(InstallError::Preflight(
+            "installation state changed since submission".into(),
+        ));
+    }
+    let ports: Vec<_> = runtime
+        .health_ports
+        .iter()
+        .map(|port| (port.protocol, port.port))
+        .collect();
+    if record.kind == Kind::Binary {
+        crate::service::process::check_conflicts_relaxed(&root.canonical, &installed, &ports)?;
+    } else {
+        crate::service::process::check_conflicts(&root.canonical, &installed, &ports)?;
+    }
+    pipeline::run_preflight(
+        &root.canonical,
+        Some(&installed),
+        record.kind == Kind::Binary,
+        runtime,
+        false,
+    )?;
+    let choice = match &args.repository {
+        Some(choice) => choice.clone(),
+        None => crate::deployment::config::resolve_default_choice()?,
+    };
+    let spec = choice.resolve()?;
+    let provider = crate::release::repository::provider_for(spec.kind, &spec.location)?;
+    if record.kind == Kind::Static {
+        repair_static(&root, &provider, &installed, args.official).await?;
+        return Ok(0);
+    }
+    let manager = runtime.service_manager.as_ref();
+    if manager.kind() != installed.service.manager
+        || !matches!(
+            manager.probe(),
+            crate::service::manager::Availability::Available { .. }
+        )
+    {
+        return Err(InstallError::Preflight(
+            "matching service backend is unavailable".into(),
+        ));
+    }
+    if !manager.is_active(ManagedService::LandscapeRouter)? {
+        return Err(InstallError::Preflight(
+            "binary repair requires a running managed service for export and backup".into(),
+        ));
+    }
+    let origin = root.canonical.join("service/landscape-router.service");
+    if !matches!(manager.query_registration(ManagedService::LandscapeRouter)?, crate::service::manager::SystemRegistration::Symlink {target} if target == origin)
+    {
+        return Err(InstallError::Preflight(
+            "service registration is not owned by this installation".into(),
+        ));
+    }
+    if !matches!(installed.service.definition_sha256.as_ref(), Some(hash) if crate::release::artifacts::hash_file(&origin)?.0 == *hash)
+    {
+        return Err(InstallError::Preflight(
+            "service definition identity mismatch".into(),
+        ));
+    }
+    let health = runtime.health_options()?;
+    let data = root.canonical.join("data");
+    let options = SwitchOptions {
+        export_base_url: runtime.export_base_url.clone(),
+        token: &|| {
+            crate::backup::export::read_api_token(
+                &data.join("landscape_api_token"),
+                runtime.managed_uid,
+            )
+        },
+        confirm: &|_| {
+            Err(InstallError::Preflight(
+                "daemon repair cannot request terminal input".into(),
+            ))
+        },
+        health: &health,
+    };
+    match repair_binary(&root, &provider, &installed, manager, &options).await? {
+        RepairOutcome::Committed => Ok(0),
+        RepairOutcome::RolledBack => Ok(5),
+        RepairOutcome::RollbackFailed { reason } => {
+            eprintln!("repair recovery failed: {reason}");
+            Ok(6)
+        }
+    }
+}
+pub(crate) fn cleanup_preparing(
+    root: &InstallRoot,
+    tx: &TransactionFile,
+) -> Result<(), InstallError> {
+    let dir = tx_dir(root, tx);
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(InstallError::Io(e)),
+    }
+    super::transaction::mark_phase(root, tx, Phase::Failed)
+}
+pub(crate) async fn recover_assets<P: DocsProbe>(
+    root: &InstallRoot,
+    tx: &TransactionFile,
+    manager: &dyn ServiceManager,
+    health: &super::health::HealthOptions<P>,
+) -> Result<(), InstallError> {
+    match tx.phase {
+        Phase::Preparing => cleanup_preparing(root, tx),
+        Phase::Prepared | Phase::Stopping => {
+            if let Some(before) = &tx.systemd_before {
+                manager.restore_before(
+                    ManagedService::LandscapeRouter,
+                    before,
+                    &root.canonical.join("service/landscape-router.service"),
+                )?;
+            }
+            if let Some(backup) = &tx.resolv_conf_backup {
+                super::resolv::restore(manager.resolv_conf(), &layout::territory_relative(backup))?;
+            }
+            cleanup_preparing(root, tx)
+        }
+        Phase::Activating | Phase::Verifying | Phase::RollingBack if tx.static_backup.is_some() => {
+            super::repair_snapshot::restore(root, tx)
+        }
+        Phase::Activating | Phase::Verifying | Phase::RollingBack if tx.backup.is_some() => {
+            let snapshot = rollback::read_state_snapshot(root, &tx.transaction_id)?;
+            if manager.kind() != snapshot.service.manager {
+                return Err(InstallError::Preflight("recovery backend mismatch".into()));
+            }
+            let result = rollback::rollback_switch(root, tx, &snapshot, manager, health).await;
+            if result.is_err() {
+                super::transaction::mark_phase(root, tx, Phase::RollingBack)?;
+            }
+            result
+        }
+        _ => Err(InstallError::CorruptedTransaction(
+            "asset repair lacks recovery evidence".into(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::service::systemd::Systemd;
+    use crate::service::manager::{Availability, ServiceBefore, SystemRegistration};
     use std::collections::HashMap;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::super::health::HealthOptions;
     use super::super::repository::ProviderKind;
@@ -455,6 +594,121 @@ mod tests {
         ServiceState, StateArchitecture, StateServiceManager, WebserverAsset,
     };
     use super::*;
+
+    struct FakeManager {
+        root: std::path::PathBuf,
+        resolv: std::path::PathBuf,
+        backend: StateServiceManager,
+        active: AtomicBool,
+        enabled: AtomicBool,
+        stops: AtomicUsize,
+        starts: AtomicUsize,
+    }
+    impl FakeManager {
+        fn new(root: &Path, backend: StateServiceManager) -> Self {
+            Self {
+                root: root.into(),
+                resolv: root.join("resolv.conf"),
+                backend,
+                active: AtomicBool::new(true),
+                enabled: AtomicBool::new(true),
+                stops: AtomicUsize::new(0),
+                starts: AtomicUsize::new(0),
+            }
+        }
+    }
+    impl ServiceManager for FakeManager {
+        fn kind(&self) -> StateServiceManager {
+            self.backend
+        }
+        fn probe(&self) -> Availability {
+            Availability::Available {
+                version: "fake".into(),
+            }
+        }
+        fn service_name(&self, _: ManagedService) -> &str {
+            "landscape-router.service"
+        }
+        fn render_definition(&self, _: ManagedService, _: &Path) -> Result<String, InstallError> {
+            Ok("fake definition".into())
+        }
+        fn validate_definition(
+            &self,
+            _: ManagedService,
+            _: &str,
+            _: &Path,
+        ) -> Result<(), InstallError> {
+            Ok(())
+        }
+        fn query_registration(
+            &self,
+            _: ManagedService,
+        ) -> Result<SystemRegistration, InstallError> {
+            Ok(SystemRegistration::Symlink {
+                target: self.root.join("service/landscape-router.service"),
+            })
+        }
+        fn register(&self, _: ManagedService, _: &Path) -> Result<(), InstallError> {
+            Ok(())
+        }
+        fn unregister(&self, _: ManagedService, _: &Path) -> Result<(), InstallError> {
+            Ok(())
+        }
+        fn is_enabled(&self, _: ManagedService) -> Result<bool, InstallError> {
+            Ok(self.enabled.load(Ordering::SeqCst))
+        }
+        fn enable(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.enabled.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn disable(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.enabled.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+        fn is_active(&self, _: ManagedService) -> Result<bool, InstallError> {
+            Ok(self.active.load(Ordering::SeqCst))
+        }
+        fn active_state(&self, _: ManagedService) -> Result<String, InstallError> {
+            Ok(if self.active.load(Ordering::SeqCst) {
+                "active"
+            } else {
+                "inactive"
+            }
+            .into())
+        }
+        fn start(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            self.active.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn stop(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            self.active.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+        fn restart(&self, service: ManagedService) -> Result<(), InstallError> {
+            self.stop(service)?;
+            self.start(service)
+        }
+        fn main_pid(&self, _: ManagedService) -> Result<u32, InstallError> {
+            Ok(std::process::id())
+        }
+        fn restore_registration(
+            &self,
+            _: ManagedService,
+            before: &ServiceBefore,
+            _: &Path,
+        ) -> Result<(), InstallError> {
+            self.enabled.store(before.enabled, Ordering::SeqCst);
+            Ok(())
+        }
+        fn resolv_conf(&self) -> &Path {
+            &self.resolv
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
 
     const TRUSTED_PAYLOAD: &[u8] = b"trusted webserver payload";
     const DRIFTED_PAYLOAD: &[u8] = b"drifted webserver payload";
@@ -593,13 +847,11 @@ mod tests {
             },
             service: ServiceState {
                 manager,
-                registered: manager == StateServiceManager::Systemd,
-                enabled: manager == StateServiceManager::Systemd,
-                verified: manager == StateServiceManager::Systemd,
-                definition_path: (manager == StateServiceManager::Systemd)
-                    .then(|| "service/landscape-router.service".into()),
-                definition_sha256: (manager == StateServiceManager::Systemd)
-                    .then(|| "d".repeat(64)),
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("d".repeat(64)),
             },
             last_transaction_id: None,
             committed_at: Some(chrono::Utc::now()),
@@ -698,6 +950,110 @@ mod tests {
             .find(|path| path.extension().is_some_and(|ext| ext == "json"))
             .expect("the transaction json must exist");
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn static_recovery_restores_directory_archive_and_state_at_each_crash_boundary() {
+        for had_archive in [false, true] {
+            for phase in [Phase::Activating, Phase::RollingBack] {
+                let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>new</h1>");
+                let (_server, root, provider, _guard) = start_repository("static-recovery", files);
+                activate_version(&root, "1.2.3");
+                let archive = root.canonical.join("releases/1.2.3/static.zip");
+                let old_archive = build_static_zip("<h1>old archive</h1>");
+                if had_archive {
+                    std::fs::write(&archive, &old_archive).unwrap();
+                }
+                let (hash, size) = sha256_bytes(&old_archive);
+                let state = install_state(
+                    &root,
+                    StateServiceManager::Systemd,
+                    InitStatus::Complete,
+                    &hash,
+                    size,
+                );
+                crate::deployment::state::write_state(&root, &state).unwrap();
+                repair_static(&root, &provider, &state, false)
+                    .await
+                    .unwrap();
+                let mut tx: TransactionFile =
+                    serde_json::from_value(load_transaction_json()).unwrap();
+                tx.phase = phase;
+                crate::deployment::transaction::persist(&root, &tx).unwrap();
+                let fake = FakeManager::new(&root.canonical, StateServiceManager::Systemd);
+                // State was written and assets replaced, but the commit receipt is absent.
+                recover_assets(&root, &tx, &fake, &none_health())
+                    .await
+                    .unwrap();
+                recover_assets(&root, &tx, &fake, &none_health())
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(root.canonical.join("current/static/index.html"))
+                        .unwrap(),
+                    "<h1>default</h1>"
+                );
+                if had_archive {
+                    assert_eq!(std::fs::read(&archive).unwrap(), old_archive);
+                } else {
+                    assert!(!archive.exists());
+                }
+                assert_eq!(
+                    crate::deployment::state::load_state(&root)
+                        .unwrap()
+                        .unwrap(),
+                    state
+                );
+                assert_eq!(fake.stops.load(Ordering::SeqCst), 0);
+                assert_eq!(fake.starts.load(Ordering::SeqCst), 0);
+                assert!(!layout::territory_backups_dir().exists());
+                assert_eq!(load_transaction_json()["phase"], "rolled_back");
+                std::fs::remove_dir_all(root.canonical.parent().unwrap()).unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn corrupt_static_preimage_blocks_recovery_without_overwriting_live_assets() {
+        let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>new</h1>");
+        let (_server, root, provider, _guard) = start_repository("static-corrupt-snapshot", files);
+        activate_version(&root, "1.2.3");
+        std::fs::write(
+            root.canonical.join("releases/1.2.3/static.zip"),
+            b"old archive",
+        )
+        .unwrap();
+        let (hash, size) = sha256_bytes(b"old archive");
+        let state = install_state(
+            &root,
+            StateServiceManager::Systemd,
+            InitStatus::Complete,
+            &hash,
+            size,
+        );
+        repair_static(&root, &provider, &state, false)
+            .await
+            .unwrap();
+        let mut tx: TransactionFile = serde_json::from_value(load_transaction_json()).unwrap();
+        tx.phase = Phase::Activating;
+        crate::deployment::transaction::persist(&root, &tx).unwrap();
+        std::fs::write(tx_dir(&root, &tx).join("previous-static.zip"), b"corrupt").unwrap();
+        let fake = FakeManager::new(&root.canonical, StateServiceManager::Systemd);
+        assert!(
+            recover_assets(&root, &tx, &fake, &none_health())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.canonical.join("current/static/index.html")).unwrap(),
+            "<h1>new</h1>"
+        );
+        assert!(
+            crate::deployment::transaction::find_unfinished(&root)
+                .unwrap()
+                .is_some()
+        );
+        std::fs::remove_dir_all(root.canonical.parent().unwrap()).unwrap();
     }
 
     #[tokio::test]
@@ -1008,6 +1364,11 @@ mod tests {
 
     #[tokio::test]
     async fn repairs_drifted_backend_with_systemd() {
+        for backend in StateServiceManager::supported() {
+            check_repairs_drifted_backend_with_systemd(backend).await;
+        }
+    }
+    async fn check_repairs_drifted_backend_with_systemd(backend: StateServiceManager) {
         let static_zip = build_static_zip("<h1>page</h1>");
         let (static_sha, static_size) = sha256_bytes(&static_zip);
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>page</h1>");
@@ -1031,39 +1392,7 @@ mod tests {
         let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
         activate_version(&install_root, "1.2.3");
         // systemd 假环境:stop/start 维护 state 文件,MainPID 指向测试进程。
-        let fake_dir = root.join("fake-systemd");
-        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
-        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
-        std::fs::write(fake_dir.join("state"), b"active").unwrap();
-        let script = fake_dir.join("systemctl");
-        std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-STATE_FILE="{}"
-case "$*" in
-  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
-  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
-  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
-  "show --property=MainPID --value landscape-router.service") echo {};;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") cat "$STATE_FILE";;
-  *) exit 0;;
-esac
-"#,
-                fake_dir.join("state").display(),
-                std::process::id()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let systemd = Systemd {
-            systemctl: script,
-            system_unit_dir: fake_dir.join("units"),
-            run_systemd_dir: fake_dir.join("run"),
-            pid1_is_systemd: true,
-            resolv_conf: fake_dir.join("resolv.conf"),
-        };
+        let systemd = FakeManager::new(&root, backend);
         std::fs::create_dir_all(install_root.canonical.join("service")).unwrap();
         std::fs::write(
             install_root
@@ -1086,7 +1415,7 @@ esac
         std::fs::write(install_root.canonical.join("data/landscape.toml"), b"").unwrap();
         let state = install_state(
             &install_root,
-            StateServiceManager::Systemd,
+            backend,
             InitStatus::Complete,
             &static_sha,
             static_size,
@@ -1123,6 +1452,9 @@ esac
         let state = super::super::state::load_state(&install_root)
             .unwrap()
             .unwrap();
+        assert_eq!(state.service.manager, backend);
+        assert_eq!(systemd.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(systemd.starts.load(Ordering::SeqCst), 1);
         let (expected_sha, _) = sha256_bytes(TRUSTED_PAYLOAD);
         assert_eq!(state.assets.webserver.sha256, expected_sha);
         assert!(
@@ -1139,6 +1471,11 @@ esac
 
     #[tokio::test]
     async fn binary_repair_rolls_back_when_activation_fails() {
+        for backend in StateServiceManager::supported() {
+            check_binary_repair_rolls_back_when_activation_fails(backend).await;
+        }
+    }
+    async fn check_binary_repair_rolls_back_when_activation_fails(backend: StateServiceManager) {
         let static_zip = build_static_zip("<h1>page</h1>");
         let (static_sha, static_size) = sha256_bytes(&static_zip);
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>page</h1>");
@@ -1161,39 +1498,7 @@ esac
         };
         let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
         activate_version(&install_root, "1.2.3");
-        let fake_dir = root.join("fake-systemd");
-        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
-        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
-        std::fs::write(fake_dir.join("state"), b"active").unwrap();
-        let script = fake_dir.join("systemctl");
-        std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-STATE_FILE="{}"
-case "$*" in
-  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
-  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
-  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
-  "show --property=MainPID --value landscape-router.service") echo {};;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") cat "$STATE_FILE";;
-  *) exit 0;;
-esac
-"#,
-                fake_dir.join("state").display(),
-                std::process::id()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let systemd = Systemd {
-            systemctl: script,
-            system_unit_dir: fake_dir.join("units"),
-            run_systemd_dir: fake_dir.join("run"),
-            pid1_is_systemd: true,
-            resolv_conf: fake_dir.join("resolv.conf"),
-        };
+        let systemd = FakeManager::new(&root, backend);
         std::fs::create_dir_all(install_root.canonical.join("service")).unwrap();
         std::fs::write(
             install_root
@@ -1216,7 +1521,7 @@ esac
         std::fs::write(install_root.canonical.join("data/landscape.toml"), b"").unwrap();
         let state = install_state(
             &install_root,
-            StateServiceManager::Systemd,
+            backend,
             InitStatus::Complete,
             &static_sha,
             static_size,
@@ -1256,8 +1561,9 @@ esac
         let state = super::super::state::load_state(&install_root)
             .unwrap()
             .unwrap();
-        let (drifted_sha, _) = sha256_bytes(DRIFTED_PAYLOAD);
-        assert_eq!(state.assets.webserver.sha256, drifted_sha);
+        let (recorded_sha, _) = sha256_bytes(TRUSTED_PAYLOAD);
+        assert_eq!(state.assets.webserver.sha256, recorded_sha);
+        assert_eq!(state.service.manager, backend);
         let tx = load_transaction_json();
         assert_eq!(tx["phase"], "rolled_back");
         assert_eq!(tx["operation"], "repair");
@@ -1277,6 +1583,13 @@ esac
 
     #[tokio::test]
     async fn binary_repair_rollback_failure_returns_rollback_failed() {
+        for backend in StateServiceManager::supported() {
+            check_binary_repair_rollback_failure_returns_rollback_failed(backend).await;
+        }
+    }
+    async fn check_binary_repair_rollback_failure_returns_rollback_failed(
+        backend: StateServiceManager,
+    ) {
         let static_zip = build_static_zip("<h1>page</h1>");
         let (static_sha, static_size) = sha256_bytes(&static_zip);
         let files = repository_files_for("1.2.3", TRUSTED_PAYLOAD, "<h1>page</h1>");
@@ -1299,39 +1612,7 @@ esac
         };
         let provider = provider_for(ProviderKind::Http, &server.base).unwrap();
         activate_version(&install_root, "1.2.3");
-        let fake_dir = root.join("fake-systemd");
-        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
-        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
-        std::fs::write(fake_dir.join("state"), b"active").unwrap();
-        let script = fake_dir.join("systemctl");
-        std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-STATE_FILE="{}"
-case "$*" in
-  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
-  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
-  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
-  "show --property=MainPID --value landscape-router.service") echo {};;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") cat "$STATE_FILE";;
-  *) exit 0;;
-esac
-"#,
-                fake_dir.join("state").display(),
-                std::process::id()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let systemd = Systemd {
-            systemctl: script,
-            system_unit_dir: fake_dir.join("units"),
-            run_systemd_dir: fake_dir.join("run"),
-            pid1_is_systemd: true,
-            resolv_conf: fake_dir.join("resolv.conf"),
-        };
+        let systemd = FakeManager::new(&root, backend);
         std::fs::create_dir_all(install_root.canonical.join("service")).unwrap();
         std::fs::write(
             install_root
@@ -1354,7 +1635,7 @@ esac
         std::fs::write(install_root.canonical.join("data/landscape.toml"), b"").unwrap();
         let state = install_state(
             &install_root,
-            StateServiceManager::Systemd,
+            backend,
             InitStatus::Complete,
             &static_sha,
             static_size,
@@ -1362,7 +1643,7 @@ esac
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         init_watcher(install_root.canonical.join("data"), stop.clone());
         // 探测恒失败:激活验证失败触发回滚,回滚自身的健康检查同样失败,
-        // 返回人工恢复结果;事务保持 `failed` 且诊断目录保留。
+        // 返回人工恢复结果;事务保持可重试的回滚状态且诊断目录保留。
         let health = failing_health(FailingDocs);
         static TOKEN: fn() -> Result<String, InstallError> = || Ok("tok".into());
         let options = SwitchOptions {
@@ -1381,8 +1662,8 @@ esac
 
         let tx = load_transaction_json();
         assert_eq!(
-            tx["phase"], "failed",
-            "a failed rollback must leave the transaction in the failed phase"
+            tx["phase"], "rolling_back",
+            "a failed rollback must retain a blocking, retryable transaction"
         );
         assert_eq!(tx["operation"], "repair");
         let tx_dir =
@@ -1392,8 +1673,8 @@ esac
             "the interrupted data must be preserved for manual recovery"
         );
         assert!(
-            tx_dir.join("replaced-release").is_dir(),
-            "the repaired release must be preserved for manual recovery"
+            tx_dir.join("restore").is_dir(),
+            "the verified backup extraction must be preserved for recovery"
         );
         assert!(
             tx_dir.join("repaired-binary").is_file(),
@@ -1407,7 +1688,7 @@ esac
         assert!(
             super::super::transaction::find_unfinished(&install_root)
                 .unwrap()
-                .is_none()
+                .is_some()
         );
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
