@@ -118,17 +118,21 @@ async fn run_command(
     let internal_migrate = !internal_worker
         && matches!(&command, Commands::Migrate(_))
         && daemon_worker::migrate_delegates(&command);
-    let interrupt =
-        match interaction::presentation::InterruptGuard::install(delegated || internal_migrate) {
-            Ok(interrupt) => interrupt,
-            Err(error) => {
-                eprintln!(
-                    "lkit: {}",
-                    crate::tr!(keys::MAIN_UNABLE_INSTALL_CTRL_C_HANDLER, error = error)
-                );
-                return ExitCode::FAILURE;
-            }
-        };
+    let interrupt_result = if from_console && matches!(&command, Commands::Update(_)) {
+        interaction::presentation::InterruptGuard::install_console()
+    } else {
+        interaction::presentation::InterruptGuard::install(delegated || internal_migrate)
+    };
+    let interrupt = match interrupt_result {
+        Ok(interrupt) => interrupt,
+        Err(error) => {
+            eprintln!(
+                "lkit: {}",
+                crate::tr!(keys::MAIN_UNABLE_INSTALL_CTRL_C_HANDLER, error = error)
+            );
+            return ExitCode::FAILURE;
+        }
+    };
 
     if internal_migrate {
         return match command {
@@ -180,7 +184,7 @@ async fn run_command(
         Commands::Migrate(args) => commands::migrate::run(&args, &interrupt, from_console).await,
         Commands::Network(args) => commands::network::run(&args).await,
         Commands::Switch(args) => commands::switch::run(&args, internal_worker).await,
-        Commands::Update(args) => commands::update::run(&args).await,
+        Commands::Update(args) => commands::update::run(&args, internal_worker).await,
         Commands::Repair(args) => commands::repair::run(&args, internal_worker).await,
         Commands::Restore(args) => commands::restore::run(&args).await,
         Commands::Reinit(args) => commands::reinit::run(&args).await,

@@ -146,7 +146,7 @@ fn update_confirmation_builds_console_confirmed_command() {
     let Commands::Update(update) = command else {
         panic!("expected update request");
     };
-    assert_eq!(update.version.as_deref(), Some("latest"));
+    assert_eq!(update.version.as_deref(), Some("1.2.4"));
     assert!(
         update.repository.is_none(),
         "Current source must not forward --repository"
@@ -155,67 +155,49 @@ fn update_confirmation_builds_console_confirmed_command() {
         update.console_confirmed,
         "the console must mark the update as confirmed so no TTY prompt appears"
     );
-    assert!(
-        args.iter()
-            .any(|argument| argument == "--console-confirmed")
-    );
-    assert!(args.windows(2).any(|pair| pair == ["--version", "latest"]));
-    assert!(!args.iter().any(|argument| argument == "--repository"));
+    assert_eq!(args, vec!["update"]);
+    assert_eq!(update.confirmed.unwrap(), resolved("1.2.3", "1.2.4"));
 }
 
 #[test]
-fn update_repository_modes_map_to_cli_flags() {
+fn update_dispatch_uses_resolved_context_not_mutable_form_fields() {
     let mut app = update_ready_app();
-    for (mode, repository, expected) in [
-        (UpdateRepositoryMode::Current, None, Vec::<&str>::new()),
-        (
-            UpdateRepositoryMode::Github,
-            Some(Some("github".into())),
-            vec!["--repository", "github"],
-        ),
-        (
-            UpdateRepositoryMode::Mirror,
-            Some(None),
-            vec!["--repository"],
-        ),
-        (
-            UpdateRepositoryMode::Custom,
-            Some(Some("https://example.com/releases/".into())),
-            vec!["--repository", "https://example.com/releases/"],
-        ),
+    for mode in [
+        UpdateRepositoryMode::Current,
+        UpdateRepositoryMode::Github,
+        UpdateRepositoryMode::Mirror,
+        UpdateRepositoryMode::Custom,
     ] {
+        app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
         app.update.repository = mode;
-        app.update.repository_url = "https://example.com/releases/".into();
-        let action = app.update_action();
-        let ConsoleAction::Command { command, args } = action else {
-            panic!("{mode:?} must build an update command");
+        app.update.version = "latest".into();
+        app.update.repository_url = "https://changed.example/".into();
+        let ConsoleAction::Command {
+            command: Commands::Update(update),
+            args,
+        } = app.update_action()
+        else {
+            panic!("expected update");
         };
-        let Commands::Update(update) = command else {
-            panic!("{mode:?} must build an update request");
-        };
-        assert_eq!(update.repository, repository, "{mode:?}");
-        assert!(update.console_confirmed, "{mode:?}");
-        for pair in expected.chunks(2) {
-            if pair.len() == 1 {
-                assert!(
-                    args.iter().any(|argument| argument == pair[0]),
-                    "{mode:?} must forward {:?}, got {args:?}",
-                    pair[0]
-                );
-            } else {
-                assert!(
-                    args.windows(2).any(|window| window == pair),
-                    "{mode:?} must forward {pair:?}, got {args:?}"
-                );
-            }
-        }
-        if expected.is_empty() {
-            assert!(
-                !args.iter().any(|argument| argument == "--repository"),
-                "{mode:?} must not forward --repository, got {args:?}"
-            );
-        }
+        assert_eq!(update.confirmed, Some(resolved("1.2.3", "1.2.4")));
+        assert_eq!(update.version.as_deref(), Some("1.2.4"));
+        assert_eq!(args, vec!["update"]);
     }
+}
+#[test]
+fn editing_or_new_resolution_invalidates_confirmation() {
+    let mut app = update_ready_app();
+    app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
+    app.update.change(true);
+    assert!(app.update.confirming.is_none());
+    app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
+    app.update.editable_value_mut();
+    assert!(app.update.confirming.is_none());
+    app.update.confirming = Some(resolved("1.2.3", "1.2.4"));
+    let mut notice = Notice::Ready;
+    app.update
+        .apply_resolution(&mut notice, resolved("1.2.3", "1.2.3"));
+    assert!(app.update.confirming.is_none());
 }
 
 #[test]
@@ -314,7 +296,8 @@ fn uninstall_panel_renders_summary_and_opens_confirmation() {
     let content = terminal_content(&terminal);
     assert!(content.contains("Confirm uninstall"));
     assert!(content.contains("Version 1.2.3"));
-    assert!(content.contains("Enter Uninstall"));
+    // Uninstall is absent from Menu::ALL. Direct renderer coverage does not
+    // assert an active-menu keyboard hint for this hidden panel.
 
     app.handle_uninstall_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(

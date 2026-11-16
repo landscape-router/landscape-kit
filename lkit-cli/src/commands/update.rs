@@ -1,11 +1,10 @@
 #[cfg(feature = "test-support")]
-#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Args;
 
-use super::manage::{InstallRequest, RequestMode, repository_override};
+use super::manage::repository_override;
 use crate::deployment::config::RepositorySourceKind;
 use crate::deployment::plan::{self, RepositoryChoice, TargetVersion};
 use crate::deployment::state;
@@ -23,11 +22,12 @@ pub struct Update {
     /// created in this case and automatic rollback cannot restore previous data
     #[arg(long)]
     pub allow_no_backup: bool,
-    /// The interactive console already asked for the repository and the
-    /// upgrade confirmation; skip every /dev/tty prompt (delegated workers
-    /// cannot read TUI keyboard input)
+    /// Terminal interaction is complete; an in-memory confirmation context is required.
     #[arg(long, hide = true)]
     pub console_confirmed: bool,
+    /// In-memory confirmation context; never reconstructed from CLI flags.
+    #[arg(skip)]
+    pub(crate) confirmed: Option<ResolvedUpdate>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -35,9 +35,18 @@ pub struct Update {
 
 /// 交互式版本更新:选择读取渠道、解析目标版本、确认后委托 switch 流水线执行。
 /// 确认发生在创建事务和备份之前,拒绝时零副作用。
-pub async fn run(args: &Update) -> ExitCode {
+pub async fn run(args: &Update, internal_worker: bool) -> ExitCode {
+    if internal_worker {
+        eprintln!("lkit: update requires frontend confirmation and the daemon operation protocol");
+        return ExitCode::FAILURE;
+    }
     let result = if args.console_confirmed {
-        run_update(args, None).await
+        match args.confirmed.as_ref() {
+            Some(resolved) => execute_confirmed(args, resolved).await,
+            None => Err(plan::InstallError::ParameterUsage(
+                "missing update confirmation context".into(),
+            )),
+        }
     } else {
         let mut tty = match crate::interaction::interactive::Tty::open() {
             Ok(tty) => tty,
@@ -52,7 +61,7 @@ pub async fn run(args: &Update) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        run_update(args, Some(&mut tty)).await
+        run_update(args, &mut tty).await
     };
     match result {
         Ok(code) => code,
@@ -65,7 +74,7 @@ pub async fn run(args: &Update) -> ExitCode {
 
 async fn run_update(
     args: &Update,
-    mut tty: Option<&mut crate::interaction::interactive::Tty>,
+    tty: &mut crate::interaction::interactive::Tty,
 ) -> Result<ExitCode, plan::InstallError> {
     let normalized = state::discover_landscape_root()?.ok_or_else(|| {
         plan::InstallError::ParameterUsage(crate::tr!(
@@ -80,10 +89,7 @@ async fn run_update(
 
     let repository = match repository_override(&args.repository) {
         Some(choice) => choice,
-        None => match &mut tty {
-            Some(tty) => select_repository(tty)?,
-            None => crate::deployment::config::resolve_default_choice()?,
-        },
+        None => select_repository(tty)?,
     };
     let target = match &args.version {
         Some(value) => TargetVersion::parse(value)?,
@@ -110,20 +116,17 @@ async fn run_update(
         }
         std::cmp::Ordering::Greater => {}
     }
-    let accepted = match &mut tty {
-        Some(tty) => tty.confirm(&crate::tr!(
-            crate::keys::UPDATE_CONFIRM_UPDATE,
-            current = resolved.current,
-            target = resolved.target
-        ))?,
-        None => true,
-    };
+    eprintln!("update: {}", resolved.repository_location());
+    let accepted = tty.confirm(&crate::tr!(
+        crate::keys::UPDATE_CONFIRM_UPDATE,
+        current = resolved.current,
+        target = resolved.target
+    ))?;
     if !accepted {
         println!("install: {}", crate::tr!(crate::keys::UPDATE_CANCELLED));
         return Ok(ExitCode::FAILURE);
     }
-    let request = switch_request(args, resolved.target.to_string(), repository);
-    Ok(super::manage::run_request(&request).await)
+    execute_confirmed(args, &resolved).await
 }
 
 /// 解析出的当前与目标版本。比较规则与 `lkit update` 命令一致。
@@ -131,6 +134,9 @@ async fn run_update(
 pub(crate) struct ResolvedUpdate {
     pub current: semver::Version,
     pub target: semver::Version,
+    pub install_root: String,
+    pub state_identity: String,
+    pub repository: RepositoryChoice,
 }
 
 /// 解析目标版本并与当前版本比较:只做网络只读解析,不创建事务、不下载资产。
@@ -168,30 +174,73 @@ pub(crate) async fn resolve_update_target(
     Ok(ResolvedUpdate {
         current,
         target: release.version,
+        install_root: state.canonical_install_root.clone(),
+        state_identity: crate::daemon_operations::installation_identity(state)?,
+        repository: match spec.kind {
+            crate::release::repository::ProviderKind::Github => {
+                RepositoryChoice::Github(spec.location)
+            }
+            crate::release::repository::ProviderKind::Http => RepositoryChoice::Http(spec.location),
+        },
     })
 }
 
-fn switch_request(args: &Update, version: String, repository: RepositoryChoice) -> InstallRequest {
-    InstallRequest {
-        mode: RequestMode::Switch,
-        version: Some(version),
-        repository: Some(repository),
-        install_dir: None,
-        admin_user: None,
-        password_file: None,
-        interactive_password: None,
-        repair_static: false,
-        repair_official: false,
-        repair_binary: false,
-        allow_no_backup: args.allow_no_backup,
-        accept_service_change: args.accept_service_change,
-        force: false,
-        takeover_network: false,
-        network_plan: None,
-        console_confirmed: args.console_confirmed,
-        #[cfg(feature = "test-support")]
-        test_runtime: args.test_runtime.clone(),
+impl ResolvedUpdate {
+    pub(crate) fn repository_location(&self) -> &str {
+        match &self.repository {
+            RepositoryChoice::Github(location) | RepositoryChoice::Http(location) => location,
+            RepositoryChoice::Mirror => "unresolved mirror",
+        }
     }
+    fn switch_request(
+        &self,
+        args: &Update,
+    ) -> Result<crate::daemon_operations::SwitchRequest, plan::InstallError> {
+        if self.target <= self.current
+            || !std::path::Path::new(&self.install_root).is_absolute()
+            || matches!(self.repository, RepositoryChoice::Mirror)
+            || self.state_identity.len() != 64
+            || !self.state_identity.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(plan::InstallError::ParameterUsage(
+                "invalid update confirmation context".into(),
+            ));
+        }
+        plan::TargetVersion::parse(&self.target.to_string())?;
+        self.repository.clone().resolve()?;
+        Ok(crate::daemon_operations::SwitchRequest {
+            from_version: self.current.to_string(),
+            target: self.target.to_string(),
+            state_identity: self.state_identity.clone(),
+            repository: Some(self.repository.clone()),
+            accept_service_change: args.accept_service_change,
+            allow_no_backup: args.allow_no_backup,
+        })
+    }
+}
+async fn execute_confirmed(
+    args: &Update,
+    resolved: &ResolvedUpdate,
+) -> Result<ExitCode, plan::InstallError> {
+    let request = resolved.switch_request(args)?;
+    let runtime = runtime(args)?;
+    crate::daemon_operations::submit_confirmed_switch_and_wait(
+        &runtime,
+        resolved.install_root.clone(),
+        request,
+        args.console_confirmed,
+    )
+    .await
+    .map(ExitCode::from)
+}
+fn runtime(
+    _args: &Update,
+) -> Result<crate::deployment::runtime::InstallRuntime, plan::InstallError> {
+    #[cfg(feature = "test-support")]
+    if let Some(path) = &_args.test_runtime {
+        return crate::deployment::runtime::InstallRuntime::from_test_file(path);
+    }
+    Ok(crate::deployment::runtime::InstallRuntime::production())
 }
 
 /// 交互选择更新渠道:配置存在且有效时默认选项是记录的最新来源,其余为官方 GitHub、
@@ -247,43 +296,60 @@ fn select_repository(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "test-support")]
-    use std::path::PathBuf;
-
     fn args() -> Update {
         Update {
-            version: None,
-            repository: None,
+            version: Some("latest".into()),
+            repository: Some(Some("https://other.example/".into())),
             accept_service_change: true,
-            allow_no_backup: true,
+            allow_no_backup: false,
             console_confirmed: false,
+            confirmed: None,
             #[cfg(feature = "test-support")]
-            test_runtime: Some(PathBuf::from("/tmp/lkit-update-runtime.json")),
+            test_runtime: None,
         }
     }
-
-    #[test]
-    fn forwards_every_selected_repository_to_the_switch_request() {
-        for repository in [
-            RepositoryChoice::Github("ThisSeanZhang/landscape".into()),
-            RepositoryChoice::Mirror,
-            RepositoryChoice::Http("https://example.com/releases/".into()),
-        ] {
-            let request = switch_request(&args(), "1.2.4".into(), repository.clone());
-            assert_eq!(request.repository, Some(repository));
-            assert_eq!(request.version.as_deref(), Some("1.2.4"));
-            assert!(request.install_dir.is_none());
-            assert!(request.accept_service_change);
-            assert!(request.allow_no_backup);
-            assert!(!request.console_confirmed);
+    fn confirmed() -> ResolvedUpdate {
+        ResolvedUpdate {
+            current: semver::Version::new(1, 2, 3),
+            target: semver::Version::new(1, 2, 4),
+            install_root: "/fixture/landscape".into(),
+            state_identity: "a".repeat(64),
+            repository: RepositoryChoice::Http("https://confirmed.example/releases/".into()),
         }
     }
-
     #[test]
-    fn forwards_console_confirmation_to_the_switch_request() {
+    fn confirmed_request_preserves_version_source_and_state_instead_of_form_defaults() {
+        let resolved = confirmed();
+        let request = resolved.switch_request(&args()).unwrap();
+        assert_eq!(request.target, "1.2.4");
+        assert_eq!(request.repository, Some(resolved.repository));
+        assert_eq!(request.state_identity, "a".repeat(64));
+        assert_eq!(request.from_version, "1.2.3");
+        assert!(request.accept_service_change);
+        assert!(!request.allow_no_backup);
+    }
+    #[test]
+    fn incomplete_or_non_upgrade_confirmation_is_rejected() {
+        let mut resolved = confirmed();
+        resolved.repository = RepositoryChoice::Mirror;
+        assert!(resolved.switch_request(&args()).is_err());
+        let mut resolved = confirmed();
+        resolved.state_identity.clear();
+        assert!(resolved.switch_request(&args()).is_err());
+        let mut resolved = confirmed();
+        resolved.install_root = "relative".into();
+        assert!(resolved.switch_request(&args()).is_err());
+        for target in [semver::Version::new(1, 2, 3), semver::Version::new(1, 0, 0)] {
+            let mut resolved = confirmed();
+            resolved.target = target;
+            assert!(resolved.switch_request(&args()).is_err());
+        }
+    }
+    #[tokio::test]
+    async fn stale_worker_and_bare_confirmation_flag_fail_without_io() {
+        assert_eq!(run(&args(), true).await, ExitCode::FAILURE);
         let mut args = args();
         args.console_confirmed = true;
-        let request = switch_request(&args, "1.2.4".into(), RepositoryChoice::Mirror);
-        assert!(request.console_confirmed);
+        assert_eq!(run(&args, false).await, ExitCode::from(2));
     }
 }

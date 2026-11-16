@@ -297,6 +297,7 @@ impl UpdatePanel {
     }
 
     pub(crate) fn change(&mut self, forward: bool) {
+        self.confirming = None;
         let options = self.repository_options();
         let position = options.iter().position(|mode| *mode == self.repository);
         let next = match position {
@@ -320,6 +321,7 @@ impl UpdatePanel {
     }
 
     pub(crate) fn editable_value_mut(&mut self) -> Option<&mut String> {
+        self.confirming = None;
         match self.selected {
             UpdateField::Version => Some(&mut self.version),
             UpdateField::RepositoryUrl if self.repository == UpdateRepositoryMode::Custom => {
@@ -331,6 +333,7 @@ impl UpdatePanel {
 
     /// 消费后台解析结果,按与命令模式相同的规则分支。
     pub(crate) fn apply_resolution(&mut self, notice: &mut Notice, resolved: ResolvedUpdate) {
+        self.confirming = None;
         match resolved.current.cmp(&resolved.target) {
             std::cmp::Ordering::Equal => {
                 *notice = Notice::Info(crate::tr!(
@@ -465,6 +468,7 @@ impl ConsoleApp {
         if self.update.resolving.is_some() {
             return Ok(());
         }
+        self.update.confirming = None;
         plan::TargetVersion::parse(self.update.version.trim())
             .map_err(|error| error.to_string())?;
         if self.update.repository == UpdateRepositoryMode::Custom {
@@ -545,40 +549,21 @@ impl ConsoleApp {
     }
 
     /// 确认层 Enter：构建带 `--console-confirmed` 的结构化 `Update` 请求。
-    /// Current 来源不传 `--repository`，由命令按 `config.toml` > 官方 GitHub 解析。
+    /// 版本、来源和现场身份均来自确认层的解析结果。
     pub(crate) fn update_action(&self) -> ConsoleAction {
-        let repository = match self.update.repository {
-            UpdateRepositoryMode::Current => None,
-            UpdateRepositoryMode::Github => Some(Some("github".into())),
-            UpdateRepositoryMode::Mirror => Some(None),
-            UpdateRepositoryMode::Custom => {
-                Some(Some(self.update.repository_url.trim().to_string()))
-            }
-        };
-        let version = self.update.version.trim().to_string();
+        let confirmed = self.update.confirming.clone();
         let command = Commands::Update(crate::commands::update::Update {
-            version: Some(version.clone()),
-            repository: repository.clone(),
+            version: confirmed.as_ref().map(|r| r.target.to_string()),
+            repository: None,
             accept_service_change: false,
             allow_no_backup: false,
             console_confirmed: true,
+            confirmed,
             #[cfg(feature = "test-support")]
             test_runtime: None,
         });
-        let mut args = vec![
-            "update".into(),
-            "--console-confirmed".into(),
-            "--version".into(),
-            version,
-        ];
-        match &repository {
-            None => {}
-            Some(Some(value)) if value == "github" => {
-                args.extend(["--repository".into(), "github".into()])
-            }
-            Some(None) => args.push("--repository".into()),
-            Some(Some(url)) => args.extend(["--repository".into(), url.clone()]),
-        }
+        // Native dispatch carries the confirmation in memory, never through argv.
+        let args = vec!["update".into()];
         ConsoleAction::Command { command, args }
     }
 }
@@ -694,7 +679,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 7.min(screen.height.saturating_sub(2));
+    let height = 8.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -709,6 +694,7 @@ pub(crate) fn render_update_confirmation(frame: &mut Frame<'_>, app: &mut Consol
                 current = resolved.current,
                 target = resolved.target
             )),
+            Line::raw(resolved.repository_location()),
             Line::raw(crate::tr!(crate::keys::CONSOLE_UPDATE_CONFIRM_NOTE)),
             Line::raw(""),
             dialog_hint_line(app),

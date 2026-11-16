@@ -8,7 +8,7 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 回答“安装现场如何安全提交或恢复”。daemon 存活不等于某个操作已经成功。
 
 `switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
-其他委托修改命令通过 worker 执行，两条入口共用串行调度和安装锁。外部服务管理
+`update` 在前端解析和确认后提交同一 `switch` 操作。其他委托修改命令通过 worker 执行，两条入口共用串行调度和安装锁。外部服务管理
 工具是独立进程。`self install/upgrade/remove` 直接执行。
 
 ## 操作状态
@@ -163,4 +163,9 @@ CLI 与真实 daemon 的交互、前端断开、强杀 daemon、重启和结果�
 下载取消完成清理后才报告 cancelled；进入 preparing 后不接受取消。旧安装状态、服务
 定义和服务状态在停服务前保存，三个后端共用恢复规则。同版本校验成功可无切换事务；
 已提交事务只补写操作结果，恢复失败保留阻断状态，不启动后续修改请求。
-详见 [`lkit switch`](../commands/switch.md)。
+`update` 复用该操作类型、schema 与能力标记，提交的目标必须是前端已确认的精确 stable
+版本；来源固定为确认时解析出的 provider kind 与 location，原活动版本和状态摘要也
+来自该确认上下文。daemon 重新校验现场，可重新获取精确版本元数据，但不得重新查询
+latest 或读取默认来源来改写请求。前端只读解析和等待确认不持有安装锁、不创建操作；
+拒绝确认、同版本与降级均不入队。协议不接受任意命令行、环境或终端句柄。
+详见 [`lkit switch`](../commands/switch.md) 与 [`lkit update`](../commands/update.md)。

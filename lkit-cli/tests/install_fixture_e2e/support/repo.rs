@@ -10,6 +10,7 @@ use super::{LANDSCAPE_FIXTURE, VERSION};
 pub(crate) struct RepositoryServer {
     pub(crate) base_url: String,
     requests: Arc<Mutex<Vec<String>>>,
+    files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
 impl RepositoryServer {
@@ -21,7 +22,8 @@ impl RepositoryServer {
         files: HashMap<String, Vec<u8>>,
         gate: Option<(String, Arc<std::sync::atomic::AtomicBool>)>,
     ) -> Self {
-        let files = Arc::new(files);
+        let files = Arc::new(Mutex::new(files));
+        let response_files = files.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let request_log = requests.clone();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -46,16 +48,16 @@ impl RepositoryServer {
                         std::thread::sleep(std::time::Duration::from_millis(20));
                     }
                 }
-                let (status, reason, body) = match files.get(path) {
-                    Some(body) => (200, "OK", body.as_slice()),
-                    None => (404, "Not Found", &[][..]),
+                let (status, reason, body) = match response_files.lock().unwrap().get(path) {
+                    Some(body) => (200, "OK", body.clone()),
+                    None => (404, "Not Found", Vec::new()),
                 };
                 let head = format!(
                     "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
                 if stream.write_all(head.as_bytes()).is_ok() {
-                    let _ = stream.write_all(body);
+                    let _ = stream.write_all(&body);
                     let _ = stream.flush();
                 }
             }
@@ -63,7 +65,12 @@ impl RepositoryServer {
         Self {
             base_url: format!("http://{address}/"),
             requests,
+            files,
         }
+    }
+
+    pub(crate) fn replace_file(&self, path: &str, bytes: Vec<u8>) {
+        self.files.lock().unwrap().insert(path.into(), bytes);
     }
 
     pub(crate) fn request_paths(&self) -> Vec<String> {

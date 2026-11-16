@@ -646,7 +646,7 @@ pub(crate) async fn submit_and_wait(
         })
     };
     let record = submit_request(root.canonical.to_string_lossy().into_owned(), kind, assets)?;
-    wait_for_result(record, capability).await
+    wait_for_result(record, capability, false).await
 }
 
 pub(crate) async fn submit_switch_and_wait(
@@ -666,7 +666,20 @@ pub(crate) async fn submit_switch_and_wait(
         None,
         Some(args),
     )?;
-    wait_for_result(record, capability).await
+    wait_for_result(record, capability, false).await
+}
+pub(crate) async fn submit_confirmed_switch_and_wait(
+    runtime: &InstallRuntime,
+    root: String,
+    args: SwitchRequest,
+    full_screen: bool,
+) -> Result<u8, InstallError> {
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
+        return Err(error("update requires root"));
+    }
+    crate::daemon::require_capability("switch-v1.pid")?;
+    let record = submit_operation(root, Kind::Switch, None, Some(args))?;
+    wait_for_result(record, "switch-v1.pid", full_screen).await
 }
 pub(crate) fn set_message(id: &str, message: &str) -> Result<(), InstallError> {
     let _guard = queue_lock()?;
@@ -693,22 +706,60 @@ pub(crate) fn resolve_switch_version(id: &str, version: &str) -> Result<(), Inst
     record.revision += 1;
     save(&record)
 }
-async fn wait_for_result(record: Record, capability: &str) -> Result<u8, InstallError> {
+async fn wait_for_result(
+    record: Record,
+    capability: &str,
+    full_screen: bool,
+) -> Result<u8, InstallError> {
+    use crate::interaction::presentation::{
+        PresentationAction, WorkerPresentation, operation_screen,
+    };
     eprintln!(
         "lkit: operation {} (query with `lkit operation status {}`)",
         record.id, record.id
     );
+    let mut presentation = full_screen
+        .then(|| WorkerPresentation::new(true, operation_screen(&["update".into()])))
+        .filter(|screen| screen.is_full_screen());
+    if let Some(screen) = &mut presentation {
+        screen.capture_log(&format!("Operation {}", record.id));
+    }
+    let mut last_revision = None;
     let mut unavailable_since = None;
     let mut displayed = None;
     loop {
         let current = read(&record.id)?;
+        if let Some(screen) = &mut presentation {
+            if last_revision != Some(current.revision) {
+                screen.observe_operation(&current);
+                last_revision = Some(current.revision);
+            }
+            match screen.poll_action().map_err(error)? {
+                Some(PresentationAction::Stop) => match cancel(&record.id) {
+                    Ok(_) => screen.cancel_requested(),
+                    Err(e) => {
+                        screen.capture_log(&e.to_string());
+                        screen.ignore_stop();
+                    }
+                },
+                Some(PresentationAction::Close) => {
+                    screen.finish();
+                    eprintln!(
+                        "lkit: detached; query operation {} for its result",
+                        record.id
+                    );
+                    return Ok(130);
+                }
+                _ => {}
+            }
+        }
         let progress = (
             current.status,
             current.stage,
             current.downloaded_bytes,
             current.total_bytes,
         );
-        if displayed.as_ref() != Some(&progress) {
+        if presentation.is_none() && displayed.as_ref() != Some(&progress) {
             eprintln!(
                 "lkit: {:?} {:?} {} / {:?} bytes",
                 current.status, current.stage, current.downloaded_bytes, current.total_bytes
@@ -718,17 +769,33 @@ async fn wait_for_result(record: Record, capability: &str) -> Result<u8, Install
         if current.status.terminal()
             || (current.status == Status::Recovering && current.exit_code == Some(6))
         {
-            if let Some(message) = current.message {
-                eprintln!("lkit: {message}");
-            }
-            return Ok(current
+            let code = current
                 .exit_code
                 .unwrap_or(if current.status == Status::Succeeded {
                     0
                 } else {
                     1
-                }));
+                });
+            if let Some(screen) = &mut presentation {
+                screen.capture_log(&format!("Operation {}: {:?}", record.id, current.status));
+                screen.show_result(code, false);
+                while screen.is_full_screen() {
+                    if matches!(
+                        screen.poll_action().map_err(error)?,
+                        Some(PresentationAction::Close)
+                    ) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                screen.finish();
+            }
+            if let Some(message) = current.message {
+                eprintln!("lkit: {message}");
+            }
+            return Ok(code);
         }
+
         if crate::daemon::require_capability(capability).is_err() {
             let since = unavailable_since.get_or_insert_with(std::time::Instant::now);
             if since.elapsed() >= std::time::Duration::from_secs(30) {

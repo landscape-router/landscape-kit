@@ -33,6 +33,7 @@ pub(crate) struct WorkerPresentation {
     screen: Option<FullScreenOperation>,
     operation: Box<dyn OperationScreen>,
     phase: OperationPhase,
+    durable_cancellable: Option<bool>,
     progress: Option<(u8, u8)>,
     logs: Vec<String>,
     notice: String,
@@ -71,6 +72,7 @@ impl WorkerPresentation {
                 .and_then(Result::ok),
             operation,
             phase: OperationPhase::Preparing,
+            durable_cancellable: None,
             progress: None,
             logs: Vec::new(),
             notice: String::new(),
@@ -79,6 +81,45 @@ impl WorkerPresentation {
             confirming_takeover: false,
             result: None,
         }
+    }
+
+    pub(crate) fn is_full_screen(&self) -> bool {
+        self.screen.is_some()
+    }
+
+    /// Observe durable state directly, without worker stdout or event files.
+    pub(crate) fn observe_operation(&mut self, record: &crate::daemon_operations::Record) {
+        use crate::daemon_operations::{Stage, Status};
+        let cancellable = record.status == Status::Queued
+            || (record.status == Status::Running && record.cancellable && !record.cancel_requested);
+        if self.durable_cancellable != Some(cancellable) {
+            self.confirming_stop = false;
+        }
+        self.durable_cancellable = Some(cancellable);
+        let (phase, step) = match record.stage {
+            Stage::Checking | Stage::Preparing => (OperationPhase::Preparing, 1),
+            Stage::Downloading => (OperationPhase::Downloading, 1),
+            Stage::Stopping => (OperationPhase::Stopping, 2),
+            Stage::Activating | Stage::RollingBack => (OperationPhase::Activating, 3),
+            Stage::Verifying | Stage::Finished => (OperationPhase::Verifying, 4),
+        };
+        self.phase = phase;
+        self.progress = Some((step, 4));
+        self.current = (record.stage == Stage::Downloading).then(|| DownloadState {
+            id: 0,
+            label: record.id.clone(),
+            total: record.total_bytes.unwrap_or(0),
+            position: record.downloaded_bytes,
+            elapsed_millis: 0,
+            status: DownloadStatus::Downloading,
+        });
+        self.notice = format!("{:?} / {:?}", record.status, record.stage);
+        if let Some(message) = &record.message
+            && self.logs.last() != Some(message)
+        {
+            self.capture_log(message);
+        }
+        self.render_screen();
     }
 
     pub(crate) fn operation(&self) -> &dyn OperationScreen {
@@ -138,7 +179,9 @@ impl WorkerPresentation {
         if self.result.is_some() {
             return false;
         }
-        self.phase == OperationPhase::Downloading || self.operation.cancellable_during_switch()
+        self.durable_cancellable.unwrap_or(
+            self.phase == OperationPhase::Downloading || self.operation.cancellable_during_switch(),
+        )
     }
 
     /// 取消请求后是否继续等待 worker 收尾（迁移切换的回滚），而不是立即
@@ -187,6 +230,9 @@ impl WorkerPresentation {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<PresentationAction> {
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        if self.durable_cancellable.is_some() && ctrl_c {
+            return Some(PresentationAction::Close);
+        }
         if matches!(key.code, KeyCode::Char('l' | 'L'))
             && !key
                 .modifiers
@@ -460,6 +506,49 @@ impl Drop for FullScreenOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_observer_detaches_and_obeys_persisted_cancellation_window() {
+        use crate::daemon_operations::{Record, Stage, Status};
+        let mut record: Record = serde_json::from_value(serde_json::json!({
+            "schema_version":3, "id":"fixture", "kind":"switch", "install_root":"/fixture",
+            "status":"queued", "transaction_id":null, "message":null
+        }))
+        .unwrap();
+        let mut screen =
+            WorkerPresentation::new(false, Box::new(super::super::screens::UpdateScreen));
+        screen.observe_operation(&record);
+        assert!(screen.is_cancellable());
+        assert_eq!(
+            screen.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(PresentationAction::Close)
+        );
+        assert_eq!(record.status, Status::Queued);
+        record.status = Status::Running;
+        record.stage = Stage::Downloading;
+        record.cancellable = true;
+        screen.observe_operation(&record);
+        assert_eq!(
+            screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(PresentationAction::Stop)
+        );
+        record.stage = Stage::Preparing;
+        record.cancellable = false;
+        screen.observe_operation(&record);
+        assert!(!screen.is_cancellable());
+        assert_eq!(
+            screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            screen.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(PresentationAction::Close)
+        );
+    }
 
     #[test]
     fn only_download_phase_is_cancellable() {

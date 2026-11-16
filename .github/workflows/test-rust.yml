@@ -62,6 +62,9 @@ jobs:
             commands::lkit_self::upgrade_tests \
             network::discovery::tests \
             network::recovery::tests \
+            commands::update::tests \
+            console::tests::update \
+            interaction::presentation::worker::tests \
             commands::switch::tests \
             workflows::switch::tests \
             commands::repair::tests \

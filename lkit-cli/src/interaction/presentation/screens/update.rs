@@ -156,10 +156,8 @@ impl OperationScreen for UpdateScreen {
             crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
         } else if confirming_stop {
             crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
-        } else if phase == OperationPhase::Downloading {
-            crate::tr!(crate::keys::PRESENTATION_CTRL_C_STOP_ESC_OPTIONS)
         } else {
-            crate::tr!(crate::keys::PRESENTATION_OPERATION_IN_PROGRESS_STOP_IGNORED)
+            crate::tr!(crate::keys::PRESENTATION_OBSERVE_OPERATION_HINT)
         };
         let footer_text = if notice.is_empty() {
             hint

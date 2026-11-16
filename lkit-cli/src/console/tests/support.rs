@@ -214,6 +214,11 @@ pub(crate) fn resolved(current: &str, target: &str) -> ResolvedUpdate {
     ResolvedUpdate {
         current: semver::Version::parse(current).unwrap(),
         target: semver::Version::parse(target).unwrap(),
+        install_root: "/fixture/landscape".into(),
+        state_identity: "a".repeat(64),
+        repository: crate::deployment::plan::RepositoryChoice::Http(
+            "https://example.com/releases/".into(),
+        ),
     }
 }
 

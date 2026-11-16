@@ -291,13 +291,13 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-以下清单列出保留 worker 协议的入口；repair 和 switch 的直接执行协议单独定义：
+以下清单列出保留 worker 协议的入口；repair、switch 和 update 的结构化操作协议单独定义：
 
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
 | `install` | `check` |
 |  | `reconcile` |
-| `update` | `set-mirror` |
+|  | `set-mirror` |
 |  | `software` |
 | `restore` | `backup` |
 | `reinit` | `self` |
@@ -306,7 +306,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 | `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
 
-`switch` 与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
 由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
 `operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
@@ -446,7 +446,7 @@ binary 备份完成后保存旧状态、服务事实和必要宿主文件；替�
 
 ### daemon switch 事务
 
-schema v8 专用于 daemon 直接执行的 switch。操作 schema v3 记录解析后的目标版本，
+schema v8 专用于 daemon 直接执行的 switch，包括 update 在前端确认后提交的切换。操作 schema v3 记录解析后的目标版本，
 事务关联同时核对安装根、from_version 和目标版本。状态快照无论是否创建 `.lkb` 都在
 prepared 前持久化；恢复依据是该快照，不能读取可能已经写成目标版本的现场 state。
 

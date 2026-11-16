@@ -146,15 +146,20 @@ Update 面板提供与命令模式 `lkit update` 相同的交互语义：选择�
 （不退出控制台）；目标与当前相同（已是最新）时面板内显示“已是最新版本 <X>”（不创建
 事务、不下载、不持久化所选来源）；解析失败（网络、版本不存在等）时面板内显示错误并可
 修改字段重试；只有目标高于当前版本时才显示居中确认层：`当前 <X> → 目标 <Y>`（Y 为
-解析出的真实版本），并说明更新复用 switch 流水线（事务、`.lkb` 配置快照、systemd 托管、
-健康检查与自动回滚）。Enter 确认后控制台把结构化 `Update` 请求（标记
-`--console-confirmed`）交给共享命令分发并退出 alternate screen，systemd 模式下委托
-worker，在无侧栏全屏更新页（标题“正在更新 Landscape”）显示下载、配置与服务阶段及
-结果页；Esc 取消确认层并留在面板。`--console-confirmed` 使命令跳过 `/dev/tty` 的渠道
-选择与 `yes` 确认，也不在 switch 流水线内做任何交互确认；面板按所选来源传递显式
-`--repository`（官方 GitHub、默认镜像与自定义 URL 分别映射为 `--repository github`、
-裸 `--repository` 与 `--repository <URL>`），“当前来源”不传该参数，由命令按
-`config.toml` > 官方 GitHub 的规则解析，与命令模式选中“当前来源”的语义一致。
+解析出的真实版本）及解析后的具体仓库地址，并说明事务、`.lkb` 配置快照、受管后端
+停启、健康检查与自动回滚规则。Enter 提交确认时固定的精确版本、具体来源、安装根、
+原活动版本和安装状态摘要，通过共享分发创建一个 daemon `switch` 操作；Esc 关闭
+确认层并留在面板，不提交操作。修改表单或刷新解析结果使此前确认失效。
+
+确认上下文中的“当前来源”和默认镜像均转换为具体 provider kind 与 location，不能
+在执行时重新读取默认配置。共享分发不能重新解析 latest，也不能以提交时重新读取的
+安装状态替代用户确认的状态。`--console-confirmed` 只跳过终端提问，缺少完整确认
+上下文时拒绝内部请求；服务定义变化和无备份切换仍要求各自的显式授权。
+
+提交后更新页按操作 ID 显示 daemon 的阶段、下载进度和结果。daemon 直接执行工作流，
+不读取 TUI 键盘输入。关闭前端只停止观察；重连读取同一操作。显式取消使用操作取消
+接口，仅排队和下载阶段接受；进入 preparing 后拒绝取消。daemon 不可用或缺少
+switch 能力时显示错误，不回退到 worker 或前台执行。详见 [`lkit update`](../commands/update.md)。
 
 Uninstall 面板暂未在 TUI 中启用：侧栏只显示 Overview、Install、Backup、Update、Mirror、
 Software 与 Reinit，`Menu::ALL` 中 `Self::Uninstall` 以注释保留，面板渲染、键处理与确认层
@@ -210,7 +215,7 @@ hostapd 及其安装状态（已安装的包显示 `✓` 且不可取消勾选�
 Reinit 面板只对已安装、`service.manager == systemd` 且宿主网络服务已被接管
 （NetworkManager、`networking.service`、firewalld、systemd-resolved 被 stop/disable/mask）
 的安装可用，其余情况面板显示不可用原因且菜单被导航跳过；CLI `lkit reinit` 与
-[`lkit install --takeover-network`](install.md) 的前置条件一致。面板顶部展示当前版本与
+[`lkit install --takeover-network`](../commands/install.md) 的前置条件一致。面板顶部展示当前版本与
 服务摘要，并说明 reinit 会清空除新网络计划与新凭据外的全部配置（DNS 规则、已登记设备、
 证书、DDNS 任务等由 Landscape 重建数据库）。聚焦面板时“开始 reinit”动作行显示 `>`
 光标标记并高亮，Enter 进入与 Install 相同的全屏网络向导；向导确认后回到面板的凭据

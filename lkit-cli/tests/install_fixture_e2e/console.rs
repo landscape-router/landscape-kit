@@ -109,7 +109,7 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
             .contains("use `lkit switch --version <VERSION>")
     );
 
-    // 控制台分发路径:--console-confirmed 跳过 /dev/tty,解析与比较照常进行。
+    // A bare flag cannot stand in for the in-memory console confirmation context.
     let console_output = harness
         .update_command()
         .arg("--console-confirmed")
@@ -117,13 +117,13 @@ fn update_interaction_handles_defaults_cancellation_and_non_interactive_mode() {
         .arg(&harness.repository.base_url)
         .output()
         .unwrap();
-    assert_success(&console_output);
+    assert_eq!(console_output.status.code(), Some(2));
     let console_stderr = String::from_utf8_lossy(&console_output.stderr);
     assert!(
         !console_stderr.contains("Select the repository source for the update"),
         "console-confirmed update must not open the repository prompt: {console_stderr}"
     );
-    assert!(String::from_utf8_lossy(&console_output.stdout).contains("already up to date"));
+    assert!(console_stderr.contains("missing update confirmation context"));
     assert_eq!(
         std::fs::read(&config_path).unwrap(),
         preset.as_bytes(),

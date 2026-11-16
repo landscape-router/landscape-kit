@@ -87,3 +87,5 @@ pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_PRESS_ENTER: &str =
     "presentation.takeover_confirm_press_enter";
 pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_PRESS_ESC: &str =
     "presentation.takeover_confirm_press_esc";
+
+pub(crate) const PRESENTATION_OBSERVE_OPERATION_HINT: &str = "presentation.observe_operation_hint";

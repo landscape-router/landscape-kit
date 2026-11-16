@@ -70,3 +70,5 @@ presentation.takeover_confirm_question = "Confirm the network takeover now? The 
 presentation.takeover_confirm_fallback = "If the confirmation fails or the session drops, reconnect to the management address and run `lkit network confirm`; an unconfirmed takeover rolls back automatically (`lkit network rollback`)."
 presentation.takeover_confirm_press_enter = "Press Enter to confirm the takeover."
 presentation.takeover_confirm_press_esc = "Esc to keep the result screen"
+
+presentation.observe_operation_hint = "Ctrl+C: stop watching · Esc: request cancellation"

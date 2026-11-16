@@ -70,3 +70,5 @@ presentation.takeover_confirm_question = "立即确认网络接管？确认后�
 presentation.takeover_confirm_fallback = "若确认失败或会话中断，用管理地址重连后运行 `lkit network confirm`；未在期限内确认将自动回滚（`lkit network rollback`）。"
 presentation.takeover_confirm_press_enter = "按 Enter 确认接管。"
 presentation.takeover_confirm_press_esc = "Esc 返回结果页"
+
+presentation.observe_operation_hint = "Ctrl+C：退出观察 · Esc：请求取消"

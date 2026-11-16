@@ -147,14 +147,16 @@
 **Update 面板：字段、后台解析分支、确认层与结构化请求**
 
 - 测试层：Rust 单元、Ratatui TestBackend
-- 状态：`已覆盖`
+- 状态：`部分覆盖`
 - 证据：[控制台规格](../../../interaction/console.md)、[`lkit update`](../../../commands/update.md)、[控制台测试](../../../../lkit-cli/src/console/)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
+- 缺口：真实控制台与 daemon 的端到端衔接、进度重连及显式取消；确认上下文和观察页按键已有隔离单元覆盖；见 [UP-08](update.md#up-08) 和 [UP-11](update.md#up-11)。
 - 说明：已安装时 Update 菜单可选，未安装/非 root/状态不可读时置灰且导航跳过。面板顶部
   显示当前版本，字段为目标版本（默认 latest，`TargetVersion` 校验）、仓库来源（config.toml
   有效时首项为“当前来源”，损坏时显示错误且只留显式选项）与自定义 URL。激活“开始更新”后
   在后台线程解析目标版本：解析中忽略按键；已是最新与降级在面板内提示且不退出；解析失败
   显示错误；升级才显示确认层（`当前 <X> → 目标 <Y>`，Y 为解析出的真实版本），Enter 构建
-  带 `--console-confirmed` 的结构化 `Update` 请求与显式 `--repository` 参数，Esc 取消。
+  携带精确版本、具体来源、原活动版本和状态摘要的已确认请求，Esc 取消。
+  确认标记不替代上下文；字段变化使确认失效，分发与 daemon 不重新解析 latest。
 - 缺口：真实网络解析与 worker 全屏更新页的执行链路依赖安装现场，控制台单测覆盖状态机、
   渲染与请求构建；`--console-confirmed` 跳过 tty 由命令层测试覆盖。
 

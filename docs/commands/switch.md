@@ -57,7 +57,8 @@ with --allow-no-backup to switch without a configuration snapshot
 ## 交互式升级
 
 希望交互选择读取渠道、解析最新或指定 stable 版本并在执行前确认时，使用
-[`lkit update`](update.md)。update 是 switch 的薄封装，确认后复用本命令的完整流水线。
+[`lkit update`](update.md)。update 在前端固定并确认精确版本、具体来源与安装现场，随后提交同一 switch 操作，
+复用本命令的完整流水线；执行时不重新解析 latest。
 
 ## 进度、取消与恢复
 
