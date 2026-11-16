@@ -72,10 +72,9 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
    `--accept-service-change` 时的交互确认路径、[`REI-08`](functional/reinit.md#rei-08)
    回滚失败（`6`）分支。
 
-**委托端到端链路**（daemon worker：CLI 写请求 → daemon 认领 → 子进程执行 → 结果回收）
-由 systemd-nspawn 兼容性 smoke 在真实 systemd 下覆盖：委托提交与结果回收、
-前端断开后 daemon 独立完成、cancel 文件驱动的取消 + daemon 恢复、daemon 未运行
-拒绝、`LKIT_LANG` 转发（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
+**原生操作与真实 systemd 兼容性**由 systemd-nspawn smoke 覆盖提交及回执、
+前端断开、拒绝运行中取消、daemon 崩溃后的前向恢复、daemon 不可用、可执行文件路径
+删除及操作语言（[SYS-03](systemd-smoke.md#sys-03)，仅 CI/手动运行）。
 `migrate` 的前端确认与 daemon 原生执行由 fixture E2E 覆盖
 （[MIG-07](functional/migrate.md#mig-07)）；观察端断开、运行中拒绝取消和
 四个事务崩溃窗口的恢复见 [MIG-10](functional/migrate.md#mig-10)。

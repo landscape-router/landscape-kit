@@ -22,3 +22,7 @@ migrate.tx_failed_mark_warning = "warning: could not mark the migration transact
 migrate.old_instance_still_running = "warning: the old instance is still running; the managed service may fail to bind the fixed ports"
 migrate.cancelled_during_switch = "migration cancelled; rolling back to restore the old instance"
 migrate.cancelled_rolled_back = "migration cancelled; the old instance was automatically restored (version %{version})"
+
+migrate.native_wait_source = "Waiting for source PID %{pid} to exit; stop the old instance in another terminal"
+
+migrate.native_complete = "Migrated Landscape %{version}; backup %{backup}; source directory retained"

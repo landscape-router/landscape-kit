@@ -82,6 +82,7 @@ pub(super) fn submit(
         status: Status::Queued,
         transaction_id: None,
         message: None,
+        language: request_language(),
         assets: None,
         switch: None,
         restore: None,

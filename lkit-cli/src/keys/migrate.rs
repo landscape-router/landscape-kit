@@ -27,3 +27,7 @@ pub(crate) const MIGRATE_CANCELLED_ROLLED_BACK: &str = "migrate.cancelled_rolled
 pub(crate) const MAIN_MIGRATE_ABOUT: &str = "main.migrate_about";
 pub(crate) const MAIN_MIGRATE_FROM_HELP: &str = "main.migrate_from_help";
 pub(crate) const MAIN_MIGRATE_YES_HELP: &str = "main.migrate_yes_help";
+
+pub(crate) const MIGRATE_NATIVE_WAIT_SOURCE: &str = "migrate.native_wait_source";
+
+pub(crate) const MIGRATE_NATIVE_COMPLETE: &str = "migrate.native_complete";

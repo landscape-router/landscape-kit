@@ -125,6 +125,8 @@ pub(crate) struct Record {
     pub transaction_id: Option<String>,
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<crate::i18n::Language>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets: Option<AssetRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch: Option<SwitchRequest>,
@@ -166,6 +168,12 @@ pub(crate) fn installation_identity(
     Ok(crate::release::artifacts::hash_str(
         &serde_json::to_string(installed).map_err(InstallError::StateWrite)?,
     ))
+}
+
+fn request_language() -> Option<crate::i18n::Language> {
+    crate::daemon::require_capability("operations-v3.pid")
+        .ok()
+        .map(|_| crate::i18n::current())
 }
 
 fn directory() -> PathBuf {
@@ -426,6 +434,7 @@ fn submit_operation(
         status: Status::Queued,
         transaction_id: None,
         message: None,
+        language: request_language(),
         assets,
         switch,
         restore: None,
@@ -847,7 +856,8 @@ fn execute_record(
     mut record: Record,
     mut execute: impl FnMut(&mut Record) -> Result<(), InstallError>,
 ) -> Result<bool, InstallError> {
-    let result = execute(&mut record).map_err(|e| {
+    let language = record.language.unwrap_or_else(crate::i18n::current);
+    let result = crate::i18n::with_language(language, || execute(&mut record)).map_err(|e| {
         record.exit_code = record.exit_code.or(Some(match e {
             InstallError::ParameterUsage(_) | InstallError::UnsupportedPlatform(_) => 2,
             _ => 1,
@@ -948,6 +958,7 @@ fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, Inst
         status: Status::Queued,
         transaction_id: None,
         message: None,
+        language: request_language(),
         assets: None,
         switch: None,
         restore: None,
@@ -1011,6 +1022,7 @@ fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallE
         status: Status::Queued,
         transaction_id: None,
         message: None,
+        language: request_language(),
         assets: None,
         switch: None,
         restore: Some(args),
@@ -1245,6 +1257,7 @@ fn submit_network(
         status: Status::Queued,
         transaction_id: None,
         message: None,
+        language: request_language(),
         assets: None,
         switch: None,
         restore: None,

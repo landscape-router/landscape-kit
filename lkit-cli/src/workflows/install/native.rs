@@ -424,20 +424,12 @@ pub(crate) async fn run_operation(
     .await;
     match result {
         Ok(pending) => {
-            control::message(&format!(
-                "Landscape {} {}; {}",
-                release.version,
-                if pending {
-                    "awaits network confirmation"
-                } else {
-                    "installed"
-                },
-                if pending {
-                    "run lkit network confirm or lkit network rollback before the deadline"
-                } else {
-                    "flare recovery channel remains available"
-                }
-            ))?;
+            let key = if pending {
+                crate::keys::INSTALL_NATIVE_AWAITING
+            } else {
+                crate::keys::INSTALL_NATIVE_COMPLETE
+            };
+            control::message(&crate::tr!(key, version = release.version))?;
             Ok(0)
         }
         Err(error) => {

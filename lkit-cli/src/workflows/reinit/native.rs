@@ -95,8 +95,13 @@ pub(crate) async fn run_operation(
             backup_id,
             pending_network_address,
         } => {
-            control::message(&format!(
-                "Landscape {version} awaits network confirmation; address: {pending_network_address:?}; protection backup: {backup_id:?}. Run lkit network confirm or lkit network rollback before the deadline."
+            control::message(&crate::tr!(
+                crate::keys::REINIT_NATIVE_AWAITING,
+                version = version,
+                address = pending_network_address
+                    .map(|address| address.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                backup = backup_id.as_deref().unwrap_or("-")
             ))?;
             Ok(0)
         }

@@ -75,6 +75,7 @@ pub(super) fn submit(root: String, args: MigrateRequest) -> Result<Record, Insta
         status: Status::Queued,
         transaction_id: None,
         message: None,
+        language: request_language(),
         assets: None,
         switch: None,
         restore: None,

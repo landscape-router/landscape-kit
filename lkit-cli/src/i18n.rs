@@ -13,7 +13,8 @@ thread_local! {
     static THREAD_LANGUAGE: Cell<Option<Language>> = const { Cell::new(None) };
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum Language {
     En,
     Zh,

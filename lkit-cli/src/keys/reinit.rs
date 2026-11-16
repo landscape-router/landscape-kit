@@ -18,3 +18,5 @@ pub(crate) const REINIT_AWAITING_CONFIRMATION_DHCP: &str = "reinit.awaiting_conf
 pub(crate) const REINIT_CONFIRM_BEFORE_ROLLBACK: &str = "reinit.confirm_before_rollback";
 pub(crate) const REINIT_FAILED_ROLLED_BACK: &str = "reinit.failed_rolled_back";
 pub(crate) const REINIT_FAILED_ROLLBACK_FAILED: &str = "reinit.failed_rollback_failed";
+
+pub(crate) const REINIT_NATIVE_AWAITING: &str = "reinit.native_awaiting";

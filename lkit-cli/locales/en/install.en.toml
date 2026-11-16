@@ -1,3 +1,7 @@
 install.cleanup_failed_network = "network takeover cleanup failed: %{cleanup_error}"
 install.cleanup_failed_first_install = "first install cleanup failed: %{cleanup_error}"
 install.only_x86_64_and_aarch64_supported = "only x86_64, aarch64, riscv64 and loongarch64 are supported"
+
+install.native_complete = "Landscape %{version} installed; flare recovery channel remains available"
+
+install.native_awaiting = "Landscape %{version} awaits network confirmation; run lkit network confirm or lkit network rollback before the deadline"

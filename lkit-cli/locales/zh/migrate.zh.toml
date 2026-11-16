@@ -22,3 +22,7 @@ migrate.tx_failed_mark_warning = "警告：无法将迁移事务标记为失败�
 migrate.old_instance_still_running = "警告：旧实例仍在运行；受管服务可能无法绑定固定端口"
 migrate.cancelled_during_switch = "迁移已取消，正在回滚恢复旧实例"
 migrate.cancelled_rolled_back = "迁移已取消；已自动恢复旧实例（版本 %{version}）"
+
+migrate.native_wait_source = "等待源进程 PID %{pid} 退出；请在另一终端停止旧实例"
+
+migrate.native_complete = "Landscape %{version} 迁移完成；备份：%{backup}；源目录已保留"

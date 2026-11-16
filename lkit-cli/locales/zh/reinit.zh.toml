@@ -16,3 +16,5 @@ reinit.awaiting_confirmation_dhcp = "新 WAN 使用 DHCP；请从任意可达会
 reinit.confirm_before_rollback = "请在 %{minutes} 分钟内确认，否则未确认的重启或超时会使 reinit 自动回滚"
 reinit.failed_rolled_back = "reinit 版本 %{version} 失败；已自动恢复原安装"
 reinit.failed_rollback_failed = "reinit 版本 %{version} 失败，且无法恢复原安装：%{reason}"
+
+reinit.native_awaiting = "Landscape %{version} 等待网络确认；管理地址：%{address}；保护备份：%{backup}。请在截止时间前运行 lkit network confirm 或 lkit network rollback。"

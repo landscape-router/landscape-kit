@@ -1,3 +1,7 @@
 install.cleanup_failed_network = "网络接管清理失败：%{cleanup_error}"
 install.cleanup_failed_first_install = "首次安装清理失败：%{cleanup_error}"
 install.only_x86_64_and_aarch64_supported = "仅支持 x86_64、aarch64、riscv64 和 loongarch64"
+
+install.native_complete = "Landscape %{version} 已安装；flare 恢复通道保持可用"
+
+install.native_awaiting = "Landscape %{version} 等待网络确认；请在截止时间前运行 lkit network confirm 或 lkit network rollback"

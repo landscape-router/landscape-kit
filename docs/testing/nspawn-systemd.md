@@ -9,7 +9,7 @@
 - system unit 能注册、enable、start 和 stop；
 - 服务启动后真实 manager 报告非零 MainPID；
 - lkit 常驻 daemon 由真实 systemd 托管，unit 含 `KillMode=process`；
-- daemon 委托执行器（`daemon_worker`）在真实 systemd 环境下的能力。
+- daemon 原生操作在真实 systemd 环境下的执行和恢复能力。
 
 测试使用 test-support 运行时跳过完整宿主 preflight，但配置
 `execution: daemon` 并使用真实 `/bin/systemctl`、`/etc/systemd/system` 和
@@ -19,38 +19,28 @@
 `systemd --user` 不能替代这一层：lkit 管理的是 root system unit、低位端口和系统 unit
 目录。完整宿主 preflight 则仍由实际受支持主机或 VM 验收。
 
-## worker 委托能力场景
+## 原生操作场景
 
-每个场景基于"卸载一次安装"展开：`lkit uninstall` 是委托命令，CLI 写请求到
-`/run/lkit/operations`，daemon（真实 systemd 服务）认领后以子进程
-（`--internal-daemon-worker`）执行真实 systemd 操作并写回结果，CLI 转发输出并
-回收退出码。场景之间通过 `restore_scene` 恢复可卸载现场：
+每个场景基于一次卸载验证 systemd 契约，CLI 提交结构化操作，daemon 直接执行，
+操作记录保留在 `/root/.lkit/run/operations/`。场景之间恢复隔离安装现场。
 
-- **S-1 委托提交与结果回收**：CLI 全程等待委托的 uninstall 提交，断言状态删除、
-  注册链接移除、`current` 移除、服务停止、保护 `.lkb` 保留、daemon 存活；
-- **S-2 前端断开**：请求写入后 SIGKILL 前端进程，daemon 脱离会话独立完成卸载；
-- **S-3 cancel 文件取消**：委托执行中（等 worker 事务文件出现后再写入 cancel
-  文件，保证取消落在可恢复现场；等价于可取消阶段 Ctrl+C 的委托侧信号）→ daemon
-  以 SIGTERM 终止子进程组并写回非 0 结果，前端拿到退出码；恢复语义随中断点：
-  取消落在 `Preparing`（现场未变）时恢复只把事务标记 `failed`、state 保留，
-  落在 `Preparing` 之后则前向完成中断的卸载（state 删除）。委托的 uninstall
-  没有下载阶段，前端 Ctrl+C 被忽略（仅 `Downloading` 阶段可取消）；
-- **S-4 daemon 未运行**：`systemctl stop lkit.service` 后委托请求必须拒绝
-  （退出码 `2` + "daemon is not running"），不卡住；
-- **S-4b daemon 二进制被替换**：删除（或移动）daemon 正在使用的可执行文件后，
-  委托请求必须拒绝（退出码 `2` + 提示恢复文件并重启 daemon），而不是像历史上
-  那样无限等待 result.json（daemon 的 worker spawn 报 `ENOENT` 且只写 journald）；
-- **S-5 语言转发**：先完成一次正常卸载，再以 `LKIT_LANG=zh` 委托卸载触发
-  "requires an existing installation"（退出码 `2`），断言 worker 输出为中文，
-  验证 CLI 的 `LKIT_LANG` 进入委托请求、worker 子进程使用同一语言输出。
+- **S-1 提交与查询**：卸载成功后按 operation ID 查询提交结果，检查状态、注册、current
+  已清理，保护备份保留，daemon 仍运行。
+- **S-2 前端断开**：在停止阶段检查点杀死观察端，解除检查点后 daemon 完成原操作。
+- **S-3 daemon 崩溃恢复**：运行中的取消请求被拒绝；杀死实际 daemon 后，监管进程
+  自动重启它，恢复按原事务前向完成卸载，同一 operation ID 收敛为成功。
+- **S-4 daemon 不可用**：停止 lkit 服务后提交在有限时间内失败，不入队、不改变安装。
+- **S-4b 可执行文件替换**：daemon 运行时删除其二进制路径，使用独立 CLI 副本提交卸载，
+  原 daemon PID 完成操作；随后恢复 CLI 文件。
+- **S-5 操作语言**：`LKIT_LANG=zh` 的前端提交卸载，回执保存 `language: zh` 并输出中文
+  结果，语言不通过子进程环境传播。
 
-尚未纳入 smoke 抽样：systemd unit 注册链接所有权冲突的失败路径（不停止服务、
-不删除外部文件）。
+停止阶段检查点只编译于 test-support 构建，文件位于容器的 lkit 地盘，不影响生产路径。
 
 ## 执行策略
 
 该测试低频、手动或在 systemd 集成契约变化时运行，适合发现 unit 格式、真实 manager
-调用和 daemon 委托执行器（`daemon_worker` 子进程）生命周期的兼容性回归。它不作为
+调用和 daemon 原生操作生命周期的兼容性回归。它不作为
 每个 PR 或普通发布的必需门禁，也不要求为每个业务场景建立真实 systemd 版本。安装与
 生命周期的发布判断以 Rust fixture E2E 和 Docker 功能 E2E 为主，避免 nspawn 的
 rootfs 下载、PID 1 启动和宿主差异阻碍发布。
@@ -85,5 +75,5 @@ ShellCheck。CI 当前每周及手动运行；普通 PR 和普通发布不承担
 
 测试先注册并启动受管的 landscape-router unit，再以 `lkit self install` 部署
 常驻 daemon，断言 unit 注册、启停、MainPID 与 `KillMode=process`；随后按
-「worker 委托能力场景」验证 daemon 委托执行器的提交、断开、取消、拒绝与语言转发
+「原生操作场景」验证提交、断开、拒绝运行中取消、崩溃恢复、能力检查与操作语言
 能力；最后停止并重新启动两个受管服务，确认真实 manager 的 stop/start 契约。

@@ -5,10 +5,8 @@ set -euo pipefail
 
 # 真实 systemd 契约验证:在 systemd-nspawn 中部署 lkit 常驻 daemon
 # (`lkit self install`),验证真实 manager 的注册、启停、MainPID 与
-# `KillMode=process` 契约;随后以真实委托(CLI 写请求 → daemon 认领 → 子进程
-# 执行 → 结果回收)验证 worker 能力:提交、前端断开后独立完成、Ctrl+C 取消、
-# daemon 未运行拒绝、LKIT_LANG 转发。由 OpenRC/sysvinit 后端 fixture E2E 覆盖
-# 的委托执行边界不在此重复。
+# `KillMode=process` 契约；原生操作验证覆盖提交、断开、运行中拒绝取消、
+# daemon 崩溃恢复、不可用时拒绝、二进制替换与持久化操作语言。
 #
 # 每条 machine_shell 命令都有超时(LKIT_NSPAWN_CMD_TIMEOUT,默认 120s),卡住
 # 的步骤会在约 2 分钟内失败并输出诊断,而不是空等到 workflow 超时。
@@ -381,14 +379,10 @@ machine_shell "systemctl is-active --quiet lkit.service"
 echo "   restart: pidfile"
 machine_shell "test -f /root/.lkit/run/lkit.pid"
 
-# ============ worker 委托能力验证 ============
-# daemon(真实 systemd 服务)认领委托请求、以子进程执行真实 systemd 操作、
-# 响应取消并写回结果;CLI 侧转发输出并回收退出码。以下场景基于"卸载一次
-# 安装"展开:uninstall 是委托命令,子进程以 --internal-daemon-worker 内联执行,
-# 不受前端会话影响。每个场景后通过 restore_scene 恢复可卸载现场。
+# ============ 原生 daemon 操作兼容性 ============
 
 restore_scene() {
-  machine_shell 'rm -f /root/.lkit/transactions/*.json 2>/dev/null; rm -f /run/lkit/operations/* 2>/dev/null; true'
+  machine_shell 'rm -f /root/.lkit/transactions/*.json 2>/dev/null; rm -f /root/.lkit/run/operations/*.json 2>/dev/null; true'
   mkdir -p "$install_root/releases/1.0.0/static" "$install_root/data" "$install_root/service"
   install -m 0755 "$prebuilt_dir/landscape-webserver" \
     "$install_root/releases/1.0.0/landscape-webserver"
@@ -495,10 +489,63 @@ PY
   machine_shell 'for ((i = 0; i < 200; i++)); do (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null && break; sleep 0.1; done; (exec 3<>/dev/tcp/127.0.0.1/6443) 2>/dev/null || exit 1'
 }
 
-# S-1 委托提交与结果回收:CLI 写请求、daemon 认领、子进程完成真实卸载、结果回。
-echo "== worker S-1: a delegated uninstall commits through the daemon"
+# Native operation receipts are the observable contract; the smoke never looks
+# for a child lkit process or a transient worker output file.
+cat >"$rootfs/var/lib/lkit-nspawn/operation.py" <<'PY'
+import glob
+import json
+import sys
+
+records = [json.load(open(path, encoding="utf-8")) for path in
+           glob.glob("/root/.lkit/run/operations/*.json")]
+records = sorted((r for r in records if r["kind"] == "uninstall"), key=lambda r: r["id"])
+if not records:
+    sys.exit(1)
+record = records[-1]
+if sys.argv[1] == "id":
+    print(record["id"])
+elif sys.argv[1] == "status":
+    sys.exit(0 if record["status"] == sys.argv[2] else 1)
+elif sys.argv[1] == "language":
+    assert record["language"] == "zh", record
+    assert "卸载" in record["message"], record
+else:
+    raise ValueError(sys.argv[1])
+PY
+
+wait_receipt() {
+  machine_shell "for ((i = 0; i < 300; i++)); do python3 /var/lib/lkit-nspawn/operation.py status '$1' && exit 0; sleep 0.2; done; exit 1"
+}
+
+checkpoint_on() {
+  machine_shell 'mkdir -p /etc/systemd/system/lkit.service.d /root/.lkit/run
+printf "[Service]\nEnvironment=LKIT_TEST_REPAIR_CHECKPOINT=uninstall-stopping\n" >/etc/systemd/system/lkit.service.d/checkpoint.conf
+rm -f /root/.lkit/run/test-repair-uninstall-stopping.reached
+touch /root/.lkit/run/test-repair-uninstall-stopping.gate
+systemctl daemon-reload
+systemctl restart lkit.service
+for ((i = 0; i < 100; i++)); do
+  P=$(cat /root/.lkit/run/lkit.pid 2>/dev/null || true)
+  C=$(cat /root/.lkit/run/uninstall-v1.pid 2>/dev/null || true)
+  if [ -n "$P" ] && [ "$P" = "$C" ] && kill -0 "$P" 2>/dev/null; then exit 0; fi
+  sleep 0.1
+done
+exit 1'
+}
+checkpoint_off() {
+  machine_shell 'rm -f /root/.lkit/run/test-repair-uninstall-stopping.gate /etc/systemd/system/lkit.service.d/checkpoint.conf
+systemctl daemon-reload'
+}
+start_observer() {
+  machine_shell_bg 'nohup /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/observer.out 2>/tmp/observer.err </dev/null & echo $! >/tmp/observer.pid'
+  machine_shell 'for ((i = 0; i < 300; i++)); do test -f /root/.lkit/run/test-repair-uninstall-stopping.reached && exit 0; sleep 0.1; done; cat /tmp/observer.err; exit 1'
+}
+
+echo "== native S-1: submit and query the committed uninstall"
 machine_shell \
   "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json"
+wait_receipt succeeded
+machine_shell 'OPID=$(python3 /var/lib/lkit-nspawn/operation.py id); /usr/local/bin/lkit operation status "$OPID"'
 machine_shell "test ! -f /root/.lkit/state/install-state.json"
 machine_shell "test ! -L /etc/systemd/system/landscape-router.service"
 machine_shell "test ! -e /var/lib/lkit-nspawn/landscape/current"
@@ -506,104 +553,61 @@ machine_shell "! systemctl is-active --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 machine_shell "test \"\$(find /root/.lkit/backups -name '*.lkb' | wc -l)\" -ge 1"
 
-# S-2 前端断开:请求写入后 SIGKILL 前端,daemon 脱离会话独立完成卸载。
-echo "== worker S-2: the daemon finishes after the frontend disconnects"
+echo "== native S-2: frontend disconnect does not cancel the operation"
 restore_scene
-machine_shell_bg \
-  'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s2.out 2>/tmp/s2.err; echo \$? >/tmp/s2.exit" >/dev/null 2>&1 &'
-machine_shell 'for ((i = 0; i < 200; i++)); do [ -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)" ] && break; sleep 0.1; done; test -n "$(ls /run/lkit/operations/*.request.json 2>/dev/null)"'
-machine_shell 'pgrep -f "^/usr/local/bin/lkit --non-interactive uninstall" | head -1 | xargs -r kill -9 || true'
-machine_shell 'for ((i = 0; i < 300; i++)); do [ ! -f /root/.lkit/state/install-state.json ] && break; sleep 0.2; done; test ! -f /root/.lkit/state/install-state.json'
+checkpoint_on
+start_observer
+machine_shell 'kill -9 "$(cat /tmp/observer.pid)"'
+checkpoint_off
+wait_receipt succeeded
+machine_shell "test ! -f /root/.lkit/state/install-state.json"
+machine_shell "systemctl is-active --quiet lkit.service"
+
+echo "== native S-3: running cancellation is refused; daemon crash recovers forward"
+restore_scene
+checkpoint_on
+start_observer
+machine_shell 'OPID=$(python3 /var/lib/lkit-nspawn/operation.py id)
+echo "$OPID" >/tmp/recovery-operation
+if /usr/local/bin/lkit operation cancel "$OPID"; then exit 1; fi
+python3 /var/lib/lkit-nspawn/operation.py status running
+kill -KILL "$(cat /root/.lkit/run/lkit.pid)"'
+checkpoint_off
+wait_receipt succeeded
+machine_shell 'test "$(python3 /var/lib/lkit-nspawn/operation.py id)" = "$(cat /tmp/recovery-operation)"'
+machine_shell "test ! -f /root/.lkit/state/install-state.json"
 machine_shell "! systemctl is-active --quiet landscape-router.service"
 machine_shell "systemctl is-active --quiet lkit.service"
 
-# S-3 取消:委托执行中写 cancel 文件(等价于可取消阶段 Ctrl+C 的委托侧信号),
-# daemon 以 SIGTERM 终止子进程组并写回结果;前端拿到非 0 退出码,daemon 下个
-# 周期前向完成中断的卸载(恢复语义)。注意委托的 uninstall 没有下载阶段,前端
-# Ctrl+C 会被忽略(仅 Downloading 阶段可取消),因此取消由 cancel 文件驱动。
-echo "== worker S-3: the daemon cancels the delegated worker and recovers"
+echo "== native S-4: unavailable daemon rejects submission promptly"
 restore_scene
-# 同一会话内完成「后台启动 CLI + 等事务 journal + 写 cancel」,避开多次
-# systemd-run 启动开销;KillMode=process 保证会话结束后 CLI 前端与 daemon
-# 交互不受影响。cancel 的目标 id 不从 /run/lkit/operations/ 的目录内容推断
-# (S-2 的 SIGKILL 残留、request.json 被认领删除都会让按文件名猜测出错),
-# 而是等事务 journal 出现(= worker 正在执行,处于 SIGTERM 窗口)后,从活
-# worker 进程的 /proc/<pid>/environ 读 executor 注入的
-# LKIT_INTERNAL_PRESENTATION_EVENTS 提取 id。此前三轮 CI 失败(空 op id)
-# 的共同根因是 systemd 对瞬态单元 ExecStart 的 `${VAR...}` 展开,把
-# `${VAR#pat}` / `${VAR%pat}` 换成了空串——payload 内只允许 `$(...)` 和
-# 裸 `$VAR`,截断用 cut,剥后缀用 basename 的 suffix 参数。每步取值失败都
-# 转储现场并退出,不静默继续。
-machine_shell_bg \
-  'bash -c "/usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s3.out 2>/tmp/s3.err; echo \$? >/tmp/s3.exit" >/dev/null 2>&1 &
-T=
-for ((i = 0; i < 750; i++)); do
-  T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1)
-  [ -n "$T" ] && break
-  sleep 0.02
-done
-if [ -z "$T" ]; then
-  echo "== S-3 FAIL: no transaction journal after 15s"
-  ls -la /root/.lkit/transactions/ /run/lkit/operations/ 2>&1
-  exit 1
-fi
-echo "== S-3 txn=[$T]"
-# pgrep 每轮扫描全部匹配 pid,取第一个 environ 中带非空
-# LKIT_INTERNAL_PRESENTATION_EVENTS 值的(spawn 窗口的瞬时匹配或读取竞争
-# 只会得到空值,重试即可跳过)。
-WPID=
-PRES=
-for ((i = 0; i < 15; i++)); do
-  for cand in $(pgrep -f "^/usr/local/bin/lkit --internal-daemon-worker" || true); do
-    PRES=$(tr "\0" "\n" </proc/$cand/environ 2>/dev/null | grep "^LKIT_INTERNAL_PRESENTATION_EVENTS=" | head -1 | cut -d= -f2-)
-    if [ -n "$PRES" ]; then
-      WPID=$cand
-      break
-    fi
-    PRES=
-  done
-  [ -n "$WPID" ] && break
-  sleep 0.03
-done
-if [ -z "$WPID" ]; then
-  echo "== S-3 FAIL: no running daemon worker with a presentation path"
-  pgrep -a -f lkit 2>&1 || true
-  ps aux 2>&1 | grep lkit | grep -v grep
-  ls -la /run/lkit/operations/ 2>&1
-  exit 1
-fi
-OPID=$(basename "$PRES" .presentation.jsonl)
-case "$OPID" in
-  ""|*[!0-9a-f-]*)
-    echo "== S-3 FAIL: unexpected operation id [$OPID] from [$PRES]"
-    exit 1
-    ;;
-esac
-echo "== S-3 op=[$OPID] worker=[$WPID] from=[$PRES]"
-touch "/run/lkit/operations/$OPID.cancel"' || { machine_dump "S-3 setup-failed"; exit 1; }
-machine_shell 'for ((i = 0; i < 200; i++)); do [ -s /tmp/s3.exit ] && break; sleep 0.1; done; test "$(cat /tmp/s3.exit)" -ne 0' || { machine_dump "S-3 worker-not-cancelled"; exit 1; }
-machine_shell 'for ((i = 0; i < 300; i++)); do if [ ! -f /root/.lkit/state/install-state.json ]; then exit 0; fi; T=$(ls /root/.lkit/transactions/*.json 2>/dev/null | head -1); if [ -n "$T" ] && grep -q "failed" "$T"; then exit 0; fi; sleep 0.2; done; exit 1' || { machine_dump "S-3 recovery-timeout"; exit 1; }
-machine_shell "systemctl is-active --quiet lkit.service"
-machine_shell "systemctl is-active --quiet landscape-router.service"
-
-# S-4 daemon 未运行:委托请求必须拒绝(退出码 2)而不是卡住。
-echo "== worker S-4: delegation refuses when the daemon is stopped"
 machine_shell "systemctl stop lkit.service"
-machine_shell 'if /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s4.out 2>/tmp/s4.err; then exit 1; else [ "$?" -eq 2 ] || exit 1; fi'
-machine_shell 'grep -q "daemon is not running" /tmp/s4.err'
+machine_shell 'timeout 10 /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s4.out 2>/tmp/s4.err
+CODE=$?
+test "$CODE" -ne 0 && test "$CODE" -ne 124'
+machine_shell 'test -f /root/.lkit/state/install-state.json; test -z "$(find /root/.lkit/run/operations -name "*.json" -print)"'
 machine_shell "systemctl start lkit.service"
-machine_shell "systemctl is-active --quiet lkit.service"
 
-# S-5 语言转发:CLI 的 LKIT_LANG 进入委托请求,worker 子进程使用同一语言输出。
-# S-3 的取消落点不确定:Preparing 中断时 state 保留,越过 preparing 时恢复前向
-# 完成卸载(state 已删)。先把现场收敛到"已卸载"(state 存在才卸载),再以
-# LKIT_LANG=zh 委托卸载,worker 报 "requires an existing installation"(exit 2)
-# 且消息为中文。
-echo "== worker S-5: LKIT_LANG=zh reaches the delegated worker"
-machine_shell 'if [ -f /root/.lkit/state/install-state.json ]; then /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5a.out 2>/tmp/s5a.err || exit 1; fi'
-machine_shell 'test ! -f /root/.lkit/state/install-state.json'
-machine_shell 'LKIT_LANG=zh /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5.out 2>/tmp/s5.err; [ "$?" -eq 2 ] || exit 1'
-machine_shell 'grep -q "install-state.json" /tmp/s5.err'
-machine_shell 'grep -q "需要" /tmp/s5.err'
+echo "== native S-4b: executable replacement does not block native execution"
+machine_shell 'for ((i = 0; i < 100; i++)); do
+  P=$(cat /root/.lkit/run/lkit.pid 2>/dev/null || true)
+  C=$(cat /root/.lkit/run/uninstall-v1.pid 2>/dev/null || true)
+  if [ -n "$P" ] && [ "$P" = "$C" ] && kill -0 "$P" 2>/dev/null; then break; fi
+  sleep 0.1
+done
+cp /usr/local/bin/lkit /tmp/lkit-observer
+rm /usr/local/bin/lkit
+/tmp/lkit-observer --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json
+RESULT=$?
+install -m 0755 /tmp/lkit-observer /usr/local/bin/lkit
+rm /tmp/lkit-observer
+test "$RESULT" -eq 0 && test "$(cat /root/.lkit/run/lkit.pid)" = "$P"'
+wait_receipt succeeded
 
-echo "PASS: systemd-nspawn real-systemd registration, lifecycle and worker delegation"
+echo "== native S-5: the operation carries its selected language"
+restore_scene
+machine_shell 'LKIT_LANG=zh /usr/local/bin/lkit --non-interactive uninstall --yes --test-runtime /var/lib/lkit-nspawn/runtime.json >/tmp/s5.out 2>/tmp/s5.err'
+wait_receipt succeeded
+machine_shell 'python3 /var/lib/lkit-nspawn/operation.py language'
+
+echo "PASS: systemd-nspawn registration, lifecycle and native daemon operations"

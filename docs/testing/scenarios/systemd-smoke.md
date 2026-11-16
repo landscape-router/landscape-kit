@@ -2,7 +2,7 @@
 
 本文件只列 fake systemctl 无法证明的真实 manager 契约。它不重新执行发布、首次安装、
 切换、备份、回滚、repair 或 reconcile 场景，不参与核心功能覆盖率，也不是普通 PR 或
-普通发布门禁。仅在 unit、daemon worker 委托或 systemctl 适配变化时按需运行，CI 当前还会
+普通发布门禁。仅在 unit、daemon 原生操作或 systemctl 适配变化时按需运行，CI 当前还会
 每周执行一次。
 
 ## SYS-01
@@ -23,13 +23,12 @@
 
 ## SYS-03
 
-**CLI 前端断开后委托操作由 daemon 继续提交事务**
+**CLI 前端断开后 daemon 继续提交原生操作**
 
 - 测试层：systemd-nspawn
 - 状态：`低频 smoke`
 - 证据：[nspawn 兼容性 smoke](../nspawn-systemd.md)
-- 说明：smoke 覆盖委托提交（S-1）、前端断开后 daemon 独立完成（S-2）、cancel 文件
-  取消与 daemon 恢复（S-3）、daemon 未运行拒绝（S-4）、`LKIT_LANG` 转发（S-5）。
+- 说明：smoke 覆盖提交与回执（S-1）、前端断开后独立完成（S-2）、运行中拒绝取消及崩溃恢复（S-3）、daemon 不可用时拒绝（S-4）、二进制路径删除后继续执行（S-4b）、操作语言（S-5）。
 
 ## SYS-04
 
@@ -37,7 +36,7 @@
 
 - 测试层：systemd-nspawn
 - 状态：`待补充`
-- 说明：nspawn 兼容性 smoke 当前只抽样 unit 注册、启停与 daemon 委托契约，尚未包含
+- 说明：nspawn 兼容性 smoke 当前只抽样 unit 注册、启停与 daemon 操作契约，尚未包含
   foreign unit 所有权冲突的接管失败路径（见 [nspawn 兼容性 smoke](../nspawn-systemd.md)）。
 
 ## SYS-05

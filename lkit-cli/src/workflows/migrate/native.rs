@@ -125,9 +125,9 @@ pub(super) fn wait_for_source(
     timeout: Duration,
 ) -> Result<(), InstallError> {
     control::phase(Stage::WaitingForSourceStop)?;
-    control::message(&format!(
-        "Waiting for source PID {} to exit; stop the old instance in another terminal",
-        args.source.pid
+    control::message(&crate::tr!(
+        crate::keys::MIGRATE_NATIVE_WAIT_SOURCE,
+        pid = args.source.pid
     ))?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -179,8 +179,10 @@ pub(crate) async fn run_operation(
         .await?
     {
         MigrateOutcome::Committed { version, backup_id } => {
-            control::message(&format!(
-                "Migrated Landscape {version}; backup {backup_id}; source directory retained"
+            control::message(&crate::tr!(
+                crate::keys::MIGRATE_NATIVE_COMPLETE,
+                version = version,
+                backup = backup_id
             ))?;
             Ok(0)
         }

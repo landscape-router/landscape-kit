@@ -87,6 +87,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&service_capability)?;
     let operations_capability = layout::territory_run_dir().join("operations-v1.pid");
     write_pidfile(&operations_capability)?;
+    let operations_v3 = layout::territory_run_dir().join("operations-v3.pid");
+    write_pidfile(&operations_v3)?;
     let operations_v2 = layout::territory_run_dir().join("operations-v2.pid");
     write_pidfile(&operations_v2)?;
     let migrate_capability = layout::territory_run_dir().join("migrate-v1.pid");
@@ -177,6 +179,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     let _ = std::fs::remove_file(&restore_capability);
     let _ = std::fs::remove_file(&switch_capability);
     let _ = std::fs::remove_file(&assets_capability);
+    let _ = std::fs::remove_file(&operations_v3);
     let _ = std::fs::remove_file(&operations_v2);
     let _ = std::fs::remove_file(&operations_capability);
     let _ = std::fs::remove_file(&service_capability);

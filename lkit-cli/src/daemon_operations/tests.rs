@@ -938,3 +938,44 @@ fn migration_rejects_unbound_unit_and_foreign_payloads() {
     save(&record).unwrap();
     assert!(read(&record.id).is_err());
 }
+
+#[test]
+fn operation_language_is_capability_gated_and_scoped_to_execution() {
+    let f = Fixture::new();
+    let old = crate::i18n::with_language(crate::i18n::Language::Zh, || f.submit());
+    assert!(old.language.is_none());
+    assert!(
+        !std::fs::read_to_string(path(&old.id).unwrap())
+            .unwrap()
+            .contains("language")
+    );
+    cancel(&old.id).unwrap();
+    let pid = std::process::id().to_string();
+    std::fs::write(layout::territory_pidfile(), &pid).unwrap();
+    std::fs::write(layout::territory_run_dir().join("operations-v3.pid"), &pid).unwrap();
+    let queued = crate::i18n::with_language(crate::i18n::Language::Zh, || f.submit());
+    assert_eq!(queued.language, Some(crate::i18n::Language::Zh));
+    crate::i18n::with_language(crate::i18n::Language::En, || {
+        execute_next(|record| {
+            assert_eq!(crate::i18n::current(), crate::i18n::Language::Zh);
+            set_message(
+                &record.id,
+                &crate::tr!(crate::keys::INSTALL_NATIVE_COMPLETE, version = "1.0.0"),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(crate::i18n::current(), crate::i18n::Language::En);
+    });
+    assert_eq!(read(&queued.id).unwrap().status, Status::Succeeded);
+    assert!(
+        read(&queued.id)
+            .unwrap()
+            .message
+            .unwrap()
+            .contains("已安装")
+    );
+    let mut value = serde_json::to_value(&queued).unwrap();
+    value["language"] = "invalid".into();
+    assert!(serde_json::from_value::<Record>(value).is_err());
+}
