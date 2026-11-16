@@ -477,3 +477,147 @@ fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
         download_gate.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
+
+/// Keep the real observer open while another session resolves the network
+/// transaction, including an already-open confirmation dialog.
+#[test]
+fn console_reinit_refreshes_external_confirmation_and_automatic_rollback() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for rollback in [false, true] {
+        let h = InstallHarness::new("console-reinit-resolution", "healthy", 10_000);
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&h.runtime_config).unwrap()).unwrap();
+        config["network_confirm_timeout_ms"] = 180_000.into();
+        write_json(&h.runtime_config, &config);
+        h.seed_host_services();
+        assert_success(&h.run_takeover());
+        assert_success(&h.network_command(&["confirm"]));
+        let runtime = h.daemon_runtime();
+        let _daemon = h.spawn_daemon(&runtime);
+        use termlens::Key;
+        let mut terminal = termlens::Terminal::builder()
+            .size(100, 32)
+            .env("LKIT_LANG", "en")
+            .env("LKIT_TERRITORY", &h.territory)
+            .env("LKIT_TEST_CONSOLE_RUNTIME", &runtime)
+            .env(
+                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+                &h.world.systemctl_config,
+            )
+            .timeout(Duration::from_secs(40))
+            .spawn(LKIT)
+            .unwrap();
+        terminal
+            .wait_until(|s| s.contains("Landscape Kit"))
+            .unwrap();
+        // Overview -> Backup -> Update -> Mirror -> Software -> Reinit.
+        for _ in 0..5 {
+            terminal.send(Key::Down).unwrap();
+        }
+        terminal.send(Key::Right).unwrap();
+        terminal.wait_until(|s| s.contains("Begin reinit")).unwrap();
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|s| s.contains("Select the WAN interface"))
+            .unwrap();
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|s| s.contains("WAN IPv4 mode"))
+            .unwrap();
+        // Preserve the fixture's static WAN, then advance to the Continue row.
+        for _ in 0..3 {
+            terminal.send(Key::Down).unwrap();
+        }
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|s| s.contains("Select LAN interfaces"))
+            .unwrap();
+        terminal.send(Key::Enter).unwrap();
+        terminal.send(Key::Enter).unwrap();
+        // Credentials: retain admin, enter matching passwords, submit.
+        for _ in 0..2 {
+            terminal.send(Key::Down).unwrap();
+            terminal.send(Key::Enter).unwrap();
+            terminal.send_str("Secret123").unwrap();
+            terminal.send(Key::Enter).unwrap();
+        }
+        terminal.send(Key::Down).unwrap();
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|s| s.contains("Confirm reinit"))
+            .unwrap();
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|s| s.contains("Network takeover awaiting confirmation"))
+            .unwrap();
+        terminal.send(Key::Enter).unwrap();
+        let records = || {
+            std::fs::read_dir(h.run_dir().join("operations"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .map(|e| {
+                    serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).unwrap())
+                        .unwrap()
+                })
+                .find(|r| r["kind"] == "reinit")
+                .unwrap()
+        };
+        let before = records();
+        assert_eq!(before["status"], "awaiting_confirmation");
+        if rollback {
+            // Expire the real transaction; daemon's recovery cycle performs rollback.
+            let tx = h.transactions_dir().join(format!(
+                "{}.json",
+                before["transaction_id"].as_str().unwrap()
+            ));
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&tx).unwrap()).unwrap();
+            value["network_takeover"]["confirmation_deadline"] = (chrono::Utc::now()
+                - chrono::Duration::seconds(1))
+            .to_rfc3339()
+            .into();
+            let staged = tx.with_extension("staged");
+            write_json(&staged, &value);
+            std::fs::rename(staged, tx).unwrap();
+        } else {
+            assert_success(
+                &h.command()
+                    .args(["network", "confirm", "--test-runtime"])
+                    .arg(&runtime)
+                    .output()
+                    .unwrap(),
+            );
+        }
+        terminal
+            .wait_until(|s| {
+                s.contains(if rollback {
+                    "Reinit failed"
+                } else {
+                    "Reinit complete"
+                })
+            })
+            .unwrap();
+        assert!(
+            !terminal
+                .screen()
+                .contains("Network takeover awaiting confirmation")
+        );
+        let after = records();
+        assert_eq!(after["id"], before["id"]);
+        assert_eq!(after["transaction_id"], before["transaction_id"]);
+        assert_eq!(
+            after["status"],
+            if rollback { "failed" } else { "succeeded" }
+        );
+        terminal.send(Key::Ctrl('c')).unwrap();
+        assert_eq!(
+            terminal.wait_exit().unwrap().code(),
+            Some(if rollback { 5 } else { 0 })
+        );
+        assert!(!terminal.screen().alternate_screen());
+    }
+}

@@ -33,6 +33,7 @@ pub(crate) struct OperationPresentation {
     confirming_stop: bool,
     /// 结果页时是否存在待确认的网络接管（install/reinit 成功后进入该状态）。
     takeover_pending: bool,
+    observed_outcome: Option<(u8, bool)>,
     /// 结果页「确认网络接管」确认层是否开启。
     confirming_takeover: bool,
     pub(super) result: Option<OperationResult>,
@@ -42,7 +43,7 @@ pub(crate) struct OperationPresentation {
 pub(crate) enum PresentationAction {
     Stop,
     Close,
-    /// 结果页确认层确认：调用方退出全屏页后内联执行 `lkit network confirm`。
+    /// 结果页确认层确认：调用方提交结构化网络确认操作。
     ConfirmTakeover,
 }
 
@@ -61,6 +62,7 @@ impl OperationPresentation {
             notice: String::new(),
             confirming_stop: false,
             takeover_pending: false,
+            observed_outcome: None,
             confirming_takeover: false,
             result: None,
         }
@@ -101,6 +103,17 @@ impl OperationPresentation {
             elapsed_millis: 0,
             status: DownloadStatus::Downloading,
         });
+        let outcome = crate::daemon_operations::observed_outcome(record);
+        if self.observed_outcome != outcome {
+            self.observed_outcome = outcome;
+            if let Some((code, pending)) = outcome {
+                self.show_result(code, pending);
+            } else {
+                self.result = None;
+                self.takeover_pending = false;
+                self.confirming_takeover = false;
+            }
+        }
         self.notice = format!("{:?} / {:?}", record.status, record.stage);
         if let Some(message) = &record.message
             && self.logs.last() != Some(message)
@@ -433,6 +446,68 @@ mod tests {
             screen.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(PresentationAction::Close)
         );
+    }
+
+    #[test]
+    fn pending_confirmation_tracks_external_resolution_and_invalidates_open_dialog() {
+        use crate::daemon_operations::{Record, Status, observed_outcome};
+        for (status, code) in [
+            (Status::Succeeded, 0),
+            (Status::Failed, 5),
+            (Status::Recovering, 6),
+        ] {
+            let mut record: Record = serde_json::from_value(serde_json::json!({
+                "schema_version":7, "id":"fixture", "kind":"reinit", "install_root":"/fixture",
+                "status":"awaiting_confirmation", "transaction_id":null, "message":null, "exit_code":0
+            })).unwrap();
+            let mut screen = OperationPresentation::new(false, Box::new(InstallScreen));
+            screen.observe_operation(&record);
+            assert_eq!(observed_outcome(&record), Some((0, true)));
+            screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert!(screen.confirming_takeover);
+            // Unrelated receipt revisions must not dismiss a still-valid dialog.
+            record.revision += 1;
+            screen.observe_operation(&record);
+            assert!(screen.confirming_takeover);
+            record.status = status;
+            record.exit_code = Some(code);
+            screen.observe_operation(&record);
+            assert!(!screen.confirming_takeover);
+            assert!(!screen.takeover_pending);
+            assert_eq!(observed_outcome(&record), Some((code, false)));
+            assert_eq!(
+                screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                None
+            );
+            assert_eq!(
+                screen.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+                Some(PresentationAction::Close)
+            );
+        }
+    }
+
+    #[test]
+    fn pending_confirmation_tracks_recovery_progress_and_final_failure() {
+        use crate::daemon_operations::{Record, Status, observed_outcome};
+        let mut record: Record = serde_json::from_value(serde_json::json!({
+            "schema_version":8, "id":"fixture", "kind":"install", "install_root":"/fixture",
+            "status":"awaiting_confirmation", "transaction_id":null, "message":null
+        }))
+        .unwrap();
+        let mut screen = OperationPresentation::new(false, Box::new(InstallScreen));
+        screen.observe_operation(&record);
+        screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        record.status = Status::Recovering;
+        screen.observe_operation(&record);
+        assert_eq!(observed_outcome(&record), None);
+        assert!(screen.result.is_none());
+        assert!(!screen.confirming_takeover);
+        assert!(!screen.takeover_pending);
+        record.status = Status::Failed;
+        record.exit_code = Some(1);
+        screen.observe_operation(&record);
+        assert!(matches!(screen.result, Some(OperationResult::Failed)));
+        assert_eq!(observed_outcome(&record), Some((1, false)));
     }
 
     #[test]

@@ -119,4 +119,13 @@
 - 说明：密码不进入操作 JSON，独立文件权限为 `0600`，读取后、排队取消和认领中断时
   删除；操作等待确认时阻挡普通请求但允许绑定事务的确认。CI 在替换数据后和进入确认
   窗口后分别断开观察者并强杀 daemon，验证原数据回滚、确认期限不变和原操作结果更新。
-- 缺口：原生链路的真实 TUI 端到端及 OpenRC／SysVinit 故障注入尚未单独覆盖。
+- 缺口：OpenRC／SysVinit 原生链路故障注入矩阵。
+
+## REI-12
+
+**全屏待确认页跟随外部确认与自动回滚**
+
+- 测试层：隔离单元、PTY Fixture E2E（CI）
+- 状态：`已覆盖`
+- 证据：[观察页单元测试](../../../../lkit-cli/src/interaction/presentation/operation.rs)、[真实 TUI reinit](../../../../lkit-cli/tests/install_fixture_e2e/console.rs)（`console_reinit_refreshes_external_confirmation_and_automatic_rollback`）
+- 说明：TUI 完成网络向导、凭据输入和破坏性确认后，观察同一原生操作。确认层打开期间，由另一会话确认或由 daemon 到期回滚；页面更新最终状态、关闭失效确认层，退出返回最新回执码，操作与事务 ID 不变。单元另覆盖恢复中、恢复失败和最终失败的切换，以及普通 revision 更新保留有效确认层。

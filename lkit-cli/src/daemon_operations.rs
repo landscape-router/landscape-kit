@@ -762,7 +762,7 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
     save(record)
 }
 
-/// Returns false when legacy requests may run (including network confirmation).
+/// Returns whether an operation was executed or remains blocked on recovery.
 pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError> {
     let _install_lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
@@ -1091,6 +1091,27 @@ pub(crate) fn resolve_switch_version(id: &str, version: &str) -> Result<(), Inst
     record.revision += 1;
     save(&record)
 }
+/// A displayable outcome is not necessarily terminal: pending confirmation and
+/// failed recovery must keep being observed while the full-screen page is open.
+pub(crate) fn observed_outcome(record: &Record) -> Option<(u8, bool)> {
+    let pending = record.status == Status::AwaitingConfirmation;
+    (record.status.terminal()
+        || pending
+        || (record.status == Status::Recovering && record.exit_code == Some(6)))
+    .then(|| {
+        (
+            record
+                .exit_code
+                .unwrap_or(if record.status == Status::Succeeded || pending {
+                    0
+                } else {
+                    1
+                }),
+            pending,
+        )
+    })
+}
+
 async fn wait_for_result(
     record: Record,
     capability: &str,
@@ -1126,6 +1147,8 @@ async fn wait_for_result(
     let mut displayed_message = None;
     loop {
         let current = read(&record.id)?;
+        let outcome = observed_outcome(&current);
+        let mut closed = false;
         if let Some(screen) = &mut presentation {
             if last_revision != Some(current.revision) {
                 screen.observe_operation(&current);
@@ -1141,14 +1164,33 @@ async fn wait_for_result(
                 },
                 Some(PresentationAction::Close) => {
                     screen.finish();
-                    eprintln!(
-                        "lkit: detached; query operation {} for its result",
-                        record.id
-                    );
-                    return Ok(130);
+                    if outcome.is_none() {
+                        eprintln!(
+                            "lkit: detached; query operation {} for its result",
+                            record.id
+                        );
+                        return Ok(130);
+                    }
+                    closed = true;
+                }
+                Some(PresentationAction::ConfirmTakeover) if outcome == Some((0, true)) => {
+                    screen.finish();
+                    let tx = current
+                        .transaction_id
+                        .clone()
+                        .ok_or_else(|| error("missing network transaction"))?;
+                    return Box::pin(submit_network_and_wait(
+                        current.install_root.clone(),
+                        Kind::NetworkConfirm,
+                        tx,
+                    ))
+                    .await;
                 }
                 _ => {}
             }
+        }
+        if closed {
+            presentation = None;
         }
         if presentation.is_none() && displayed_message != current.message {
             if let Some(message) = &current.message {
@@ -1169,45 +1211,9 @@ async fn wait_for_result(
             );
             displayed = Some(progress);
         }
-        if current.status.terminal()
-            || current.status == Status::AwaitingConfirmation
-            || (current.status == Status::Recovering && current.exit_code == Some(6))
+        if let Some((code, _)) = outcome
+            && presentation.is_none()
         {
-            let code = current.exit_code.unwrap_or(
-                if matches!(
-                    current.status,
-                    Status::Succeeded | Status::AwaitingConfirmation
-                ) {
-                    0
-                } else {
-                    1
-                },
-            );
-            if let Some(screen) = &mut presentation {
-                screen.capture_log(&format!("Operation {}: {:?}", record.id, current.status));
-                screen.show_result(code, current.status == Status::AwaitingConfirmation);
-                while screen.is_full_screen() {
-                    match screen.poll_action().map_err(error)? {
-                        Some(PresentationAction::Close) => break,
-                        Some(PresentationAction::ConfirmTakeover) => {
-                            screen.finish();
-                            let tx = current
-                                .transaction_id
-                                .clone()
-                                .ok_or_else(|| error("missing network transaction"))?;
-                            return Box::pin(submit_network_and_wait(
-                                current.install_root.clone(),
-                                Kind::NetworkConfirm,
-                                tx,
-                            ))
-                            .await;
-                        }
-                        _ => {}
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                }
-                screen.finish();
-            }
             if let Some(message) = current.message {
                 if current.kind == Kind::Uninstall && code == 0 {
                     println!("uninstall: {message}");
@@ -1218,7 +1224,7 @@ async fn wait_for_result(
             return Ok(code);
         }
 
-        if crate::daemon::require_capability(capability).is_err() {
+        if !current.status.terminal() && crate::daemon::require_capability(capability).is_err() {
             let since = unavailable_since.get_or_insert_with(std::time::Instant::now);
             if since.elapsed() >= std::time::Duration::from_secs(30) {
                 return Err(error(format!(

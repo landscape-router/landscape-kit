@@ -103,12 +103,20 @@ pub(crate) fn reinit_eligible(app: &ConsoleApp) -> bool {
     if !installed_systemd {
         return false;
     }
+    #[cfg(test)]
     if std::env::var_os("LKIT_TEST_REINIT_ELIGIBLE").is_some() {
         return true;
     }
-    crate::workflows::uninstall::host_network_services_masked(
-        crate::deployment::runtime::host_manager().as_ref(),
-    )
+    let runtime = crate::deployment::runtime::InstallRuntime::production();
+    #[cfg(feature = "test-support")]
+    let runtime = match super::test_runtime_path() {
+        Some(path) => match crate::deployment::runtime::InstallRuntime::from_test_file(&path) {
+            Ok(runtime) => runtime,
+            Err(_) => return false,
+        },
+        None => runtime,
+    };
+    crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref())
 }
 
 impl ReinitPanel {

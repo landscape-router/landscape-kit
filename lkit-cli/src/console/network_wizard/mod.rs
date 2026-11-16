@@ -56,11 +56,15 @@ pub(crate) struct NetworkWizard {
 
 impl NetworkWizard {
     pub(crate) fn discover() -> Result<Self, String> {
-        let (interfaces, routes) = discovery::discover(
-            std::path::Path::new("/sys/class/net"),
-            std::path::Path::new(discovery::HOST_IP_COMMAND),
-        )
-        .map_err(|error| error.to_string())?;
+        let runtime = crate::deployment::runtime::InstallRuntime::production();
+        #[cfg(feature = "test-support")]
+        let runtime = match super::test_runtime_path() {
+            Some(path) => crate::deployment::runtime::InstallRuntime::from_test_file(&path)
+                .map_err(|error| error.to_string())?,
+            None => runtime,
+        };
+        let (interfaces, routes) = discovery::discover(&runtime.sys_class_net, &runtime.ip_command)
+            .map_err(|error| error.to_string())?;
         let mut wizard = Self {
             interfaces,
             routes,

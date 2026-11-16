@@ -15,7 +15,7 @@ pub struct Migrate {
     /// 旧手工部署的 Landscape 配置目录(如 /root/.landscape-router)
     #[arg(long, value_name = "CONFIG_DIR")]
     pub from: PathBuf,
-    /// 仅用于 static.zip 缺失时从发布仓库下载该版本
+    /// 迁移记录使用的仓库来源；迁移资产从旧实例现场打包，不下载 static.zip
     #[arg(long, num_args = 0..=1, value_name = "BASE_URL")]
     pub repository: Option<Option<String>>,
     /// 非交互模式确认迁移
