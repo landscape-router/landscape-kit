@@ -325,3 +325,136 @@ fn language_toggle_persists_across_console_sessions() {
     let status = child.wait().unwrap();
     assert!(status.success(), "console exit failed: {exited:?}");
 }
+
+/// A failed terminal assertion must not leave the observer process alive.
+struct ConsoleObserver(std::process::Child);
+impl Drop for ConsoleObserver {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn update_operation(h: &InstallHarness) -> serde_json::Value {
+    let paths: Vec<_> = std::fs::read_dir(h.run_dir().join("operations"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    assert_eq!(paths.len(), 1, "console must submit exactly one operation");
+    serde_json::from_slice(&std::fs::read(paths[0].path()).unwrap()).unwrap()
+}
+
+fn await_console_condition(mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "console operation timed out"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// UP-08/UP-11: exercise the actual console, its in-memory command dispatch,
+/// and the durable observer's keyboard handling using a controlling terminal.
+#[test]
+fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for mode in ["detach", "cancel", "activating"] {
+        let h = InstallHarness::new(&format!("console-update-{mode}"), "healthy", 30_000);
+        assert_success(&h.run());
+        let old_state = std::fs::read(h.state_path()).unwrap();
+        let download_gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let next = RepositoryServer::start_gated(
+            repository_files_for("2.0.0"),
+            (mode != "activating").then(|| (".zst".into(), download_gate.clone())),
+        );
+        std::fs::write(
+            h.config_path(),
+            format!(
+                "schema_version = 1\n[repository]\nkind = \"http\"\nlocation = \"{}\"\n",
+                next.base_url
+            ),
+        )
+        .unwrap();
+        let runtime = h.daemon_runtime();
+        let activation_gate = h.run_dir().join("test-repair-switch-activated.gate");
+        let _daemon = if mode == "activating" {
+            std::fs::write(&activation_gate, b"pause").unwrap();
+            h.spawn_daemon_at_checkpoint(&runtime, "switch-activated")
+        } else {
+            h.spawn_daemon(&runtime)
+        };
+        let mut pty = Pty::open();
+        let mut command = h.command();
+        command.env("LKIT_LANG", "en");
+        attach_pty(&mut command, &pty);
+        let mut observer = ConsoleObserver(command.spawn().unwrap());
+        pty.read_until("Landscape Kit", Duration::from_secs(10));
+        // Installed instances skip the unavailable Install menu: Overview -> Backup -> Update.
+        pty.master.write_all(b"\x1b[B\x1b[B\x1b[C").unwrap();
+        pty.read_until("Start update", Duration::from_secs(10));
+        pty.master.write_all(b"\x1b[B\x1b[B\r").unwrap();
+        let confirmation = pty.read_until("Enter Update", Duration::from_secs(10));
+        assert!(confirmation.contains("2.0.0"), "{confirmation:?}");
+        // Change latest after the visible confirmation; dispatch must use its exact target.
+        next.replace_file(
+            "/channels/stable.json",
+            br#"{"protocol_version":1,"version":"3.0.0"}"#.to_vec(),
+        );
+        pty.master.write_all(b"\r").unwrap();
+        let initial_screen = pty.read_until("stop watching", Duration::from_secs(10));
+        if mode == "activating" {
+            await_console_condition(|| {
+                h.run_dir()
+                    .join("test-repair-switch-activated.reached")
+                    .exists()
+            });
+            pty.read_until("Activating", Duration::from_secs(10));
+            pty.master.write_all(b"\x1b").unwrap();
+            pty.read_until("stop requests are ignored", Duration::from_secs(10));
+        } else {
+            await_console_condition(|| next.request_paths().iter().any(|p| p.ends_with(".zst")));
+            if !initial_screen.contains("Downloading") {
+                pty.read_until("Downloading", Duration::from_secs(10));
+            }
+        }
+        let operation = update_operation(&h);
+        assert_eq!(operation["switch"]["target"], "2.0.0");
+        assert_eq!(operation["switch"]["repository"]["http"], next.base_url);
+        if mode == "cancel" {
+            pty.master.write_all(b"\x1b").unwrap();
+            pty.read_until("Confirm stop", Duration::from_secs(10));
+            pty.master.write_all(b"\r").unwrap();
+            pty.read_until("Update cancelled", Duration::from_secs(10));
+        }
+        pty.master.write_all(b"\x03").unwrap();
+        pty.read_until("\x1b[?1049l", Duration::from_secs(10));
+        assert_eq!(observer.0.wait().unwrap().code(), Some(130));
+        assert!(pty.echo_enabled(), "observer must restore terminal echo");
+        if mode == "cancel" {
+            let result = update_operation(&h);
+            assert_eq!(result["status"], "cancelled");
+            assert_eq!(result["cancel_cleaned"], true);
+            assert_eq!(std::fs::read(h.state_path()).unwrap(), old_state);
+        } else {
+            assert_eq!(update_operation(&h)["cancel_requested"], false);
+            if mode == "activating" {
+                std::fs::remove_file(&activation_gate).unwrap();
+            }
+            download_gate.store(true, std::sync::atomic::Ordering::SeqCst);
+            await_console_condition(|| update_operation(&h)["status"] == "succeeded");
+            assert_success(
+                &h.command()
+                    .args(["operation", "status", operation["id"].as_str().unwrap()])
+                    .output()
+                    .unwrap(),
+            );
+        }
+        download_gate.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}

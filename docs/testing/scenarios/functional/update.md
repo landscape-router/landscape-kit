@@ -83,9 +83,9 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 **控制台 Update 面板分发时跳过 tty 交互**
 
 - 测试层：Rust workflow/CLI
-- 状态：`部分覆盖`
+- 状态：`已覆盖`
 - 证据：[`lkit update`](../../../commands/update.md)、[交互控制台](../../../interaction/console.md)、[CLI fixture E2E](../../../../lkit-cli/tests/install_fixture_e2e/)
-- 缺口：真实终端中控制台分发到 daemon 的完整端到端验证；确认上下文传递与失效由 [控制台单元测试](../../../../lkit-cli/src/console/tests/update.rs) 覆盖。
+- 说明：真实伪终端通过 [console fixture](../../../../lkit-cli/tests/install_fixture_e2e/console.rs) 验证确认后的单次提交与固定目标；确认上下文传递与失效由 [控制台单元测试](../../../../lkit-cli/src/console/tests/update.rs) 覆盖。
 - 说明：面板完成解析与确认后提交该确认上下文，不传未解析的 latest 或默认来源。
   `--console-confirmed` 不替代完整上下文，不绕过服务变化和无备份切换授权，也不触发
   daemon 终端交互；改动表单后必须重新解析和确认。
@@ -123,7 +123,8 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 - 测试层：隔离操作单元测试、CI fixture E2E、控制台端到端
 - 状态：`部分覆盖`
 - 证据：[操作契约](../../../service/daemon.md)、[SW-12](switch.md#sw-12)、[SW-13](switch.md#sw-13)、[SW-14](switch.md#sw-14)
-- 缺口：真实控制台中的重连展示和取消按键端到端验证；CLI SIGINT 断开、显式取消、daemon 激活后崩溃与提交后补写结果由 [update fixture](../../../../lkit-cli/tests/install_fixture_e2e/update.rs) 覆盖。
+- 缺口：重新进入控制台观察既有操作的交互入口。
+- 说明：[console fixture](../../../../lkit-cli/tests/install_fixture_e2e/console.rs) 验证 Ctrl+C 断开、Esc/Enter 显式取消、激活阶段拒绝取消与终端恢复；断开后通过 operation status 查询同一个操作。CLI SIGINT、daemon 激活后崩溃与提交后补写结果由 [update fixture](../../../../lkit-cli/tests/install_fixture_e2e/update.rs) 覆盖。
 - 说明：Ctrl+C 和前端退出只停止观察，不重新提交或隐式取消。显式取消仅在排队或下载
   阶段接受，清理完成后返回 `130`。进入 preparing 后拒绝取消；已提交事务只补写
   结果，恢复失败阻止后续修改。daemon 不可用或能力不匹配时不回退到 worker。
