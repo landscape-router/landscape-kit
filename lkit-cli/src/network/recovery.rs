@@ -59,10 +59,15 @@ pub(crate) async fn recover(
 }
 
 pub(crate) fn startup_check() -> Result<(), InstallError> {
-    startup_check_for(&super::takeover::current_boot_id()?)
+    startup_check_at(&super::takeover::current_boot_id()?, Utc::now())
 }
 
+#[cfg(test)]
 fn startup_check_for(boot: &str) -> Result<(), InstallError> {
+    startup_check_at(boot, Utc::now())
+}
+
+fn startup_check_at(boot: &str, now: DateTime<Utc>) -> Result<(), InstallError> {
     let entries = match std::fs::read_dir(layout::territory_transactions_dir()) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -92,6 +97,8 @@ fn startup_check_for(boot: &str) -> Result<(), InstallError> {
             }
         }
         if tx.phase == Phase::RollingBack
+            || (tx.phase == Phase::AwaitingNetworkConfirmation
+                && now >= network.confirmation_deadline)
             || (tx.phase != Phase::Finalizing
                 && network
                     .boot_id
@@ -171,7 +178,9 @@ mod tests {
         let file = layout::territory_transactions_dir().join(format!("{}.json", tx.transaction_id));
         tx.network_takeover.as_mut().unwrap().boot_id = Some(boot.clone());
         std::fs::write(&file, serde_json::to_vec(&tx).unwrap()).unwrap();
-        assert!(startup_check_for(&boot).is_ok());
+        assert!(startup_check_at(&boot, now - chrono::Duration::seconds(1)).is_ok());
+        assert!(startup_check_at(&boot, now).is_err());
+        assert!(startup_check_at(&boot, now + chrono::Duration::seconds(1)).is_err());
         assert!(startup_check_for(&uuid::Uuid::now_v7().to_string()).is_err());
         tx.phase = Phase::Finalizing;
         std::fs::write(&file, serde_json::to_vec(&tx).unwrap()).unwrap();
@@ -233,6 +242,31 @@ mod tests {
                     tx.transaction_id
                 ),
             });
+            let network = tx.network_takeover.as_ref().unwrap();
+            for seconds in [-1, 0, 1] {
+                let result = super::super::takeover::check_confirmation_window(
+                    network,
+                    now + chrono::Duration::seconds(seconds),
+                    Ok(boot.clone()),
+                );
+                assert_eq!(result.is_ok(), seconds < 0);
+            }
+            assert!(
+                super::super::takeover::check_confirmation_window(
+                    network,
+                    now - chrono::Duration::seconds(1),
+                    Ok("new-boot".into())
+                )
+                .is_err()
+            );
+            assert!(
+                super::super::takeover::check_confirmation_window(
+                    network,
+                    now - chrono::Duration::seconds(1),
+                    Err(InstallError::Preflight("unreadable boot".into()))
+                )
+                .is_err()
+            );
             tx.phase = Phase::AwaitingNetworkConfirmation;
             for saved_boot in [Some(boot.clone()), None] {
                 tx.network_takeover.as_mut().unwrap().boot_id = saved_boot;

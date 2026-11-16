@@ -230,11 +230,14 @@ pub(crate) fn render_lkit_daemon_unit(binary: &Path) -> String {
         "[Unit]\n\
          Description=Lkit daemon\n\
          After=local-fs.target\n\
+         StartLimitIntervalSec=0\n\
          \n\
          [Service]\n\
-         ExecStart={} daemon\n\
+         ExecStart={} daemon --supervise\n\
          User=root\n\
          Restart=always\n\
+         RestartSec=10\n\
+         TimeoutStopSec=infinity\n\
          KillMode=process\n\
          \n\
          [Install]\n\
@@ -283,7 +286,7 @@ pub(crate) fn validate_unit(content: &str, canonical_root: &Path) -> Result<(), 
 }
 
 fn validate_lkit_daemon_unit(content: &str, binary: &Path) -> Result<(), InstallError> {
-    let expected = format!("{} daemon", binary.display());
+    let expected = format!("{} daemon --supervise", binary.display());
     validate_definition(content, expected, false, true)
 }
 

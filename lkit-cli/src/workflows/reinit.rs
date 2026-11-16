@@ -77,7 +77,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
         std::fs::read_to_string(root.canonical.join("service/landscape-router.service"))
             .map_err(InstallError::Io)?;
     if runtime.test_runtime_path.is_none() && !definition.contains("network startup-check") {
-        return Err(InstallError::Preflight("Landscape service definition lacks the recovery startup check; reinit requires a service definition with `lkit network startup-check` (lkit repair does not update service definitions)".into()));
+        return Err(InstallError::Preflight("Landscape service definition lacks the recovery startup check; run `lkit repair service` before reinit".into()));
     }
     // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件。
     confirm_reinit(options, args, state, network)?;
@@ -148,7 +148,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
                 manager
                     .active_state(ManagedService::LandscapeRouter)
                     .map(|value| value != "active")
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             }),
         )?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
@@ -391,7 +391,13 @@ fn build_reinit_state(
         service: ServiceState {
             manager: previous.service.manager,
             registered: true,
-            enabled: true,
+            enabled: transaction
+                .systemd_before
+                .as_ref()
+                .ok_or_else(|| {
+                    InstallError::CorruptedTransaction("missing original service state".into())
+                })?
+                .enabled,
             verified: true,
             definition_path: Some("service/landscape-router.service".into()),
             definition_sha256: unit_sha.map(str::to_string),
@@ -428,13 +434,16 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
+    let before = transaction.systemd_before.as_ref().ok_or_else(|| {
+        InstallError::CorruptedTransaction("reinit is missing original service state".into())
+    })?;
     manager.stop_and_wait(
         ManagedService::LandscapeRouter,
         &(|| {
             manager
                 .active_state(ManagedService::LandscapeRouter)
                 .map(|value| value != "active")
-                .unwrap_or(true)
+                .unwrap_or(false)
         }),
     )?;
     if let Some(backup_path) = &transaction.resolv_conf_backup {
@@ -452,27 +461,46 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
         )
         .map_err(InstallError::Io)?;
     }
-    manager.start(ManagedService::LandscapeRouter)?;
-    let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
-    if pid == 0 {
-        return Err(InstallError::Systemd(
-            "restored service did not produce a main pid".into(),
+    manager.restore_registration(
+        ManagedService::LandscapeRouter,
+        before,
+        &root.canonical.join("service/landscape-router.service"),
+    )?;
+    if manager.is_enabled(ManagedService::LandscapeRouter)? != before.enabled {
+        if before.enabled {
+            manager.enable(ManagedService::LandscapeRouter)?;
+        } else {
+            manager.disable(ManagedService::LandscapeRouter)?;
+        }
+    }
+    if before.active {
+        manager.start(ManagedService::LandscapeRouter)?;
+        let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
+        if pid == 0 {
+            return Err(InstallError::Systemd(
+                "restored service did not produce a main pid".into(),
+            ));
+        }
+        let startup = StartupOptions {
+            ports: &health.ports,
+            expected_pid: pid,
+            docs: &health.docs,
+            unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
+            init_required: true,
+            data_dir: &data,
+            startup_timeout: health.startup_timeout,
+            stable_duration: health.stable_duration,
+        };
+        super::health::wait_for_startup(&startup).await?;
+        super::health::observe_stable(&startup).await?;
+    } else if manager.is_active(ManagedService::LandscapeRouter)? {
+        return Err(InstallError::HealthCheck(
+            "restored service must remain stopped".into(),
         ));
     }
-    let startup = StartupOptions {
-        ports: &health.ports,
-        expected_pid: pid,
-        docs: &health.docs,
-        unit_state: Some(&(|| manager.active_state(ManagedService::LandscapeRouter).ok())),
-        init_required: true,
-        data_dir: &data,
-        startup_timeout: health.startup_timeout,
-        stable_duration: health.stable_duration,
-    };
-    super::health::wait_for_startup(&startup).await?;
-    super::health::observe_stable(&startup).await?;
     let snapshot = rollback::read_state_snapshot(root, &transaction.transaction_id)?;
     let mut restored = snapshot.clone();
+    restored.service.enabled = before.enabled;
     restored.last_transaction_id = Some(transaction.transaction_id.clone());
     restored.committed_at = Some(Utc::now());
     super::state::write_state(root, &restored)?;

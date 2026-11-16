@@ -12,6 +12,7 @@ use clap::ValueEnum;
 pub enum RepairTarget {
     Static,
     Binary,
+    Service,
 }
 
 #[derive(Debug, Args)]
@@ -29,6 +30,28 @@ pub struct Repair {
 }
 
 pub async fn run(args: &Repair) -> ExitCode {
+    if args.target == RepairTarget::Service {
+        if args.repository.is_some() || args.official {
+            eprintln!("lkit: repair service does not accept repository or official options");
+            return ExitCode::from(2);
+        }
+        let runtime = {
+            #[cfg(feature = "test-support")]
+            if let Some(path) = &args.test_runtime {
+                match crate::deployment::runtime::InstallRuntime::from_test_file(path) {
+                    Ok(runtime) => {
+                        return service_result(crate::workflows::repair_service::run(&runtime));
+                    }
+                    Err(error) => {
+                        eprintln!("lkit: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            crate::deployment::runtime::InstallRuntime::production()
+        };
+        return service_result(crate::workflows::repair_service::run(&runtime));
+    }
     let binary = args.target == RepairTarget::Binary;
     if binary && args.official {
         eprintln!("lkit: --official is only valid for `lkit repair static`");
@@ -59,4 +82,14 @@ pub async fn run(args: &Repair) -> ExitCode {
         test_runtime: args.test_runtime.clone(),
     })
     .await
+}
+
+fn service_result(result: Result<(), crate::deployment::plan::InstallError>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("lkit repair service: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }

@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod console;
 mod daemon;
+mod daemon_supervisor;
 mod daemon_worker;
 mod deployment;
 mod flare;

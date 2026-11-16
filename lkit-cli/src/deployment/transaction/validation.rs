@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::super::plan::InstallError;
-use super::{Operation, Phase, RegistrationKind, TRANSACTION_SCHEMA_VERSION, TransactionFile};
+use super::{MAX_TRANSACTION_SCHEMA_VERSION, Operation, Phase, RegistrationKind, TransactionFile};
 
 pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), InstallError> {
     if let Some(network) = &transaction.network_takeover
@@ -10,7 +10,7 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
     {
         return Err(corrupted("invalid network recovery boot id".into()));
     }
-    if !(1..=TRANSACTION_SCHEMA_VERSION).contains(&transaction.schema_version) {
+    if !(1..=MAX_TRANSACTION_SCHEMA_VERSION).contains(&transaction.schema_version) {
         return Err(corrupted(format!(
             "unsupported transaction schema version {}",
             transaction.schema_version
@@ -206,6 +206,33 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 return Err(corrupted(
                     "restore transaction must record both versions and both release paths".into(),
                 ));
+            }
+        }
+        Operation::RepairService => {
+            reject_network_takeover(transaction, "repair_service")?;
+            if transaction.schema_version < 6
+                || transaction.systemd_before.is_none()
+                || has_backup
+                || has_static_backup
+                || has_restore_backup
+                || transaction.no_backup
+                || transaction.resolv_conf_backup.is_some()
+            {
+                return Err(corrupted("invalid service repair transaction".into()));
+            }
+            if !matches!(
+                transaction.phase,
+                Phase::Preparing
+                    | Phase::Prepared
+                    | Phase::Activating
+                    | Phase::Verifying
+                    | Phase::Finalizing
+                    | Phase::RollingBack
+                    | Phase::Committed
+                    | Phase::RolledBack
+                    | Phase::Failed
+            ) {
+                return Err(corrupted("invalid service repair phase".into()));
             }
         }
         Operation::Repair => {
@@ -478,7 +505,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 6;
+        transaction.schema_version = 7;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);

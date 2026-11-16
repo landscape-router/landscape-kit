@@ -9,6 +9,7 @@ mod manager_backends;
 mod migrate;
 mod network;
 mod reinit;
+mod repair_service;
 mod self_cmd;
 mod support;
 mod switch;

@@ -94,13 +94,17 @@ OpenRC 使用 `use`/`after lkit.service`，SysVinit 使用 `Should-Start`/`Shoul
 对 daemon 只声明启动顺序，不增加 readiness 等待、重试或 bpffs 挂载成功条件，也不将
 其故障传播为 Landscape 的硬依赖失败。OpenRC 下 Landscape 对 `cgroups` 另有
 `need cgroups` 硬依赖，与相对 daemon 的弱依赖分开；daemon 自身不要求 cgroups。
-Landscape 启动入口执行 `lkit network startup-check`，跨主机启动的未确认网络接管
+Landscape 启动入口执行 `lkit network startup-check`，跨主机启动或已经到期的未确认网络接管
 和回滚中的目标配置必须先完成恢复。该检查不把 daemon 的普通重启传播为 Landscape 停服，
 见[网络恢复契约](../network/daemon-recovery.md)。
 已有受管服务定义仍遵循下述用户变更与原件更新规则。
 
 `test-support` fixture 运行时禁用宿主 bpffs 准备，挂载策略单测使用注入操作，
 不触碰宿主 `/sys` 或执行真实挂载。
+
+daemon 的 init 入口为 `lkit daemon --supervise`，三个后端使用相同的子进程退避策略，
+见[监管与停止语义](../network/daemon-recovery.md#启动与生命周期)。业务 daemon 的 PID
+及恢复能力以 lkit 地盘中的标识为准，不能用 init 的监管进程 PID 代替。
 
 ### 可用性判断
 

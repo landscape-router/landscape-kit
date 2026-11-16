@@ -274,6 +274,8 @@ fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, 
     let result = (|| -> Result<(), InstallError> {
         manager.register(service, &origin)?;
         manager.enable(service)?;
+        let previous_pid =
+            std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
         if manager.is_active(service)? {
             manager.restart(service)?;
         } else {
@@ -282,7 +284,12 @@ fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, 
         // Backgrounding init scripts can return before exec is visible in
         // /proc. This only verifies process existence, not bpffs readiness.
         for _ in 0..30 {
-            if manager.main_pid(service).is_ok_and(|pid| pid != 0) {
+            let current_pid =
+                std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
+            if current_pid != previous_pid
+                && manager.main_pid(service).is_ok_and(|pid| pid != 0)
+                && crate::daemon::require_capability("service-repair-v1.pid").is_ok()
+            {
                 return Ok(());
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -359,6 +366,14 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
     else {
         return Ok(());
     };
+    if version.cmp_precedence(&current_version()?).is_lt()
+        && crate::deployment::state::discover_landscape_root_from_unfinished_transaction()?
+            .is_some()
+    {
+        return Err(InstallError::Preflight(
+            "finish the pending transaction before downgrading lkit".into(),
+        ));
+    }
     let asset_name = upgrade_asset_name(architecture);
     let asset = unique_asset(&release.assets, asset_name).ok_or_else(|| {
         InstallError::Repository(RepositoryError::InvalidRelease(format!(

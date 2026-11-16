@@ -54,6 +54,9 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
             Ok(())
         }
         Operation::Switch => recover_switch(root, transaction, systemd, health).await,
+        Operation::RepairService => {
+            crate::workflows::repair_service::recover(root, transaction, systemd)
+        }
         Operation::Repair => recover_repair(root, transaction, systemd, health).await,
         Operation::Restore => recover_restore(root, transaction, systemd, health).await,
         Operation::Uninstall => recover_uninstall(root, transaction, systemd),

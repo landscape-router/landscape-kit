@@ -160,6 +160,10 @@ pub(crate) trait ServiceManager: Send + Sync {
     /// 移除系统注册链接。
     fn unregister(&self, service: ManagedService, origin: &Path) -> Result<(), InstallError>;
 
+    /// Exact init startup links, when the backend uses runlevel directories.
+    fn startup_links(&self, _service: ManagedService) -> Result<Option<String>, InstallError> {
+        Ok(None)
+    }
     fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError>;
     fn enable(&self, service: ManagedService) -> Result<(), InstallError>;
     fn disable(&self, service: ManagedService) -> Result<(), InstallError>;

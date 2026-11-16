@@ -117,54 +117,52 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
 
 **旧部署服务定义迁移与 reinit 准入**
 
-- 测试层：CLI Fixture E2E（待补充）
-- 状态：`待实现`
-- 证据：[reinit](../../../commands/reinit.md)、[恢复契约](../../../network/daemon-recovery.md)
-- 缺口：实现 `repair service`；覆盖三个后端迁移成功后通过 reinit 准入、重复执行无变化、
-  自定义定义或外部注册拒绝覆盖、替换后加载失败回滚、提交前中断恢复、恢复失败保留
-  非终态。断言原运行状态、启用状态、权限与数据不变。单元测试注入服务管理器；
-  真实 reload 和命令到命令的迁移链路在 CI 执行。
+- 测试层：隔离单元、CLI Fixture E2E（CI）
+- 状态：`部分覆盖`
+- 证据：[修复实现及测试](../../../../lkit-cli/src/workflows/repair_service.rs)、[CLI 迁移](../../../../lkit-cli/tests/install_fixture_e2e/repair_service.rs)
+- 说明：覆盖三个后端运行／停止与启用／禁用组合、重复执行、定义漂移拒绝、加载失败、
+  回滚失败重试及提交阶段前后的中断恢复；Fake 管理器禁止修改运行状态。
+- 缺口：三个后端真实迁移到 reinit 的完整链路与故障注入仍需 CI 验收。
 
 ## DAE-10
 
 **reinit 回滚保留原服务运行状态**
 
-- 测试层：隔离单元、CLI Fixture E2E（待补充）
-- 状态：`待修复`
-- 证据：[reinit 回滚实现](../../../../lkit-cli/src/workflows/reinit.rs)
-- 缺口：按运行／停止 × 启用／禁用验证恢复；原本停止且允许无保护备份时不调用
-  start 或在线健康检查；原本运行时必须恢复并通过健康检查。覆盖失败重试、重复回滚、
-  状态快照缺失时阻断而非猜测，以及各后端启用设置保持不变。当前实现无条件启动原服务。
+- 测试层：隔离单元、CLI Fixture E2E
+- 状态：`部分覆盖`
+- 证据：[停止状态回归测试](../../../../lkit-cli/src/workflows/repair_service.rs)、[reinit fixture](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)
+- 说明：三个后端覆盖运行／停止 × 启用／禁用组合，原本停止时不启动、不做在线健康检查；
+  原本运行时启动并检查健康；连续回滚两次保留原数据。
+- 缺口：真实后端运行状态恢复的完整故障注入矩阵。
 
 ## DAE-11
 
 **确认健康检查跨越截止时刻**
 
-- 测试层：注入时钟的单元、CLI Fixture E2E（待补充）
-- 状态：`待修复`
-- 证据：[确认实现](../../../../lkit-cli/src/network/takeover.rs)、[恢复契约](../../../network/daemon-recovery.md)
-- 缺口：注入时钟覆盖检查完成时早于／等于／晚于截止时刻、检查期间 boot ID 改变或
-  读取失败；过期不得写入 `finalizing` 或安装状态。覆盖确认与回滚竞争，确认持锁期间
-  daemon 等待，释放后重新判断；`finalizing` 已持久化后即使超时或重启仍继续提交。
-  当前实现仅在健康检查前校验截止时刻。
+- 测试层：注入时间的单元测试
+- 状态：`部分覆盖`
+- 证据：[确认入口](../../../../lkit-cli/src/network/takeover.rs)、[期限测试](../../../../lkit-cli/src/network/recovery.rs)
+- 说明：确认前后均校验时间与启动标识；覆盖截止前／截止时刻／截止后、启动标识改变或读取失败。
+- 缺口：健康检查期间推进时间与确认／回滚锁竞争的完整 CLI 集成验证。
 
 ## DAE-12
 
 **启动检查拒绝同次开机已超时事务和不可解析的恢复依据**
 
-- 测试层：临时目录与注入时间的单元测试、CI 后端启动测试
-- 状态：`待补充`
-- 证据：[启动契约](../../../network/daemon-recovery.md#启动与生命周期)
-- 缺口：截止前／截止时刻／截止后、跨开机、损坏事务和未知版本；持锁启动服务不死锁；
-  旧配置恢复凭据不能放行其他事务或目标配置。当前启动检查没有同次开机的到期判定。
+- 测试层：临时目录与注入时间的单元测试
+- 状态：`部分覆盖`
+- 证据：[启动检查](../../../../lkit-cli/src/network/recovery.rs)
+- 说明：覆盖同次开机截止边界、跨开机与回滚阶段；启动检查只读，不等待安装锁。
+- 缺口：三个后端真实启动屏障及损坏恢复凭据的完整验证。
 
 ## DAE-13
 
-**daemon 不可用与恢复能力不匹配**
+**daemon 恢复能力及持续退避重启**
 
-- 测试层：注入能力探测的单元测试、CI 后端进程生命周期测试
-- 状态：`待补充`
-- 证据：[恢复责任与可用性](../../../network/daemon-recovery.md#启动与生命周期)
-- 缺口：PID 存活但能力缺失时拒绝接管和服务迁移；新 CLI 与旧 daemon 混用；
-  daemon 消失后重启立即处理过期事务；各后端崩溃监管行为；未完成事务拒绝不兼容降级。
-  已提交安装在 daemon 重启期间保持运行，移除 daemon 后保留 CLI 时仍可执行启动检查。
+- 测试层：隔离单元、CLI Fixture E2E、systemd-nspawn、Alpine QEMU（CI）
+- 状态：`部分覆盖`
+- 证据：[能力标识](../../../../lkit-cli/src/daemon.rs)、[退避策略](../../../../lkit-cli/src/daemon_supervisor.rs)、[进程 fixture](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)、[systemd smoke](../../../../scripts/test-nspawn-systemd.sh)、[OpenRC 虚拟机](../../../../scripts/qemu/alpine/guest-tests.sh)
+- 说明：单元覆盖能力缺失／PID 不符、1s→3s→5s→10s 封顶、无限重试及 5 分钟稳定重置；
+  fixture 覆盖实际子进程崩溃、重复封顶拉起、主动停止与退避等待中停止。
+  systemd／OpenRC 场景检查监管进程保持不变而 daemon 子进程重新启动。
+- 缺口：SysVinit 真实虚拟机生命周期验收；本地不运行系统级测试，CI 执行结果单独判定。

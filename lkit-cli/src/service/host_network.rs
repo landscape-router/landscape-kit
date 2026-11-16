@@ -137,6 +137,16 @@ fn matching_links(
     Ok(links)
 }
 
+pub(crate) fn startup_links_snapshot(
+    manager: &dyn ServiceManager,
+    service: ManagedService,
+) -> Result<Option<String>, InstallError> {
+    let links = matching_links(manager, manager.service_name(service))?;
+    serde_json::to_string(&links)
+        .map(Some)
+        .map_err(InstallError::StateWrite)
+}
+
 pub(crate) fn inspect(
     manager: &dyn ServiceManager,
     name: &str,

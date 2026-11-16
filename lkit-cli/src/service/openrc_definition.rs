@@ -48,7 +48,7 @@ name="lkit"
 description="lkit resident daemon"
 
 command="{}"
-command_args="daemon"
+command_args="daemon --supervise"
 command_user="root"
 pidfile="/run/lkit.pid"
 
@@ -62,7 +62,7 @@ start() {{
 
 stop() {{
     ebegin "Stopping lkit daemon"
-    start-stop-daemon --stop --pidfile /run/lkit.pid --retry TERM/10/KILL/5
+    start-stop-daemon --stop --pidfile /run/lkit.pid --retry TERM/forever/1
     eend $?
 }}
 "#,

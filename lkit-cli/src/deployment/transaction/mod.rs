@@ -25,12 +25,14 @@ pub(crate) use self::cleanup::{
 use self::file::{append_log, load_transaction_file, write_transaction};
 
 pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 5;
+pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 6;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Operation {
     Install,
     Repair,
+    RepairService,
     Switch,
     Restore,
     Uninstall,
@@ -43,6 +45,7 @@ impl Operation {
         match self {
             Self::Install => "install",
             Self::Repair => "repair",
+            Self::RepairService => "repair_service",
             Self::Switch => "switch",
             Self::Restore => "restore",
             Self::Uninstall => "uninstall",

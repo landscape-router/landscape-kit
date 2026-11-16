@@ -18,7 +18,10 @@ lkit self remove
 
 `self` 命令都不接收 `--install-dir`。
 
-daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
+daemon 全局唯一(`lkit.service` 单例)。init 托管监管进程，监管进程启动实际 daemon；
+退避采用 1s、3s、5s、10s 封顶且无限重试，稳定运行 5 分钟后重置，
+主动停止取消拉起，见[监管契约](../network/daemon-recovery.md#启动与生命周期)。
+daemon 进程写 pidfile 到
 `/root/.lkit/run/lkit.pid`(`0600`,原子替换);同地盘已存在存活实例时拒绝启动。
 
 ## install
@@ -29,7 +32,7 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
 2. 按主机探测结果使用 systemd、OpenRC 或 SysVinit;
 3. 校验 `/usr/local/bin/lkit` 可执行,把对应服务定义渲染到全局目录
    `/usr/local/lib/lkit/lkit.service`。systemd unit 为 `0600`；init 脚本为可执行的 `0755`，
-   各后端均运行 `/usr/local/bin/lkit daemon`，不绑定 Landscape 安装根；
+   各后端均运行 `/usr/local/bin/lkit daemon --supervise`，不绑定 Landscape 安装根；
 4. （可选）供给 急救恢复码:提供 `--flare-psk-file`(root 所有、`0400`/`0600`
    私密文件)时,在启动 daemon 前把 psk 写入 lkit 地盘 `config.toml` 的 `[flare]` 段
    (保留既有字段,文件缺失时创建带默认仓库来源的最小配置),daemon 首启即用该 psk
@@ -37,7 +40,7 @@ daemon 全局唯一(`lkit.service` 单例)。daemon 进程写 pidfile 到
    说明,至少 12 字符),无终端环境(脚本/控制台后台部署)回落 daemon 自动生成,
    不阻断部署。psK 用途与查看方式见 [flare 协议](../flare/protocol.md);
 5. 注册、启用并启动服务：systemd 注册链接为 `/etc/systemd/system/lkit.service`，
-   OpenRC/SysVinit 为 `/etc/init.d/lkit.service`，均指向全局原件；检查 daemon PID 非零。
+   OpenRC/SysVinit 为 `/etc/init.d/lkit.service`，均指向全局原件；检查监管进程存在，且实际 daemon 的新 PID 与恢复能力标识匹配。
    后台 init 脚本返回后最多等待 3 秒确认进程出现，不等待 bpffs 准备成功。
 
 重复执行时:若旧 daemon 仍在运行,注册完成后执行 `restart` 使其加载当前二进制;
@@ -85,6 +88,7 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 `--include-prerelease` 只影响本次 `self upgrade` / `self update` 的自动选择，不保存到
 配置，不影响安装脚本、`self install` 或 Landscape 的顶层 `update`。
 
+`upgrade` 遇到未完成事务时拒绝降级；已有旧服务入口通过 `self install` 刷新为监管入口。
 `upgrade` 不创建事务、不创建保护备份;daemon 在 `restart` 期间短暂退出,由
 服务管理器执行重启。替换运行中的 daemon 二进制是安全的:进程继续使用已打开的
 旧 inode,重启后加载新文件。

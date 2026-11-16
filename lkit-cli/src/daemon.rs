@@ -41,6 +41,8 @@ pub(crate) const DAEMON_CYCLE_INTERVAL: std::time::Duration = std::time::Duratio
 
 #[derive(Debug, Args)]
 pub struct Daemon {
+    #[arg(long, hide = true)]
+    pub supervise: bool,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
@@ -54,6 +56,9 @@ extern "C" fn handle_termination(_signal: libc::c_int) {
 
 /// 运行 lkit 常驻服务直到收到 SIGTERM/SIGINT。
 pub(crate) async fn run(args: &Daemon) -> ExitCode {
+    if args.supervise {
+        return crate::daemon_supervisor::run(args).await;
+    }
     run_with_runtime(resolve_runtime(args)).await
 }
 
@@ -68,6 +73,8 @@ pub(crate) async fn run_with_runtime(runtime: InstallRuntime) -> ExitCode {
 }
 
 async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
+    let _instance_lock =
+        crate::daemon_supervisor::instance_lock("daemon.lock").map_err(InstallError::Io)?;
     let pidfile = layout::territory_pidfile();
     std::fs::create_dir_all(
         pidfile
@@ -78,6 +85,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&pidfile)?;
     let recovery_capability = layout::territory_run_dir().join("network-recovery-v1.pid");
     write_pidfile(&recovery_capability)?;
+    let service_capability = layout::territory_run_dir().join("service-repair-v1.pid");
+    write_pidfile(&service_capability)?;
 
     // Best effort only: bpffs preparation must not disable the L2 recovery
     // channel or prevent Landscape's normal service startup.
@@ -125,6 +134,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         }
     }
     drop(flare);
+    let _ = std::fs::remove_file(&service_capability);
     let _ = std::fs::remove_file(&recovery_capability);
     let _ = std::fs::remove_file(&pidfile);
     Ok(())
@@ -445,11 +455,39 @@ fn resolve_runtime(_args: &Daemon) -> InstallRuntime {
     InstallRuntime::production()
 }
 
+/// Capabilities identify the live daemon, not its init supervisor.
+pub(crate) fn require_capability(name: &str) -> Result<(), InstallError> {
+    let pid = std::fs::read_to_string(layout::territory_pidfile()).map_err(InstallError::Io)?;
+    let number = pid.trim().parse::<i32>().unwrap_or(0);
+    let capability =
+        std::fs::read_to_string(layout::territory_run_dir().join(name)).unwrap_or_default();
+    if number <= 0 || unsafe { libc::kill(number, 0) } != 0 || capability.trim() != pid.trim() {
+        return Err(InstallError::Preflight("running daemon lacks required recovery capability; upgrade lkit and run `lkit self install`".into()));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::MetadataExt;
 
     use super::*;
+
+    #[test]
+    fn capability_requires_the_live_daemon_pid_and_matching_marker() {
+        let (_guard, temp) = territory("capabilities");
+        std::fs::create_dir_all(layout::territory_run_dir()).unwrap();
+        std::fs::write(layout::territory_pidfile(), std::process::id().to_string()).unwrap();
+        assert!(require_capability("service-repair-v1.pid").is_err());
+        let marker = layout::territory_run_dir().join("service-repair-v1.pid");
+        std::fs::write(&marker, "0").unwrap();
+        assert!(require_capability("service-repair-v1.pid").is_err());
+        std::fs::write(&marker, std::process::id().to_string()).unwrap();
+        assert!(require_capability("service-repair-v1.pid").is_ok());
+        std::fs::write(layout::territory_pidfile(), "0").unwrap();
+        assert!(require_capability("service-repair-v1.pid").is_err());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn cycle_interval_is_sliceable() {

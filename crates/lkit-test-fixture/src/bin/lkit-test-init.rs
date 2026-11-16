@@ -216,12 +216,12 @@ fn rc_update(config: &InitFixtureConfig, args: &[String]) -> Result<ExitCode> {
 // ---------------------------------------------------------------- update-rc.d
 
 fn update_rc_d(config: &InitFixtureConfig, args: &[String]) -> Result<ExitCode> {
-    let Some((action, name)) = args.first().zip(args.get(1)) else {
-        anyhow::bail!("update-rc.d requires an action and a service name");
+    let Some((name, action)) = args.first().zip(args.get(1)) else {
+        anyhow::bail!("update-rc.d requires a service name and an action");
     };
     let rc3 = config.rc_d_dir.join("rc3.d");
     match action.as_str() {
-        "enable" => {
+        "defaults" | "enable" => {
             std::fs::create_dir_all(&rc3).context("create rc3.d")?;
             let link = rc3.join(format!("S20{name}"));
             std::fs::remove_file(&link).ok();

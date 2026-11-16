@@ -104,6 +104,18 @@ case "${1:-}" in
         grep -F 'bpffs is mounted read-write at /sys/fs/bpf' /var/log/check-ready.log
         assert_flare mounted
 
+        echo '== daemon crash must restart under the same supervisor =='
+        supervisor=$(cat /run/lkit.pid)
+        daemon_before=$(cat /root/.lkit/run/lkit.pid)
+        kill -KILL "$daemon_before"
+        daemon_replaced() {
+            daemon_after=$(cat /root/.lkit/run/lkit.pid 2>/dev/null) || return 1
+            [ "$daemon_after" != "$daemon_before" ] && kill -0 "$daemon_after"
+        }
+        wait_for daemon_replaced
+        test "$(cat /run/lkit.pid)" = "$supervisor"
+        assert_flare restarted
+
         echo '== repeated self install must restart without stacking mounts =='
         before=$(cat /run/lkit.pid)
         /usr/local/bin/lkit --lang en --non-interactive self install

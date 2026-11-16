@@ -344,6 +344,22 @@ machine_shell "systemctl show --property=KillMode --value lkit.service | grep -q
 echo "   self: pidfile"
 machine_shell "test -f /root/.lkit/run/lkit.pid"
 
+echo "== daemon crash restarts without replacing the supervisor"
+machine_shell '
+  supervisor=$(systemctl show --property=MainPID --value lkit.service)
+  previous=$(cat /root/.lkit/run/lkit.pid)
+  kill -KILL "$previous"
+  for attempt in $(seq 1 30); do
+    current=$(cat /root/.lkit/run/lkit.pid 2>/dev/null || true)
+    if [ -n "$current" ] && [ "$current" != "$previous" ] && kill -0 "$current" 2>/dev/null; then
+      test "$(systemctl show --property=MainPID --value lkit.service)" = "$supervisor"
+      exit 0
+    fi
+    sleep 1
+  done
+  exit 1
+'
+
 # 真实 systemd 契约:受管服务可停止并重新启动(不涉及卸载/注销)。
 echo "== stop and restart the managed services"
 echo "   restart: stop landscape"

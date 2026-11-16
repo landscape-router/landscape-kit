@@ -60,6 +60,7 @@
 
 - `install`；
 - `repair`；
+- `repair_service`；
 - `switch`；
 - `restore`；
 - `uninstall`。
@@ -407,3 +408,11 @@ binary、static 和初始化观测 repair 区分。
 服务定义修复的持久化格式必须有显式版本和类型判别。执行前验证运行中的 daemon
 支持该格式和对应恢复能力；不支持时在写事务前拒绝，提示先升级并重启 daemon。
 未知版本或修复类型不得按普通 repair 清理。失败恢复数据在事务终结前不得删除。
+
+服务定义修复使用 schema v6、`operation: repair_service`；普通事务继续写 v5，读取支持
+v1 至 v6。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
+原定义、目标定义、原权限、服务状态、OpenRC／SysVinit 精确启动链接及安装状态。
+`preparing` 未修改定义，可标记失败；`prepared`、`activating`、`verifying` 与
+`rolling_back` 恢复原定义；`finalizing` 校验并续做提交。恢复遇到外部定义修改或
+注册链接冲突时拒绝覆盖并保留事务。运行中的 daemon 通过 `service-repair-v1.pid`
+声明支持该恢复类型，标识 PID 必须与实际 daemon 的存活 PID 一致。

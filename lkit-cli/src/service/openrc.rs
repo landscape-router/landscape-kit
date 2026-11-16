@@ -89,6 +89,10 @@ impl ServiceManager for Openrc {
         unregister_at(&self.init_d_dir.join(self.service_name(service)), origin)
     }
 
+    fn startup_links(&self, service: ManagedService) -> Result<Option<String>, InstallError> {
+        super::host_network::startup_links_snapshot(self, service)
+    }
+
     fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError> {
         rc_update_show(&self.rc_update, self.service_name(service))
     }
@@ -420,7 +424,7 @@ mod tests {
         let binary = Path::new("/usr/local/bin/lkit");
         let script = render_lkit_script(binary);
         assert!(script.contains("command=\"/usr/local/bin/lkit\""));
-        assert!(script.contains("command_args=\"daemon\""));
+        assert!(script.contains("command_args=\"daemon --supervise\""));
         assert!(!script.contains("/srv/landscape"));
         assert!(!script.contains("need cgroups"));
         validate_script(&script, ManagedService::LkitDaemon, binary).unwrap();

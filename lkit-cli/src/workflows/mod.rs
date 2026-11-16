@@ -4,6 +4,7 @@ pub(crate) mod install;
 pub(crate) mod migrate;
 pub(crate) mod reinit;
 pub(crate) mod repair;
+pub(crate) mod repair_service;
 pub(crate) mod restore;
 pub(crate) mod switch;
 pub(crate) mod uninstall;

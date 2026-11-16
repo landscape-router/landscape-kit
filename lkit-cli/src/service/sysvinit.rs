@@ -88,6 +88,10 @@ impl ServiceManager for Sysvinit {
         unregister_at(&self.init_d_dir.join(self.service_name(service)), origin)
     }
 
+    fn startup_links(&self, service: ManagedService) -> Result<Option<String>, InstallError> {
+        super::host_network::startup_links_snapshot(self, service)
+    }
+
     fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError> {
         Ok(rc_d_link_exists(
             &self.rc_d_glob,
@@ -209,7 +213,7 @@ fn render_router_script(canonical_root: &Path) -> String {
 
 fn render_lkit_script(binary: &Path) -> String {
     format!(
-        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          lkit\n# Required-Start:    $local_fs\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       lkit resident daemon\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile /run/lkit.pid --background \\\n      --exec {} -- daemon\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile /run/lkit.pid\n    ;;\n  restart)\n    sh \"$0\" stop\n    sh \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
+        "#!/bin/sh\n### BEGIN INIT INFO\n# Provides:          lkit\n# Required-Start:    $local_fs\n# Required-Stop:     $network\n# Default-Start:     2 3 4 5\n# Default-Stop:      0 1 6\n# Description:       lkit resident daemon\n### END INIT INFO\n\ncase \"$1\" in\n  start)\n    start-stop-daemon --start --make-pidfile --pidfile /run/lkit.pid --background \\\n      --exec {} -- daemon --supervise\n    ;;\n  stop)\n    start-stop-daemon --stop --pidfile /run/lkit.pid --retry TERM/forever/1\n    ;;\n  restart)\n    sh \"$0\" stop\n    sh \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\" >&2\n    exit 1\n    ;;\nesac\n",
         shell_quote(&binary.display().to_string()),
     )
 }

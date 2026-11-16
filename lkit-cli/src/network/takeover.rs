@@ -117,15 +117,7 @@ fn require_recovery_daemon(runtime: &InstallRuntime) -> Result<(), InstallError>
         return Ok(());
     }
     let manager = runtime.service_manager.as_ref();
-    let capability =
-        std::fs::read_to_string(layout::territory_run_dir().join("network-recovery-v1.pid"))
-            .unwrap_or_default();
-    let pid = manager.main_pid(ManagedService::LkitDaemon)?;
-    if capability.trim() != pid.to_string() || pid == 0 {
-        return Err(InstallError::Preflight(
-            "restart lkit with lkit self install to enable daemon network recovery".into(),
-        ));
-    }
+    crate::daemon::require_capability("network-recovery-v1.pid")?;
     if !manager.is_enabled(ManagedService::LkitDaemon)?
         || !manager.is_active(ManagedService::LkitDaemon)?
     {
@@ -262,6 +254,20 @@ fn status(root: &InstallRoot) -> Result<(), InstallError> {
     Ok(())
 }
 
+pub(super) fn check_confirmation_window(
+    network: &transaction::NetworkTakeoverTransaction,
+    now: chrono::DateTime<Utc>,
+    boot: Result<String, InstallError>,
+) -> Result<(), InstallError> {
+    let boot = boot?;
+    if now >= network.confirmation_deadline
+        || network.boot_id.as_ref().is_some_and(|saved| saved != &boot)
+    {
+        return Err(InstallError::ParameterUsage("network confirmation expired or host restarted; wait for automatic rollback or run `lkit network rollback`".into()));
+    }
+    Ok(())
+}
+
 pub(crate) async fn confirm(
     root: &InstallRoot,
     runtime: &InstallRuntime,
@@ -285,17 +291,7 @@ pub(crate) async fn confirm(
     })?;
     let manager = runtime.service_manager.as_ref();
     if pending.phase == transaction::Phase::AwaitingNetworkConfirmation {
-        if Utc::now() >= network.confirmation_deadline
-            || network
-                .boot_id
-                .as_deref()
-                .is_some_and(|saved| current_boot_id().map_or(true, |boot| saved != boot))
-        {
-            return Err(InstallError::ParameterUsage(
-                "network confirmation deadline has expired; wait for automatic rollback or run `lkit network rollback`"
-                    .into(),
-            ));
-        }
+        check_confirmation_window(&network, Utc::now(), current_boot_id())?;
         verify_interfaces(&network.plan, runtime)?;
         super::discovery::verify_live(&network.plan, &runtime.ip_command)?;
         let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
@@ -317,6 +313,7 @@ pub(crate) async fn confirm(
         };
         health::wait_for_startup(&options).await?;
         clear_inherited_wan_ipv4(&network.plan, &runtime.ip_command)?;
+        check_confirmation_window(&network, Utc::now(), current_boot_id())?;
         pending.phase = transaction::Phase::Finalizing;
         pending.updated_at = Utc::now();
         transaction::persist(root, &pending)?;

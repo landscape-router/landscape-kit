@@ -299,3 +299,75 @@ fn daemon_rolls_back_expired_or_rebooted_network_takeover() {
         assert!(!harness.install_root.join("current").exists());
     }
 }
+
+/// DAE-13: the same supervisor is used by all init backend definitions.
+#[test]
+fn supervisor_restarts_a_crashed_daemon_and_honors_stop() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("daemon-supervision", "healthy", 30_000);
+    let mut supervisor = harness
+        .command()
+        .args(["daemon", "--supervise", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let pidfile = harness.run_dir().join("lkit.pid");
+    let read_pid = || {
+        std::fs::read_to_string(&pidfile)
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+    };
+    wait_for(
+        || read_pid().is_some_and(process_alive),
+        "supervised daemon must start",
+    );
+    for expected_delay in [1, 3, 5, 10, 10] {
+        let pid = read_pid().unwrap();
+        let killed = Instant::now();
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
+        wait_for(
+            || read_pid().is_some_and(|next| next != pid && process_alive(next)),
+            "supervisor must replace crashed daemon",
+        );
+        assert!(killed.elapsed() >= Duration::from_millis(expected_delay * 1000 - 100));
+    }
+    terminate(&mut supervisor);
+    assert!(!pidfile.exists(), "stop must wait for daemon shutdown");
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !pidfile.exists(),
+        "intentional stop must not restart daemon"
+    );
+
+    // Stopping during backoff also cancels the next launch.
+    let mut supervisor = harness
+        .command()
+        .args(["daemon", "--supervise", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    wait_for(
+        || read_pid().is_some_and(process_alive),
+        "explicit restart must launch daemon",
+    );
+    let pid = read_pid().unwrap();
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    terminate(&mut supervisor);
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(!process_alive(pid));
+    assert_eq!(
+        read_pid(),
+        Some(pid),
+        "no replacement after stopping during backoff"
+    );
+}

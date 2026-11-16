@@ -27,7 +27,7 @@ fn setup(name: &str, kind: &str) -> InitWorld {
     std::fs::create_dir_all(&territory).unwrap();
     let host = world.path("host");
     let init_d_dir = host.join("etc/init.d");
-    let rc_d_dir = host.join("etc/rc.d");
+    let rc_d_dir = host.join("etc");
     let init_state = host.join("init-state");
     for dir in [&init_d_dir, &rc_d_dir, &init_state] {
         std::fs::create_dir_all(dir).unwrap();
