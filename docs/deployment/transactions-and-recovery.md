@@ -211,7 +211,7 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
     恢复旧版本；
   - 后端 `repair` 且事务含 `.lkb`：按事务记录的受管后端停止修复后的版本，
     使用 `.lkb`、旧二进制和现场快照恢复修复前运行状态；
-  - `install`：没有旧版本和 `.lkb`，执行首次安装失败清理；仅 systemd 环境恢复服务注册和 `/etc/resolv.conf`，不得调用 `.lkb` 回滚；
+  - `install`：没有旧版本和 `.lkb`，执行首次安装失败清理；按保存的后端恢复服务注册、宿主网络及 `/etc/resolv.conf`，不得调用 `.lkb` 回滚；
   - `repair` 且 `static_backup` 非空、`backup` 为空：从 `static_backup.path` 恢复 `static_backup.target`，并恢复原版本归档与安装状态，
     不重建 Landscape data；
 - `migrate`（手工部署迁移）：安装状态包含相同事务 ID、版本及后端时确认提交；

@@ -49,8 +49,8 @@
 
 使用 `--takeover-network` 时，健康检查通过后先写入 pending install state 并进入
 `awaiting_network_confirmation`；此时安装尚未提交。只有运行 `lkit network
-confirm`（不限制 SSH 会话来源）通过复检才能提交状态。10 分钟 timer、确认前重启的 boot
-rollback 和手工
+confirm`（不限制 SSH 会话来源）通过复检才能提交状态。daemon 按 10 分钟确认期限和
+主机启动标识执行自动回滚，手工
 `lkit network rollback` 都进入同一回滚路径；回滚成功后删除整个未提交 `data/`，恢复宿主
 网络，并回到可重新首次安装的状态。
 
@@ -165,75 +165,51 @@ CLI 等待进程退出不会中止已接受的操作。daemon 按持久化事务
 7. 提交 `committed`,输出卸载结果、保护备份 ID 与保留物清单。
 
 卸载中断恢复采用前向完成:继续注销服务、删除文件并提交,不自动回滚;恢复再次失败
-标记 `failed` 并保留现场要求人工诊断。卸载成功后 lkit 地盘视为无已提交安装,
+保留未完成阶段与现场，由 daemon 重试并阻止后续修改。卸载成功后 lkit 地盘视为无已提交安装,
 再次 `lkit install` 按全新首次安装处理。
 
 ### 10. 重新初始化
 
-`lkit reinit` 是独立的 `reinit` 事务,只接受已提交、systemd 且宿主网络服务已被接管的
-安装,配置级重建语义与 restore 一致(不复制数据库字节文件,按新 init 配置重建)。
-完整命令规格见 [`lkit reinit`](../commands/reinit.md),网络细节见
-[网络重配置](../network/reinit.md)。
+`lkit reinit` 是独立的 `reinit` 事务，只接受已提交、由 systemd／OpenRC／SysVinit
+管理且宿主网络服务已接管的安装。配置级重建不复制数据库字节文件，版本与 release
+保持不变。完整规格见 [`lkit reinit`](../commands/reinit.md)。
 
-1. 获取安装锁并恢复未完成事务;读取已提交 state,不存在则参数错误;校验 systemd 与
-   宿主网络服务已接管;
-2. 交互收集目标配置(凭据 + 网络计划)并确认破坏性计划,非交互模式以 `--yes` 代替;
-   收集与确认先于任何修改,拒绝时不创建事务、不写文件;
-3. 默认创建保护 `.lkb`(`reinit 前自动备份`,auto 标记为 true),失败阻断;
-   `--allow-no-backup` 显式跳过;
-4. 创建 `preparing` reinit 事务,记录 `systemd_before`、`/etc/resolv.conf` 备份、状态
-   快照与网络计划;`version` 固定为当前活动版本,不下载任何资产;
-5. 更新为 `stopping` 后停止服务并确认进程退出;
-6. 更新为 `activating`:旧 `data/` 原子移动到事务目录,创建新空 `data/` 并写入新
-   `landscape_init.toml`(权限 `0600`,版本等于当前活动版本,凭据为用户新输入,网络为
-   新计划),清理新选 LAN 接口地址;不检查、不协调 `br_lan`,桥接创建、成员同步与
-   清理全部由 Landscape 按新配置处理;
-7. 更新为 `verifying`:启动服务并完成 180 秒启动检查与 10 秒稳定观察;
-8. 一律进入 `awaiting_network_confirmation`:arm 恢复二进制、确认 timer 与 boot
-   rollback,写入 pending state;`lkit network confirm` 复核接口 MAC、管理地址、
-   `br_lan` 成员、PID 与健康后提交;
-9. 成功提交后保留旧 data 事务现场与保护备份,事务进入 `committed`,输出新管理地址与
-   备份 ID。
+1. 前端收集凭据与网络计划，展示破坏性计划并确认；确认绑定安装根、版本与状态摘要。
+   拒绝时不创建事务或修改现场，密码通过独立受限输入文件交接。
+2. daemon 领取请求并获取安装锁，复核安装身份、服务所有权与网络接管状态。
+3. 创建并关联事务，保存原 state、服务状态、宿主网络与 DNS 恢复依据；默认创建保护
+   `.lkb`，`--allow-no-backup` 显式跳过。任何恢复依据缺失均不能继续激活。
+4. 停止服务后将旧 `data/` 移入事务现场，创建新 data 并写入新初始化配置，按计划清理
+   新选 LAN 地址；桥接的创建、成员同步与清理由 Landscape 完成。
+5. 启动服务并完成健康检查，写入 pending state，进入 `awaiting_network_confirmation`。
+   操作记录为 `awaiting_confirmation`，释放执行线程与安装锁；普通修改请求等待。
+6. 显式网络确认复核接口、管理地址、桥成员、PID 与健康后提交；确认期限到达、主机
+   重启或手工回滚时，由 daemon 恢复旧 data、原服务与宿主网络状态。
 
-失败语义:目标激活或健康检查失败时进入 `rolling_back`,从事务目录恢复旧 `data/` 并
-重启旧配置,回滚成功返回 `5`、失败返回 `6`;timer 到期、确认前重启与手工 rollback
-走同一回滚入口。中断恢复:`preparing` 标记 `failed`;`prepared`/`stopping` 恢复事务前
-systemd 状态后标记 `failed`;`activating`/`verifying` 执行旧 data 回滚;
-`awaiting_network_confirmation`/`finalizing`/`rolling_back` 阻断并提示使用
-`lkit network confirm` 或 `lkit network rollback`。
+崩溃恢复不重放凭据或工作流。激活前按事务恢复准备现场；激活后恢复原数据与服务；
+已提交状态的身份匹配时补齐成功回执。回滚成功返回 `5`，未恢复完成保留未完成阶段并
+返回 `6`，daemon 继续重试。待确认事务不会由 daemon 代替用户确认。
 
 ### 11. 手工部署迁移
 
-`lkit migrate` 把手工部署（非 lkit 安装格式）迁移为受管安装，是独立的 `migrate`
-事务。单实例约束下，lkit 地盘必须无已提交状态（无 `state/install-state.json`），
-landscape 安装根必须全新。完整命令规格见 [`lkit migrate`](../commands/migrate.md)。
+`lkit migrate` 把运行中的手工部署迁移为同版本受管安装，使用独立 `migrate` 事务。
+旧 unit 识别与接管要求 systemd，目标安装根必须全新，lkit 地盘不能已有已提交安装。
+完整规格见 [`lkit migrate`](../commands/migrate.md)。
 
-1. 获取安装锁并恢复未完成事务；校验安装根无状态且无遗留受管内容；校验 `--from`
-   目录含 Landscape 特征文件且不是受管安装的 data；
-2. 按固定端口识别运行中的旧实例（`--config-dir` 匹配源目录），未运行则报错提示先启动；
-   端口上有无法确认身份的进程时阻断；
-3. 创建 `preparing` 迁移事务，通过导出 API 读取当前配置与后端版本（备份不升级），
-   从 `/proc/<pid>/exe` 读取二进制，static 目录取进程 `--web` 参数或缺省
-   `<from>/static`，`static.zip` 本地缺失时从发布仓库下载、仓库不可用时从现场打包，
-   生成迁移 `.lkb` 到 `backups/`；
-4. 交互确认迁移计划（非交互必须 `--yes`），拒绝时不创建事务、不写文件；
-5. 更新为 `prepared`，再更新为 `stopping`：systemd 可用时按 `ExecStart --config-dir`
-   匹配发现旧 unit——唯一匹配则 stop/disable（原件位于 `/etc/systemd/system` 时移入
-   事务目录，否则 mask），无匹配或多匹配分别要求人工确认或先清理；旧实例进程仍存活
-   时同样要求确认；
-6. 更新为 `activating`：从迁移备份解包重建 `releases/<版本>`，创建空 `data/`、写入
-   导出的 `landscape_init.toml`（`0600`）、恢复 `geo_tmp`，原子创建 `current`；
-7. 更新为 `verifying`：写入受管 unit 原件、注册、启用、启动并完成完整
-   健康检查；
-8. 提交 state（版本为被迁移版本、资产身份来自备份、
-   `initialization.status: complete`），事务进入 `committed`，输出迁移备份 ID 与旧部署
-   清理提示。
+1. 前端只读检查源目录、进程身份与导出版本，展示计划并确认。请求绑定源目录身份、
+   PID 与启动时刻、二进制与命令行摘要、旧 unit 与版本；拒绝确认不创建事务或备份。
+2. daemon 在安装锁下重新验证，先关联操作与事务，再创建完整迁移 `.lkb`，包含导出
+   配置、运行二进制和现场 static 内容；备份校验通过才进入停止阶段。
+3. 修改旧 unit 前保存文件身份与 enabled/active 状态，再停止、禁用和解除注册冲突。
+   无受管 unit 时提示 PID，等待用户从另一会话停止源进程；超时失败，不能以确认
+   代替进程退出，不自动杀死无受管 unit 的源实例。
+4. 从备份重建 release、data 与初始化配置，原子创建 current，注册、启用和启动
+   新受管服务，完成健康检查后写入带本次事务 ID 的 state 并提交。
 
-失败语义：停止旧实例前失败标记 `failed` 返回 `1`；停止后失败进入 `rolling_back`——
-注销/停止新受管 unit、恢复 `/etc/resolv.conf`、恢复旧 unit（文件放回原位或 unmask，
-按 enabled/active 重启）、删除新根内容，回滚成功返回 `5`、失败返回 `6`；前台实例
-场景不自动重启旧实例。中断恢复见
-[事务与中断恢复](../deployment/transactions-and-recovery.md)。
+前端断开只停止观察；迁移领取后不允许取消。准备中断不重新执行备份，停止或激活
+中断恢复原 unit 并清理未提交目标；同事务的已提交安装状态可补齐成功回执。回滚失败
+保留 `rolling_back` 供 daemon 重试；源目录始终保留，无受管 unit 的前台实例由用户
+自行重新启动。成功后保留备份，输出旧部署清理提示。
 
 ### 12. lkit 自身生命周期
 

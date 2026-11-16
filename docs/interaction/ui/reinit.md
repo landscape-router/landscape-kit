@@ -1,6 +1,6 @@
 # Reinit 面板样式验收标准
 
-- 来源:侧栏面板;仅已安装、systemd 且宿主网络已被接管时可用,否则置灰跳过
+- 来源:侧栏面板;仅已安装、后端为 systemd／OpenRC／SysVinit 且宿主网络已被接管时可用,否则置灰跳过
 - 对应实现:`console/reinit.rs`
 
 ## 布局

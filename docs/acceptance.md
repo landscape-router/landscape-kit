@@ -96,15 +96,14 @@
   资产逐字节不变,`config.toml` 不读取不修改。
 - install 与 reinit 都不检查 `br_lan` 是否存在;桥接的创建、成员同步与清理由 Landscape
   按新配置处理。新选 LAN 接口执行地址 flush,WAN 不清理。
-- 健康检查通过后一律进入 `awaiting_network_confirmation`,arm 恢复二进制、10 分钟
-  daemon 确认期限与主机重启恢复,不直接提交;`lkit network confirm` 复核接口 MAC、管理地址、
+- 健康检查通过后一律进入 `awaiting_network_confirmation`，保存 10 分钟确认期限与
+  主机启动标识，由 daemon 执行到期或重启恢复，不直接提交;`lkit network confirm` 复核接口 MAC、管理地址、
   `br_lan` 成员、PID 与健康后提交。
 - 确认前重启、确认期限到达与手工 rollback 走同一幂等回滚:停止服务 → 恢复旧 `data/` →
-  重启旧配置并通过健康检查;回滚成功 `rolled_back`,失败 `failed` 并保留现场与保护
-  备份。
+  重启旧配置并通过健康检查;回滚成功 `rolled_back`，恢复失败保留未完成阶段、现场与保护备份，由 daemon 重试。
 - 激活或健康检查失败但自动回滚成功返回 `5`;回滚失败返回 `6`。
 - 中断事务按阶段恢复:`preparing` 标记 `failed`;`prepared`/`stopping` 恢复事务前
-  systemd 状态;`activating`/`verifying` 执行旧 data 回滚;待确认阶段阻断并提示
+  原服务状态;`activating`/`verifying` 执行旧 data 回滚;待确认阶段阻断并提示
   `lkit network confirm`/`rollback`。
 
 ### 手工部署迁移

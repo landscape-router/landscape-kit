@@ -22,7 +22,7 @@ lkit --non-interactive install ... # 严格非交互命令模式
 - Update：版本更新表单（仅已安装时可用）；
 - Mirror：主机软件源换源面板（见[`lkit set-mirror`](../commands/mirror.md)）；
 - Software：常用软件安装面板（见[`lkit software`](../commands/software.md)）；
-- Reinit：重新初始化面板（仅已安装、systemd 且宿主网络服务已被接管时可用）。
+- Reinit：重新初始化面板（仅已安装、后端为 systemd／OpenRC／SysVinit 且宿主网络服务已被接管时可用）。
 
 检测到 Landscape 已安装时，Install 菜单（首次安装表单）在侧栏中置灰且不可选中，
 Up/Down 导航会跳过它；面板仍可显示“已安装”提示。反之，未安装、非 root 或安装
