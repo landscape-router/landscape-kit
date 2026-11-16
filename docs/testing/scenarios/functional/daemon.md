@@ -122,6 +122,7 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
 - 证据：[修复实现及测试](../../../../lkit-cli/src/workflows/repair_service.rs)、[CLI 迁移](../../../../lkit-cli/tests/install_fixture_e2e/repair_service.rs)
 - 说明：覆盖三个后端运行／停止与启用／禁用组合、重复执行、定义漂移拒绝、加载失败、
   回滚失败重试及提交阶段前后的中断恢复；Fake 管理器禁止修改运行状态。
+  CLI 迁移用例由 Fixture E2E 的 `repair-service` 分组执行，过滤器为 `repair_service::`。
 - 缺口：三个后端真实迁移到 reinit 的完整链路与故障注入仍需 CI 验收。
 
 ## DAE-10
