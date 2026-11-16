@@ -50,6 +50,7 @@ jobs:
       - name: Run init, Cgroup and mirror CLI unit tests
         run: |
           for module in \
+            deployment::config::tests::load_flare_is_independent_of_repository_schema \
             check::init::tests \
             check::openrc::tests \
             service::manager::init_detection_tests \

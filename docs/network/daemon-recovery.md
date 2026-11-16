@@ -102,3 +102,8 @@ systemd、OpenRC 和 SysVinit。普通开发过程不在宿主执行这些系统
 旧 Landscape 服务定义缺少启动检查时，reinit 在创建事务或修改现场前拒绝执行，
 提示运行 [`lkit repair service`](../commands/repair.md#服务定义修复)。迁移成功后重新
 执行 reinit；迁移失败不放宽启动检查。
+
+## 恢复通道配置
+
+flare 独立读取 `config.toml` 的 `[flare]` 段。仓库配置缺失或仓库字段不合法不影响
+有效 PSK 的读取，daemon 重启保留该 PSK，不因无关配置重新生成恢复密钥。

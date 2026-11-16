@@ -337,9 +337,13 @@ pub(crate) fn load_language() -> Option<Language> {
 /// 读取 `[flare]` 配置段。宽容读取:文件缺失、TOML 损坏或段缺失时一律返回
 /// `None`,由 daemon 决定不启动 flare 服务,绝不阻断 daemon 主循环。
 pub(crate) fn load_flare() -> Option<FlareSection> {
-    let path = layout::territory_config_file();
-    let text = std::fs::read_to_string(&path).ok()?;
-    let config: ConfigFile = toml::from_str(&text).ok()?;
+    #[derive(Deserialize)]
+    struct FlareConfig {
+        #[serde(default)]
+        flare: Option<FlareSection>,
+    }
+    let text = std::fs::read_to_string(layout::territory_config_file()).ok()?;
+    let config: FlareConfig = toml::from_str(&text).ok()?;
     config.flare
 }
 
@@ -585,6 +589,30 @@ mod tests {
         std::fs::create_dir_all(&territory).unwrap();
         let guard = layout::test_territory(&territory);
         (guard, territory)
+    }
+
+    #[test]
+    fn load_flare_is_independent_of_repository_schema() {
+        let (_guard, territory) = setup("flare-independent");
+        for prefix in [
+            "",
+            "[repository]\n",
+            "schema_version = 999\n[repository]\nkind = 42\n",
+        ] {
+            let text = format!("{prefix}\n[flare]\npsk = \"existing-recovery-secret\"\n");
+            std::fs::write(layout::territory_config_file(), &text).unwrap();
+            assert_eq!(
+                load_flare().unwrap().psk.as_deref(),
+                Some("existing-recovery-secret")
+            );
+            assert_eq!(
+                std::fs::read_to_string(layout::territory_config_file()).unwrap(),
+                text
+            );
+        }
+        std::fs::write(layout::territory_config_file(), "[flare]\npsk = 123\n").unwrap();
+        assert!(load_flare().is_none());
+        let _ = std::fs::remove_dir_all(territory.parent().unwrap());
     }
 
     fn github_source() -> RepositorySource {
