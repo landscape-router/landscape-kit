@@ -37,7 +37,7 @@ fn snapshot_path(tx: &TransactionFile) -> PathBuf {
 }
 
 pub(crate) fn run(runtime: &InstallRuntime) -> Result<(), InstallError> {
-    if unsafe { libc::geteuid() } != 0 {
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(failure("service repair requires root"));
     }
     let _lock = lock::acquire_install_lock()?;
