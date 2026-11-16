@@ -164,6 +164,25 @@ pub(crate) fn write_pending_state(
 }
 
 pub(crate) async fn run_command(args: &Network) -> ExitCode {
+    let native = matches!(
+        args.action,
+        NetworkAction::Confirm | NetworkAction::Rollback { automatic: false }
+    );
+    #[cfg(feature = "test-support")]
+    let native = native
+        && args
+            .test_runtime
+            .as_deref()
+            .is_none_or(|path| InstallRuntime::test_uses_daemon(path).unwrap_or(false));
+    if native {
+        match submit_native(args).await {
+            Ok(code) => return ExitCode::from(code),
+            Err(error) => {
+                eprintln!("network: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    }
     match run_command_inner(args).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -317,6 +336,8 @@ pub(crate) async fn confirm(
         pending.phase = transaction::Phase::Finalizing;
         pending.updated_at = Utc::now();
         transaction::persist(root, &pending)?;
+        #[cfg(feature = "test-support")]
+        crate::workflows::operation_control::checkpoint("network-finalizing")?;
     }
     cleanup_recovery(root, &network, manager, false)?;
     let bytes = std::fs::read(layout::territory_relative(&network.pending_state))
@@ -417,6 +438,8 @@ pub(crate) async fn rollback(
     }
     let health = runtime.health_options()?;
     transaction::mark_phase(root, &pending, transaction::Phase::RollingBack)?;
+    #[cfg(feature = "test-support")]
+    crate::workflows::operation_control::checkpoint("network-rolling-back")?;
     let result: Result<(), InstallError> = async {
         match pending.operation {
             transaction::Operation::Install => {
@@ -560,6 +583,68 @@ fn resolve_runtime(_args: &Network) -> Result<InstallRuntime, InstallError> {
         return InstallRuntime::from_test_file(path);
     }
     Ok(InstallRuntime::production())
+}
+
+async fn submit_native(args: &Network) -> Result<u8, InstallError> {
+    let runtime = resolve_runtime(args)?;
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
+        return Err(InstallError::UnsupportedPlatform(
+            "network commands require root".into(),
+        ));
+    }
+    let root = match state::discover_landscape_root()? {
+        Some(root) => root,
+        None => state::discover_landscape_root_from_unfinished_transaction()?
+            .ok_or_else(|| InstallError::ParameterUsage("no pending network transaction".into()))?,
+    };
+    let tx = transaction::find_unfinished(&root)?
+        .ok_or_else(|| InstallError::ParameterUsage("no pending network transaction".into()))?;
+    let confirm = matches!(args.action, NetworkAction::Confirm);
+    validate_action(&tx, confirm)?;
+    let kind = if confirm {
+        crate::daemon_operations::Kind::NetworkConfirm
+    } else {
+        crate::daemon_operations::Kind::NetworkRollback
+    };
+    crate::daemon_operations::submit_network_and_wait(
+        root.canonical.to_string_lossy().into_owned(),
+        kind,
+        tx.transaction_id,
+    )
+    .await
+}
+
+pub(crate) fn validate_action(
+    tx: &transaction::TransactionFile,
+    confirm: bool,
+) -> Result<(), InstallError> {
+    use transaction::{Operation, Phase};
+    if !matches!(tx.operation, Operation::Install | Operation::Reinit) {
+        return Err(InstallError::ParameterUsage(
+            "not a network takeover transaction".into(),
+        ));
+    }
+    let network = tx.network_takeover.as_ref().ok_or_else(|| {
+        InstallError::ParameterUsage("transaction has no network takeover".into())
+    })?;
+    if confirm {
+        if !matches!(
+            tx.phase,
+            Phase::AwaitingNetworkConfirmation | Phase::Finalizing
+        ) {
+            return Err(InstallError::ParameterUsage(
+                "transaction is not awaiting network confirmation".into(),
+            ));
+        }
+        if tx.phase == Phase::AwaitingNetworkConfirmation {
+            check_confirmation_window(network, Utc::now(), current_boot_id())?;
+        }
+    } else if !rollback_allowed(tx.phase) {
+        return Err(InstallError::ParameterUsage(
+            "accepted network confirmation cannot be rolled back".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -87,7 +87,16 @@ fn network_takeover_confirms_from_any_ssh_session() {
 
     assert!(resolved_stop < network_manager_stop);
 
-    let confirm = harness.network_command(&["confirm"]);
+    let daemon_config = format!("[flare]\npsk = \"{}\"\n", "ab".repeat(32));
+    std::fs::write(harness.config_path(), &daemon_config).unwrap();
+    let runtime = harness.daemon_runtime();
+    let _daemon = harness.spawn_daemon(&runtime);
+    let confirm = harness
+        .command()
+        .args(["network", "confirm", "--test-runtime"])
+        .arg(&runtime)
+        .output()
+        .unwrap();
     assert_success(&confirm);
     assert_eq!(
         std::fs::read_to_string(&harness.ip_state).unwrap(),
@@ -97,11 +106,11 @@ fn network_takeover_confirms_from_any_ssh_session() {
     let state: serde_json::Value =
         serde_json::from_slice(&std::fs::read(harness.state_path()).unwrap()).unwrap();
     assert_eq!(state["active_version"], VERSION);
-    assert!(
-        !harness.config_path().exists(),
-        "network confirm must not create config.toml"
+    assert_eq!(
+        std::fs::read_to_string(harness.config_path()).unwrap(),
+        daemon_config,
+        "network confirm must preserve daemon config"
     );
-    eprintln!("DEBUG SECOND READ");
     let transaction = read_only_transaction(&harness.territory);
     assert_eq!(transaction["phase"], "committed");
     assert!(
@@ -338,4 +347,105 @@ fn network_takeover_rejects_other_active_network_manager() {
         !harness.transactions_dir().exists(),
         "preflight created a transaction before rejecting an unknown manager"
     );
+}
+
+#[test]
+fn native_network_actions_survive_observer_disconnect_and_daemon_crash() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for (action, point, outcome) in [
+        ("confirm", "network-finalizing", "committed"),
+        ("confirm", "before-result", "committed"),
+        ("rollback", "network-rolling-back", "rolled_back"),
+        ("rollback", "before-result", "rolled_back"),
+    ] {
+        let h = InstallHarness::new("network-native-crash", "healthy", 10_000);
+        h.seed_host_services();
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&h.runtime_config).unwrap()).unwrap();
+        config["network_confirm_timeout_ms"] = 180_000.into();
+        write_json(&h.runtime_config, &config);
+        assert_success(&h.run_takeover());
+        let tx = read_only_transaction(&h.territory);
+        let runtime = h.daemon_runtime();
+        let gate = h.run_dir().join(format!("test-repair-{point}.gate"));
+        std::fs::write(&gate, b"pause").unwrap();
+        let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, point);
+        struct Observer(std::process::Child);
+        impl Drop for Observer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let observer = Observer(
+            h.command()
+                .args(["network", action, "--test-runtime"])
+                .arg(&runtime)
+                .spawn()
+                .unwrap(),
+        );
+        let wait = |condition: &mut dyn FnMut() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(50);
+            while !condition() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "network {action} timed out at {point}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        wait(&mut || {
+            h.run_dir()
+                .join(format!("test-repair-{point}.reached"))
+                .exists()
+        });
+        let record = || -> serde_json::Value {
+            let paths: Vec<_> = std::fs::read_dir(h.run_dir().join("operations"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .collect();
+            assert_eq!(paths.len(), 1);
+            serde_json::from_slice(&std::fs::read(paths[0].path()).unwrap()).unwrap()
+        };
+        let before = record();
+        assert_eq!(before["network_transaction"], tx["transaction_id"]);
+        assert!(
+            !h.command()
+                .args(["operation", "cancel", before["id"].as_str().unwrap()])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(observer);
+        daemon.crash();
+        std::fs::remove_file(gate).unwrap();
+        let _daemon = h.spawn_daemon(&runtime);
+        wait(&mut || record()["status"] == "succeeded");
+        assert_eq!(record()["transaction_id"], tx["transaction_id"]);
+        assert_eq!(record()["exit_code"], 0);
+        assert_eq!(read_only_transaction(&h.territory)["phase"], outcome);
+        assert_eq!(h.state_path().exists(), action == "confirm");
+        if action == "rollback" {
+            assert!(!h.install_root.join("data").exists());
+            for unit in [
+                "NetworkManager.service",
+                "firewalld.service",
+                "systemd-resolved.service",
+            ] {
+                assert_eq!(
+                    std::fs::read_to_string(
+                        h.host.join("systemd-state/units").join(unit).join("active")
+                    )
+                    .unwrap()
+                    .trim(),
+                    "active"
+                );
+            }
+        }
+    }
 }

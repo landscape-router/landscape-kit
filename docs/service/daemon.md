@@ -18,7 +18,7 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 | `queued` | 请求已持久化，尚未开始修改现场 |
 | `running` | daemon 已领取并开始处理 |
 | `recovering` | 关联事务未终结，继续按事务规则恢复 |
-| `succeeded` | 工作流成功，关联事务存在时必须已提交 |
+| `succeeded` | 工作流成功；修改事务已提交，网络回滚事务已回滚 |
 | `failed` | 执行失败；关联事务已经回滚或失败 |
 | `interrupted` | daemon 中断且没有足够依据确定结果，不自动重放请求 |
 | `cancelled` | 排队请求已取消，或下载取消已完成清理且没有修改活动安装 |
@@ -31,8 +31,8 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 
 操作记录位于 lkit 地盘 `run/operations/`，目录权限 `0700`、记录权限 `0600`，原子
 写入并同步到磁盘，可以跨主机启动保留。记录只包含受支持的操作类型、安装根、状态、事务关联和结果说明，
-repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4，uninstall 写入 v5；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
-`repair_static`、`repair_binary`、`switch`、`restore`、`uninstall`，请求载荷按类型校验；未知类型、字段或不支持的
+repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4，uninstall 写入 v5，网络确认／手工回滚写入 v6；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
+`repair_static`、`repair_binary`、`switch`、`restore`、`uninstall`、`network_confirm`、`network_rollback`，请求载荷按类型校验；未知类型、字段或不支持的
 协议版本在入队前拒绝。操作类型与业务事务中的 `operation` 不必同名：
 static／binary 对应 `repair` 事务，并分别校验 `static_backup`／`.lkb` 等恢复依据。
 
@@ -191,3 +191,14 @@ restore 只允许取消排队操作，领取后不允许取消；Ctrl+C 退出�
 v10 卸载事务持久化 `uninstall_keep_data`；停止阶段之后中断时前向完成，保留相同清理
 选项。恢复失败保持未完成并重试。完成后即使安装 state 已删除，也以保留的 committed
 卸载事务核实成功并补写结果；不通过“根目录不存在”猜测成功。
+
+## 网络确认与手工回滚
+
+请求绑定安装根及既有网络事务 ID。daemon 在安装锁下优先处理此类请求，重新校验
+事务身份、阶段及确认期限；它们可处理阻挡普通队列的待确认事务，不能越过安装锁。
+新事务、无网络接管的事务和已终结事务不能接受旧请求。只有排队阶段允许取消。
+
+确认以 `committed` 为成功依据，手工回滚以 `rolled_back` 为成功依据。关联事务仍为
+`awaiting_network_confirmation` 时，执行失败记录失败，进程中断记录中断；不会重新
+接受或重放确认。`finalizing` 和 `rolling_back` 由恢复入口继续收尾，操作保留恢复中，
+终结后根据事务结果更新。自动回滚不需要用户操作请求。

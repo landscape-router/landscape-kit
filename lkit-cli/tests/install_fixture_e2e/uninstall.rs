@@ -11,7 +11,8 @@ fn uninstalls_an_existing_installation_through_full_cli() {
     let harness = InstallHarness::new("uninstall", "healthy", 10_000);
     assert_success(&harness.run());
     let config_path = harness.config_path();
-    std::fs::write(&config_path, b"[repository]\n").unwrap();
+    let config_before = format!("[repository]\n\n[flare]\npsk = \"{}\"\n", "ab".repeat(32));
+    std::fs::write(&config_path, &config_before).unwrap();
 
     let runtime = harness.daemon_runtime();
     let _daemon = harness.spawn_daemon(&runtime);
@@ -43,7 +44,7 @@ fn uninstalls_an_existing_installation_through_full_cli() {
     assert!(!harness.install_root.join("service").exists());
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),
-        "[repository]\n",
+        config_before,
         "config.toml must be preserved byte-for-byte"
     );
     assert!(

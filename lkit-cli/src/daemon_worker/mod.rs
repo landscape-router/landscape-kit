@@ -11,7 +11,6 @@ use std::process::ExitCode;
 use uuid::Uuid;
 
 use crate::commands::Commands;
-use crate::commands::network::NetworkAction;
 #[cfg(feature = "test-support")]
 use crate::deployment::runtime::InstallRuntime;
 use crate::interaction::presentation::{InterruptGuard, OPERATIONS_DIR, operation_screen};
@@ -63,14 +62,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         Commands::Frontend(_) => false,
         // migrate 不整体委托:前台先执行前置检查,再内部委托切换阶段。
         Commands::Migrate(_) => false,
-        Commands::Network(args) => {
-            matches!(
-                args.action,
-                // 手工 rollback 与 confirm 都委托:两者都会切换/恢复宿主网络,
-                // 发起会话可能在执行中断开,由 daemon 侧完成收尾。
-                NetworkAction::Confirm | NetworkAction::Rollback { automatic: false }
-            )
-        }
+        Commands::Network(_) => false,
         Commands::Install(_) | Commands::Reinit(_) => true,
     }
 }
@@ -360,14 +352,12 @@ pub(crate) async fn delegate(
         // 即使前端进程消失,daemon 也会独立完成提交,事务不会停在
         // 半提交状态;前端存活时照常经请求/结果文件回收输出与退出码。
         Ok(WaitOutcome::ConfirmTakeover) => {
-            Box::pin(delegate(
-                interrupt,
-                vec!["network".into(), "confirm".into()],
-                None,
-                None,
-                false,
-            ))
-            .await
+            let args = crate::commands::network::Network {
+                action: crate::commands::network::NetworkAction::Confirm,
+                #[cfg(feature = "test-support")]
+                test_runtime: None,
+            };
+            Ok(crate::commands::network::run(&args).await)
         }
         Ok(WaitOutcome::Interrupted) => unreachable!("interrupted outcome handled above"),
         Err(error) => Err(DelegateError::infrastructure(format!(
@@ -402,12 +392,7 @@ mod tests {
 
     #[test]
     fn delegates_state_changing_commands() {
-        for args in [
-            &["install", "--version", "1.2.3"][..],
-            &["reinit"][..],
-            &["network", "rollback"][..],
-            &["network", "confirm"][..],
-        ] {
+        for args in [&["install", "--version", "1.2.3"][..], &["reinit"][..]] {
             assert!(delegates_for(args), "expected delegation for {args:?}");
         }
     }
@@ -432,6 +417,8 @@ mod tests {
             &["daemon"][..],
             &["migrate", "--from", "/etc/landscape"][..],
             &["network", "status"][..],
+            &["network", "rollback"][..],
+            &["network", "confirm"][..],
         ] {
             assert!(!delegates_for(args), "unexpected delegation for {args:?}");
         }

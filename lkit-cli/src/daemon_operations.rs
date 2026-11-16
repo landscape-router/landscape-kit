@@ -44,6 +44,8 @@ pub(crate) enum Kind {
     Switch,
     Restore,
     Uninstall,
+    NetworkConfirm,
+    NetworkRollback,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +122,8 @@ pub(crate) struct Record {
     #[serde(default)]
     pub uninstall: Option<UninstallRequest>,
     #[serde(default)]
+    pub network_transaction: Option<String>,
+    #[serde(default)]
     pub resolved_version: Option<String>,
     #[serde(default)]
     pub stage: Stage,
@@ -192,7 +196,7 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=5).contains(&record.schema_version) || record.id != id {
+    if !(1..=6).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
@@ -200,6 +204,30 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     }
     if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
+    }
+    if is_network(record.kind) {
+        if record.schema_version != 6
+            || record.assets.is_some()
+            || record.switch.is_some()
+            || record.restore.is_some()
+            || record.uninstall.is_some()
+            || record.resolved_version.is_some()
+        {
+            return Err(error("invalid network operation schema"));
+        }
+        validate_id(
+            record
+                .network_transaction
+                .as_deref()
+                .ok_or_else(|| error("missing network transaction"))?,
+        )?;
+        if record.transaction_id.is_some() && record.transaction_id != record.network_transaction {
+            return Err(error("network transaction identity mismatch"));
+        }
+        return Ok(record);
+    }
+    if record.network_transaction.is_some() {
+        return Err(error("unexpected network payload"));
     }
     if record.kind == Kind::Uninstall {
         if record.schema_version != 5
@@ -364,6 +392,7 @@ fn submit_operation(
         switch,
         restore: None,
         uninstall: None,
+        network_transaction: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -405,15 +434,20 @@ pub(crate) fn cancel(id: &str) -> Result<Record, InstallError> {
     Ok(record)
 }
 fn claim() -> Result<Option<Record>, InstallError> {
+    claim_kind(false)
+}
+fn claim_kind(network: bool) -> Result<Option<Record>, InstallError> {
     let _guard = queue_lock()?;
     let records = list()?;
-    if records
-        .iter()
-        .any(|r| matches!(r.status, Status::Running | Status::Recovering))
-    {
+    if records.iter().any(|r| {
+        matches!(r.status, Status::Running | Status::Recovering) && (!network || is_network(r.kind))
+    }) {
         return Ok(None);
     }
-    let Some(mut record) = records.into_iter().find(|r| r.status == Status::Queued) else {
+    let Some(mut record) = records
+        .into_iter()
+        .find(|r| r.status == Status::Queued && is_network(r.kind) == network)
+    else {
         return Ok(None);
     };
     record.status = Status::Running;
@@ -425,6 +459,14 @@ fn claim() -> Result<Option<Record>, InstallError> {
 fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bool {
     record.install_root == tx.canonical_install_root
         && match record.kind {
+            Kind::NetworkConfirm | Kind::NetworkRollback => {
+                record.network_transaction.as_deref() == Some(&tx.transaction_id)
+                    && tx.network_takeover.is_some()
+                    && matches!(
+                        tx.operation,
+                        transaction::Operation::Install | transaction::Operation::Reinit
+                    )
+            }
             Kind::Switch => {
                 tx.operation == transaction::Operation::Switch
                     && tx.schema_version == 8
@@ -582,6 +624,15 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
     let rolled_back = matches!(evidence, Ok(Some(Phase::RolledBack)));
     record.status = match evidence {
         Ok(_) if record.cancel_cleaned => Status::Cancelled,
+        Ok(Some(Phase::AwaitingNetworkConfirmation)) if is_network(record.kind) => {
+            if result.is_some() {
+                Status::Failed
+            } else {
+                Status::Interrupted
+            }
+        }
+        Ok(Some(Phase::Committed)) if record.kind == Kind::NetworkRollback => Status::Failed,
+        Ok(Some(Phase::RolledBack)) if record.kind == Kind::NetworkRollback => Status::Succeeded,
         Ok(Some(Phase::Committed)) => Status::Succeeded,
         Ok(Some(Phase::RolledBack | Phase::Failed)) => Status::Failed,
         Ok(Some(_)) => Status::Recovering,
@@ -639,6 +690,9 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
             reconcile(&mut record, None)?;
         }
     }
+    if let Some(record) = claim_kind(true)? {
+        return execute_record(record, |record| execute_network(runtime, record));
+    }
     if list()?
         .iter()
         .any(|r| matches!(r.status, Status::Running | Status::Recovering))
@@ -684,11 +738,17 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
     })
 }
 fn execute_next(
-    mut execute: impl FnMut(&mut Record) -> Result<(), InstallError>,
+    execute: impl FnMut(&mut Record) -> Result<(), InstallError>,
 ) -> Result<bool, InstallError> {
-    let Some(mut record) = claim()? else {
+    let Some(record) = claim()? else {
         return Ok(false);
     };
+    execute_record(record, execute)
+}
+fn execute_record(
+    mut record: Record,
+    mut execute: impl FnMut(&mut Record) -> Result<(), InstallError>,
+) -> Result<bool, InstallError> {
     let result = execute(&mut record).map_err(|e| {
         record.exit_code = record.exit_code.or(Some(match e {
             InstallError::ParameterUsage(_) | InstallError::UnsupportedPlatform(_) => 2,
@@ -700,7 +760,13 @@ fn execute_next(
     if result.is_ok()
         && matches!(
             record.kind,
-            Kind::Static | Kind::Binary | Kind::Switch | Kind::Restore | Kind::Uninstall
+            Kind::Static
+                | Kind::Binary
+                | Kind::Switch
+                | Kind::Restore
+                | Kind::Uninstall
+                | Kind::NetworkConfirm
+                | Kind::NetworkRollback
         )
     {
         crate::workflows::operation_control::checkpoint("before-result")?;
@@ -786,6 +852,7 @@ fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, Inst
         switch: None,
         restore: None,
         uninstall: Some(args),
+        network_transaction: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -839,6 +906,7 @@ fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallE
         switch: None,
         restore: Some(args),
         uninstall: None,
+        network_transaction: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -1015,3 +1083,93 @@ async fn wait_for_result(
 
 #[cfg(test)]
 mod tests;
+
+fn is_network(kind: Kind) -> bool {
+    matches!(kind, Kind::NetworkConfirm | Kind::NetworkRollback)
+}
+fn submit_network(
+    root: String,
+    kind: Kind,
+    transaction_id: String,
+) -> Result<Record, InstallError> {
+    if !is_network(kind) {
+        return Err(error("invalid network operation kind"));
+    }
+    validate_id(&transaction_id)?;
+    let _guard = queue_lock()?;
+    let record = Record {
+        schema_version: 6,
+        id: uuid::Uuid::now_v7().to_string(),
+        kind,
+        install_root: root,
+        status: Status::Queued,
+        transaction_id: None,
+        message: None,
+        assets: None,
+        switch: None,
+        restore: None,
+        uninstall: None,
+        network_transaction: Some(transaction_id),
+        resolved_version: None,
+        stage: Stage::Checking,
+        revision: 1,
+        cancel_requested: false,
+        cancel_cleaned: false,
+        cancellable: true,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        exit_code: None,
+    };
+    save(&record)?;
+    Ok(record)
+}
+pub(crate) async fn submit_network_and_wait(
+    root: String,
+    kind: Kind,
+    transaction_id: String,
+) -> Result<u8, InstallError> {
+    crate::daemon::require_capability("network-operations-v1.pid")?;
+    wait_for_result(
+        submit_network(root, kind, transaction_id)?,
+        "network-operations-v1.pid",
+        false,
+    )
+    .await
+}
+fn execute_network(runtime: &InstallRuntime, record: &mut Record) -> Result<(), InstallError> {
+    let root = crate::deployment::root::normalize_install_root(std::path::Path::new(
+        &record.install_root,
+    ))?;
+    let tx = transaction::find_unfinished(&root)?
+        .ok_or_else(|| InstallError::ParameterUsage("no pending network transaction".into()))?;
+    if !matches_transaction(record, &tx) {
+        return Err(InstallError::ParameterUsage(
+            "network transaction changed since submission".into(),
+        ));
+    }
+    // A rejected confirmation must not turn into a recovering operation that
+    // waits forever for another session to decide the takeover's outcome.
+    crate::network::takeover::validate_action(&tx, record.kind == Kind::NetworkConfirm)?;
+    associate(record, &tx)?;
+    set_stage(
+        &record.id,
+        if record.kind == Kind::NetworkConfirm {
+            Stage::Verifying
+        } else {
+            Stage::RollingBack
+        },
+    )?;
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(InstallError::Io)?;
+    let result = if record.kind == Kind::NetworkConfirm {
+        executor.block_on(crate::network::takeover::confirm(&root, runtime))
+    } else {
+        executor.block_on(crate::network::takeover::rollback(&root, runtime, false))
+    };
+    if result.is_err() {
+        record.exit_code = Some(6);
+    }
+    result
+}

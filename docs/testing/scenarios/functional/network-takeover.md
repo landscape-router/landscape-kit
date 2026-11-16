@@ -86,7 +86,7 @@
   都必须恢复宿主网络、删除未提交首次安装的整个 `data/`，并允许随后带新凭据重新执行
   `lkit install`。
 - 缺口：fixture 直接覆盖自动回滚入口和重装，QEMU 覆盖 boot rollback；真实确认期限到达和
-  手工 systemd operation worker 尚未分别触发。
+  真实主机启动恢复仍需按 QEMU 场景验证；原生手工回滚见 NET-13。
 
 ## NET-11
 
@@ -121,3 +121,15 @@
 - 说明：`networking.service` 是受支持的 Debian ifupdown 宿主服务，不属于本场景的未知
   管理器。已有 `br_lan` 不阻断安装：install 与 reinit 都不检查桥接是否存在，桥接的
   创建、成员同步与清理由 Landscape 按新配置处理。
+
+## NET-13
+
+**原生确认与手工回滚绑定事务，前端断开和 daemon 崩溃不丢失结果**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[操作队列测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[网络 fixture](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[网络命令](../../../commands/network.md)
+- 说明：验证网络操作可处理阻挡普通队列的事务、拒绝事务 ID 不匹配、只允许排队取消。
+  确认与回滚分别在接受动作后及事务终结但结果尚未写入时强杀 daemon，重启后检查
+  原操作 ID 的持久化成功结果；回滚恢复宿主服务并清理未提交的数据。
+- 缺口：原生操作链路的 OpenRC／SysVinit 故障注入矩阵尚未单独覆盖。

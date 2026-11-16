@@ -67,6 +67,7 @@ jobs:
             interaction::presentation::worker::tests \
             console::tests::backup \
             console::tests::ops \
+            commands::network::tests \
             commands::uninstall::tests \
             commands::restore::tests \
             workflows::restore::native::tests \

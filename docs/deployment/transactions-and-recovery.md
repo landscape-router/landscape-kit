@@ -291,7 +291,7 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 ### 委托命令清单
 
 委托与直接执行的边界是「命令是否会改变 init 系统或 Landscape 运行态」。
-以下清单列出保留 worker 协议的入口；repair、switch、update、restore 和 uninstall 的结构化操作协议单独定义：
+以下清单列出保留 worker 协议的入口；repair、switch、update、restore、uninstall 和 network confirm/rollback 的结构化操作协议单独定义：
 
 | 委托给 daemon 执行 | 直接执行 |
 |---|---|
@@ -302,11 +302,11 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 |  | `backup` |
 | `reinit` | `self` |
 |  | `daemon` |
-| `network confirm` | `network status` |
-| `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
+|  | `network status` |
+|  | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
 
-`restore`、`uninstall`、`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+`network confirm/rollback`、`restore`、`uninstall`、`switch`、update 确认后的切换与 `repair static/binary/service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
 由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
 `operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
@@ -323,11 +323,11 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 - 命令携带 `--test-runtime`（仅 test-support 构建存在；测试与容器脚本用它
   注入 fake systemd/运行时，绕过 daemon 依赖）。
 
-`lkit network confirm` 与手工 `lkit network rollback` 都委托给 daemon：两者都会
+`lkit network confirm` 与手工 `lkit network rollback` 提交绑定事务 ID 的持久化操作，由 daemon 直接执行：两者都会
 切换/恢复宿主网络（confirm 清除 WAN 继承地址、rollback 恢复被 stop/disable/mask
 的宿主网络服务），发起会话可能因此在执行中断开——委托后即使前端进程消失，
 daemon 也会独立完成提交或回滚，事务不会停在半提交状态。控制台结果页的「确认
-网络接管」与阻塞屏的「确认执行」走同一条委托路径。`lkit network rollback
+网络接管」与阻塞屏的「确认执行」走同一条结构化操作路径。`lkit network rollback
 --automatic`（旧恢复 unit 兼容入口）位于独立恢复路径，不委托。
 
 CLI 以 root-only 权限把请求写入 `/run/lkit/operations/<id>.request.json`

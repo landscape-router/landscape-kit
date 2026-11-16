@@ -533,3 +533,157 @@ fn uninstall_receipt_binds_keep_data_and_survives_installation_state_removal() {
     assert!(!layout::territory_state_path().exists());
     let _ = std::fs::remove_dir_all(temp);
 }
+
+fn network_tx(f: &Fixture) -> transaction::TransactionFile {
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let mut tx =
+        transaction::TransactionFile::new_install(&root, &semver::Version::new(1, 0, 0)).unwrap();
+    tx.network_takeover = Some(transaction::NetworkTakeoverTransaction {
+        boot_id: None,
+        plan: crate::network::config::NetworkPlan {
+            mode: crate::network::config::NetworkMode::WanDhcp { wan: "ens3".into() },
+            selected_macs: vec![crate::network::config::SelectedInterface {
+                name: "ens3".into(),
+                mac: "02:00:00:00:00:03".into(),
+            }],
+        },
+        host_services: vec![],
+        confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(5),
+        rollback_service: "lkit-network-test-rollback.service".into(),
+        rollback_timer: "lkit-network-test-rollback.timer".into(),
+        boot_rollback_service: "lkit-network-test-boot.service".into(),
+        recovery_binary: "service/lkit-network-recovery".into(),
+        pending_state: format!(
+            "transactions/{}/pending-install-state.json",
+            tx.transaction_id
+        ),
+    });
+    tx.phase = transaction::Phase::AwaitingNetworkConfirmation;
+    tx
+}
+
+#[test]
+fn network_queue_can_resolve_pending_business_operation_without_claiming_other_changes() {
+    let f = Fixture::new();
+    let ordinary = f.submit();
+    claim().unwrap().unwrap();
+    f.submit();
+    let tx = network_tx(&f);
+    let request = submit_network(
+        tx.canonical_install_root.clone(),
+        Kind::NetworkConfirm,
+        tx.transaction_id.clone(),
+    )
+    .unwrap();
+    assert!(claim().unwrap().is_none());
+    let network = claim_kind(true).unwrap().unwrap();
+    assert_eq!(network.id, request.id);
+    assert!(claim_kind(true).unwrap().is_none());
+    assert!(cancel(&network.id).is_err());
+    assert_eq!(read(&ordinary.id).unwrap().status, Status::Running);
+    assert!(claim().unwrap().is_none());
+}
+
+#[test]
+fn network_receipts_use_the_requested_outcome_and_never_replay_unaccepted_confirmation() {
+    for (kind, phase, expected) in [
+        (
+            Kind::NetworkConfirm,
+            transaction::Phase::Committed,
+            Status::Succeeded,
+        ),
+        (
+            Kind::NetworkRollback,
+            transaction::Phase::RolledBack,
+            Status::Succeeded,
+        ),
+        (
+            Kind::NetworkConfirm,
+            transaction::Phase::RolledBack,
+            Status::Failed,
+        ),
+        (
+            Kind::NetworkRollback,
+            transaction::Phase::Committed,
+            Status::Failed,
+        ),
+        (
+            Kind::NetworkConfirm,
+            transaction::Phase::AwaitingNetworkConfirmation,
+            Status::Interrupted,
+        ),
+        (
+            Kind::NetworkConfirm,
+            transaction::Phase::Finalizing,
+            Status::Recovering,
+        ),
+        (
+            Kind::NetworkRollback,
+            transaction::Phase::RollingBack,
+            Status::Recovering,
+        ),
+    ] {
+        let f = Fixture::new();
+        let mut tx = network_tx(&f);
+        submit_network(
+            tx.canonical_install_root.clone(),
+            kind,
+            tx.transaction_id.clone(),
+        )
+        .unwrap();
+        let mut record = claim_kind(true).unwrap().unwrap();
+        let mut wrong = tx.clone();
+        wrong.transaction_id = uuid::Uuid::now_v7().to_string();
+        assert!(associate(&mut record, &wrong).is_err());
+        associate(&mut record, &tx).unwrap();
+        tx.phase = phase;
+        f.write_tx(&tx);
+        reconcile(&mut record, None).unwrap();
+        assert_eq!(
+            record.status, expected,
+            "{kind:?} / {phase:?}: {:?}",
+            record.message
+        );
+        if expected == Status::Succeeded {
+            assert_eq!(record.exit_code, Some(0));
+        }
+        assert!(claim_kind(true).unwrap().is_none());
+    }
+}
+
+#[test]
+fn network_payload_validation_and_queued_cancel_do_not_change_transaction() {
+    let f = Fixture::new();
+    let tx = network_tx(&f);
+    f.write_tx(&tx);
+    let before = std::fs::read(
+        layout::territory_transactions_dir().join(format!("{}.json", tx.transaction_id)),
+    )
+    .unwrap();
+    assert!(
+        submit_network(
+            tx.canonical_install_root.clone(),
+            Kind::NetworkConfirm,
+            "../bad".into()
+        )
+        .is_err()
+    );
+    let mut record = submit_network(
+        tx.canonical_install_root.clone(),
+        Kind::NetworkRollback,
+        tx.transaction_id.clone(),
+    )
+    .unwrap();
+    assert_eq!(cancel(&record.id).unwrap().status, Status::Cancelled);
+    assert!(claim_kind(true).unwrap().is_none());
+    record.schema_version = 5;
+    save(&record).unwrap();
+    assert!(read(&record.id).is_err());
+    assert_eq!(
+        std::fs::read(
+            layout::territory_transactions_dir().join(format!("{}.json", tx.transaction_id))
+        )
+        .unwrap(),
+        before
+    );
+}
