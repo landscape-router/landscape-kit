@@ -225,6 +225,7 @@ fn reinit_esc_cancels_confirmation_layer() {
     app.reinit.confirming = true;
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(!app.reinit.confirming);
+    assert!(app.reinit.confirmation.is_none());
 }
 
 #[test]
@@ -272,4 +273,65 @@ fn reinit_plan_summary_lists_wan_and_lan_interfaces() {
     unsafe {
         std::env::remove_var("LKIT_TEST_REINIT_ELIGIBLE");
     }
+}
+
+#[test]
+fn reinit_reopening_cancelled_confirmation_refreshes_installation_identity() {
+    use crate::deployment::{layout, root, state};
+    let dir = std::env::temp_dir().join(format!("lkit-reinit-confirm-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let _territory = layout::test_territory(&dir.join("territory"));
+    let root = root::normalize_install_root(&dir.join("landscape")).unwrap();
+    let mut installed: state::InstallState = serde_json::from_value(serde_json::json!({
+        "schema_version":1, "layout_version":2,
+        "install_root":root.canonical, "canonical_install_root":root.canonical,
+        "active_version":"1.2.3",
+        "assets":{
+            "webserver":{"architecture":"x86_64", "sha256":"a".repeat(64), "size":1},
+            "static_archive":{"sha256":"b".repeat(64), "size":1}
+        },
+        "initialization":{"status":"complete", "lock_present":true, "initialized_at":chrono::Utc::now()},
+        "service":{"manager":"systemd", "registered":true, "enabled":true, "verified":true,
+            "definition_path":"service/landscape-router.service", "definition_sha256":"c".repeat(64)},
+        "last_transaction_id":null, "committed_at":chrono::Utc::now()
+    })).unwrap();
+    std::fs::create_dir_all(root.canonical.join("releases/1.2.3")).unwrap();
+    std::os::unix::fs::symlink("releases/1.2.3", root.canonical.join("current")).unwrap();
+    state::write_state(&root, &installed).unwrap();
+    let mut app = reinit_ready_app();
+    app.reinit.confirmation = None;
+    app.reinit.step = ReinitStep::Credentials;
+    app.reinit.selected = ReinitField::Start;
+    app.reinit.password = "Secret123".into();
+    app.reinit.password_confirmation = "Secret123".into();
+    app.reinit.plan = Some(NetworkPlan {
+        mode: NetworkMode::WanDhcp { wan: "ens3".into() },
+        selected_macs: vec![],
+    });
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    app.handle_reinit_key(enter);
+    assert!(app.reinit.confirming, "{:?}", app.notice);
+    let original = app.reinit.confirmation.clone().unwrap();
+    installed.active_version = "1.2.4".into();
+    std::fs::create_dir_all(root.canonical.join("releases/1.2.4")).unwrap();
+    std::fs::remove_file(root.canonical.join("current")).unwrap();
+    std::os::unix::fs::symlink("releases/1.2.4", root.canonical.join("current")).unwrap();
+    state::write_state(&root, &installed).unwrap();
+    // A confirmation already on screen must remain bound to its original state.
+    assert_eq!(
+        app.reinit.confirmation.as_ref().unwrap().state_identity,
+        original.state_identity
+    );
+    app.handle_reinit_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.reinit.confirmation.is_none());
+    app.handle_reinit_key(enter);
+    assert!(app.reinit.confirming, "{:?}", app.notice);
+    let refreshed = app.reinit.confirmation.as_ref().unwrap();
+    assert_eq!(refreshed.from_version, "1.2.4");
+    assert_ne!(refreshed.state_identity, original.state_identity);
+    assert_eq!(
+        refreshed.state_identity,
+        crate::daemon_operations::installation_identity(&installed).unwrap()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }

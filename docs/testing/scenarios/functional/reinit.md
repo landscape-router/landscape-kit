@@ -129,3 +129,12 @@
 - 状态：`已覆盖`
 - 证据：[观察页单元测试](../../../../lkit-cli/src/interaction/presentation/operation.rs)、[真实 TUI reinit](../../../../lkit-cli/tests/install_fixture_e2e/console.rs)（`console_reinit_refreshes_external_confirmation_and_automatic_rollback`）
 - 说明：TUI 完成网络向导、凭据输入和破坏性确认后，观察同一原生操作。确认层打开期间，由另一会话确认或由 daemon 到期回滚；页面更新最终状态、关闭失效确认层，退出返回最新回执码，操作与事务 ID 不变。单元另覆盖恢复中、恢复失败和最终失败的切换，以及普通 revision 更新保留有效确认层。
+
+## REI-13
+
+**取消确认后重新读取安装身份**
+
+- 测试层：隔离单元、PTY Fixture E2E（CI）
+- 状态：`已覆盖`
+- 证据：[控制台单元测试](../../../../lkit-cli/src/console/tests/reinit.rs)（`reinit_reopening_cancelled_confirmation_refreshes_installation_identity`）、[真实 TUI reinit](../../../../lkit-cli/tests/install_fixture_e2e/console.rs)
+- 说明：确认层打开时保持原安装身份；Esc 取消后丢弃上下文。安装状态发生变化后重新打开确认层，读取新身份并正常提交；原生 TUI 场景验证该流程能继续进入网络确认窗口。

@@ -153,7 +153,10 @@ impl ConsoleApp {
                     self.reinit.confirming = false;
                     return Some(Some(self.reinit_action()));
                 }
-                KeyCode::Esc => self.reinit.confirming = false,
+                KeyCode::Esc => {
+                    self.reinit.confirming = false;
+                    self.reinit.confirmation = None;
+                }
                 _ => {}
             }
             return Some(None);

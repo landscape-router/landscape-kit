@@ -549,6 +549,20 @@ fn console_reinit_refreshes_external_confirmation_and_automatic_rollback() {
         terminal
             .wait_until(|s| s.contains("Confirm reinit"))
             .unwrap();
+        // Cancel, change the committed state from another session, and reopen.
+        // Reusing the cancelled confirmation's identity would reject submission.
+        terminal.send(Key::Esc).unwrap();
+        terminal
+            .wait_until(|s| !s.contains("Confirm reinit"))
+            .unwrap();
+        let mut installed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(h.state_path()).unwrap()).unwrap();
+        installed["committed_at"] = "2020-01-01T00:00:00Z".into();
+        write_json(&h.state_path(), &installed);
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|s| s.contains("Confirm reinit"))
+            .unwrap();
         terminal.send(Key::Enter).unwrap();
         terminal
             .wait_until(|s| s.contains("Network takeover awaiting confirmation"))
