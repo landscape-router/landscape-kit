@@ -402,7 +402,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
     }
 }
 
-async fn build_staged(
+pub(crate) async fn build_staged(
     root: &InstallRoot,
     tx: &super::transaction::TransactionFile,
     release: &Release,

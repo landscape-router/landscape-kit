@@ -68,6 +68,9 @@ jobs:
             interaction::presentation::worker::tests \
             console::tests::backup \
             console::tests::ops \
+            commands::install::tests \
+            workflows::install::native::tests \
+            interaction::presentation::screens::install::tests \
             commands::reinit::tests \
             commands::reinit::native::tests \
             console::tests::reinit \

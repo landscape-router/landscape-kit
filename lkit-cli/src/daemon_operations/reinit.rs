@@ -45,7 +45,7 @@ pub(super) fn input_path(id: &str) -> Result<PathBuf, InstallError> {
     Ok(directory().join(format!("{id}.password")))
 }
 pub(super) fn remove_input(record: &Record) -> Result<(), InstallError> {
-    if record.kind != Kind::Reinit {
+    if !matches!(record.kind, Kind::Reinit | Kind::Install) {
         return Ok(());
     }
     match std::fs::remove_file(input_path(&record.id)?) {
@@ -88,6 +88,7 @@ pub(super) fn submit(
         uninstall: None,
         network_transaction: None,
         reinit: Some(args),
+        install: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,

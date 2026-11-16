@@ -1,4 +1,6 @@
 //! Durable, typed operations executed by the daemon without an lkit child.
+mod install;
+pub(crate) use install::{InstallRequest, submit_install_and_wait};
 pub(crate) mod reinit;
 use crate::deployment::{
     layout, lock, plan::InstallError, runtime::InstallRuntime, state, transaction,
@@ -50,6 +52,7 @@ pub(crate) enum Kind {
     NetworkConfirm,
     NetworkRollback,
     Reinit,
+    Install,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,18 +120,20 @@ pub(crate) struct Record {
     pub status: Status,
     pub transaction_id: Option<String>,
     pub message: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets: Option<AssetRequest>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch: Option<SwitchRequest>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore: Option<RestoreRequest>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uninstall: Option<UninstallRequest>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_transaction: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reinit: Option<ReinitRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<InstallRequest>,
     #[serde(default)]
     pub resolved_version: Option<String>,
     #[serde(default)]
@@ -202,7 +207,7 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=7).contains(&record.schema_version) || record.id != id {
+    if !(1..=8).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
@@ -210,6 +215,13 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     }
     if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
+    }
+    if record.kind == Kind::Install {
+        install::validate_record(&record)?;
+        return Ok(record);
+    }
+    if record.install.is_some() {
+        return Err(error("unexpected install payload"));
     }
     if record.kind == Kind::Reinit {
         reinit::validate_record(&record)?;
@@ -407,6 +419,7 @@ fn submit_operation(
         uninstall: None,
         network_transaction: None,
         reinit: None,
+        install: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -477,6 +490,11 @@ fn claim_kind(network: bool) -> Result<Option<Record>, InstallError> {
 fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bool {
     record.install_root == tx.canonical_install_root
         && match record.kind {
+            Kind::Install => {
+                tx.operation == transaction::Operation::Install
+                    && tx.schema_version == 12
+                    && tx.target_version == record.resolved_version
+            }
             Kind::Reinit => {
                 tx.operation == transaction::Operation::Reinit
                     && tx.schema_version == 11
@@ -617,7 +635,7 @@ fn cleanup_cancel(
     let root = crate::deployment::root::normalize_install_root(std::path::Path::new(
         &record.install_root,
     ))?;
-    if record.kind == Kind::Switch {
+    if matches!(record.kind, Kind::Switch | Kind::Install) {
         crate::workflows::switch::cleanup_preparing(&root, tx)?;
     } else {
         crate::workflows::repair::cleanup_preparing(&root, tx)?;
@@ -651,7 +669,9 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
     let rolled_back = matches!(evidence, Ok(Some(Phase::RolledBack)));
     record.status = match evidence {
         Ok(_) if record.cancel_cleaned => Status::Cancelled,
-        Ok(Some(Phase::AwaitingNetworkConfirmation)) if record.kind == Kind::Reinit => {
+        Ok(Some(Phase::AwaitingNetworkConfirmation))
+            if matches!(record.kind, Kind::Reinit | Kind::Install) =>
+        {
             Status::AwaitingConfirmation
         }
         Ok(Some(Phase::AwaitingNetworkConfirmation)) if is_network(record.kind) => {
@@ -738,16 +758,23 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
     }) {
         return Ok(true);
     }
-    let Some(root) = state::discover_landscape_root()? else {
-        // Claim and fail missing installations instead of leaving requests queued forever.
-        return execute_next(|_| Err(error("no Landscape installation")));
+    let root = match state::discover_landscape_root()? {
+        Some(root) => Some(root),
+        None => state::discover_landscape_root_from_unfinished_transaction()?,
     };
-    if transaction::find_unfinished(&root)?.is_some() {
+    if let Some(root) = &root
+        && transaction::find_unfinished(root)?.is_some()
+    {
         return Ok(false);
     }
     execute_next(|record| {
-        if record.install_root != root.canonical.to_string_lossy() {
-            return Err(error("installation changed since submission"));
+        if record.kind != Kind::Install {
+            let root = root
+                .as_ref()
+                .ok_or_else(|| error("no Landscape installation"))?;
+            if record.install_root != root.canonical.to_string_lossy() {
+                return Err(error("installation changed since submission"));
+            }
         }
         if record.kind == Kind::Service {
             return crate::workflows::repair_service::run_locked(runtime, &mut |tx| {
@@ -759,7 +786,9 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
             .enable_all()
             .build()
             .map_err(InstallError::Io)?;
-        let code = if record.kind == Kind::Reinit {
+        let code = if record.kind == Kind::Install {
+            executor.block_on(crate::workflows::install::run_operation(runtime, record))?
+        } else if record.kind == Kind::Reinit {
             executor.block_on(crate::workflows::reinit::run_operation(runtime, record))?
         } else if record.kind == Kind::Uninstall {
             executor.block_on(crate::workflows::uninstall::run_operation(runtime, record))?
@@ -808,6 +837,7 @@ fn execute_record(
                 | Kind::Uninstall
                 | Kind::NetworkConfirm
                 | Kind::NetworkRollback
+                | Kind::Install
         )
     {
         crate::workflows::operation_control::checkpoint("before-result")?;
@@ -895,6 +925,7 @@ fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, Inst
         uninstall: Some(args),
         network_transaction: None,
         reinit: None,
+        install: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -950,6 +981,7 @@ fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallE
         uninstall: None,
         network_transaction: None,
         reinit: None,
+        install: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -1000,7 +1032,7 @@ pub(crate) fn resolve_switch_version(id: &str, version: &str) -> Result<(), Inst
         .map_err(|e| InstallError::ParameterUsage(e.to_string()))?;
     let _guard = queue_lock()?;
     let mut record = read(id)?;
-    if record.kind != Kind::Switch
+    if !matches!(record.kind, Kind::Switch | Kind::Install)
         || record.status != Status::Running
         || record.resolved_version.is_some()
     {
@@ -1022,7 +1054,9 @@ async fn wait_for_result(
         "lkit: operation {} (query with `lkit operation status {}`)",
         record.id, record.id
     );
-    let command = if record.kind == Kind::Reinit {
+    let command = if record.kind == Kind::Install {
+        "install"
+    } else if record.kind == Kind::Reinit {
         "reinit"
     } else if record.kind == Kind::Restore {
         "restore"
@@ -1171,6 +1205,7 @@ fn submit_network(
         uninstall: None,
         network_transaction: Some(transaction_id),
         reinit: None,
+        install: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,

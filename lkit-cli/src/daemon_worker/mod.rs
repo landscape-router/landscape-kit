@@ -63,7 +63,7 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         // migrate 不整体委托:前台先执行前置检查,再内部委托切换阶段。
         Commands::Migrate(_) => false,
         Commands::Network(_) => false,
-        Commands::Install(_) => true,
+        Commands::Install(_) => false,
         Commands::Reinit(_) => false,
     }
 }
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn delegates_state_changing_commands() {
-        assert!(delegates_for(&["install", "--version", "1.2.3"]));
+        assert!(!delegates_for(&["install", "--version", "1.2.3"]));
     }
 
     #[test]

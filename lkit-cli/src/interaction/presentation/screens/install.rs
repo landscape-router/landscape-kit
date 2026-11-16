@@ -49,6 +49,9 @@ impl OperationScreen for InstallScreen {
         ])
         .areas(frame.area());
         let header_text = match result {
+            Some(OperationResult::Success) if takeover_pending => {
+                crate::tr!(crate::keys::CONSOLE_TAKEOVER_PENDING_WINDOW)
+            }
             Some(OperationResult::Success) => {
                 crate::tr!(crate::keys::PRESENTATION_INSTALLATION_COMPLETE)
             }
@@ -108,6 +111,9 @@ impl OperationScreen for InstallScreen {
             );
         } else {
             let status = match result {
+                Some(OperationResult::Success) if takeover_pending => {
+                    crate::tr!(crate::keys::MANAGE_TAKEOVER_AWAITING_CONFIRMATION)
+                }
                 Some(OperationResult::Success) => {
                     crate::tr!(crate::keys::PRESENTATION_INSTALLATION_FINISHED_SUCCESSFULLY)
                 }
@@ -161,10 +167,8 @@ impl OperationScreen for InstallScreen {
             }
         } else if confirming_stop {
             crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
-        } else if phase == OperationPhase::Downloading {
-            crate::tr!(crate::keys::PRESENTATION_CTRL_C_STOP_ESC_OPTIONS)
         } else {
-            crate::tr!(crate::keys::PRESENTATION_INSTALLATION_IN_PROGRESS_STOP_IGNORED)
+            crate::tr!(crate::keys::PRESENTATION_OBSERVE_OPERATION_HINT)
         };
         render_footer(frame, footer, notice, &hint);
         if confirming_stop {
@@ -284,7 +288,7 @@ mod tests {
         let content = render(OperationPhase::Downloading, None, Some(&state), &[], None);
         assert!(content.contains("Installing Landscape"));
         assert!(content.contains("Landscape webserver"));
-        assert!(content.contains("Ctrl+C Stop"));
+        assert!(content.contains("stop watching"));
         assert!(!content.contains("Navigation"));
     }
 
@@ -347,6 +351,8 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect();
+        assert!(content.contains("Network takeover awaiting confirmation"));
+        assert!(!content.contains("Installation complete"));
         assert!(content.contains("Enter Confirm takeover"));
         assert!(content.contains("Ctrl+C Close"));
     }

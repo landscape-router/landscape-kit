@@ -15,6 +15,9 @@ pub(crate) async fn recover_interrupted<P: DocsProbe>(
 ) -> Result<(), InstallError> {
     match transaction.operation {
         Operation::Install => {
+            if transaction.schema_version == 12 {
+                return crate::workflows::install::native::recover(root, transaction, systemd);
+            }
             if transaction.network_takeover.is_some()
                 && matches!(
                     transaction.phase,

@@ -355,12 +355,13 @@ impl InstallForm {
             admin_user: Some(self.admin_user.clone()),
             password_file: None,
             interactive_password: Some(password),
+            from_console: true,
             force: false,
             takeover_network: self.takeover_network,
             network_plan,
             network_plan_file: None,
             #[cfg(feature = "test-support")]
-            test_runtime: None,
+            test_runtime: super::test_runtime_path(),
         };
         let mut args = vec!["install".into(), "--version".into(), version.into()];
         match &repository {

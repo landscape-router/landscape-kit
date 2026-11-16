@@ -92,6 +92,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&operations_capability)?;
     let operations_v2 = layout::territory_run_dir().join("operations-v2.pid");
     write_pidfile(&operations_v2)?;
+    let install_capability = layout::territory_run_dir().join("install-v1.pid");
+    write_pidfile(&install_capability)?;
     let reinit_capability = layout::territory_run_dir().join("reinit-v1.pid");
     write_pidfile(&reinit_capability)?;
     let network_operations = layout::territory_run_dir().join("network-operations-v1.pid");
@@ -166,6 +168,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
         let _ = task.await;
     }
     drop(flare);
+    let _ = std::fs::remove_file(&install_capability);
     let _ = std::fs::remove_file(&reinit_capability);
     let _ = std::fs::remove_file(&network_operations);
     let _ = std::fs::remove_file(&uninstall_capability);

@@ -1,3 +1,5 @@
+#[path = "install_native.rs"]
+mod native;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -28,6 +30,8 @@ pub struct Install {
     /// Password captured by the interactive console. Never populated by CLI parsing.
     #[arg(skip)]
     pub(crate) interactive_password: Option<String>,
+    #[arg(skip)]
+    pub(crate) from_console: bool,
     /// Prompt the user to manually clean the existing directory before a clean install
     #[arg(long)]
     pub force: bool,
@@ -65,6 +69,17 @@ impl std::fmt::Debug for Install {
 }
 
 pub async fn run(args: &Install) -> ExitCode {
+    let native = true;
+    #[cfg(feature = "test-support")]
+    let native = args.test_runtime.as_deref().map_or(native, |p| {
+        crate::deployment::runtime::InstallRuntime::test_uses_daemon(p).unwrap_or(false)
+    });
+    if native && !args.force {
+        return native::run(args).await;
+    }
+    run_inline(args).await
+}
+async fn run_inline(args: &Install) -> ExitCode {
     let network_plan = match (&args.network_plan, &args.network_plan_file) {
         (Some(plan), None) => Some(plan.clone()),
         (None, Some(path)) => match crate::daemon_worker::read_network_plan(path) {
@@ -80,27 +95,31 @@ pub async fn run(args: &Install) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    super::manage::run_request(&InstallRequest {
-        mode: RequestMode::Install,
-        version: args.version.clone(),
-        repository: super::manage::repository_override(&args.repository),
-        install_dir: args.install_dir.clone(),
-        admin_user: args.admin_user.clone(),
-        password_file: args.password_file.clone(),
-        interactive_password: args.interactive_password.clone(),
-        repair_static: false,
-        repair_official: false,
-        repair_binary: false,
-        allow_no_backup: false,
-        accept_service_change: false,
-        force: args.force,
-        takeover_network: args.takeover_network,
-        network_plan,
-        console_confirmed: false,
-        #[cfg(feature = "test-support")]
-        test_runtime: args.test_runtime.clone(),
-    })
-    .await
+    super::manage::run_request(&args.request(network_plan)).await
+}
+impl Install {
+    fn request(&self, network_plan: Option<NetworkPlan>) -> InstallRequest {
+        InstallRequest {
+            mode: RequestMode::Install,
+            version: self.version.clone(),
+            repository: super::manage::repository_override(&self.repository),
+            install_dir: self.install_dir.clone(),
+            admin_user: self.admin_user.clone(),
+            password_file: self.password_file.clone(),
+            interactive_password: self.interactive_password.clone(),
+            repair_static: false,
+            repair_official: false,
+            repair_binary: false,
+            allow_no_backup: false,
+            accept_service_change: false,
+            force: self.force,
+            takeover_network: self.takeover_network,
+            network_plan,
+            console_confirmed: false,
+            #[cfg(feature = "test-support")]
+            test_runtime: self.test_runtime.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +143,7 @@ mod tests {
             admin_user: None,
             password_file: None,
             interactive_password: None,
+            from_console: false,
             force: false,
             takeover_network: false,
             network_plan: None,

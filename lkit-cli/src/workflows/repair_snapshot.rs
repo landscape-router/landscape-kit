@@ -133,7 +133,7 @@ pub(crate) fn restore(root: &InstallRoot, tx: &TransactionFile) -> Result<(), In
     transaction::mark_phase(root, tx, Phase::RolledBack)
 }
 
-fn tree_digest(root: &Path) -> Result<String, InstallError> {
+pub(crate) fn tree_digest(root: &Path) -> Result<String, InstallError> {
     fn visit(
         path: &Path,
         root: &Path,

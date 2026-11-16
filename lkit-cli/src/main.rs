@@ -121,7 +121,7 @@ async fn run_command(
     let interrupt_result = if from_console
         && matches!(
             &command,
-            Commands::Update(_) | Commands::Restore(_) | Commands::Reinit(_)
+            Commands::Update(_) | Commands::Restore(_) | Commands::Reinit(_) | Commands::Install(_)
         ) {
         interaction::presentation::InterruptGuard::install_console()
     } else {
@@ -184,7 +184,14 @@ async fn run_command(
 
     match command {
         Commands::Check(args) => commands::check::run(&args),
-        Commands::Install(args) => commands::install::run(&args).await,
+        Commands::Install(args) => {
+            if internal_worker {
+                eprintln!("install requires the native daemon protocol");
+                ExitCode::from(2)
+            } else {
+                commands::install::run(&args).await
+            }
+        }
         Commands::Migrate(args) => commands::migrate::run(&args, &interrupt, from_console).await,
         Commands::Network(args) => {
             if internal_worker {

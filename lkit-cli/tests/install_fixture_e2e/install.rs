@@ -546,3 +546,231 @@ fn reconcile_accepts_a_modified_service_unit() {
     let active = systemctl(&harness.world, &["is-active", "landscape-router.service"]);
     assert_eq!(String::from_utf8_lossy(&active.stdout).trim(), "active");
 }
+
+#[test]
+fn native_install_recovers_without_existing_state_and_keeps_the_original_operation() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for point in [
+        "install-activated",
+        "install-state-written",
+        "before-result",
+        "install-awaiting",
+    ] {
+        let h = InstallHarness::new("install-native-crash", "healthy", 10_000);
+        let takeover = point == "install-awaiting";
+        if takeover {
+            h.seed_host_services();
+        } else {
+            std::fs::create_dir_all(h.install_root.join("data")).unwrap();
+            std::fs::write(h.install_root.join("data/original-marker"), b"original").unwrap();
+        }
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&h.runtime_config).unwrap()).unwrap();
+        config["network_confirm_timeout_ms"] = 180_000.into();
+        write_json(&h.runtime_config, &config);
+        let runtime = h.daemon_runtime();
+        let gate = h.run_dir().join(format!("test-repair-{point}.gate"));
+        std::fs::create_dir_all(h.run_dir()).unwrap();
+        std::fs::write(&gate, b"pause").unwrap();
+        let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, point);
+        let mut pty = Pty::open();
+        pty.master.write_all(b"1\n1\n\n\n\n").unwrap();
+        let mut cmd = h.command();
+        cmd.env("LKIT_INTERNAL_DAEMON_TTY", &pty.slave_path)
+            .args([
+                "install",
+                "--version",
+                VERSION,
+                "--repository",
+                &h.repository.base_url,
+                "--install-dir",
+            ])
+            .arg(&h.install_root)
+            .args(["--admin-user", "admin", "--password-file"])
+            .arg(&h.password)
+            .arg("--test-runtime")
+            .arg(&runtime);
+        if takeover {
+            cmd.arg("--takeover-network");
+        } else {
+            cmd.arg("--non-interactive");
+        }
+        struct Observer(std::process::Child);
+        impl Drop for Observer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let observer = Observer(cmd.spawn().unwrap());
+        let wait = |condition: &mut dyn FnMut() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(50);
+            while !condition() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "install timed out at {point}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        wait(&mut || {
+            h.run_dir()
+                .join(format!("test-repair-{point}.reached"))
+                .exists()
+        });
+        let record = || -> serde_json::Value {
+            std::fs::read_dir(h.run_dir().join("operations"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .map(|e| {
+                    serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).unwrap())
+                        .unwrap()
+                })
+                .find(|r| r["kind"] == "install")
+                .unwrap()
+        };
+        let before = record();
+        assert!(!before.to_string().contains("Secret123"));
+        assert!(
+            !h.run_dir()
+                .join("operations")
+                .join(format!("{}.password", before["id"].as_str().unwrap()))
+                .exists()
+        );
+        assert!(
+            !h.command()
+                .args(["operation", "cancel", before["id"].as_str().unwrap()])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(observer);
+        daemon.crash();
+        std::fs::remove_file(gate).unwrap();
+        let _daemon = h.spawn_daemon(&runtime);
+        if takeover {
+            wait(&mut || record()["status"] == "awaiting_confirmation");
+            assert_success(
+                &h.command()
+                    .args(["network", "rollback", "--test-runtime"])
+                    .arg(&runtime)
+                    .output()
+                    .unwrap(),
+            );
+        }
+        let success = point == "install-state-written" || point == "before-result";
+        wait(&mut || record()["status"] == if success { "succeeded" } else { "failed" });
+        assert_eq!(h.state_path().exists(), success);
+        assert_eq!(record()["id"], before["id"]);
+        assert_eq!(record()["transaction_id"], before["transaction_id"]);
+        if point == "install-activated" {
+            assert_eq!(
+                std::fs::read(h.install_root.join("data/original-marker")).unwrap(),
+                b"original"
+            );
+            assert!(!h.install_root.join("current").exists());
+        }
+        if takeover {
+            assert!(!h.install_root.join("data").exists());
+        }
+        let tx = read_only_transaction(&h.territory);
+        assert_eq!(tx["schema_version"], 12);
+        assert_eq!(
+            tx["phase"],
+            if success { "committed" } else { "rolled_back" }
+        );
+    }
+}
+
+#[test]
+fn native_install_download_can_be_cancelled_or_observed_after_cli_disconnect() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for cancel in [true, false] {
+        let h = InstallHarness::new("install-native-download", "healthy", 10_000);
+        let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let repository = RepositoryServer::start_gated(
+            repository_files_for(VERSION),
+            Some((".zst".into(), gate.clone())),
+        );
+        let runtime = h.daemon_runtime();
+        let _daemon = h.spawn_daemon(&runtime);
+        struct Observer(std::process::Child);
+        impl Drop for Observer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let observer = Observer(
+            h.command()
+                .args([
+                    "install",
+                    "--non-interactive",
+                    "--version",
+                    VERSION,
+                    "--repository",
+                    &repository.base_url,
+                    "--install-dir",
+                ])
+                .arg(&h.install_root)
+                .args(["--password-file"])
+                .arg(&h.password)
+                .arg("--test-runtime")
+                .arg(&runtime)
+                .spawn()
+                .unwrap(),
+        );
+        let record = || -> Option<serde_json::Value> {
+            std::fs::read_dir(h.run_dir().join("operations"))
+                .ok()?
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .find_map(|e| serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok())
+        };
+        let wait = |condition: &mut dyn FnMut() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+            while !condition() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "install download timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        wait(&mut || {
+            record().is_some_and(|r| r["stage"] == "downloading")
+                && repository
+                    .request_paths()
+                    .iter()
+                    .any(|p| p.ends_with(".zst"))
+        });
+        let before = record().unwrap();
+        drop(observer);
+        if cancel {
+            assert_success(
+                &h.command()
+                    .args(["operation", "cancel", before["id"].as_str().unwrap()])
+                    .output()
+                    .unwrap(),
+            );
+        }
+        gate.store(true, std::sync::atomic::Ordering::SeqCst);
+        wait(&mut || {
+            record().is_some_and(|r| r["status"] == if cancel { "cancelled" } else { "succeeded" })
+        });
+        assert_eq!(h.state_path().exists(), !cancel);
+        assert_eq!(record().unwrap()["id"], before["id"]);
+        if cancel {
+            assert_eq!(record().unwrap()["cancel_cleaned"], true);
+            assert!(!h.install_root.join("current").exists());
+        }
+    }
+}

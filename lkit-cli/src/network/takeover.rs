@@ -442,6 +442,13 @@ pub(crate) async fn rollback(
     crate::workflows::operation_control::checkpoint("network-rolling-back")?;
     let result: Result<(), InstallError> = async {
         match pending.operation {
+            transaction::Operation::Install if pending.schema_version == 12 => {
+                crate::workflows::install::native::recover(
+                    root,
+                    &pending,
+                    runtime.service_manager.as_ref(),
+                )?;
+            }
             transaction::Operation::Install => {
                 transaction::restore_uncommitted_network_systemd(
                     root,
@@ -470,7 +477,7 @@ pub(crate) async fn rollback(
                 )));
             }
         }
-        if pending.operation == transaction::Operation::Install {
+        if pending.operation == transaction::Operation::Install && pending.schema_version != 12 {
             transaction::cleanup_uncommitted_network_install(root, &pending)?;
         }
         Ok(())

@@ -177,3 +177,15 @@
 - 状态：`部分覆盖`
 - 证据：`service::process::is_managed` / `is_managed_relaxed` 单元测试；`check::ports` 受管/摘要漂移/外部分支单元测试（见 [ENV-04](security-and-environment.md#env-04)）。
 - 缺口：完整「安装或切换时旧受管实例仍在监听端口」的 CLI 端到端现场（含摘要漂移组合）尚无直接断言；`service::preflight::managed_occupancy_ok` 无独立单元测试，由 fixture E2E 与低频验收承担。
+
+## INS-20
+
+**原生首次安装无需已有状态，崩溃恢复与下载取消保留正确结果**
+
+- 测试层：Rust 单元、CLI fixture E2E
+- 状态：`已覆盖`
+- 证据：[操作队列](../../../../lkit-cli/src/daemon_operations/tests.rs)、[安装快照](../../../../lkit-cli/src/workflows/install/native.rs)、[首次安装 fixture](../../../../lkit-cli/tests/install_fixture_e2e/install.rs)
+- 说明：验证安装根安全、目录权限及缓存快照、损坏快照拒绝恢复、下载取消仅清理暂存、
+  密码文件清理、前端断开后继续执行。CI 在激活、安装状态写入、提交结果写入前及
+  网络确认窗口中强杀 daemon，检查原操作 ID、回滚前数据和最终事务结果。
+- 缺口：原生首次安装的真实 TUI 端到端和 OpenRC／SysVinit 故障注入尚未单独覆盖。

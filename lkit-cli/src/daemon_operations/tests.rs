@@ -803,3 +803,70 @@ fn reinit_waits_for_network_confirmation_and_updates_the_original_receipt_after_
         assert!(record.status.terminal());
     }
 }
+
+fn first_install_request() -> InstallRequest {
+    InstallRequest {
+        target: "latest".into(),
+        repository: crate::deployment::plan::RepositoryChoice::Http(
+            "https://example.invalid/".into(),
+        ),
+        admin_user: "admin".into(),
+        network: None,
+    }
+}
+#[test]
+fn install_download_cancellation_removes_only_staging_and_private_inputs() {
+    let f = Fixture::new();
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let cache = root.canonical.join("releases/1.0.0/static.zip");
+    std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    std::fs::write(&cache, b"cached").unwrap();
+    let request = install::submit(
+        root.canonical.to_string_lossy().into_owned(),
+        first_install_request(),
+        "Secret123",
+    )
+    .unwrap();
+    let mut record = claim().unwrap().unwrap();
+    resolve_switch_version(&record.id, "1.0.0").unwrap();
+    let mut tx =
+        transaction::TransactionFile::new_install(&root, &semver::Version::new(1, 0, 0)).unwrap();
+    tx.schema_version = 12;
+    associate(&mut record, &tx).unwrap();
+    transaction::begin(&root, &tx).unwrap();
+    let staged = layout::territory_transactions_dir()
+        .join(&tx.transaction_id)
+        .join("target/releases");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("partial"), b"download").unwrap();
+    set_stage(&record.id, Stage::Downloading).unwrap();
+    cancel(&record.id).unwrap();
+    reconcile(&mut record, Some(Err("cancelled".into()))).unwrap();
+    assert_eq!(record.status, Status::Cancelled, "{:?}", record.message);
+    assert!(!staged.exists());
+    assert_eq!(std::fs::read(cache).unwrap(), b"cached");
+    assert!(!reinit::input_path(&request.id).unwrap().exists());
+}
+#[test]
+fn install_committed_receipt_does_not_replay_and_resolved_version_is_immutable() {
+    let f = Fixture::new();
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    install::submit(
+        root.canonical.to_string_lossy().into_owned(),
+        first_install_request(),
+        "Secret123",
+    )
+    .unwrap();
+    let mut record = claim().unwrap().unwrap();
+    resolve_switch_version(&record.id, "1.0.0").unwrap();
+    assert!(resolve_switch_version(&record.id, "2.0.0").is_err());
+    let mut tx =
+        transaction::TransactionFile::new_install(&root, &semver::Version::new(1, 0, 0)).unwrap();
+    tx.schema_version = 12;
+    associate(&mut record, &tx).unwrap();
+    tx.phase = transaction::Phase::Committed;
+    f.write_tx(&tx);
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.status, Status::Succeeded);
+    assert!(!execute_next(|_| panic!("must not replay")).unwrap());
+}

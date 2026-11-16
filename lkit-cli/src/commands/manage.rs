@@ -578,7 +578,7 @@ async fn run_first_install(
     }
 }
 
-fn resolve_credentials(
+pub(crate) fn resolve_credentials(
     args: &InstallRequest,
     managed_uid: u32,
 ) -> Result<Credentials, plan::InstallError> {
@@ -725,7 +725,7 @@ async fn execute(
 /// 已安装环境:受管进程放行,无法确认的占用者阻断;
 /// 首次安装:任何固定端口占用者都阻断。
 /// `allow_sha_drift` 用于 `--repair-binary`,允许执行文件摘要漂移的受管进程。
-fn check_host_conflicts(
+pub(crate) fn check_host_conflicts(
     presence: plan::StatePresence,
     canonical: &std::path::Path,
     loaded: &Option<state::InstallState>,

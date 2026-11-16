@@ -6,7 +6,7 @@ pub mod frontend;
 pub mod install;
 #[path = "self.rs"]
 pub mod lkit_self;
-mod manage;
+pub(crate) mod manage;
 pub mod migrate;
 pub mod network;
 pub mod operation;

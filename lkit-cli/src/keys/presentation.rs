@@ -20,8 +20,6 @@ pub(crate) const PRESENTATION_CTRL_C_CLOSE: &str = "presentation.ctrl_c_close";
 pub(crate) const PRESENTATION_ENTER_STOP_ESC_CANCEL: &str = "presentation.enter_stop_esc_cancel";
 pub(crate) const PRESENTATION_CTRL_C_STOP_ESC_OPTIONS: &str =
     "presentation.ctrl_c_stop_esc_options";
-pub(crate) const PRESENTATION_INSTALLATION_IN_PROGRESS_STOP_IGNORED: &str =
-    "presentation.installation_in_progress_stop_ignored";
 pub(crate) const PRESENTATION_STOP_DOWNLOAD_CONFIRM: &str = "presentation.stop_download_confirm";
 pub(crate) const PRESENTATION_CONFIRM_STOP: &str = "presentation.confirm_stop";
 pub(crate) const PRESENTATION_INSTALLATION_IS_APPLYING: &str =

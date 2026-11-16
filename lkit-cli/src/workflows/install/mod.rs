@@ -1,6 +1,8 @@
+pub(crate) mod native;
 #[cfg(test)]
 use super::state::StateServiceManager;
 use chrono::Utc;
+pub(crate) use native::run_operation;
 
 use super::artifacts::build_release;
 #[cfg(test)]

@@ -16,6 +16,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             transaction.schema_version
         )));
     }
+    if transaction.schema_version == 12 && transaction.operation != Operation::Install {
+        return Err(corrupted("schema v12 requires install".into()));
+    }
     if transaction.schema_version == 11 && transaction.operation != Operation::Reinit {
         return Err(corrupted("schema v11 requires reinit".into()));
     }
@@ -525,7 +528,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 12;
+        transaction.schema_version = 13;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);
