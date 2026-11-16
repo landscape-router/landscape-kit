@@ -109,10 +109,14 @@ pub(crate) async fn repair_static(
         }
         let replaced = tx_dir.join("static-replaced");
         std::fs::rename(&live_static, &replaced).map_err(InstallError::Io)?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("static-removed")?;
         std::fs::rename(&new_static, &live_static).map_err(|error| {
             let _ = std::fs::rename(&replaced, &live_static);
             InstallError::Io(error)
         })?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("static-installed")?;
         let mut updated = state.clone();
         if official_restored {
             updated.assets.static_archive = ArchiveAsset {
@@ -123,6 +127,8 @@ pub(crate) async fn repair_static(
         updated.last_transaction_id = Some(transaction.transaction_id.clone());
         updated.committed_at = Some(Utc::now());
         super::state::write_state(root, &updated)?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("static-state-written")?;
         super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
         if official_restored && custom_source.is_some() {
             eprintln!(

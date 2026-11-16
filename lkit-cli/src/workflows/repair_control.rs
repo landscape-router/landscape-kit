@@ -75,3 +75,26 @@ pub(crate) async fn download<T>(
         }
     }
 }
+
+/// Deterministic crash windows for CI fixtures only. Both markers live in the
+/// fixture territory; production builds contain neither the hook nor its calls.
+#[cfg(feature = "test-support")]
+pub(crate) fn checkpoint(name: &str) -> Result<(), InstallError> {
+    if std::env::var("LKIT_TEST_REPAIR_CHECKPOINT").ok().as_deref() != Some(name) {
+        return Ok(());
+    }
+    let run = crate::deployment::layout::territory_run_dir();
+    let gate = run.join(format!("test-repair-{name}.gate"));
+    std::fs::write(run.join(format!("test-repair-{name}.reached")), b"ready")
+        .map_err(InstallError::Io)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
+    while gate.exists() {
+        if std::time::Instant::now() >= deadline {
+            return Err(InstallError::Preflight(format!(
+                "repair checkpoint {name} timed out"
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Ok(())
+}

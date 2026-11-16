@@ -516,6 +516,10 @@ fn execute_next(
         }));
         e.to_string()
     });
+    #[cfg(feature = "test-support")]
+    if result.is_ok() && matches!(record.kind, Kind::Static | Kind::Binary) {
+        crate::workflows::repair_control::checkpoint("before-result")?;
+    }
     reconcile(&mut record, Some(result))?;
     Ok(true)
 }

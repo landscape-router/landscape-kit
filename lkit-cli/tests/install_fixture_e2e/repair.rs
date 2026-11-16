@@ -330,3 +330,333 @@ fn crashed_daemon_rolls_back_binary_replacement_and_preserves_original_state() {
     .unwrap();
     assert_eq!(tx["phase"], "rolled_back");
 }
+
+fn service_mutations(h: &InstallHarness) -> Vec<Vec<String>> {
+    std::fs::read_to_string(h.world.path("systemctl-calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
+        .filter(|args| {
+            args.iter().any(|arg| {
+                matches!(
+                    arg.as_str(),
+                    "start"
+                        | "stop"
+                        | "restart"
+                        | "enable"
+                        | "disable"
+                        | "mask"
+                        | "unmask"
+                        | "link"
+                        | "daemon-reload"
+                )
+            })
+        })
+        .collect()
+}
+fn acquire_fixture_install_lock(h: &InstallHarness) -> std::fs::File {
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(h.run_dir().join("install.lock"))
+        .unwrap();
+    wait_until(|| unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0);
+    lock
+}
+
+fn start_repair(
+    h: &InstallHarness,
+    runtime: &std::path::Path,
+    target: &str,
+    repository: &str,
+) -> Frontend {
+    Frontend(
+        h.command()
+            .args([
+                "repair",
+                target,
+                "--repository",
+                repository,
+                "--test-runtime",
+            ])
+            .arg(runtime)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
+}
+fn transaction(h: &InstallHarness, operation: &serde_json::Value) -> serde_json::Value {
+    serde_json::from_slice(
+        &std::fs::read(h.transactions_dir().join(format!(
+            "{}.json",
+            operation["transaction_id"].as_str().unwrap()
+        )))
+        .unwrap(),
+    )
+    .unwrap()
+}
+fn checkpoint_gate(h: &InstallHarness, name: &str) -> std::path::PathBuf {
+    let gate = h.run_dir().join(format!("test-repair-{name}.gate"));
+    std::fs::write(&gate, b"pause").unwrap();
+    gate
+}
+fn await_checkpoint(h: &InstallHarness, name: &str) {
+    wait_until(|| {
+        h.run_dir()
+            .join(format!("test-repair-{name}.reached"))
+            .exists()
+    });
+}
+fn operation_by_id(h: &InstallHarness, id: &str) -> serde_json::Value {
+    records(h).into_iter().find(|r| r["id"] == id).unwrap()
+}
+
+#[test]
+fn static_crash_windows_restore_pages_archive_and_state_together() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for checkpoint in ["static-removed", "static-installed", "static-state-written"] {
+        for archive_present in [false, true] {
+            let h = InstallHarness::new("static-crash-window", "healthy", 30_000);
+            assert_success(&h.run());
+            let (asset, _) = alter_asset(&h, "static");
+            let archive = h.install_root.join("current/static.zip");
+            if archive_present {
+                std::fs::write(&archive, b"previous archive").unwrap();
+            } else {
+                std::fs::remove_file(&archive).unwrap();
+            }
+            let old_archive = std::fs::read(&archive).ok();
+            let old_state = std::fs::read(h.state_path()).unwrap();
+            let old_service = service_mutations(&h);
+            let runtime = h.daemon_runtime();
+            let gate = checkpoint_gate(&h, checkpoint);
+            let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, checkpoint);
+            let frontend = start_repair(&h, &runtime, "static", &h.repository.base_url);
+            await_checkpoint(&h, checkpoint);
+            let operation = records(&h).pop().unwrap();
+            assert_eq!(operation["status"], "running");
+            assert_eq!(transaction(&h, &operation)["phase"], "activating");
+            assert_eq!(asset.exists(), checkpoint != "static-removed");
+            drop(frontend);
+            daemon.crash();
+            std::fs::remove_file(gate).unwrap();
+            let requests = h.repository.request_paths();
+            let daemon = h.spawn_daemon(&runtime);
+            wait_until(|| records(&h)[0]["status"] == "failed");
+            let result = records(&h).pop().unwrap();
+            assert_eq!(result["exit_code"], 1);
+            assert_eq!(transaction(&h, &result)["phase"], "rolled_back");
+            assert_eq!(std::fs::read(&asset).unwrap(), b"tampered asset");
+            assert_eq!(std::fs::read(&archive).ok(), old_archive);
+            assert_eq!(std::fs::read(h.state_path()).unwrap(), old_state);
+            assert_eq!(
+                service_mutations(&h),
+                old_service,
+                "static repair must not restart service"
+            );
+            drop(daemon);
+            let _daemon = h.spawn_daemon(&runtime);
+            std::thread::sleep(Duration::from_secs(3));
+            assert_eq!(records(&h), vec![result]);
+            assert_eq!(h.repository.request_paths(), requests);
+        }
+    }
+}
+
+#[test]
+fn committed_repairs_recover_missing_results_without_replaying_side_effects() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for target in ["static", "binary"] {
+        let h = InstallHarness::new("repair-commit-window", "healthy", 30_000);
+        assert_success(&h.run());
+        let (asset, original) = alter_asset(&h, target);
+        let runtime = h.daemon_runtime();
+        let gate = checkpoint_gate(&h, "before-result");
+        let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, "before-result");
+        let frontend = start_repair(&h, &runtime, target, &h.repository.base_url);
+        await_checkpoint(&h, "before-result");
+        let operation = records(&h).pop().unwrap();
+        assert_eq!(operation["status"], "running");
+        assert_eq!(transaction(&h, &operation)["phase"], "committed");
+        assert_eq!(std::fs::read(&asset).unwrap(), original);
+        let state = std::fs::read(h.state_path()).unwrap();
+        let service_log = service_mutations(&h);
+        let requests = h.repository.request_paths();
+        let backup_count = std::fs::read_dir(h.backups_dir()).unwrap().count();
+        let transaction_count = std::fs::read_dir(h.transactions_dir()).unwrap().count();
+        drop(frontend);
+        daemon.crash();
+        std::fs::remove_file(gate).unwrap();
+        let daemon = h.spawn_daemon(&runtime);
+        wait_until(|| records(&h)[0]["status"] == "succeeded");
+        let result = records(&h).pop().unwrap();
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["transaction_id"], operation["transaction_id"]);
+        drop(daemon);
+        let _daemon = h.spawn_daemon(&runtime);
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(records(&h), vec![result]);
+        assert_eq!(std::fs::read(&asset).unwrap(), original);
+        assert_eq!(std::fs::read(h.state_path()).unwrap(), state);
+        assert_eq!(h.repository.request_paths(), requests);
+        assert_eq!(service_mutations(&h), service_log);
+        assert_eq!(
+            std::fs::read_dir(h.backups_dir()).unwrap().count(),
+            backup_count
+        );
+        assert_eq!(
+            std::fs::read_dir(h.transactions_dir()).unwrap().count(),
+            transaction_count
+        );
+    }
+}
+
+/// A second accepted request must remain queued through multiple recovery cycles.
+/// Cancel it before removing the fault so only recovery may modify the installation.
+fn assert_recovery_blocks_next_repair(h: &InstallHarness, runtime: &std::path::Path, id: &str) {
+    let _frontend = start_repair(h, runtime, "static", &h.repository.base_url);
+    wait_until(|| records(h).len() == 2);
+    let queued = records(h).into_iter().find(|r| r["id"] != id).unwrap();
+    let queued_id = queued["id"].as_str().unwrap();
+    let requests = h.repository.request_paths();
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(operation_by_id(h, id)["status"], "recovering");
+    assert_eq!(operation_by_id(h, queued_id)["status"], "queued");
+    assert_eq!(
+        operation_by_id(h, queued_id)["transaction_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(h.repository.request_paths(), requests);
+    assert_success(
+        &h.command()
+            .args(["operation", "cancel", queued_id])
+            .output()
+            .unwrap(),
+    );
+}
+
+#[test]
+fn failed_static_rollback_blocks_mutations_and_resumes_after_filesystem_repair() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let h = InstallHarness::new("repair-rollback-fault", "healthy", 30_000);
+    assert_success(&h.run());
+    let (asset, _) = alter_asset(&h, "static");
+    let old_state = std::fs::read(h.state_path()).unwrap();
+    let archive = h.install_root.join("current/static.zip");
+    let old_archive = std::fs::read(&archive).unwrap();
+    let runtime = h.daemon_runtime();
+    let gate = checkpoint_gate(&h, "static-removed");
+    let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, "static-removed");
+    let frontend = start_repair(&h, &runtime, "static", &h.repository.base_url);
+    await_checkpoint(&h, "static-removed");
+    let operation = records(&h).pop().unwrap();
+    let id = operation["id"].as_str().unwrap();
+    drop(frontend);
+    daemon.crash();
+    std::fs::remove_file(gate).unwrap();
+    // A regular file at the directory destination makes remove_dir_all fail,
+    // even when CI runs as root. The verified preimage remains intact.
+    let destination = asset.parent().unwrap();
+    std::fs::write(destination, b"filesystem obstruction").unwrap();
+    let mut daemon = h.spawn_daemon(&runtime);
+    wait_until(|| operation_by_id(&h, id)["status"] == "recovering");
+    assert_eq!(transaction(&h, &operation)["phase"], "rolling_back");
+    let preimage = h
+        .transactions_dir()
+        .join(operation["transaction_id"].as_str().unwrap())
+        .join("static-backup/index.html");
+    assert_eq!(std::fs::read(&preimage).unwrap(), b"tampered asset");
+    daemon.crash();
+    let _daemon = h.spawn_daemon(&runtime);
+    assert_recovery_blocks_next_repair(&h, &runtime, id);
+    assert_eq!(
+        std::fs::read(destination).unwrap(),
+        b"filesystem obstruction"
+    );
+    std::fs::remove_file(destination).unwrap();
+    wait_until(|| operation_by_id(&h, id)["status"] == "failed");
+    assert_eq!(transaction(&h, &operation)["phase"], "rolled_back");
+    assert_eq!(std::fs::read(asset).unwrap(), b"tampered asset");
+    assert_eq!(std::fs::read(archive).unwrap(), old_archive);
+    assert_eq!(std::fs::read(h.state_path()).unwrap(), old_state);
+}
+
+#[test]
+fn failed_cancellation_cleanup_survives_restart_and_resumes_without_download() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for target in ["static", "binary"] {
+        let h = InstallHarness::new("repair-cancel-fault", "healthy", 30_000);
+        assert_success(&h.run());
+        let (asset, _) = alter_asset(&h, target);
+        let old_state = std::fs::read(h.state_path()).unwrap();
+        let service_log = service_mutations(&h);
+        let gate = Gate(Arc::new(AtomicBool::new(false)));
+        let suffix = if target == "static" {
+            "static.zip"
+        } else {
+            ".zst"
+        };
+        let server = RepositoryServer::start_gated(
+            repository_files(),
+            Some((suffix.into(), gate.0.clone())),
+        );
+        let runtime = h.daemon_runtime();
+        let mut daemon = h.spawn_daemon(&runtime);
+        let frontend = start_repair(&h, &runtime, target, &server.base_url);
+        wait_until(|| {
+            server
+                .request_paths()
+                .iter()
+                .any(|path| path.ends_with(suffix))
+        });
+        let operation = records(&h).pop().unwrap();
+        let id = operation["id"].as_str().unwrap();
+        let dir = h
+            .transactions_dir()
+            .join(operation["transaction_id"].as_str().unwrap());
+        let saved = h.world.path("saved-download-directory");
+        std::fs::rename(&dir, &saved).unwrap();
+        std::fs::write(&dir, b"cleanup obstruction").unwrap();
+        assert_success(
+            &h.command()
+                .args(["operation", "cancel", id])
+                .output()
+                .unwrap(),
+        );
+        wait_until(|| operation_by_id(&h, id)["status"] == "recovering");
+        assert_eq!(operation_by_id(&h, id)["cancel_cleaned"], false);
+        assert_eq!(transaction(&h, &operation)["phase"], "preparing");
+        drop(frontend);
+        daemon.crash();
+        let _daemon = h.spawn_daemon(&runtime);
+        assert_recovery_blocks_next_repair(&h, &runtime, id);
+        assert!(saved.is_dir());
+        let requests = server.request_paths();
+        let lock = acquire_fixture_install_lock(&h);
+        std::fs::remove_file(&dir).unwrap();
+        std::fs::rename(saved, &dir).unwrap();
+        drop(lock);
+        wait_until(|| operation_by_id(&h, id)["status"] == "cancelled");
+        let result = operation_by_id(&h, id);
+        assert_eq!(result["cancel_cleaned"], true);
+        assert_eq!(result["exit_code"], 130);
+        assert_eq!(transaction(&h, &result)["phase"], "failed");
+        assert!(!dir.exists());
+        assert_eq!(server.request_paths(), requests);
+        assert_eq!(std::fs::read(asset).unwrap(), b"tampered asset");
+        assert_eq!(std::fs::read(h.state_path()).unwrap(), old_state);
+        assert_eq!(service_mutations(&h), service_log);
+    }
+}
