@@ -25,7 +25,7 @@ pub(crate) use self::cleanup::{
 use self::file::{append_log, load_transaction_file, write_transaction};
 
 pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 5;
-pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 12;
+pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 13;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +133,9 @@ pub(crate) struct LegacyUnitBefore {
     /// 事务目录内相对备份路径(`file_moved` 时非空)。
     #[serde(default)]
     pub file_backup: Option<String>,
+    /// Digest of the original unit, used to recognize an already restored file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -64,6 +64,7 @@ pub(super) fn submit(
         uninstall: None,
         reinit: None,
         install: Some(args),
+        migrate: None,
         network_transaction: None,
         resolved_version: None,
         stage: Stage::Checking,

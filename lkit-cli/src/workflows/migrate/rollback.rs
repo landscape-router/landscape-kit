@@ -15,6 +15,9 @@ pub(crate) fn rollback_migrate(
     transaction: &TransactionFile,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    if transaction.schema_version == 13 {
+        return super::native::recover(root, transaction, manager);
+    }
     super::super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
     let result = rollback_migrate_inner(root, transaction, manager);
     if result.is_err()
@@ -66,9 +69,10 @@ pub(crate) fn restore_legacy_unit(
         let file_path = before.file_path.as_deref().ok_or_else(|| {
             InstallError::CorruptedTransaction("moved legacy unit is missing file_path".into())
         })?;
-        move_file(
+        restore_unit_file(
             &layout::territory_relative(backup_path),
             Path::new(file_path),
+            before.file_sha256.as_deref(),
         )?;
         systemd::daemon_reload(systemd)?;
     }
@@ -83,6 +87,40 @@ pub(crate) fn restore_legacy_unit(
     )
 }
 
+/// A persisted preimage may describe a move that has not happened yet, or a
+/// restoration completed before a crash. Both are successful recovery states.
+fn restore_unit_file(
+    backup: &Path,
+    original: &Path,
+    digest: Option<&str>,
+) -> Result<(), InstallError> {
+    let Some(digest) = digest else {
+        return move_file(backup, original);
+    };
+    let matches = |path: &Path| -> Result<bool, InstallError> {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.is_file() => Ok(super::hash_file(path)?.0 == digest),
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(InstallError::Io(error)),
+        }
+    };
+    if matches(original)? {
+        return Ok(());
+    }
+    if std::fs::symlink_metadata(original).is_ok() {
+        return Err(InstallError::CorruptedTransaction(
+            "legacy unit destination has changed".into(),
+        ));
+    }
+    if !matches(backup)? {
+        return Err(InstallError::CorruptedTransaction(
+            "legacy unit preimage is missing or corrupt".into(),
+        ));
+    }
+    move_file(backup, original)
+}
+
 /// 删除迁移创建但未提交的根目录内容。`backups/`(迁移 `.lkb`)与
 /// `transactions/`(事务文件)保留;`run/` 与 `logs/` 保留(锁文件与事务日志)。
 pub(crate) fn cleanup_migrated_root(root: &InstallRoot) -> Result<(), InstallError> {
@@ -95,11 +133,64 @@ pub(crate) fn cleanup_migrated_root(root: &InstallRoot) -> Result<(), InstallErr
 /// 跨文件系统安全的文件移动:rename 失败且为 EXDEV 时复制后删除。
 pub(crate) fn move_file(source: &Path, target: &Path) -> Result<(), InstallError> {
     match std::fs::rename(source, target) {
-        Ok(()) => Ok(()),
+        Ok(()) => (),
         Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
             std::fs::copy(source, target).map_err(InstallError::Io)?;
-            std::fs::remove_file(source).map_err(InstallError::Io)
+            std::fs::File::open(target)
+                .and_then(|f| f.sync_all())
+                .map_err(InstallError::Io)?;
+            std::fs::remove_file(source).map_err(InstallError::Io)?;
         }
-        Err(error) => Err(InstallError::Io(error)),
+        Err(error) => return Err(InstallError::Io(error)),
+    }
+    std::fs::File::open(target)
+        .and_then(|f| f.sync_all())
+        .map_err(InstallError::Io)?;
+    for parent in [source.parent(), target.parent()].into_iter().flatten() {
+        std::fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(InstallError::Io)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn unit_file_recovery_is_idempotent_before_and_after_the_move() {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-unit-recovery-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let original = temp.join("original.service");
+        let backup = temp.join("backup.service");
+        std::fs::write(&original, b"original unit").unwrap();
+        let digest = super::super::hash_file(&original).unwrap().0;
+        restore_unit_file(&backup, &original, Some(&digest)).unwrap();
+        move_file(&original, &backup).unwrap();
+        restore_unit_file(&backup, &original, Some(&digest)).unwrap();
+        restore_unit_file(&backup, &original, Some(&digest)).unwrap();
+        assert_eq!(std::fs::read(&original).unwrap(), b"original unit");
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn unit_file_recovery_preserves_foreign_or_corrupt_files() {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-unit-recovery-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let original = temp.join("original.service");
+        let backup = temp.join("backup.service");
+        std::fs::write(&backup, b"original unit").unwrap();
+        let digest = super::super::hash_file(&backup).unwrap().0;
+        std::fs::write(&original, b"foreign unit").unwrap();
+        assert!(restore_unit_file(&backup, &original, Some(&digest)).is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"foreign unit");
+        std::fs::remove_file(&original).unwrap();
+        std::fs::write(&backup, b"corrupt").unwrap();
+        assert!(restore_unit_file(&backup, &original, Some(&digest)).is_err());
+        assert!(!original.exists());
+        std::fs::remove_dir_all(temp).unwrap();
     }
 }

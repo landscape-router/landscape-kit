@@ -27,6 +27,7 @@ use crate::deployment::layout;
 use crate::interaction::interactive;
 
 mod legacy;
+pub(crate) mod native;
 mod rollback;
 #[cfg(all(test, feature = "test-support"))]
 mod tests;
@@ -183,6 +184,15 @@ pub(crate) async fn prepare_migration<P: DocsProbe>(
     args: &MigrateArgs,
     options: &MigrateOptions<'_, P>,
 ) -> Result<PreparedMigration, InstallError> {
+    prepare_migration_bound(root, manager, args, options, None).await
+}
+async fn prepare_migration_bound<P: DocsProbe>(
+    root: &InstallRoot,
+    manager: &dyn ServiceManager,
+    args: &MigrateArgs,
+    options: &MigrateOptions<'_, P>,
+    bound: Option<&crate::daemon_operations::MigrateRequest>,
+) -> Result<PreparedMigration, InstallError> {
     let source = validate_source_dir(&args.config_dir)?;
     eprintln!(
         "migrate: {}",
@@ -221,7 +231,20 @@ pub(crate) async fn prepare_migration<P: DocsProbe>(
     );
     check_interrupted(options.interrupted)?;
 
+    if let Some(bound) = bound {
+        native::verify(bound, &source, &instance, systemd::downcast(manager)?)?;
+        if version.to_string() != bound.version {
+            return Err(InstallError::ParameterUsage(
+                "source version changed since confirmation".into(),
+            ));
+        }
+    }
     let mut transaction = super::transaction::TransactionFile::new_migrate(root, &version)?;
+    if bound.is_some() {
+        transaction.schema_version = 13;
+        super::operation_control::associate(&transaction)?;
+        super::operation_control::phase(crate::daemon_operations::Stage::Preparing)?;
+    }
     super::transaction::begin(root, &transaction)?;
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
@@ -365,6 +388,16 @@ async fn migrate_switch_outcome<P: DocsProbe>(
     options: &MigrateOptions<'_, P>,
     prepared: &PreparedMigration,
 ) -> Result<MigrateOutcome, InstallError> {
+    migrate_switch_outcome_bound(root, systemd, args, options, prepared, None).await
+}
+async fn migrate_switch_outcome_bound<P: DocsProbe>(
+    root: &InstallRoot,
+    systemd: &Systemd,
+    args: &MigrateArgs,
+    options: &MigrateOptions<'_, P>,
+    prepared: &PreparedMigration,
+    bound: Option<&crate::daemon_operations::MigrateRequest>,
+) -> Result<MigrateOutcome, InstallError> {
     let transaction = load_prepared_transaction(root, Some(&prepared.transaction_id))?;
     let version = transaction_version(&transaction)?;
 
@@ -378,9 +411,13 @@ async fn migrate_switch_outcome<P: DocsProbe>(
         &transaction,
         &version,
         &mut stopping_started,
+        bound,
     )
     .await;
 
+    if let Err(error) = &result {
+        super::operation_control::message(&error.to_string())?;
+    }
     match result {
         Ok(()) => Ok(MigrateOutcome::Committed {
             version,
@@ -451,6 +488,7 @@ async fn run_migrate_switch<P: DocsProbe>(
     transaction: &TransactionFile,
     version: &semver::Version,
     stopping_started: &mut bool,
+    bound: Option<&crate::daemon_operations::MigrateRequest>,
 ) -> Result<(), InstallError> {
     let mut transaction = transaction.clone();
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
@@ -460,8 +498,13 @@ async fn run_migrate_switch<P: DocsProbe>(
 
     ensure_not_cancelled(options)?;
 
+    if let Some(bound) = bound {
+        native::verify(bound, source, instance, systemd)?;
+        super::operation_control::phase(crate::daemon_operations::Stage::Stopping)?;
+    }
     // ---- stopping:停止旧实例 ----
     super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
+    transaction.phase = Phase::Stopping;
     *stopping_started = true;
     {
         // 旧部署可能是旧安装器直接写入受管注册路径的普通文件 unit;systemd
@@ -508,11 +551,17 @@ async fn run_migrate_switch<P: DocsProbe>(
         }
         super::transaction::persist(root, &transaction)?;
     }
-    confirm_instance_stopped(options, args.console_confirmed, instance)?;
+    if let Some(bound) = bound {
+        native::wait_for_source(bound, options.health.startup_timeout)?;
+    } else {
+        confirm_instance_stopped(options, args.console_confirmed, instance)?;
+    }
     ensure_not_cancelled(options)?;
 
     // ---- activating:从迁移备份重建 ----
     super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
+    transaction.phase = Phase::Activating;
+    super::operation_control::phase(crate::daemon_operations::Stage::Activating)?;
     crate::interaction::presentation::operation_phase(
         crate::interaction::presentation::OperationPhase::Applying,
     );
@@ -545,6 +594,10 @@ async fn run_migrate_switch<P: DocsProbe>(
         std::fs::read(restore_dir.join("landscape_init.toml")).map_err(InstallError::Io)?;
     super::rollback::write_file_atomic(&data.join("landscape_init.toml"), &init_config, 0o600)?;
     super::rollback::restore_current(root, &format!("releases/{version}"))?;
+    #[cfg(feature = "test-support")]
+    if bound.is_some() {
+        super::operation_control::checkpoint("migrate-activated")?;
+    }
     ensure_not_cancelled(options)?;
 
     // ---- verifying(systemd):注册、启动与健康检查 ----
@@ -566,6 +619,7 @@ async fn run_migrate_switch<P: DocsProbe>(
         systemd.enable(ManagedService::LandscapeRouter)?;
         systemd.start(ManagedService::LandscapeRouter)?;
         super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
+        super::operation_control::phase(crate::daemon_operations::Stage::Verifying)?;
         let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {
             return Err(InstallError::Systemd(
@@ -594,6 +648,10 @@ async fn run_migrate_switch<P: DocsProbe>(
     // ---- 提交 ----
     let new_state = build_migrate_state(root, &transaction, &metadata, &restore_dir, unit_sha)?;
     super::state::write_state(root, &new_state)?;
+    #[cfg(feature = "test-support")]
+    if bound.is_some() {
+        super::operation_control::checkpoint("migrate-state-written")?;
+    }
     super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
     Ok(())
 }
@@ -785,7 +843,7 @@ fn copy_from_proc_exe(pid: u32, target: &Path) -> Result<(), InstallError> {
 }
 
 /// 交互模式确认迁移计划;非交互模式必须显式 `--yes`。
-fn confirm_migrate<P: DocsProbe>(
+pub(crate) fn confirm_migrate<P: DocsProbe>(
     options: &MigrateOptions<'_, P>,
     args: &MigrateArgs,
     source: &Path,

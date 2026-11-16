@@ -54,7 +54,7 @@ pub(crate) fn stop_legacy_instance<P: DocsProbe>(
 
 /// 解析旧实例所属 unit:先按 ExecStart 的 config 目录参数匹配源目录,
 /// 无匹配时回退为 cgroup 反查(已安装才接管)。
-fn resolve_legacy_units(
+pub(super) fn resolve_legacy_units(
     systemd: &Systemd,
     source: &Path,
     instance: &super::super::process::Process,
@@ -119,44 +119,46 @@ pub(crate) fn stop_legacy_unit(
     let fragment = Path::new(&systemd::fragment_path(systemd, unit)?).to_path_buf();
     let file_moved = fragment.starts_with(&systemd.system_unit_dir);
 
+    let saved = LegacyUnitBefore {
+        unit: unit.to_string(),
+        installed: true,
+        active: before.active,
+        enable_state: before.enable_state.clone(),
+        file_moved,
+        file_path: file_moved.then(|| fragment.display().to_string()),
+        file_backup: file_moved.then(|| {
+            format!(
+                "transactions/{}/legacy-unit/{unit}",
+                transaction.transaction_id
+            )
+        }),
+        file_sha256: file_moved
+            .then(|| super::hash_file(&fragment).map(|value| value.0))
+            .transpose()?,
+    };
+    // Persist the recovery evidence before the first external mutation.
+    let mut recorded = transaction.clone();
+    recorded.legacy_unit = Some(saved.clone());
+    super::super::transaction::persist(_root, &recorded)?;
+    #[cfg(feature = "test-support")]
+    if transaction.schema_version == 13 {
+        super::super::operation_control::checkpoint("migrate-before-stop")?;
+    }
     systemd::unit_command(systemd, "stop", unit)?;
     if is_enabled_state(&before.enable_state) {
         systemd::unit_command(systemd, "disable", unit)?;
     }
-    if file_moved {
-        let backup = layout::territory_transactions_dir()
-            .join(&transaction.transaction_id)
-            .join("legacy-unit")
-            .join(unit);
+    if let Some(relative) = &saved.file_backup {
+        let backup = layout::territory_relative(relative);
         if let Some(parent) = backup.parent() {
             std::fs::create_dir_all(parent).map_err(InstallError::Io)?;
         }
         move_file(&fragment, &backup)?;
         systemd::daemon_reload(systemd)?;
-        Ok(LegacyUnitBefore {
-            unit: unit.to_string(),
-            installed: true,
-            active: before.active,
-            enable_state: before.enable_state,
-            file_moved: true,
-            file_path: Some(fragment.display().to_string()),
-            file_backup: Some(format!(
-                "transactions/{}/legacy-unit/{unit}",
-                transaction.transaction_id
-            )),
-        })
     } else {
         systemd::unit_command(systemd, "mask", unit)?;
-        Ok(LegacyUnitBefore {
-            unit: unit.to_string(),
-            installed: true,
-            active: before.active,
-            enable_state: before.enable_state,
-            file_moved: false,
-            file_path: None,
-            file_backup: None,
-        })
     }
+    Ok(saved)
 }
 
 fn is_enabled_state(enable_state: &str) -> bool {

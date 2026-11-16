@@ -68,6 +68,9 @@ jobs:
             interaction::presentation::worker::tests \
             console::tests::backup \
             console::tests::ops \
+            workflows::migrate::native::tests \
+            workflows::migrate::rollback::recovery_tests \
+            commands::migrate::tests \
             commands::install::tests \
             workflows::install::native::tests \
             interaction::presentation::screens::install::tests \

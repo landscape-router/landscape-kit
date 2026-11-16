@@ -77,6 +77,9 @@ fn recover_migrate(
     transaction: &TransactionFile,
     systemd: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    if transaction.schema_version == 13 {
+        return crate::workflows::migrate::native::recover(root, transaction, systemd);
+    }
     match transaction.phase {
         Phase::Preparing => {
             transaction::mark_phase(root, transaction, Phase::Failed)?;

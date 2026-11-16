@@ -1,6 +1,8 @@
 //! Durable, typed operations executed by the daemon without an lkit child.
 mod install;
+mod migrate;
 pub(crate) use install::{InstallRequest, submit_install_and_wait};
+pub(crate) use migrate::{MigrateRequest, SourceIdentity, submit_migrate_and_wait};
 pub(crate) mod reinit;
 use crate::deployment::{
     layout, lock, plan::InstallError, runtime::InstallRuntime, state, transaction,
@@ -53,6 +55,7 @@ pub(crate) enum Kind {
     NetworkRollback,
     Reinit,
     Install,
+    Migrate,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +66,7 @@ pub(crate) enum Stage {
     Downloading,
     Preparing,
     Stopping,
+    WaitingForSourceStop,
     Activating,
     Verifying,
     RollingBack,
@@ -134,6 +138,8 @@ pub(crate) struct Record {
     pub reinit: Option<ReinitRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install: Option<InstallRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migrate: Option<MigrateRequest>,
     #[serde(default)]
     pub resolved_version: Option<String>,
     #[serde(default)]
@@ -207,7 +213,7 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=8).contains(&record.schema_version) || record.id != id {
+    if !(1..=9).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
@@ -215,6 +221,13 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     }
     if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
+    }
+    if record.kind == Kind::Migrate {
+        migrate::validate_record(&record)?;
+        return Ok(record);
+    }
+    if record.migrate.is_some() {
+        return Err(error("unexpected migration payload"));
     }
     if record.kind == Kind::Install {
         install::validate_record(&record)?;
@@ -420,6 +433,7 @@ fn submit_operation(
         network_transaction: None,
         reinit: None,
         install: None,
+        migrate: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -490,6 +504,14 @@ fn claim_kind(network: bool) -> Result<Option<Record>, InstallError> {
 fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bool {
     record.install_root == tx.canonical_install_root
         && match record.kind {
+            Kind::Migrate => {
+                tx.operation == transaction::Operation::Migrate
+                    && tx.schema_version == 13
+                    && record
+                        .migrate
+                        .as_ref()
+                        .is_some_and(|args| tx.target_version.as_deref() == Some(&args.version))
+            }
             Kind::Install => {
                 tx.operation == transaction::Operation::Install
                     && tx.schema_version == 12
@@ -716,7 +738,7 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
             _ if rolled_back => {
                 if matches!(
                     record.kind,
-                    Kind::Binary | Kind::Switch | Kind::Restore | Kind::Reinit
+                    Kind::Binary | Kind::Switch | Kind::Restore | Kind::Reinit | Kind::Migrate
                 ) {
                     5
                 } else {
@@ -768,7 +790,7 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
         return Ok(false);
     }
     execute_next(|record| {
-        if record.kind != Kind::Install {
+        if !matches!(record.kind, Kind::Install | Kind::Migrate) {
             let root = root
                 .as_ref()
                 .ok_or_else(|| error("no Landscape installation"))?;
@@ -786,7 +808,11 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
             .enable_all()
             .build()
             .map_err(InstallError::Io)?;
-        let code = if record.kind == Kind::Install {
+        let code = if record.kind == Kind::Migrate {
+            executor.block_on(crate::workflows::migrate::native::run_operation(
+                runtime, record,
+            ))?
+        } else if record.kind == Kind::Install {
             executor.block_on(crate::workflows::install::run_operation(runtime, record))?
         } else if record.kind == Kind::Reinit {
             executor.block_on(crate::workflows::reinit::run_operation(runtime, record))?
@@ -803,7 +829,9 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
         if code == 0 {
             Ok(())
         } else {
-            Err(error(format!("operation finished with exit code {code}")))
+            Err(error(read(&record.id)?.message.unwrap_or_else(|| {
+                format!("operation finished with exit code {code}")
+            })))
         }
     })
 }
@@ -838,6 +866,7 @@ fn execute_record(
                 | Kind::NetworkConfirm
                 | Kind::NetworkRollback
                 | Kind::Install
+                | Kind::Migrate
         )
     {
         crate::workflows::operation_control::checkpoint("before-result")?;
@@ -926,6 +955,7 @@ fn submit_uninstall(root: String, args: UninstallRequest) -> Result<Record, Inst
         network_transaction: None,
         reinit: None,
         install: None,
+        migrate: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -982,6 +1012,7 @@ fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallE
         network_transaction: None,
         reinit: None,
         install: None,
+        migrate: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -1072,6 +1103,7 @@ async fn wait_for_result(
     let mut last_revision = None;
     let mut unavailable_since = None;
     let mut displayed = None;
+    let mut displayed_message = None;
     loop {
         let current = read(&record.id)?;
         if let Some(screen) = &mut presentation {
@@ -1097,6 +1129,12 @@ async fn wait_for_result(
                 }
                 _ => {}
             }
+        }
+        if presentation.is_none() && displayed_message != current.message {
+            if let Some(message) = &current.message {
+                eprintln!("lkit: {message}");
+            }
+            displayed_message = current.message.clone();
         }
         let progress = (
             current.status,
@@ -1206,6 +1244,7 @@ fn submit_network(
         network_transaction: Some(transaction_id),
         reinit: None,
         install: None,
+        migrate: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,

@@ -82,19 +82,12 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 ## MIG-10
 
-**切换期间取消：Ctrl+C 回滚恢复旧实例**
+**观察端断开与 daemon 崩溃恢复**
 
-- 测试层：核心功能（E2E + 单元测试）
+- 测试层：核心功能（fixture E2E + 隔离单元测试）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../../commands/migrate.md)、`switch_cancellation_rolls_back_with_the_cancelled_outcome`
-  （lkit-cli/src/workflows/migrate/tests.rs）、`cancelling_the_delegated_switch_restores_the_old_instance`
-  （lkit-cli/tests/install_fixture_e2e/migrate.rs）
-- 说明：迁移切换完全由事务保护，允许取消。委托路径下 Ctrl+C → 前台写 cancel
-  文件 → daemon 对 worker 进程组 SIGTERM → worker 在安全点（阶段边界、健康检查
-  等待期间）感知后自动回滚（恢复旧 unit 与 enabled/active 状态、清理新根），
-  前台等待收尾后以 `130` 退出并输出"迁移已取消"。E2E 对前台发 SIGINT 验证
-  退出码 130、旧 unit 恢复、旧实例重新 active、事务终态 `rolled_back`；内联路径
-  由单元测试用递增检查次数的中断闭包验证产出 `Cancelled` 结果。
+- 证据：[迁移 fixture](../../../../lkit-cli/tests/install_fixture_e2e/migrate.rs) 的 `native_migration_recovers_crashes_without_replaying_the_source_operation`、[操作队列测试](../../../../lkit-cli/src/daemon_operations/tests.rs) 的 `migration_is_cancellable_only_while_queued_and_receipts_bind_the_target`
+- 说明：领取后的操作拒绝取消；CLI Ctrl+C 退出 130，daemon 继续执行。停止前、激活后、提交状态后和回执前发生崩溃时，重启依据原事务回滚或确认提交，保持原 operation ID，不重跑迁移。
 
 ## MIG-06
 
@@ -109,15 +102,27 @@ CLI 级 E2E 使用 landscape fixture 作为运行中的旧实例、fake systemct
 
 ## MIG-07
 
-**两阶段迁移：前台前置检查 + worker 切换委托**
+**前端确认与 daemon 原生迁移**
 
-- 测试层：核心功能（E2E + 单元测试）
+- 测试层：核心功能（fixture E2E）
 - 状态：`已覆盖`
-- 证据：[migrate 命令](../../../commands/migrate.md)、`prepared_migration_resumes_the_switch_phase_in_the_worker`、`resume_rejects_an_unknown_prepared_transaction`（lkit-cli/src/workflows/migrate/tests.rs）、`migrate_delegates_follows_runtime_and_euid`（lkit-cli/src/daemon_worker/mod.rs）、`migrates_manual_deployment_through_daemon_delegation`（lkit-cli/tests/install_fixture_e2e/migrate.rs）
-- 说明：root 下 `lkit migrate` 在前台进程直接执行前置检查（源目录、实例识别、
-  export API 检查、迁移 `.lkb`、计划确认），事务标记 `prepared` 后以内部参数
-  `--resume <事务 id>` 委托 daemon worker 只执行切换阶段；worker 要求事务 id
-  精确匹配、`prepared` 阶段且已记录备份，否则拒绝。非 root / 测试 runtime 整条
-  流程内联（`migrate_version`）。前台阶段 Ctrl+C 中止且不触碰旧实例。
-  E2E 直接覆盖真实委托链路：测试 spawn 常驻 daemon（`execution=daemon` runtime），
-  前台前置检查 → daemon 认领请求 → 子进程 `--resume` 执行切换 → 结果回收。
+- 证据：[migrate 命令](../../../commands/migrate.md)、[迁移 fixture](../../../../lkit-cli/tests/install_fixture_e2e/migrate.rs) 的 `migrates_manual_deployment_through_native_daemon`
+- 说明：CLI 只读识别源实例并确认计划，提交结构化请求。daemon 校验源目录、进程和 unit 身份后创建备份、停止旧服务、重建并提交。回执不包含原始 argv 或环境变量。
+
+## MIG-11
+
+**旧 unit 恢复证据与幂等恢复**
+
+- 测试层：隔离单元测试 + fixture E2E
+- 状态：`已覆盖`
+- 证据：[恢复测试](../../../../lkit-cli/src/workflows/migrate/rollback.rs) 的 `recovery_tests`、[迁移 fixture](../../../../lkit-cli/tests/install_fixture_e2e/migrate.rs) 的 `native_migration_recovers_crashes_without_replaying_the_source_operation`
+- 说明：停止旧服务前持久化 active/enabled、原件路径和摘要。原件尚未移动或已经恢复时可重复恢复；内容冲突和损坏备份被拒绝，恢复失败保留可重试事务。
+
+## MIG-12
+
+**旧前台进程退出验证与等待超时**
+
+- 测试层：fixture E2E
+- 状态：`已覆盖`
+- 证据：[迁移 fixture](../../../../lkit-cli/tests/install_fixture_e2e/migrate.rs) 的 `native_migration_requires_the_unmanaged_source_to_actually_exit`
+- 说明：没有 unit 托管的旧进程由用户停止。daemon 等待时不创建 current、不杀死旧进程；进程退出后完成迁移，超时则回滚新根并保留旧实例，回执说明失败原因。

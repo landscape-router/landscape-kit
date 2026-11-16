@@ -112,12 +112,6 @@ async fn run_command(
 ) -> ExitCode {
     let from_console = delegated_args.is_some();
     let delegated = !internal_worker && daemon_worker::should_delegate(&command);
-    // migrate 特殊:前置检查在发起进程内执行,只有切换阶段内部委托
-    // (见 commands/migrate.rs 与 daemon_worker::migrate_delegates)。
-    // 委托式 Ctrl+C 处理按迁移委托条件安装,使前台在等待 worker 时能取消。
-    let internal_migrate = !internal_worker
-        && matches!(&command, Commands::Migrate(_))
-        && daemon_worker::migrate_delegates(&command);
     let interrupt_result = if from_console
         && matches!(
             &command,
@@ -125,7 +119,7 @@ async fn run_command(
         ) {
         interaction::presentation::InterruptGuard::install_console()
     } else {
-        interaction::presentation::InterruptGuard::install(delegated || internal_migrate)
+        interaction::presentation::InterruptGuard::install(delegated)
     };
     let interrupt = match interrupt_result {
         Ok(interrupt) => interrupt,
@@ -137,15 +131,6 @@ async fn run_command(
             return ExitCode::FAILURE;
         }
     };
-
-    if internal_migrate {
-        return match command {
-            Commands::Migrate(args) => {
-                commands::migrate::run(&args, &interrupt, from_console).await
-            }
-            _ => unreachable!("internal migrate branch only handles Migrate"),
-        };
-    }
 
     if delegated {
         let args = match delegated_args {

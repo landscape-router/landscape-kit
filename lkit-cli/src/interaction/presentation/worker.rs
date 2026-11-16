@@ -99,7 +99,7 @@ impl WorkerPresentation {
         let (phase, step) = match record.stage {
             Stage::Checking | Stage::Preparing => (OperationPhase::Preparing, 1),
             Stage::Downloading => (OperationPhase::Downloading, 1),
-            Stage::Stopping => (OperationPhase::Stopping, 2),
+            Stage::Stopping | Stage::WaitingForSourceStop => (OperationPhase::Stopping, 2),
             Stage::Activating | Stage::RollingBack => (OperationPhase::Activating, 3),
             Stage::Verifying | Stage::Finished => (OperationPhase::Verifying, 4),
         };

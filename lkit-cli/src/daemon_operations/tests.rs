@@ -870,3 +870,71 @@ fn install_committed_receipt_does_not_replay_and_resolved_version_is_immutable()
     assert_eq!(record.status, Status::Succeeded);
     assert!(!execute_next(|_| panic!("must not replay")).unwrap());
 }
+
+fn migration_request() -> MigrateRequest {
+    MigrateRequest {
+        source: SourceIdentity {
+            source: "/legacy".into(),
+            device: 1,
+            inode: 2,
+            pid: 123,
+            started: 456,
+            executable_sha256: "a".repeat(64),
+            arguments_sha256: "b".repeat(64),
+            unit: None,
+            unit_sha256: None,
+        },
+        version: "1.0.0".into(),
+        repository: crate::deployment::plan::RepositoryChoice::Http(
+            "https://example.invalid/".into(),
+        ),
+    }
+}
+#[test]
+fn migration_is_cancellable_only_while_queued_and_receipts_bind_the_target() {
+    let f = Fixture::new();
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let queued = migrate::submit(
+        root.canonical.to_string_lossy().into_owned(),
+        migration_request(),
+    )
+    .unwrap();
+    cancel(&queued.id).unwrap();
+    assert_eq!(read(&queued.id).unwrap().status, Status::Cancelled);
+    migrate::submit(
+        root.canonical.to_string_lossy().into_owned(),
+        migration_request(),
+    )
+    .unwrap();
+    let mut active = claim().unwrap().unwrap();
+    assert!(cancel(&active.id).is_err());
+    let mut tx =
+        transaction::TransactionFile::new_migrate(&root, &semver::Version::new(2, 0, 0)).unwrap();
+    tx.schema_version = 13;
+    assert!(associate(&mut active, &tx).is_err());
+    tx.target_version = Some("1.0.0".into());
+    tx.target_release = Some("releases/1.0.0".into());
+    associate(&mut active, &tx).unwrap();
+    tx.backup = Some(transaction::BackupRef {
+        backup_id: "backup".into(),
+        path: "backups/test.lkb".into(),
+        sha256: "c".repeat(64),
+    });
+    tx.phase = transaction::Phase::Committed;
+    f.write_tx(&tx);
+    reconcile(&mut active, None).unwrap();
+    assert_eq!(active.status, Status::Succeeded);
+    assert!(!execute_next(|_| panic!("migration must not replay")).unwrap());
+}
+#[test]
+fn migration_rejects_unbound_unit_and_foreign_payloads() {
+    let f = Fixture::new();
+    let mut request = migration_request();
+    request.source.unit = Some("legacy.service".into());
+    assert!(migrate::submit(f.dir.to_string_lossy().into_owned(), request).is_err());
+    let mut record =
+        migrate::submit(f.dir.to_string_lossy().into_owned(), migration_request()).unwrap();
+    record.install = Some(first_install_request());
+    save(&record).unwrap();
+    assert!(read(&record.id).is_err());
+}

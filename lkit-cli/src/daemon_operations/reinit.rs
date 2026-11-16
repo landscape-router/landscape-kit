@@ -89,6 +89,7 @@ pub(super) fn submit(
         network_transaction: None,
         reinit: Some(args),
         install: None,
+        migrate: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,

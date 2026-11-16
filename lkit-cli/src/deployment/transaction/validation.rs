@@ -16,6 +16,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             transaction.schema_version
         )));
     }
+    if transaction.schema_version == 13 && transaction.operation != Operation::Migrate {
+        return Err(corrupted("schema v13 requires migrate".into()));
+    }
     if transaction.schema_version == 12 && transaction.operation != Operation::Install {
         return Err(corrupted("schema v12 requires install".into()));
     }
@@ -372,6 +375,16 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
                 {
                     return Err(corrupted(format!("unsafe legacy unit backup path {path}")));
                 }
+                if transaction.schema_version == 13
+                    && unit.file_moved
+                    && unit.file_sha256.as_ref().is_none_or(|hash| {
+                        hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit())
+                    })
+                {
+                    return Err(corrupted(
+                        "native migration requires a legacy unit digest".into(),
+                    ));
+                }
                 if unit.file_moved && (unit.file_path.is_none() || unit.file_backup.is_none()) {
                     return Err(corrupted(
                         "a moved legacy unit must record both file_path and file_backup".into(),
@@ -528,7 +541,7 @@ mod tests {
         ));
 
         let mut transaction = install_transaction(&root);
-        transaction.schema_version = 13;
+        transaction.schema_version = 14;
         assert!(validate_transaction(&transaction).is_err());
 
         let mut transaction = install_transaction(&root);

@@ -1,3 +1,5 @@
+#[path = "migrate_native.rs"]
+mod native;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -35,6 +37,17 @@ pub struct Migrate {
 }
 
 pub async fn run(args: &Migrate, interrupt: &InterruptGuard, from_console: bool) -> ExitCode {
+    let native = true;
+    #[cfg(feature = "test-support")]
+    let native = args.test_runtime.as_deref().map_or(native, |p| {
+        InstallRuntime::test_uses_daemon(p).unwrap_or(false)
+    });
+    if native {
+        return native::run(args).await;
+    }
+    run_inline(args, interrupt, from_console).await
+}
+async fn run_inline(args: &Migrate, interrupt: &InterruptGuard, from_console: bool) -> ExitCode {
     // 单实例守卫:lkit 地盘已有有效安装状态时拒绝迁移(无论 --install-dir),
     // 必须先卸载;损坏状态直接报错。
     match state::read_state() {
@@ -445,7 +458,7 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
-    async fn resume_without_a_prepared_transaction_fails() {
+    async fn rejects_unbound_resume_before_any_system_action() {
         let _guard = interactive_guard();
         let interrupt = InterruptGuard::install(false).unwrap();
         let territory =
@@ -456,7 +469,7 @@ mod tests {
         args.install_dir = Some(territory.join("install"));
         args.resume_transaction = Some("missing-transaction".into());
         let code = run(&args, &interrupt, false).await;
-        assert_eq!(code, ExitCode::FAILURE);
+        assert_eq!(code, ExitCode::from(2));
         let _ = std::fs::remove_dir_all(&territory);
     }
 

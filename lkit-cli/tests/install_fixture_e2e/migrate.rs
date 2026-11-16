@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use super::support::*;
@@ -294,12 +293,9 @@ fn migrate_rolls_back_and_restores_legacy_unit_on_activation_failure() {
     assert!(!harness.state_path().exists());
 }
 
-/// 真实委托链路 E2E:前台进程完成前置检查后,daemon 认领请求并以子进程
-/// 执行切换阶段(`--resume <事务 id>`)。runtime 用 `execution=daemon` 变体
-/// 使 `test_uses_daemon` 返回 true,命令不再强制内联;daemon 由测试直接
-/// spawn(测试 runtime 注入 fake systemd)。
+/// The daemon executes the typed migration request without a child CLI.
 #[test]
-fn migrates_manual_deployment_through_daemon_delegation() {
+fn migrates_manual_deployment_through_native_daemon() {
     if !e2e_enabled() {
         return;
     }
@@ -328,10 +324,10 @@ fn migrates_manual_deployment_through_daemon_delegation() {
         !output.stdout.contains(&0x1b) && !output.stderr.contains(&0x1b),
         "non-interactive output contains terminal control sequences"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stdout.contains("migrated to version") || stdout.contains("迁移完成"),
-        "the worker output must announce the committed migration\nstdout:\n{stdout}"
+        stdout.contains("Migrated Landscape"),
+        "the operation receipt must announce the committed migration\nstdout:\n{stdout}"
     );
 
     let state: serde_json::Value =
@@ -358,107 +354,105 @@ fn migrates_manual_deployment_through_daemon_delegation() {
     assert_eq!(lkb_count, 1, "the migration backup must be preserved");
 }
 
-/// 委托切换期间 ^C(前台 SIGINT):前台写 cancel 文件,daemon 对 worker 进程组
-/// SIGTERM,worker 在检查点回滚并恢复旧实例,前台等到结果后以 130 退出。
 #[test]
-fn cancelling_the_delegated_switch_restores_the_old_instance() {
+fn native_migration_recovers_crashes_without_replaying_the_source_operation() {
     if !e2e_enabled() {
         return;
     }
-    if unsafe { libc::geteuid() } != 0 {
-        return;
-    }
-    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let harness = InstallHarness::new("migrate-cancel", "healthy", 20_000);
-    let daemon_runtime = harness.daemon_runtime();
-    let _daemon = harness.spawn_daemon(&daemon_runtime);
-    let (source, _old_instance) = start_manual_install(&harness);
-
-    let mut command = migrate_command(&harness, &source, &daemon_runtime);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    {
-        let lines = Arc::clone(&stderr_lines);
-        std::thread::spawn(move || {
-            use std::io::BufRead;
-            for line in std::io::BufReader::new(stderr)
-                .lines()
-                .map_while(Result::ok)
-            {
-                lines.lock().unwrap().push(line);
-            }
-        });
-    }
-
-    // 等 worker 进入切换阶段(停止旧实例),再对前台发 SIGINT。
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let reached = stderr_lines.lock().unwrap().iter().any(|line| {
-            line.contains("stopping the old instance") || line.contains("正在停止旧实例")
-        });
-        if reached {
-            break;
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for point in [
+        "migrate-before-stop",
+        "migrate-activated",
+        "migrate-state-written",
+        "before-result",
+    ] {
+        let h = InstallHarness::new("migrate-native-crash", "healthy", 20_000);
+        let runtime = h.daemon_runtime();
+        let gate = h.run_dir().join(format!("test-repair-{point}.gate"));
+        std::fs::create_dir_all(h.run_dir()).unwrap();
+        std::fs::write(&gate, b"pause").unwrap();
+        let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, point);
+        let (source, _old) = start_manual_install(&h);
+        let legacy_name = if point == "migrate-before-stop" {
+            "landscape-router.service"
+        } else {
+            "legacy-landscape.service"
+        };
+        if legacy_name == "landscape-router.service" {
+            std::fs::rename(
+                h.host.join("units/legacy-landscape.service"),
+                h.host.join("units").join(legacy_name),
+            )
+            .unwrap();
+            std::fs::rename(
+                h.host.join("systemd-state/units/legacy-landscape.service"),
+                h.host.join("systemd-state/units").join(legacy_name),
+            )
+            .unwrap();
         }
+        let mut observer = OldInstance {
+            child: migrate_command(&h, &source, &runtime).spawn().unwrap(),
+        };
         assert!(
-            Instant::now() < deadline,
-            "the delegated switch never started\nstderr:\n{}",
-            stderr_lines.lock().unwrap().join("\n")
+            wait_for(50, || h
+                .run_dir()
+                .join(format!("test-repair-{point}.reached"))
+                .exists()),
+            "checkpoint {point} not reached; {}",
+            h.service_log()
         );
-        std::thread::sleep(Duration::from_millis(100));
+        let record = || -> serde_json::Value {
+            std::fs::read_dir(h.run_dir().join("operations"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .map(|e| {
+                    serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).unwrap())
+                        .unwrap()
+                })
+                .find(|r| r["kind"] == "migrate")
+                .unwrap()
+        };
+        let before = record();
+        assert!(before.get("argv").is_none());
+        assert!(before.get("env").is_none());
+        let cancel = h
+            .command()
+            .args(["operation", "cancel", before["id"].as_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(
+            !cancel.status.success(),
+            "running migration must not be cancelled"
+        );
+        unsafe {
+            libc::kill(observer.child.id() as i32, libc::SIGINT);
+        }
+        assert!(wait_for(5, || observer.child.try_wait().unwrap().is_some()));
+        assert_eq!(observer.child.wait().unwrap().code(), Some(130));
+        assert_eq!(record()["status"], "running");
+        daemon.crash();
+        std::fs::remove_file(gate).unwrap();
+        let _daemon = h.spawn_daemon(&runtime);
+        let committed = matches!(point, "migrate-state-written" | "before-result");
+        assert!(
+            wait_for(40, || record()["status"]
+                == if committed { "succeeded" } else { "failed" }),
+            "receipt: {}",
+            record()
+        );
+        let after = record();
+        assert_eq!(after["id"], before["id"]);
+        assert_eq!(after["transaction_id"], before["transaction_id"]);
+        assert_eq!(h.state_path().exists(), committed);
+        assert_eq!(h.host.join("units").join(legacy_name).is_file(), !committed);
+        assert!(source.join("landscape.toml").is_file());
+        if !committed {
+            assert_eq!(after["exit_code"], 5);
+            assert!(!h.install_root.join("current").exists());
+            assert!(!h.install_root.join("data").exists());
+        }
     }
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGINT);
-    }
-    let status = child.wait().unwrap();
-    assert_eq!(
-        status.code(),
-        Some(130),
-        "a cancelled migration must exit 130\nstderr:\n{}",
-        stderr_lines.lock().unwrap().join("\n")
-    );
-
-    // worker 回滚把旧 unit 放回原位并恢复旧实例。
-    let restored = wait_for(15, || {
-        harness
-            .host
-            .join("units/legacy-landscape.service")
-            .is_file()
-    });
-    assert!(restored, "the rollback must restore the legacy unit file");
-    let active = wait_for(15, || {
-        let output = systemctl(&harness.world, &["is-active", "legacy-landscape.service"]);
-        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "active"
-    });
-    assert!(active, "the rollback must restart the old instance");
-    let cancelled_seen = wait_for(10, || {
-        stderr_lines
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|line| line.contains("cancelled"))
-    });
-    assert!(
-        cancelled_seen,
-        "the worker output must announce the cancellation\nstderr:\n{}",
-        stderr_lines.lock().unwrap().join("\n")
-    );
-
-    // 事务终态为 rolled_back;没有提交状态。
-    let transactions = std::fs::read_dir(harness.territory.join("transactions")).unwrap();
-    let tx = transactions
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-        .expect("the migration transaction must exist");
-    let tx: serde_json::Value = serde_json::from_slice(&std::fs::read(&tx).unwrap()).unwrap();
-    assert_eq!(
-        tx["phase"], "rolled_back",
-        "the cancelled switch must roll back"
-    );
-    assert!(!harness.state_path().exists());
-    assert!(!harness.install_root.join("releases").join(VERSION).exists());
 }
 
 fn wait_for(seconds: u64, mut predicate: impl FnMut() -> bool) -> bool {
@@ -471,5 +465,70 @@ fn wait_for(seconds: u64, mut predicate: impl FnMut() -> bool) -> bool {
             return false;
         }
         std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[test]
+fn native_migration_requires_the_unmanaged_source_to_actually_exit() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for stop_source in [true, false] {
+        let h = InstallHarness::new(
+            "migrate-foreground",
+            "healthy",
+            if stop_source { 20_000 } else { 3_000 },
+        );
+        let runtime = h.daemon_runtime();
+        let _daemon = h.spawn_daemon(&runtime);
+        let (source, mut old) = start_manual_install(&h);
+        std::fs::remove_file(h.host.join("units/legacy-landscape.service")).unwrap();
+        let mut observer = OldInstance {
+            child: migrate_command(&h, &source, &runtime).spawn().unwrap(),
+        };
+        let record = || -> Option<serde_json::Value> {
+            std::fs::read_dir(h.run_dir().join("operations"))
+                .ok()?
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .filter_map(|e| {
+                    serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).ok()?).ok()
+                })
+                .find(|r| r["kind"] == "migrate")
+        };
+        assert!(wait_for(40, || record()
+            .is_some_and(|r| r["stage"] == "waiting_for_source_stop")));
+        assert!(
+            old.child.try_wait().unwrap().is_none(),
+            "daemon must not kill the unmanaged source"
+        );
+        assert!(
+            !h.install_root.join("current").exists(),
+            "source still owns the ports"
+        );
+        if stop_source {
+            old.child.kill().unwrap();
+            old.child.wait().unwrap();
+        }
+        assert!(
+            wait_for(40, || observer.child.try_wait().unwrap().is_some()),
+            "migration did not finish: {:?}",
+            record()
+        );
+        assert_eq!(
+            observer.child.wait().unwrap().code(),
+            Some(if stop_source { 0 } else { 5 })
+        );
+        assert_eq!(h.state_path().exists(), stop_source);
+        if !stop_source {
+            assert!(old.child.try_wait().unwrap().is_none());
+            assert!(
+                record().unwrap()["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("did not stop")
+            );
+        }
     }
 }
