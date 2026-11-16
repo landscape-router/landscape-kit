@@ -10,6 +10,8 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 `repair service` 由 daemon 直接调用工作流，不重新启动 lkit worker 子进程。
 其他修改命令仍通过既有 worker 执行；两条入口共用串行调度和安装锁。外部服务管理
 工具仍是独立进程。`self install/upgrade/remove` 保留直接执行入口。
+旧格式的服务修复 worker 请求会明确失败并提示重新提交，避免 worker 与 daemon
+互相等待。已经排队的其他 worker 请求仍按各自协议处理。
 
 ## 操作状态
 

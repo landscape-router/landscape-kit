@@ -62,6 +62,7 @@ jobs:
             commands::lkit_self::upgrade_tests \
             network::discovery::tests \
             network::recovery::tests \
+            commands::repair::tests \
             daemon_operations::tests \
             daemon_worker::tests \
             daemon_supervisor::tests \

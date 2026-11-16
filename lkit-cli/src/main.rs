@@ -181,7 +181,7 @@ async fn run_command(
         Commands::Network(args) => commands::network::run(&args).await,
         Commands::Switch(args) => commands::switch::run(&args).await,
         Commands::Update(args) => commands::update::run(&args).await,
-        Commands::Repair(args) => commands::repair::run(&args).await,
+        Commands::Repair(args) => commands::repair::run(&args, internal_worker).await,
         Commands::Restore(args) => commands::restore::run(&args).await,
         Commands::Reinit(args) => commands::reinit::run(&args).await,
         Commands::Backup(args) => commands::backup::run(&args).await,

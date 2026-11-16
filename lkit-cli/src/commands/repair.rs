@@ -28,8 +28,16 @@ pub struct Repair {
     pub test_runtime: Option<PathBuf>,
 }
 
-pub async fn run(args: &Repair) -> ExitCode {
+pub async fn run(args: &Repair, internal_worker: bool) -> ExitCode {
     if args.target == RepairTarget::Service {
+        // A request queued by an older binary must not make its worker wait
+        // for the daemon that is currently waiting for that same worker.
+        if internal_worker {
+            eprintln!(
+                "lkit: legacy service repair request rejected; run `lkit repair service` again to submit a durable operation"
+            );
+            return ExitCode::FAILURE;
+        }
         if args.repository.is_some() || args.official {
             eprintln!("lkit: repair service does not accept repository or official options");
             return ExitCode::from(2);
@@ -97,5 +105,21 @@ fn service_result(result: Result<(), crate::deployment::plan::InstallError>) -> 
             eprintln!("lkit repair service: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn legacy_worker_service_request_fails_without_resubmitting() {
+        let args = Repair {
+            target: RepairTarget::Service,
+            repository: None,
+            official: false,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        };
+        assert_eq!(run(&args, true).await, ExitCode::FAILURE);
     }
 }
