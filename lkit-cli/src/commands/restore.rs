@@ -4,8 +4,12 @@ use std::process::ExitCode;
 use clap::Args;
 
 use crate::deployment::runtime::InstallRuntime;
-use crate::deployment::{lock, plan, state, transaction};
-use crate::workflows::restore::{RestoreArgs, RestoreOptions, RestoreOutcome};
+#[cfg(feature = "test-support")]
+use crate::deployment::{lock, transaction};
+use crate::deployment::{plan, state};
+use crate::workflows::restore::RestoreArgs;
+#[cfg(feature = "test-support")]
+use crate::workflows::restore::{RestoreOptions, RestoreOutcome};
 
 #[derive(Debug, Args)]
 pub struct Restore {
@@ -24,12 +28,139 @@ pub struct Restore {
     /// 控制台已确认恢复计划（内部参数，交互模式也跳过 tty 确认）
     #[arg(long, hide = true)]
     pub console_confirmed: bool,
+    #[arg(skip)]
+    pub(crate) confirmed: Option<RestoreConfirmation>,
     #[cfg(feature = "test-support")]
     #[arg(long, value_name = "PATH", hide = true)]
     pub test_runtime: Option<PathBuf>,
 }
 
-pub async fn run(args: &Restore) -> ExitCode {
+#[derive(Debug, Clone)]
+pub(crate) struct RestoreConfirmation {
+    pub root: String,
+    pub request: crate::daemon_operations::RestoreRequest,
+}
+
+pub(crate) fn confirmed_backup(
+    root: &crate::deployment::root::InstallRoot,
+    installed: &state::InstallState,
+    source: PathBuf,
+    prepared: &crate::workflows::restore::PreparedRestore,
+) -> Result<RestoreConfirmation, plan::InstallError> {
+    Ok(RestoreConfirmation {
+        root: root.canonical.to_string_lossy().into_owned(),
+        request: crate::daemon_operations::RestoreRequest {
+            from_version: installed.active_version.clone(),
+            state_identity: crate::daemon_operations::installation_identity(installed)?,
+            source: std::path::absolute(source).map_err(plan::InstallError::Io)?,
+            backup_id: prepared.metadata.backup_id.clone(),
+            backup_sha256: prepared.sha256.clone(),
+            target_version: prepared.metadata.landscape_version.clone(),
+            allow_no_backup: false,
+        },
+    })
+}
+
+pub async fn run(args: &Restore, internal_worker: bool) -> ExitCode {
+    if internal_worker {
+        eprintln!("restore: requires the native daemon protocol");
+        return ExitCode::FAILURE;
+    }
+    if args.console_confirmed && args.confirmed.is_none() {
+        eprintln!("restore: missing restore confirmation context");
+        return ExitCode::from(2);
+    }
+    #[cfg(feature = "test-support")]
+    if let Some(path) = args.test_runtime.as_ref() {
+        match InstallRuntime::test_uses_daemon(path) {
+            Ok(false) => return run_inline(args).await,
+            Ok(true) => {}
+            Err(error) => {
+                eprintln!("restore: {error}");
+                return exit_code(&error);
+            }
+        }
+    }
+    match submit(args).await {
+        Ok(code) => ExitCode::from(code),
+        Err(error) => {
+            eprintln!("restore: {error}");
+            exit_code(&error)
+        }
+    }
+}
+
+async fn submit(args: &Restore) -> Result<u8, plan::InstallError> {
+    let runtime = resolve_runtime(args)?;
+    if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
+        return Err(plan::InstallError::ParameterUsage(
+            "restore requires root".into(),
+        ));
+    }
+    if args.console_confirmed {
+        let confirmation = args.confirmed.as_ref().ok_or_else(|| {
+            plan::InstallError::ParameterUsage("missing restore confirmation context".into())
+        })?;
+        return crate::daemon_operations::submit_restore_and_wait(
+            confirmation.root.clone(),
+            confirmation.request.clone(),
+            true,
+        )
+        .await;
+    }
+    let root = state::discover_landscape_root()?.ok_or_else(|| {
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::RESTORE_REQUIRES_EXISTING_INSTALLATION
+        ))
+    })?;
+    let installed = state::load_state(&root)?.ok_or_else(|| {
+        plan::InstallError::ParameterUsage(crate::tr!(
+            crate::keys::RESTORE_REQUIRES_EXISTING_INSTALLATION
+        ))
+    })?;
+    let workflow = RestoreArgs {
+        backup_id: args.backup.clone(),
+        file_path: args.file.clone(),
+        allow_no_backup: args.allow_no_backup,
+        yes: args.yes,
+        console_confirmed: args.console_confirmed,
+    };
+    let prepared = crate::workflows::restore::prepare_restore(&root, &installed, &workflow)?;
+    crate::workflows::restore::confirm_plan(
+        &workflow,
+        &installed,
+        &prepared.metadata,
+        &crate::interaction::interactive::confirm,
+    )?;
+    let source = match (&args.backup, &args.file) {
+        (Some(id), None) => {
+            crate::deployment::layout::territory_backups_dir().join(format!("{id}.lkb"))
+        }
+        (None, Some(path)) => std::path::absolute(path).map_err(plan::InstallError::Io)?,
+        _ => {
+            return Err(plan::InstallError::ParameterUsage(
+                "choose one restore backup".into(),
+            ));
+        }
+    };
+    crate::daemon_operations::submit_restore_and_wait(
+        root.canonical.to_string_lossy().into_owned(),
+        crate::daemon_operations::RestoreRequest {
+            from_version: installed.active_version.clone(),
+            state_identity: crate::daemon_operations::installation_identity(&installed)?,
+            source,
+            backup_id: prepared.metadata.backup_id,
+            backup_sha256: prepared.sha256,
+            target_version: prepared.metadata.landscape_version,
+            allow_no_backup: args.allow_no_backup,
+        },
+        args.console_confirmed,
+    )
+    .await
+}
+
+#[cfg(feature = "test-support")]
+async fn run_inline(args: &Restore) -> ExitCode {
     let runtime = match resolve_runtime(args) {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -189,4 +320,25 @@ fn resolve_runtime(args: &Restore) -> Result<InstallRuntime, plan::InstallError>
 #[cfg(not(feature = "test-support"))]
 fn resolve_runtime(_args: &Restore) -> Result<InstallRuntime, plan::InstallError> {
     Ok(InstallRuntime::production())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn stale_worker_cannot_execute_restore() {
+        let mut args = Restore {
+            backup: None,
+            file: None,
+            allow_no_backup: false,
+            yes: false,
+            console_confirmed: false,
+            confirmed: None,
+            #[cfg(feature = "test-support")]
+            test_runtime: None,
+        };
+        assert_eq!(run(&args, true).await, ExitCode::FAILURE);
+        args.console_confirmed = true;
+        assert_eq!(run(&args, false).await, ExitCode::from(2));
+    }
 }

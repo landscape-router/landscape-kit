@@ -11,6 +11,7 @@ mod network;
 mod reinit;
 mod repair;
 mod repair_service;
+mod restore;
 mod self_cmd;
 mod support;
 mod switch;

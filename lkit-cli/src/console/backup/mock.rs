@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use super::{BackupCreateMessage, BackupEntry, BackupOps};
+use super::{BackupCreateMessage, BackupEntry, BackupOps, VerifiedBackup};
 use crate::backup::lkb::{BackupArchitecture, BackupContents, BackupMetadata, BackupScope};
 
 #[cfg(test)]
@@ -17,7 +17,7 @@ type ListSender = mpsc::Sender<Result<Vec<BackupEntry>, String>>;
 pub(crate) struct MockBackupOps {
     list_tx: std::sync::Mutex<Option<ListSender>>,
     create_tx: std::sync::Mutex<Option<mpsc::Sender<BackupCreateMessage>>>,
-    verify_tx: std::sync::Mutex<Option<mpsc::Sender<Result<String, String>>>>,
+    verify_tx: std::sync::Mutex<Option<mpsc::Sender<Result<VerifiedBackup, String>>>>,
 }
 
 #[cfg(test)]
@@ -46,7 +46,7 @@ impl MockBackupOps {
             .expect("create() must be called before grabbing the sender")
     }
 
-    pub(crate) fn verify_sender(&self) -> mpsc::Sender<Result<String, String>> {
+    pub(crate) fn verify_sender(&self) -> mpsc::Sender<Result<VerifiedBackup, String>> {
         self.verify_tx
             .lock()
             .unwrap()
@@ -69,7 +69,7 @@ impl BackupOps for MockBackupOps {
         receiver
     }
 
-    fn verify(&self, _path: PathBuf) -> mpsc::Receiver<Result<String, String>> {
+    fn verify(&self, _path: PathBuf) -> mpsc::Receiver<Result<VerifiedBackup, String>> {
         let (sender, receiver) = mpsc::channel();
         *self.verify_tx.lock().unwrap() = Some(sender);
         receiver
@@ -133,4 +133,22 @@ pub(crate) fn backup_rows() -> Vec<BackupEntry> {
             size: None,
         },
     ]
+}
+
+pub(crate) fn sample_verified_backup() -> VerifiedBackup {
+    VerifiedBackup {
+        message: "verified".into(),
+        confirmation: crate::commands::restore::RestoreConfirmation {
+            root: "/fixture/landscape".into(),
+            request: crate::daemon_operations::RestoreRequest {
+                from_version: "1.3.0".into(),
+                state_identity: "a".repeat(64),
+                source: sample_backup_entry().path,
+                backup_id: sample_backup_metadata().backup_id,
+                backup_sha256: "b".repeat(64),
+                target_version: "1.2.3".into(),
+                allow_no_backup: false,
+            },
+        },
+    }
 }

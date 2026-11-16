@@ -35,7 +35,19 @@ impl ConsoleApp {
                     // 恢复执行前完整校验:未校验先启动(提示校验中,留在确认层),
                     // 校验失败弹损坏框,只有校验通过才提交 Restore 请求。
                     match &self.backup.verify {
-                        BackupVerifyState::Complete(Ok(_)) => {
+                        BackupVerifyState::Complete(Ok(verified)) => {
+                            if verified.confirmation.request.source != entry.path
+                                || verified.confirmation.request.backup_id != metadata.backup_id
+                                || verified.confirmation.request.target_version
+                                    != metadata.landscape_version
+                            {
+                                self.backup.restore_confirming = false;
+                                self.backup.verify = BackupVerifyState::Idle;
+                                self.notice = Notice::Error(
+                                    "Backup selection changed; verify and confirm again".into(),
+                                );
+                                return Some(None);
+                            }
                             let backup_id = metadata.backup_id.clone();
                             self.backup.restore_confirming = false;
                             return Some(Some(self.backup_restore_action(&backup_id)));
@@ -265,16 +277,14 @@ impl ConsoleApp {
             allow_no_backup: false,
             yes: true,
             console_confirmed: true,
+            confirmed: match &self.backup.verify {
+                BackupVerifyState::Complete(Ok(verified)) => Some(verified.confirmation.clone()),
+                _ => None,
+            },
             #[cfg(feature = "test-support")]
-            test_runtime: None,
+            test_runtime: crate::console::test_runtime_path(),
         });
-        let args = vec![
-            "restore".into(),
-            "--backup".into(),
-            backup_id.to_string(),
-            "--yes".into(),
-            "--console-confirmed".into(),
-        ];
+        let args = vec!["restore".into()];
         ConsoleAction::Command { command, args }
     }
 }

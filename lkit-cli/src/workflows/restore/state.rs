@@ -12,7 +12,7 @@ use super::super::plan::InstallError;
 use super::super::root::InstallRoot;
 use super::super::state::{
     ArchiveAsset, Assets, InitStatus, InitializationState, InstallState, STATE_LAYOUT_VERSION,
-    STATE_SCHEMA_VERSION, ServiceState, StateArchitecture, StateServiceManager, WebserverAsset,
+    STATE_SCHEMA_VERSION, ServiceState, StateArchitecture, WebserverAsset,
 };
 use super::super::transaction::TransactionFile;
 use super::RestoreOptions;
@@ -70,7 +70,7 @@ pub(super) async fn create_protection_backup<P: DocsProbe>(
 /// 身份分别从解包二进制和备份内压缩包现场计算。
 pub(super) fn build_restore_state(
     root: &InstallRoot,
-    _previous: &InstallState,
+    previous: &InstallState,
     transaction: &TransactionFile,
     metadata: &BackupMetadata,
     restore_dir: &Path,
@@ -92,7 +92,7 @@ pub(super) fn build_restore_state(
         initialized_at: Some(Utc::now()),
     };
     let service = ServiceState {
-        manager: StateServiceManager::Systemd,
+        manager: previous.service.manager,
         registered: true,
         enabled: true,
         verified: true,

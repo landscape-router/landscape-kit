@@ -7,7 +7,9 @@ mod mock;
 #[cfg(test)]
 pub(crate) use mock::MockBackupOps;
 #[cfg(test)]
-pub(crate) use mock::{backup_rows, sample_backup_entry, sample_backup_metadata};
+pub(crate) use mock::{
+    backup_rows, sample_backup_entry, sample_backup_metadata, sample_verified_backup,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,11 +40,17 @@ pub(crate) enum BackupListState {
     Failed(String),
 }
 
+#[derive(Clone)]
+pub(crate) struct VerifiedBackup {
+    pub message: String,
+    pub confirmation: crate::commands::restore::RestoreConfirmation,
+}
+
 pub(crate) enum BackupVerifyState {
     Idle,
-    Running(Receiver<Result<String, String>>),
+    Running(Receiver<Result<VerifiedBackup, String>>),
     /// 最近一次完整校验的结果:Ok 表示校验通过,Err 表示备份损坏。
-    Complete(Result<String, String>),
+    Complete(Result<VerifiedBackup, String>),
 }
 
 pub(crate) enum BackupCreateMessage {
@@ -56,7 +64,7 @@ pub(crate) enum BackupCreateMessage {
 pub(crate) trait BackupOps {
     fn list(&self) -> Receiver<Result<Vec<BackupEntry>, String>>;
     fn create(&self, remark: String) -> Receiver<BackupCreateMessage>;
-    fn verify(&self, path: PathBuf) -> Receiver<Result<String, String>>;
+    fn verify(&self, path: PathBuf) -> Receiver<Result<VerifiedBackup, String>>;
 }
 
 /// 生产实现:worker 线程执行真实列表/创建/校验流程。
@@ -115,25 +123,48 @@ impl BackupOps for RealBackupOps {
         receiver
     }
 
-    fn verify(&self, path: PathBuf) -> Receiver<Result<String, String>> {
+    fn verify(&self, path: PathBuf) -> Receiver<Result<VerifiedBackup, String>> {
         let (sender, receiver) = mpsc::channel();
         let language = crate::i18n::current();
         landscape_terrain_proto::concurrency::spawn_thread(
             crate::task_names::CONSOLE_BACKUP_VERIFY,
             move || {
                 let result = crate::i18n::with_language(language, || {
-                    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-                    let metadata = crate::backup::lkb::verify_lkb(&bytes)
-                        .map_err(|error| error.to_string())?;
+                    let root = crate::deployment::state::discover_landscape_root()
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "no Landscape installation".to_string())?;
+                    let installed = crate::deployment::state::load_state(&root)
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "no Landscape installation".to_string())?;
+                    let args = crate::workflows::restore::RestoreArgs {
+                        backup_id: None,
+                        file_path: Some(path.clone()),
+                        yes: false,
+                        console_confirmed: false,
+                        allow_no_backup: false,
+                    };
+                    let prepared =
+                        crate::workflows::restore::prepare_restore(&root, &installed, &args)
+                            .map_err(|e| e.to_string())?;
+                    let confirmation = crate::commands::restore::confirmed_backup(
+                        &root,
+                        &installed,
+                        path.clone(),
+                        &prepared,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let bytes = prepared.bytes;
+                    let metadata = prepared.metadata;
                     let verify_dir = std::env::temp_dir()
                         .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
                     crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
                         .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
-                        .map(|_| {
-                            crate::tr!(
+                        .map(|_| VerifiedBackup {
+                            confirmation,
+                            message: crate::tr!(
                                 crate::keys::CONSOLE_BACKUP_VERIFIED,
                                 backup_id = metadata.backup_id
-                            )
+                            ),
                         })
                         .map_err(|error| {
                             let _ = std::fs::remove_dir_all(&verify_dir);
@@ -252,7 +283,7 @@ impl BackupPanel {
             match receiver.try_recv() {
                 Ok(Ok(message)) => {
                     self.verify = BackupVerifyState::Complete(Ok(message.clone()));
-                    *notice = Notice::Success(message);
+                    *notice = Notice::Success(message.message);
                 }
                 Ok(Err(error)) => {
                     self.verify = BackupVerifyState::Complete(Err(error.clone()));

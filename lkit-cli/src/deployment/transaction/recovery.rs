@@ -186,15 +186,40 @@ async fn recover_restore<P: DocsProbe>(
     systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
+    if transaction.schema_version == 9 && transaction.phase != Phase::Preparing {
+        let snapshot =
+            crate::backup::rollback::read_state_snapshot(root, &transaction.transaction_id)?;
+        if snapshot.service.manager != systemd.kind() {
+            return Err(InstallError::Preflight(
+                "restore recovery backend mismatch".into(),
+            ));
+        }
+    }
     match transaction.phase {
         Phase::Preparing => {
-            let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            if transaction.schema_version == 9 {
+                match std::fs::remove_dir_all(transaction_dir(root, transaction)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(InstallError::Io(error)),
+                }
+            } else {
+                let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            }
             transaction::mark_phase(root, transaction, Phase::Failed)?;
             Ok(())
         }
         Phase::Prepared | Phase::Stopping => {
             restore_pre_activation_systemd(root, transaction, systemd)?;
-            let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            if transaction.schema_version == 9 {
+                match std::fs::remove_dir_all(transaction_dir(root, transaction)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(InstallError::Io(error)),
+                }
+            } else {
+                let _ = std::fs::remove_dir_all(transaction_dir(root, transaction));
+            }
             transaction::mark_phase(root, transaction, Phase::Failed)?;
             Ok(())
         }

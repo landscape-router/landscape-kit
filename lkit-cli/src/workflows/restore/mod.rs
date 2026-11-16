@@ -4,16 +4,20 @@ use super::artifacts::{hash_file, hash_str};
 use super::backup::{BackupMetadata, create_secure_dir, extract_lkb, verify_lkb};
 use super::health::{DocsProbe, HealthOptions, StartupOptions};
 use super::manager::{ManagedService, ServiceManager};
+use super::operation_control as control;
 use super::pipeline;
 use super::plan::InstallError;
 use super::rollback as rollback_util;
 use super::root::InstallRoot;
 use super::state::{InstallState, StateServiceManager};
 use super::transaction::{BackupRef, Phase, TransactionFile};
+use crate::daemon_operations::Stage;
 use crate::deployment::layout;
 use crate::interaction::presentation::{OperationPhase, operation_progress};
 
 mod backup;
+mod native;
+pub(crate) use native::run_operation;
 mod rollback;
 mod state;
 
@@ -61,6 +65,7 @@ pub(crate) struct RestoreOptions<'a, P: DocsProbe> {
 /// 从 `.lkb` 恢复指定版本。目标备份在停止服务前完整校验;
 /// 默认创建当前实例的保护 `.lkb`。失败回滚优先使用事务目录中的旧 data 现场,
 /// 必要时使用保护备份。
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) async fn restore_version<P: DocsProbe>(
     root: &InstallRoot,
     state: &InstallState,
@@ -68,32 +73,71 @@ pub(crate) async fn restore_version<P: DocsProbe>(
     args: &RestoreArgs,
     options: &RestoreOptions<'_, P>,
 ) -> Result<RestoreOutcome, InstallError> {
-    let is_systemd = state.service.manager == StateServiceManager::Systemd;
-    let (bytes, file_sha256) = resolve_target_backup(root, args)?;
+    let prepared = prepare_restore(root, state, args)?;
+    confirm_plan(args, state, &prepared.metadata, options.confirm)?;
+    restore_prepared(root, state, manager, args, options, prepared).await
+}
+
+pub(crate) struct PreparedRestore {
+    pub bytes: Vec<u8>,
+    pub sha256: String,
+    pub metadata: BackupMetadata,
+}
+
+pub(crate) fn prepare_restore(
+    root: &InstallRoot,
+    state: &InstallState,
+    args: &RestoreArgs,
+) -> Result<PreparedRestore, InstallError> {
+    let (bytes, sha256) = resolve_target_backup(root, args)?;
     let metadata = verify_lkb(&bytes)?;
     check_architecture(state, &metadata)?;
+    pipeline::parse_stable_version(&metadata.landscape_version)
+        .map_err(|error| InstallError::InvalidBackup(format!("invalid backup version: {error}")))?;
+    Ok(PreparedRestore {
+        bytes,
+        sha256,
+        metadata,
+    })
+}
+
+async fn restore_prepared<P: DocsProbe>(
+    root: &InstallRoot,
+    state: &InstallState,
+    manager: &dyn ServiceManager,
+    args: &RestoreArgs,
+    options: &RestoreOptions<'_, P>,
+    prepared: PreparedRestore,
+) -> Result<RestoreOutcome, InstallError> {
+    let PreparedRestore {
+        bytes,
+        sha256: file_sha256,
+        metadata,
+    } = prepared;
+    let native = control::active();
+    let is_systemd = native || state.service.manager == StateServiceManager::Systemd;
     let from_version = pipeline::parse_stable_version(&state.active_version).map_err(|error| {
         InstallError::CorruptedState(format!("invalid active version: {error}"))
     })?;
     let target_version = pipeline::parse_stable_version(&metadata.landscape_version)
         .map_err(|error| InstallError::InvalidBackup(format!("invalid backup version: {error}")))?;
-
-    // 确认先于事务创建:拒绝或缺少 `--yes` 时不创建事务、不写任何文件,
-    // `--file` 也不产生暂存拷贝,现场保持不变。
-    confirm_restore(options, args, state, &metadata)?;
-
+    control::phase(Stage::Preparing)?;
     let mut transaction = TransactionFile::new_restore(root, &from_version, &target_version)?;
+    if native {
+        transaction.schema_version = 9;
+        control::associate(&transaction)?;
+    }
     super::transaction::begin(root, &transaction)?;
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
 
     // 外部备份先复制进事务目录并重新自校验,事务只记录 lkit 地盘相对路径。
     let target_backup = match (&args.backup_id, &args.file_path) {
-        (Some(id), None) => BackupRef {
+        (Some(id), None) if !native => BackupRef {
             backup_id: id.clone(),
             path: format!("backups/{id}.lkb"),
             sha256: file_sha256,
         },
-        (None, Some(_)) => {
+        (None, Some(_)) | (Some(_), None) => {
             create_secure_dir(&tx_dir, 0o700)?;
             let copied = tx_dir.join("target-backup.lkb");
             write_file_atomic(&copied, &bytes, 0o600)?;
@@ -174,6 +218,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
     let result: Result<(), InstallError> = async {
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
+            control::phase(Stage::Stopping)?;
             operation_progress(OperationPhase::Stopping, Some((2, steps)));
             manager.stop_and_wait(
                 ManagedService::LandscapeRouter,
@@ -201,6 +246,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             OperationPhase::Activating,
             Some((if is_systemd { 3 } else { 2 }, steps)),
         );
+        control::phase(Stage::Activating)?;
         activated = true;
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         rollback_util::move_data_aside(
@@ -222,6 +268,8 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             std::fs::read(restore_dir.join("landscape_init.toml")).map_err(InstallError::Io)?;
         write_file_atomic(&data.join("landscape_init.toml"), &init_config, 0o600)?;
         rollback_util::restore_current(root, &format!("releases/{target_version}"))?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("restore-activated")?;
         if is_systemd {
             manager.register(
                 ManagedService::LandscapeRouter,
@@ -230,6 +278,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
             manager.enable(ManagedService::LandscapeRouter)?;
             manager.start(ManagedService::LandscapeRouter)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
+            control::phase(Stage::Verifying)?;
             operation_progress(OperationPhase::Verifying, Some((4, steps)));
             let pid = manager.main_pid(ManagedService::LandscapeRouter)?;
             if pid == 0 {
@@ -253,6 +302,8 @@ pub(crate) async fn restore_version<P: DocsProbe>(
         let new_state =
             build_restore_state(root, state, &transaction, &metadata, &restore_dir, unit_sha)?;
         super::state::write_state(root, &new_state)?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("restore-state-written")?;
         super::transaction::mark_phase(root, &transaction, Phase::Committed)?;
         Ok(())
     }
@@ -289,10 +340,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
                 // 先按 systemd_before 恢复 unit 注册与 enabled/active 状态,再标记 failed。
                 let mut systemd_restored = true;
                 if let Some(before) = &transaction.systemd_before {
-                    let unit_origin = root
-                        .canonical
-                        .join("service")
-                        .join(manager.service_name(ManagedService::LandscapeRouter));
+                    let unit_origin = root.canonical.join("service/landscape-router.service");
                     let restore_error = manager
                         .restore_before(ManagedService::LandscapeRouter, before, &unit_origin)
                         .and_then(|()| {
@@ -314,7 +362,9 @@ pub(crate) async fn restore_version<P: DocsProbe>(
                         );
                     }
                 }
-                let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+                if !native || systemd_restored {
+                    let _ = super::transaction::mark_phase(root, &transaction, Phase::Failed);
+                }
                 if !systemd_restored {
                     // 服务状态恢复也失败:事务已终结且服务可能未恢复,
                     // 按自动恢复失败处理(退出码 6),不能按普通失败返回。
@@ -331,11 +381,11 @@ pub(crate) async fn restore_version<P: DocsProbe>(
 
 /// 交互模式确认当前版本、目标版本、备份 ID 和 minimal scope 的数据损失;
 /// 非交互模式必须显式 `--yes`。
-fn confirm_restore<P: DocsProbe>(
-    options: &RestoreOptions<'_, P>,
+pub(crate) fn confirm_plan(
     args: &RestoreArgs,
     state: &InstallState,
     metadata: &BackupMetadata,
+    confirm: &dyn Fn(&str) -> Result<bool, InstallError>,
 ) -> Result<(), InstallError> {
     let current = state.active_version.clone();
     let target = metadata.landscape_version.clone();
@@ -352,7 +402,7 @@ fn confirm_restore<P: DocsProbe>(
         }
         return Ok(());
     }
-    let accepted = (options.confirm)(&crate::tr!(
+    let accepted = confirm(&crate::tr!(
         crate::keys::RESTORE_CONFIRM_PLAN,
         current = current,
         target = target,
@@ -363,7 +413,7 @@ fn confirm_restore<P: DocsProbe>(
             "user refused the restore plan".into(),
         ));
     }
-    let accepted = (options.confirm)(&crate::tr!(crate::keys::RESTORE_CONFIRM_MINIMAL_SCOPE))?;
+    let accepted = confirm(&crate::tr!(crate::keys::RESTORE_CONFIRM_MINIMAL_SCOPE))?;
     if !accepted {
         return Err(InstallError::UserRefused(
             "user refused the restore plan".into(),

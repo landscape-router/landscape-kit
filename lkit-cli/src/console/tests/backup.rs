@@ -186,7 +186,7 @@ fn backup_restore_flow_builds_restore_command() {
     let mut app = backup_ready_app();
     // 恢复 Enter 前必须校验通过:注入校验结果。
     app.backup.verify =
-        BackupVerifyState::Complete(Ok("backup 20260807-131500-ab12cd34 verified".into()));
+        BackupVerifyState::Complete(Ok(crate::console::backup::sample_verified_backup()));
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(app.backup.selected, 1);
@@ -219,15 +219,10 @@ fn backup_restore_flow_builds_restore_command() {
         restore.console_confirmed,
         "the console must mark the restore as confirmed so no TTY prompt appears"
     );
-    assert!(
-        args.windows(2)
-            .any(|pair| pair == ["--backup", "20260807-131500-ab12cd34"])
-    );
-    assert!(args.iter().any(|argument| argument == "--yes"));
-    assert!(
-        args.iter()
-            .any(|argument| argument == "--console-confirmed")
-    );
+    assert_eq!(args, ["restore"]);
+    let context = restore.confirmed.unwrap();
+    assert_eq!(context.request.backup_sha256, "b".repeat(64));
+    assert_eq!(context.request.state_identity, "a".repeat(64));
 }
 
 #[test]
@@ -499,4 +494,22 @@ fn exit_confirmation_takes_precedence_over_backup_panel_keys() {
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.backup.details, Some(0));
+}
+
+#[test]
+fn restore_confirmation_rejects_verification_for_another_selected_backup() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    let mut verified = crate::console::backup::sample_verified_backup();
+    verified.confirmation.request.target_version = "9.0.0".into();
+    app.backup.verify = BackupVerifyState::Complete(Ok(verified));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(app.backup.restore_confirming);
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .is_none()
+    );
+    assert!(!app.backup.restore_confirming);
+    assert!(matches!(app.backup.verify, BackupVerifyState::Idle));
 }

@@ -65,6 +65,10 @@ jobs:
             commands::update::tests \
             console::tests::update \
             interaction::presentation::worker::tests \
+            console::tests::backup \
+            console::tests::ops \
+            commands::restore::tests \
+            workflows::restore::native::tests \
             commands::switch::tests \
             workflows::switch::tests \
             commands::repair::tests \

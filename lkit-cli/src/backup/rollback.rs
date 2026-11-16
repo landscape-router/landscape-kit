@@ -69,7 +69,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
         && transaction.operation == super::transaction::Operation::Repair;
     let native_switch = transaction.schema_version == 8
         && transaction.operation == super::transaction::Operation::Switch;
-    let managed = asset_repair || native_switch;
+    let managed = asset_repair || native_switch || transaction.schema_version == 9;
     let is_systemd = managed || snapshot.service.manager == StateServiceManager::Systemd;
     if is_systemd {
         systemd.stop_and_wait(
@@ -203,7 +203,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
-    let native_switch = transaction.schema_version == 8;
+    let native_switch = matches!(transaction.schema_version, 8 | 9);
     let is_systemd = native_switch || previous.service.manager == StateServiceManager::Systemd;
     let mut was_active = false;
     if is_systemd {

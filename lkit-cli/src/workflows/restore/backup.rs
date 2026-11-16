@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use super::super::artifacts::hash_file;
 use super::super::backup as lkb;
 use super::super::backup::{BackupArchitecture, BackupMetadata};
 use super::super::plan::InstallError;
@@ -8,6 +7,7 @@ use super::super::root::InstallRoot;
 use super::super::state::{InstallState, StateArchitecture};
 use super::RestoreArgs;
 use crate::deployment::layout;
+use sha2::{Digest, Sha256};
 
 /// 解析目标备份:ID 只解析 lkit 地盘 `backups/`,外部文件必须 root 所有、
 /// 权限不宽于 `0600` 的普通文件。返回完整字节与文件级 SHA-256。
@@ -31,13 +31,13 @@ pub(super) fn resolve_target_backup(
             }
             validate_backup_file(&path)?;
             let bytes = std::fs::read(&path).map_err(InstallError::Io)?;
-            let (sha256, _) = hash_file(&path)?;
+            let sha256 = crate::release::artifacts::hex(&Sha256::digest(&bytes));
             Ok((bytes, sha256))
         }
         (None, Some(path)) => {
             validate_backup_file(path)?;
             let bytes = std::fs::read(path).map_err(InstallError::Io)?;
-            let (sha256, _) = hash_file(path)?;
+            let sha256 = crate::release::artifacts::hex(&Sha256::digest(&bytes));
             Ok((bytes, sha256))
         }
         _ => Err(InstallError::ParameterUsage(

@@ -473,3 +473,29 @@ fn switch_committed_evidence_recovers_success_without_reexecution() {
     assert_eq!(record.exit_code, Some(0));
     assert!(!execute_next(|_| panic!("committed switch replayed")).unwrap());
 }
+
+#[test]
+fn restore_payload_rejects_unbound_inputs_and_queued_cancel_needs_no_backup_io() {
+    let temp = std::env::temp_dir().join(format!("lkit-restore-request-{}", uuid::Uuid::now_v7()));
+    let _guard = layout::test_territory(&temp);
+    let request = RestoreRequest {
+        from_version: "1.3.0".into(),
+        state_identity: "a".repeat(64),
+        source: temp.join("selected.lkb"),
+        backup_id: "20260807-131500-ab12cd34".into(),
+        backup_sha256: "b".repeat(64),
+        target_version: "1.2.3".into(),
+        allow_no_backup: false,
+    };
+    let mut invalid = request.clone();
+    invalid.source = "relative.lkb".into();
+    assert!(validate_restore(&invalid).is_err());
+    invalid = request.clone();
+    invalid.backup_sha256.clear();
+    assert!(validate_restore(&invalid).is_err());
+    let record = submit_restore(temp.join("install").display().to_string(), request).unwrap();
+    assert_eq!(read(&record.id).unwrap().schema_version, 4);
+    assert_eq!(cancel(&record.id).unwrap().status, Status::Cancelled);
+    assert!(!temp.join("selected.lkb").exists());
+    let _ = std::fs::remove_dir_all(temp);
+}

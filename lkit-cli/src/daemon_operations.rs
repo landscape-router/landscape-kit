@@ -42,6 +42,7 @@ pub(crate) enum Kind {
     #[serde(rename = "repair_binary")]
     Binary,
     Switch,
+    Restore,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +81,18 @@ pub(crate) struct SwitchRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct RestoreRequest {
+    pub from_version: String,
+    pub state_identity: String,
+    pub source: PathBuf,
+    pub backup_id: String,
+    pub backup_sha256: String,
+    pub target_version: String,
+    pub allow_no_backup: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Record {
     pub schema_version: u32,
     pub id: String,
@@ -92,6 +105,8 @@ pub(crate) struct Record {
     pub assets: Option<AssetRequest>,
     #[serde(default)]
     pub switch: Option<SwitchRequest>,
+    #[serde(default)]
+    pub restore: Option<RestoreRequest>,
     #[serde(default)]
     pub resolved_version: Option<String>,
     #[serde(default)]
@@ -165,7 +180,7 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     let bytes = std::fs::read(path(id)?).map_err(InstallError::Io)?;
     let record: Record = serde_json::from_slice(&bytes)
         .map_err(|e| error(format!("invalid operation record: {e}")))?;
-    if !(1..=3).contains(&record.schema_version) || record.id != id {
+    if !(1..=4).contains(&record.schema_version) || record.id != id {
         return Err(error("operation identity or schema mismatch"));
     }
     if let Some(id) = &record.transaction_id {
@@ -173,6 +188,25 @@ pub(crate) fn read(id: &str) -> Result<Record, InstallError> {
     }
     if matches!(record.kind, Kind::Static | Kind::Binary) && record.schema_version != 2 {
         return Err(error("asset repair requires operation schema v2"));
+    }
+    if record.kind == Kind::Restore {
+        if record.schema_version != 4
+            || record.assets.is_some()
+            || record.switch.is_some()
+            || record.resolved_version.is_some()
+        {
+            return Err(error("invalid restore operation schema"));
+        }
+        validate_restore(
+            record
+                .restore
+                .as_ref()
+                .ok_or_else(|| error("missing restore parameters"))?,
+        )?;
+        return Ok(record);
+    }
+    if record.restore.is_some() {
+        return Err(error("unexpected restore payload"));
     }
     if record.kind == Kind::Switch {
         if record.schema_version != 3 || record.assets.is_some() {
@@ -296,6 +330,7 @@ fn submit_operation(
         message: None,
         assets,
         switch,
+        restore: None,
         resolved_version: None,
         stage: Stage::Checking,
         revision: 1,
@@ -366,6 +401,14 @@ fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bo
                             .as_ref()
                             .map(|args| args.from_version.as_str())
                     && tx.target_version == record.resolved_version
+            }
+            Kind::Restore => {
+                tx.operation == transaction::Operation::Restore
+                    && tx.schema_version == 9
+                    && record.restore.as_ref().is_some_and(|args| {
+                        tx.from_version.as_deref() == Some(&args.from_version)
+                            && tx.target_version.as_deref() == Some(&args.target_version)
+                    })
             }
             Kind::Service => tx.operation == transaction::Operation::RepairService,
             Kind::Static => {
@@ -529,7 +572,7 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
             Status::Succeeded => 0,
             Status::Cancelled => 130,
             _ if rolled_back => {
-                if matches!(record.kind, Kind::Binary | Kind::Switch) {
+                if matches!(record.kind, Kind::Binary | Kind::Switch | Kind::Restore) {
                     5
                 } else {
                     1
@@ -582,7 +625,9 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
             .enable_all()
             .build()
             .map_err(InstallError::Io)?;
-        let code = if record.kind == Kind::Switch {
+        let code = if record.kind == Kind::Restore {
+            executor.block_on(crate::workflows::restore::run_operation(runtime, record))?
+        } else if record.kind == Kind::Switch {
             executor.block_on(crate::workflows::switch::run_operation(runtime, record))?
         } else {
             executor.block_on(crate::workflows::repair::run_assets(runtime, record))?
@@ -591,7 +636,7 @@ pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError
         if code == 0 {
             Ok(())
         } else {
-            Err(error(format!("repair finished with exit code {code}")))
+            Err(error(format!("operation finished with exit code {code}")))
         }
     })
 }
@@ -609,7 +654,12 @@ fn execute_next(
         e.to_string()
     });
     #[cfg(feature = "test-support")]
-    if result.is_ok() && matches!(record.kind, Kind::Static | Kind::Binary | Kind::Switch) {
+    if result.is_ok()
+        && matches!(
+            record.kind,
+            Kind::Static | Kind::Binary | Kind::Switch | Kind::Restore
+        )
+    {
         crate::workflows::operation_control::checkpoint("before-result")?;
     }
     reconcile(&mut record, Some(result))?;
@@ -668,6 +718,60 @@ pub(crate) async fn submit_switch_and_wait(
     )?;
     wait_for_result(record, capability, false).await
 }
+fn validate_restore(args: &RestoreRequest) -> Result<(), InstallError> {
+    for hash in [&args.state_identity, &args.backup_sha256] {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(error("invalid restore identity"));
+        }
+    }
+    if !args.source.is_absolute() {
+        return Err(error("restore source must be absolute"));
+    }
+    if !crate::backup::lkb::backup_id_format_ok(&args.backup_id) {
+        return Err(error("invalid backup ID"));
+    }
+    for version in [&args.from_version, &args.target_version] {
+        crate::workflows::install::parse_stable_version(version)
+            .map_err(|e| error(e.to_string()))?;
+    }
+    Ok(())
+}
+fn submit_restore(root: String, args: RestoreRequest) -> Result<Record, InstallError> {
+    validate_restore(&args)?;
+    let _guard = queue_lock()?;
+    let record = Record {
+        schema_version: 4,
+        id: uuid::Uuid::now_v7().to_string(),
+        kind: Kind::Restore,
+        install_root: root,
+        status: Status::Queued,
+        transaction_id: None,
+        message: None,
+        assets: None,
+        switch: None,
+        restore: Some(args),
+        resolved_version: None,
+        stage: Stage::Checking,
+        revision: 1,
+        cancel_requested: false,
+        cancel_cleaned: false,
+        cancellable: true,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        exit_code: None,
+    };
+    save(&record)?;
+    Ok(record)
+}
+pub(crate) async fn submit_restore_and_wait(
+    root: String,
+    args: RestoreRequest,
+    full_screen: bool,
+) -> Result<u8, InstallError> {
+    crate::daemon::require_capability("restore-v1.pid")?;
+    let record = submit_restore(root, args)?;
+    wait_for_result(record, "restore-v1.pid", full_screen).await
+}
 pub(crate) async fn submit_confirmed_switch_and_wait(
     runtime: &InstallRuntime,
     root: String,
@@ -718,8 +822,13 @@ async fn wait_for_result(
         "lkit: operation {} (query with `lkit operation status {}`)",
         record.id, record.id
     );
+    let command = if record.kind == Kind::Restore {
+        "restore"
+    } else {
+        "update"
+    };
     let mut presentation = full_screen
-        .then(|| WorkerPresentation::new(true, operation_screen(&["update".into()])))
+        .then(|| WorkerPresentation::new(true, operation_screen(&[command.into()])))
         .filter(|screen| screen.is_full_screen());
     if let Some(screen) = &mut presentation {
         screen.capture_log(&format!("Operation {}", record.id));

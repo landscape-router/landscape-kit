@@ -246,3 +246,33 @@
 - 说明：`backup delete` 只接受格式合法的备份 ID；目标必须是 root 所有、权限不宽于 `0600` 的普通文件（符号链接与权限不安全条目拒绝删除，不跟随链接）；交互模式要求输入 `yes` 确认、`--yes` 跳过、非交互缺 `--yes` 返回参数错误 `2`，删除前持安装锁。控制台列表/详情按 D 打开删除确认层（展示 ID、版本与永久删除提示），Enter 在控制台内同步删除并刷新列表，Esc 取消且不改动现场。
 - 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的 pty 路径未覆盖（仓库无 pty 测试设施）；删除仍被未完成事务引用的备份未做专门断言。
 
+
+## RST-15
+
+**daemon 直接执行恢复并持久化结果**
+
+- 测试层：CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[restore 契约](../../../commands/restore.md)
+- 说明：断言原生 restore 操作、v9 事务、目标备份副本与成功结果，不请求仓库资产。
+- 缺口：OpenRC／SysVinit 完整恢复矩阵。
+
+## RST-16
+
+**确认后备份或安装状态变化时拒绝执行**
+
+- 测试层：隔离单元、CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[请求校验](../../../../lkit-cli/src/daemon_operations/tests.rs)
+- 说明：备份被替换时不创建事务、不修改 state；请求校验拒绝缺失摘要和相对路径，排队取消不读取备份。
+- 缺口：TUI 确认期间目标替换与安装根替换的端到端场景。
+
+## RST-17
+
+**daemon 激活中断与提交后结果丢失**
+
+- 测试层：CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)
+- 说明：激活后重启恢复原 data；提交后重启补写成功结果。保持同一操作和事务 ID，领取后的取消被拒绝。
+- 缺口：恢复失败后重试与所有持久化边界的故障注入矩阵。

@@ -326,15 +326,6 @@ fn language_toggle_persists_across_console_sessions() {
     assert!(status.success(), "console exit failed: {exited:?}");
 }
 
-/// A failed terminal assertion must not leave the observer process alive.
-struct ConsoleObserver(std::process::Child);
-impl Drop for ConsoleObserver {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn update_operation(h: &InstallHarness) -> serde_json::Value {
     let paths: Vec<_> = std::fs::read_dir(h.run_dir().join("operations"))
         .unwrap()
@@ -389,55 +380,81 @@ fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
         } else {
             h.spawn_daemon(&runtime)
         };
-        let mut pty = Pty::open();
-        let mut command = h.command();
-        command
+        use termlens::Key;
+        let mut terminal = termlens::Terminal::builder()
+            .size(100, 28)
             .env("LKIT_LANG", "en")
-            .env("LKIT_TEST_CONSOLE_RUNTIME", &runtime);
-        attach_pty(&mut command, &pty);
-        let mut observer = ConsoleObserver(command.spawn().unwrap());
-        pty.read_until("Landscape Kit", Duration::from_secs(10));
-        // Installed instances skip the unavailable Install menu: Overview -> Backup -> Update.
-        pty.master.write_all(b"\x1b[B\x1b[B\x1b[C").unwrap();
-        pty.read_until("Start update", Duration::from_secs(10));
-        pty.master.write_all(b"\x1b[B\x1b[B\r").unwrap();
-        let confirmation = pty.read_until("Enter Update", Duration::from_secs(10));
-        assert!(confirmation.contains("2.0.0"), "{confirmation:?}");
-        // Change latest after the visible confirmation; dispatch must use its exact target.
+            .env("LKIT_TERRITORY", &h.territory)
+            .env("LKIT_TEST_CONSOLE_RUNTIME", &runtime)
+            .env(
+                lkit_test_fixture::SYSTEMCTL_CONFIG_ENV,
+                &h.world.systemctl_config,
+            )
+            .timeout(Duration::from_secs(15))
+            .spawn(LKIT)
+            .unwrap();
+        terminal
+            .wait_until(|screen| screen.contains("Landscape Kit"))
+            .unwrap();
+        // Installed instances skip Install: Overview -> Backup -> Update.
+        for key in [Key::Down, Key::Down, Key::Right] {
+            terminal.send(key).unwrap();
+        }
+        terminal
+            .wait_until(|screen| screen.contains("Start update"))
+            .unwrap();
+        for key in [Key::Down, Key::Down, Key::Enter] {
+            terminal.send(key).unwrap();
+        }
+        terminal
+            .wait_until(|screen| screen.contains("Confirm update") && screen.contains("2.0.0"))
+            .unwrap();
         next.replace_file(
             "/channels/stable.json",
             br#"{"protocol_version":1,"version":"3.0.0"}"#.to_vec(),
         );
-        pty.master.write_all(b"\r").unwrap();
-        let initial_screen = pty.read_until("stop watching", Duration::from_secs(10));
+        terminal.send(Key::Enter).unwrap();
+        terminal
+            .wait_until(|screen| screen.contains("stop watching"))
+            .unwrap();
         if mode == "activating" {
             await_console_condition(|| {
                 h.run_dir()
                     .join("test-repair-switch-activated.reached")
                     .exists()
             });
-            pty.read_until("Activating", Duration::from_secs(10));
-            pty.master.write_all(b"\x1b").unwrap();
-            pty.read_until("stop requests are ignored", Duration::from_secs(10));
+            terminal
+                .wait_until(|screen| screen.contains("Activating"))
+                .unwrap();
+            terminal.send(Key::Esc).unwrap();
+            terminal
+                .wait_until(|screen| screen.contains("stopping is no longer available"))
+                .unwrap();
         } else {
             await_console_condition(|| next.request_paths().iter().any(|p| p.ends_with(".zst")));
-            if !initial_screen.contains("Downloading") {
-                pty.read_until("Downloading", Duration::from_secs(10));
-            }
+            terminal
+                .wait_until(|screen| screen.contains("Downloading"))
+                .unwrap();
         }
         let operation = update_operation(&h);
         assert_eq!(operation["switch"]["target"], "2.0.0");
         assert_eq!(operation["switch"]["repository"]["http"], next.base_url);
         if mode == "cancel" {
-            pty.master.write_all(b"\x1b").unwrap();
-            pty.read_until("Confirm stop", Duration::from_secs(10));
-            pty.master.write_all(b"\r").unwrap();
-            pty.read_until("Update cancelled", Duration::from_secs(10));
+            terminal.send(Key::Esc).unwrap();
+            terminal
+                .wait_until(|screen| screen.contains("Confirm stop"))
+                .unwrap();
+            terminal.send(Key::Enter).unwrap();
+            terminal
+                .wait_until(|screen| screen.contains("Update cancelled"))
+                .unwrap();
         }
-        pty.master.write_all(b"\x03").unwrap();
-        pty.read_until("\x1b[?1049l", Duration::from_secs(10));
-        assert_eq!(observer.0.wait().unwrap().code(), Some(130));
-        assert!(pty.echo_enabled(), "observer must restore terminal echo");
+        terminal.send(Key::Ctrl('c')).unwrap();
+        assert!(!terminal.wait_exit().unwrap().success());
+        assert!(
+            !terminal.screen().alternate_screen(),
+            "observer must leave alternate screen"
+        );
         if mode == "cancel" {
             let result = update_operation(&h);
             assert_eq!(result["status"], "cancelled");

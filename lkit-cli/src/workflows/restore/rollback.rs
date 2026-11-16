@@ -32,7 +32,7 @@ pub(crate) async fn rollback_restore<P: DocsProbe>(
 ) -> Result<(), InstallError> {
     mark_phase(root, transaction, Phase::RollingBack)?;
     let result = rollback_restore_inner(root, transaction, manager, health).await;
-    if result.is_err() {
+    if result.is_err() && transaction.schema_version != 9 {
         let _ = mark_phase(root, transaction, Phase::Failed);
     }
     result
@@ -45,7 +45,13 @@ async fn rollback_restore_inner<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     let snapshot = rollback_util::read_state_snapshot(root, &transaction.transaction_id)?;
-    let is_systemd = snapshot.service.manager == StateServiceManager::Systemd;
+    let native = transaction.schema_version == 9;
+    if native && snapshot.service.manager != manager.kind() {
+        return Err(InstallError::Preflight(
+            "restore recovery backend mismatch".into(),
+        ));
+    }
+    let is_systemd = native || snapshot.service.manager == StateServiceManager::Systemd;
     if is_systemd {
         manager.stop_and_wait(
             ManagedService::LandscapeRouter,

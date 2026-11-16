@@ -393,7 +393,9 @@ fn snapshot_backup_detail_verified_en() {
         // Enter 打开详情页并自动启动后台校验(UI-11),结果回传后底栏为已校验。
         app.handle_key(key(KeyCode::Enter));
         let sender = mock.verify_sender();
-        sender.send(Ok("verified".into())).unwrap();
+        sender
+            .send(Ok(crate::console::backup::sample_verified_backup()))
+            .unwrap();
         let ConsoleApp { backup, notice, .. } = app;
         backup.poll(notice);
     });
@@ -553,7 +555,8 @@ fn snapshot_backup_restore_confirm_en() {
         *app = backup_ready_app();
         app.backup.state = BackupListState::Complete(backup_rows());
         app.backup.selected = 1;
-        app.backup.verify = BackupVerifyState::Complete(Ok("verified".into()));
+        app.backup.verify =
+            BackupVerifyState::Complete(Ok(crate::console::backup::sample_verified_backup()));
         app.backup.restore_confirming = true;
     });
 }

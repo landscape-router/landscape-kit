@@ -232,8 +232,8 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
       顺序固定为：停止目标服务 → 恢复 unit 注册与 enabled 状态（**不启动**）→ 同版本
       restore 时把被替换的原 release 从事务目录移回 → 恢复 `current` → 恢复 `data/`
       （幂等，见下）→ 仅在恢复前服务活跃时启动并做完整健康检查 → 重新提交恢复前 state。
-      必要时再使用 `backup` 保护快照；恢复成功标记 `rolled_back`，失败标记 `failed` 并
-      保留目标 release、旧 data 和两个备份引用；
+      必要时再使用 `backup` 保护快照；恢复成功标记 `rolled_back`，恢复失败保持未完成阶段并
+      保留目标 release、旧 data 和两个备份引用，daemon 重试恢复；
     - 回滚恢复 `data/` 必须幂等，调用方按三态判定：`previous-data` 存在 → 移回原位；
       `previous-data` 缺失且 `data/` 存在 → 视为上次回滚已完成（already-restored），
       不得再次删除或移动 `data/`，直接继续写 state 与标记 `rolled_back`；两者均缺失 →
@@ -459,3 +459,14 @@ prepared／stopping 先恢复服务和宿主快照，恢复成功后才终结事
 activating／verifying／rolling_back 按旧状态快照回滚；systemd、OpenRC、SysVinit 共用
 服务快照恢复。旧版本静态目录和归档保留，`.lkb` 用于恢复二进制及初始化数据。
 无备份回滚不恢复 data。恢复失败保持非终态、保留证据并阻止后续修改。
+
+### 原生 restore 事务（Schema v9）
+
+restore 事务以 v9 记录，通过操作 ID 关联持久化请求。目标 `.lkb` 在准备阶段复制到
+事务目录并记录摘要；后续执行使用已验证字节。systemd、OpenRC、SysVinit 依安装
+state 的后端执行，恢复时必须与原后端匹配。
+
+`preparing` 清理事务临时内容后结束；`prepared`／`stopping` 恢复原服务与 DNS 后结束；
+`activating`／`verifying`／`rolling_back` 恢复旧 release、current、data 与原服务状态。
+清理或恢复失败时保留未完成阶段，daemon 重试并阻止后续修改。`committed` 只补写操作
+结果；不会重新创建备份或导入目标。观察者断开不改变事务。

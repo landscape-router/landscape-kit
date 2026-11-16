@@ -327,11 +327,13 @@ fn backup_create_and_verify_flow_through_mock_ops() {
     app.backup.selected = 1;
     app.start_backup_verify();
     assert!(matches!(app.backup.verify, BackupVerifyState::Running(_)));
-    mock.verify_sender().send(Ok("verified".into())).unwrap();
+    mock.verify_sender()
+        .send(Ok(crate::console::backup::sample_verified_backup()))
+        .unwrap();
     poll_backup(&mut app);
     assert!(matches!(
         &app.backup.verify,
-        BackupVerifyState::Complete(Ok(message)) if message == "verified"
+        BackupVerifyState::Complete(Ok(message)) if message.message == "verified"
     ));
 }
 

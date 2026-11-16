@@ -99,6 +99,8 @@ jobs:
             filter: "repair::"
           - domain: repair-service
             filter: "repair_service::"
+          - domain: restore
+            filter: "restore::"
           - domain: self
             filter: "self_cmd::"
           - domain: switch

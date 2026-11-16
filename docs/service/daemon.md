@@ -7,7 +7,7 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 业务操作的记录与业务事务分别管理：操作记录回答“用户的请求执行到哪里”，事务记录
 回答“安装现场如何安全提交或恢复”。daemon 存活不等于某个操作已经成功。
 
-`switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
+`restore`、`switch`、`repair static`、`repair binary`、`repair service` 由 daemon 直接调用工作流。
 `update` 在前端解析和确认后提交同一 `switch` 操作。其他委托修改命令通过 worker 执行，两条入口共用串行调度和安装锁。外部服务管理
 工具是独立进程。`self install/upgrade/remove` 直接执行。
 
@@ -31,8 +31,8 @@ CLI／TUI 负责收集输入、提交结构化请求和显示状态；daemon 负
 
 操作记录位于 lkit 地盘 `run/operations/`，目录权限 `0700`、记录权限 `0600`，原子
 写入并同步到磁盘，可以跨主机启动保留。记录只包含受支持的操作类型、安装根、状态、事务关联和结果说明，
-repair 操作记录写入 schema v2，switch 写入 v3；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
-`repair_static`、`repair_binary`、`switch`，请求载荷按类型校验；未知类型、字段或不支持的
+repair 操作记录写入 schema v2，switch 写入 v3，restore 写入 v4；不保存密码、环境变量或任意命令行。操作类型分别为 `repair_service`、
+`repair_static`、`repair_binary`、`switch`、`restore`，请求载荷按类型校验；未知类型、字段或不支持的
 协议版本在入队前拒绝。操作类型与业务事务中的 `operation` 不必同名：
 static／binary 对应 `repair` 事务，并分别校验 `static_backup`／`.lkb` 等恢复依据。
 
@@ -169,3 +169,15 @@ CLI 与真实 daemon 的交互、前端断开、强杀 daemon、重启和结果�
 latest 或读取默认来源来改写请求。前端只读解析和等待确认不持有安装锁、不创建操作；
 拒绝确认、同版本与降级均不入队。协议不接受任意命令行、环境或终端句柄。
 详见 [`lkit switch`](../commands/switch.md) 与 [`lkit update`](../commands/update.md)。
+
+## 备份恢复操作
+
+`restore` 使用 schema v4 和 `restore-v1.pid` 能力标记。前端先验证目标备份并确认，
+请求绑定安装根、当前版本和完整状态摘要，以及备份绝对路径、ID、目标版本和文件 SHA-256。
+daemon 持锁后复核，变化时不创建事务。执行使用同一次读取并校验的字节，目标备份
+复制到事务目录后独立于原文件。操作记录不包含备份中的配置、API token 或凭据。
+
+restore 只允许取消排队操作，领取后不允许取消；Ctrl+C 退出观察不影响执行。
+事务采用 schema v9，创建前持久化操作关联。准备阶段清理，停止阶段恢复原服务状态，
+激活阶段回滚到旧 release、data 和服务状态；恢复失败保持未完成状态并阻止新操作。
+已提交事务只补写结果，不重复执行 restore。
