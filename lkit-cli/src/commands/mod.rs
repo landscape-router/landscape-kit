@@ -9,6 +9,7 @@ pub mod lkit_self;
 mod manage;
 pub mod migrate;
 pub mod network;
+pub mod operation;
 pub mod reconcile;
 pub mod reinit;
 pub mod repair;
@@ -41,6 +42,7 @@ pub use update::Update;
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    Operation(operation::OperationCommand),
     Check(Check),
     Install(Install),
     Migrate(Migrate),

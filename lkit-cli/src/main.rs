@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod console;
 mod daemon;
+mod daemon_operations;
 mod daemon_supervisor;
 mod daemon_worker;
 mod deployment;
@@ -191,6 +192,7 @@ async fn run_command(
         Commands::Self_(args) => commands::lkit_self::run(&args).await,
         Commands::Flare(args) => commands::flare::run(&args).await,
         Commands::Frontend(args) => commands::frontend::run(&args),
+        Commands::Operation(args) => commands::operation::run(&args),
         Commands::Daemon(args) => daemon::run(&args).await,
     }
 }

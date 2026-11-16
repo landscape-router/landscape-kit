@@ -296,13 +296,17 @@ daemon 已在运行（`/root/.lkit/run/lkit.pid` pidfile 存活），否则命�
 | `install` | `check` |
 | `switch` | `reconcile` |
 | `update` | `set-mirror` |
-| `repair` | `software` |
+| `repair static/binary` | `software` |
 | `restore` | `backup` |
 | `reinit` | `self` |
 | `uninstall` | `daemon` |
 | `network confirm` | `network status` |
 | `network rollback`（手工调用） | `migrate` 的前置检查阶段 |
 |  | `network rollback --automatic` 之外的自动回滚路径 |
+
+`repair service` 使用[daemon 操作管理](../service/daemon.md)的持久化队列，
+由 daemon 直接调用工作流。以下 worker 请求格式和生命周期仅适用于表内的委托命令。
+`operation status/list/cancel` 直接访问操作记录，不等待安装锁。
 
 `migrate` 是唯一的**部分委托**命令：`delegates` 不包含它，`commands::migrate::run`
 在发起进程内先执行前置检查（源目录校验、运行实例识别、export API 支持检查、
@@ -415,4 +419,5 @@ v1 至 v6。独立快照为 `transactions/<id>/service-repair.json`，记录格�
 `preparing` 未修改定义，可标记失败；`prepared`、`activating`、`verifying` 与
 `rolling_back` 恢复原定义；`finalizing` 校验并续做提交。恢复遇到外部定义修改或
 注册链接冲突时拒绝覆盖并保留事务。运行中的 daemon 通过 `service-repair-v1.pid`
-声明支持该恢复类型，标识 PID 必须与实际 daemon 的存活 PID 一致。
+声明支持该恢复类型，标识 PID 必须与实际 daemon 的存活 PID 一致。服务修复提交入口还要求
+`operations-v1.pid`，防止将新格式请求提交给只支持 worker 的 daemon。

@@ -167,3 +167,31 @@ daemon 独立完成（S-2）、cancel 文件驱动的取消 + daemon 恢复（S-
   fixture 覆盖实际子进程崩溃、重复封顶拉起、主动停止与退避等待中停止。
   systemd／OpenRC 场景检查监管进程保持不变而 daemon 子进程重新启动。
 - 缺口：SysVinit 真实虚拟机生命周期验收；本地不运行系统级测试，CI 执行结果单独判定。
+
+
+## DAE-14
+
+**持久化操作队列、串行领取与取消边界**
+
+- 测试层：隔离单元测试
+- 状态：`covered`
+- 证据：[操作契约](../../../service/daemon.md)、[队列测试](../../../../lkit-cli/src/daemon_operations/tests.rs)
+- 说明：按 ID 排队，终态不重放，排队可取消，执行中拒绝取消，持有安装锁时仍能查询。
+
+## DAE-15
+
+**操作记录与事务之间的崩溃窗口**
+
+- 测试层：隔离单元测试
+- 状态：`covered`
+- 证据：[操作状态恢复](../../../../lkit-cli/src/daemon_operations.rs)、[崩溃窗口测试](../../../../lkit-cli/src/daemon_operations/tests.rs)
+- 说明：关联先于事务创建；提交后未保存结果恢复为成功；回滚恢复为失败；无事务证据标记中断；损坏或身份不符保持恢复中。不以重新执行工作流猜测结果。
+
+## DAE-16
+
+**daemon 直接修复服务，前端断开与执行中强杀**
+
+- 测试层：CI fixture e2e
+- 状态：`covered`
+- 证据：[真实进程场景](../../../../lkit-cli/tests/install_fixture_e2e/repair_service.rs)、[CI 分片](../../../../.github/workflows/test-fixture-e2e.yml)
+- 说明：在安装锁下排队并关闭 CLI；释放锁后由 daemon 完成操作。fake systemctl 的父 PID 必须为 daemon PID；暂停 refresh 后强杀 daemon，重启完成回滚。终态重启后保持不变。

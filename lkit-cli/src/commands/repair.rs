@@ -1,5 +1,4 @@
 #[cfg(feature = "test-support")]
-#[cfg(feature = "test-support")]
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -40,7 +39,14 @@ pub async fn run(args: &Repair) -> ExitCode {
             if let Some(path) = &args.test_runtime {
                 match crate::deployment::runtime::InstallRuntime::from_test_file(path) {
                     Ok(runtime) => {
-                        return service_result(crate::workflows::repair_service::run(&runtime));
+                        if !crate::deployment::runtime::InstallRuntime::test_uses_daemon(path)
+                            .unwrap_or(false)
+                        {
+                            return service_result(crate::workflows::repair_service::run(&runtime));
+                        }
+                        return service_result(
+                            crate::daemon_operations::submit_and_wait(&runtime).await,
+                        );
                     }
                     Err(error) => {
                         eprintln!("lkit: {error}");
@@ -50,7 +56,7 @@ pub async fn run(args: &Repair) -> ExitCode {
             }
             crate::deployment::runtime::InstallRuntime::production()
         };
-        return service_result(crate::workflows::repair_service::run(&runtime));
+        return service_result(crate::daemon_operations::submit_and_wait(&runtime).await);
     }
     let binary = args.target == RepairTarget::Binary;
     if binary && args.official {

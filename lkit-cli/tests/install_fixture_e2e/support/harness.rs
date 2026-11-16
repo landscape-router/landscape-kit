@@ -245,7 +245,9 @@ esac
             .stderr(std::process::Stdio::null());
         let child = child.spawn().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !self.run_dir().join("lkit.pid").is_file() {
+        while !std::fs::read_to_string(self.run_dir().join("operations-v1.pid"))
+            .is_ok_and(|pid| pid.trim() == child.id().to_string())
+        {
             assert!(
                 std::time::Instant::now() < deadline,
                 "lkit daemon did not write its pidfile"
@@ -364,12 +366,24 @@ pub(crate) struct DaemonGuard {
     child: std::process::Child,
 }
 
+impl DaemonGuard {
+    pub(crate) fn id(&self) -> u32 {
+        self.child.id()
+    }
+    pub(crate) fn crash(&mut self) {
+        self.child.kill().unwrap();
+        self.child.wait().unwrap();
+    }
+}
+
 impl Drop for DaemonGuard {
     fn drop(&mut self) {
-        unsafe {
-            libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM);
+        if matches!(self.child.try_wait(), Ok(None)) {
+            unsafe {
+                libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM);
+            }
+            let _ = self.child.wait();
         }
-        let _ = self.child.wait();
     }
 }
 

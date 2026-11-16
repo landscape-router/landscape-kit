@@ -1,7 +1,7 @@
 //! lkit 常驻服务。
 //!
 //! 常驻服务承担三件事:
-//! 1. **委托命令执行**:生产命令由 CLI 写入
+//! 1. **操作执行**:服务修复通过持久化结构化操作直接执行;其余委托命令由 CLI 写入
 //!    [`OPERATIONS_DIR`](OPERATIONS_DIR) 的
 //!    root-only 请求文件,daemon 周期扫描并执行,CLI 轮询结果。daemon 由 init
 //!    系统启动,天然脱离用户会话,SSH 断开不会中止进行中的事务;
@@ -75,6 +75,7 @@ pub(crate) async fn run_with_runtime(runtime: InstallRuntime) -> ExitCode {
 async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     let _instance_lock =
         crate::daemon_supervisor::instance_lock("daemon.lock").map_err(InstallError::Io)?;
+    let runtime = std::sync::Arc::new(runtime);
     let pidfile = layout::territory_pidfile();
     std::fs::create_dir_all(
         pidfile
@@ -87,6 +88,8 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&recovery_capability)?;
     let service_capability = layout::territory_run_dir().join("service-repair-v1.pid");
     write_pidfile(&service_capability)?;
+    let operations_capability = layout::territory_run_dir().join("operations-v1.pid");
+    write_pidfile(&operations_capability)?;
 
     // Best effort only: bpffs preparation must not disable the L2 recovery
     // channel or prevent Landscape's normal service startup.
@@ -112,11 +115,23 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     let mut worker: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         recovery_cycle(&runtime).await;
-        if worker.as_ref().is_none_or(|task| task.is_finished()) {
+        if !SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
+            && worker.as_ref().is_none_or(|task| task.is_finished())
+        {
             if let Some(task) = worker.take() {
                 let _ = task.await;
             }
-            worker = Some(tokio::task::spawn_blocking(execute_pending_requests));
+            let runtime = runtime.clone();
+            worker =
+                Some(tokio::task::spawn_blocking(
+                    move || match crate::daemon_operations::process_one(&runtime) {
+                        Ok(true) => {}
+                        Ok(false) => execute_pending_requests(),
+                        Err(error) => {
+                            eprintln!("lkit daemon: operation scheduling failed: {error}")
+                        }
+                    },
+                ));
         }
         flare = reload_flare(flare);
         // 分片睡眠,保证 SIGTERM 及时生效。
@@ -127,13 +142,17 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
                 shutdown = true;
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
         if shutdown {
             break;
         }
     }
+    if let Some(task) = worker {
+        let _ = task.await;
+    }
     drop(flare);
+    let _ = std::fs::remove_file(&operations_capability);
     let _ = std::fs::remove_file(&service_capability);
     let _ = std::fs::remove_file(&recovery_capability);
     let _ = std::fs::remove_file(&pidfile);
@@ -306,7 +325,7 @@ fn execute_pending_requests() {
         })
         .collect();
     requests.sort();
-    for request in requests {
+    for request in requests.into_iter().take(1) {
         if request.parent() != Some(std::path::Path::new(OPERATIONS_DIR)) {
             continue;
         }

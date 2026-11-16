@@ -51,7 +51,8 @@ impl DelegateError {
 pub(crate) fn delegates(command: &Commands) -> bool {
     match command {
         Commands::Check(_) | Commands::Reconcile(_) | Commands::SetMirror(_) => false,
-        Commands::Software(_) => false,
+        Commands::Software(_) | Commands::Operation(_) => false,
+        Commands::Repair(args) => args.target != crate::commands::repair::RepairTarget::Service,
         Commands::Backup(_) => false,
         Commands::Self_(_) | Commands::Daemon(_) => false,
         Commands::Flare(_) => false,
@@ -69,7 +70,6 @@ pub(crate) fn delegates(command: &Commands) -> bool {
         Commands::Install(_)
         | Commands::Switch(_)
         | Commands::Update(_)
-        | Commands::Repair(_)
         | Commands::Restore(_)
         | Commands::Reinit(_)
         | Commands::Uninstall(_) => true,
@@ -99,7 +99,7 @@ fn test_runtime_is_inline(command: &Commands) -> bool {
     let path = match command {
         Commands::Check(_) => return false,
         Commands::SetMirror(_) => None,
-        Commands::Software(_) => None,
+        Commands::Software(_) | Commands::Operation(_) => None,
         Commands::Self_(_) => None,
         Commands::Daemon(_) => None,
         Commands::Flare(_) => None,
@@ -421,6 +421,8 @@ mod tests {
     #[test]
     fn does_not_delegate_read_only_commands() {
         for args in [
+            &["repair", "service"][..],
+            &["operation", "list"][..],
             &["check"][..],
             &["reconcile"][..],
             &["set-mirror", "tuna"][..],

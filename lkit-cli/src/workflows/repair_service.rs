@@ -1,8 +1,6 @@
 //! Transactional service definition migration, without restarting Landscape.
 use crate::deployment::plan::InstallError;
-use crate::deployment::{
-    layout, lock, root::InstallRoot, runtime::InstallRuntime, state, transaction,
-};
+use crate::deployment::{layout, root::InstallRoot, runtime::InstallRuntime, state, transaction};
 use crate::release::artifacts::hash_str;
 use crate::service::manager::{
     self, ManagedService, ServiceBefore, ServiceManager, ServiceManagerKind, SystemRegistration,
@@ -36,11 +34,20 @@ fn snapshot_path(tx: &TransactionFile) -> PathBuf {
         .join("service-repair.json")
 }
 
+#[cfg(feature = "test-support")]
 pub(crate) fn run(runtime: &InstallRuntime) -> Result<(), InstallError> {
     if !runtime.allow_non_root && unsafe { libc::geteuid() } != 0 {
         return Err(failure("service repair requires root"));
     }
-    let _lock = lock::acquire_install_lock()?;
+    let _lock = crate::deployment::lock::acquire_install_lock()?;
+    run_locked(runtime, &mut |_| Ok(()))
+}
+
+/// The caller owns the installation lock for the entire operation.
+pub(crate) fn run_locked(
+    runtime: &InstallRuntime,
+    associate: &mut dyn FnMut(&TransactionFile) -> Result<(), InstallError>,
+) -> Result<(), InstallError> {
     let root =
         state::discover_landscape_root()?.ok_or_else(|| failure("no Landscape installation"))?;
     if transaction::find_unfinished(&root)?.is_some() {
@@ -55,10 +62,19 @@ pub(crate) fn run(runtime: &InstallRuntime) -> Result<(), InstallError> {
     if !matches!(manager.probe(), manager::Availability::Available { .. }) {
         return Err(failure("service manager is unavailable"));
     }
-    repair(&root, manager)
+    repair_associated(&root, manager, associate)
 }
 
+#[cfg(test)]
 fn repair(root: &InstallRoot, manager: &dyn ServiceManager) -> Result<(), InstallError> {
+    repair_associated(root, manager, &mut |_| Ok(()))
+}
+
+fn repair_associated(
+    root: &InstallRoot,
+    manager: &dyn ServiceManager,
+    associate: &mut dyn FnMut(&TransactionFile) -> Result<(), InstallError>,
+) -> Result<(), InstallError> {
     let installed =
         state::load_state(root)?.ok_or_else(|| failure("missing committed installation state"))?;
     if installed.service.manager != manager.kind() {
@@ -96,6 +112,7 @@ fn repair(root: &InstallRoot, manager: &dyn ServiceManager) -> Result<(), Instal
     tx.operation = Operation::RepairService;
     tx.target_release = None;
     tx.systemd_before = Some(before.clone());
+    associate(&tx)?;
     transaction::begin(root, &tx)?;
     let snapshot = Snapshot {
         version: 1,
@@ -139,7 +156,7 @@ fn check_registration(manager: &dyn ServiceManager, path: &Path) -> Result<(), I
     Ok(())
 }
 
-fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
@@ -416,6 +433,41 @@ mod tests {
         };
         (root, manager)
     }
+    #[test]
+    fn association_must_succeed_before_transaction_or_service_mutation() {
+        let dir =
+            std::env::temp_dir().join(format!("lkit-service-associate-{}", uuid::Uuid::now_v7()));
+        let _guard = layout::test_territory(&dir.join("territory"));
+        let (root, manager) = setup(
+            &dir.join("landscape"),
+            ServiceManagerKind::Systemd,
+            false,
+            false,
+        );
+        let mut calls = 0;
+        let result = repair_associated(&root, &manager, &mut |tx| {
+            calls += 1;
+            assert!(
+                !layout::territory_transactions_dir()
+                    .join(format!("{}.json", tx.transaction_id))
+                    .exists()
+            );
+            assert_eq!(
+                std::fs::read_to_string(&manager.path).unwrap(),
+                "old definition"
+            );
+            Err(failure("operation association could not be persisted"))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+        assert!(transaction::find_unfinished(&root).unwrap().is_none());
+        assert_eq!(
+            std::fs::read_to_string(&manager.path).unwrap(),
+            "old definition"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn migrates_all_backends_without_changing_runtime_and_is_idempotent() {
         for backend in ServiceManagerKind::supported() {

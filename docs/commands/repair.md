@@ -36,7 +36,13 @@ lkit repair service
 后端、不下载资产、不修改 Landscape 配置和数据、不创建 `.lkb`，不接受仓库参数。
 `repair static` 和 `repair binary` 不承担服务定义迁移。
 
-命令要求已提交的安装、可用的匹配后端、支持服务定义修复事务的运行中 daemon 和有效安装锁。存在未完成事务时拒绝迁移。
+命令要求已提交的安装、可用的匹配后端和支持操作管理的运行中 daemon。
+CLI 输出操作 ID 后等待结果；daemon 直接执行工作流，不创建 lkit worker。
+安装锁被占用或存在未完成事务时保持排队，取得锁后重新验证现场。
+前端断开不取消操作；使用 `lkit operation status <id>` 查询、`lkit operation list`
+列举，`lkit operation cancel <id>` 仅取消尚未领取的请求。
+执行和恢复中的操作不能取消。记录跨重启保留，恢复依据及状态见
+[daemon 操作管理](../service/daemon.md)。
 写入前验证安装状态中的定义摘要及系统注册链接；定义被手工修改、注册指向外部路径
 或身份无法验证时拒绝覆盖，并报告冲突路径。
 
