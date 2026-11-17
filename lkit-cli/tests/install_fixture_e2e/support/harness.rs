@@ -268,12 +268,18 @@ esac
         if pause {
             child.env("LKIT_TEST_PAUSE_REPAIR_VERIFY", "1");
         }
+        std::fs::create_dir_all(self.run_dir()).unwrap();
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.run_dir().join("daemon.log"))
+            .unwrap();
         child
             .arg("daemon")
             .arg("--test-runtime")
             .arg(runtime)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stdout(log.try_clone().unwrap())
+            .stderr(log);
         let child = child.spawn().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while !std::fs::read_to_string(self.run_dir().join("asset-repair-v2.pid"))

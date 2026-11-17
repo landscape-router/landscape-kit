@@ -219,14 +219,21 @@ fn restore_with(
             return Err(error(format!("physical interface {} changed", c.interface)));
         }
     }
+    let mut activation_error = None;
     for c in connections {
         if !manager
             .active()?
             .iter()
             .any(|(uuid, iface)| uuid == &c.uuid && iface == &c.interface)
         {
-            manager.activate(&c.uuid, &c.interface)?;
+            // A missing profile must not prevent restoration of another management link.
+            if let Err(error) = manager.activate(&c.uuid, &c.interface) {
+                activation_error.get_or_insert(error);
+            }
         }
+    }
+    if let Some(error) = activation_error {
+        return Err(error);
     }
     let active = manager.active()?;
     for c in connections {
@@ -302,6 +309,8 @@ mod tests {
         connectivity: [bool; 4],
         activations: usize,
         fail_activation: bool,
+        fail_interface: Option<String>,
+        active_reads: std::collections::VecDeque<Vec<(String, String)>>,
     }
     impl Default for Fake {
         fn default() -> Self {
@@ -311,12 +320,17 @@ mod tests {
                 connectivity: [true, false, true, false],
                 activations: 0,
                 fail_activation: false,
+                fail_interface: None,
+                active_reads: Default::default(),
             }
         }
     }
     impl Manager for Fake {
         fn active(&mut self) -> Result<Vec<(String, String)>, InstallError> {
-            Ok(self.active.clone())
+            Ok(self
+                .active_reads
+                .pop_front()
+                .unwrap_or_else(|| self.active.clone()))
         }
         fn physical_mac(&mut self, _: &str) -> Result<Option<String>, InstallError> {
             Ok(self.mac.clone())
@@ -326,10 +340,11 @@ mod tests {
         }
         fn activate(&mut self, uuid: &str, interface: &str) -> Result<(), InstallError> {
             self.activations += 1;
-            if self.fail_activation {
+            if self.fail_activation || self.fail_interface.as_deref() == Some(interface) {
                 return Err(error("profile deleted"));
             }
-            self.active = vec![(uuid.into(), interface.into())];
+            self.active.retain(|(_, iface)| iface != interface);
+            self.active.push((uuid.into(), interface.into()));
             Ok(())
         }
     }
@@ -400,6 +415,56 @@ mod tests {
         assert!(parse_active(&format!("{UUID}:vpn:--")).is_err());
         assert!(parse_active("unexpected").is_err());
     }
+    #[test]
+    fn failed_profile_does_not_prevent_other_connections_from_recovering() {
+        let second = "299df81c-247d-4f7a-a796-26638d3f205c";
+        let mut manager = Fake::default();
+        manager.active.push((second.into(), "eth1".into()));
+        let before = capture_with(&mut manager).unwrap();
+        manager.active.clear();
+        manager.fail_interface = Some("eth0".into());
+        assert!(restore_with(&before, &mut manager).is_err());
+        assert_eq!(manager.active, vec![(second.into(), "eth1".into())]);
+        assert_eq!(manager.activations, 2);
+        assert!(restore_with(&before, &mut manager).is_err());
+        assert_eq!(
+            manager.activations, 3,
+            "healthy connection must not restart"
+        );
+        manager.fail_interface = None;
+        restore_with(&before, &mut manager).unwrap();
+        assert_eq!(manager.activations, 4);
+        restore_with(&before, &mut manager).unwrap();
+        assert_eq!(manager.activations, 4);
+    }
+
+    #[test]
+    fn capture_rejects_connection_changes_but_accepts_reordered_results() {
+        let mut manager = Fake::default();
+        manager.active_reads = [manager.active.clone(), vec![]].into();
+        assert!(capture_with(&mut manager).is_err());
+        assert_eq!(manager.activations, 0);
+        manager
+            .active
+            .push(("299df81c-247d-4f7a-a796-26638d3f205c".into(), "eth1".into()));
+        let mut reversed = manager.active.clone();
+        reversed.reverse();
+        manager.active_reads = [manager.active.clone(), reversed].into();
+        assert_eq!(capture_with(&mut manager).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn disappearing_connection_after_activation_cannot_complete_recovery() {
+        let mut manager = Fake::default();
+        let before = capture_with(&mut manager).unwrap();
+        manager.active.clear();
+        manager.active_reads = [vec![], vec![]].into();
+        assert!(restore_with(&before, &mut manager).is_err());
+        assert_eq!(manager.activations, 1);
+        restore_with(&before, &mut manager).unwrap();
+        assert_eq!(manager.activations, 1);
+    }
+
     #[test]
     fn legacy_network_snapshots_remain_readable() {
         let value = serde_json::json!({

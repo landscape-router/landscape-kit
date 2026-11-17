@@ -111,13 +111,40 @@ fn switch_ignores_allow_no_backup_while_the_service_runs() {
     );
 }
 
-fn wait_until(mut ready: impl FnMut() -> bool) {
+#[track_caller]
+fn wait_until(h: &InstallHarness, label: &str, mut ready: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(45);
     while !ready() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for switch"
-        );
+        if std::time::Instant::now() >= deadline {
+            // Read evidence directly: a stuck CLI must not block timeout diagnostics.
+            for name in ["daemon.log", "switch-frontend.log"] {
+                eprintln!(
+                    "{name}:\n{}",
+                    std::fs::read_to_string(h.run_dir().join(name)).unwrap_or_default()
+                );
+            }
+            for directory in [h.run_dir().join("operations"), h.transactions_dir()] {
+                for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                        continue;
+                    }
+                    if let Ok(bytes) = std::fs::read(&path)
+                        && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                    {
+                        eprintln!(
+                            "{}: status={} stage={} phase={} message={}",
+                            path.display(),
+                            record["status"],
+                            record["stage"],
+                            record["phase"],
+                            record["message"]
+                        );
+                    }
+                }
+            }
+            panic!("timed out waiting for switch: {label}");
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -163,10 +190,15 @@ fn start_switch(
     if no_backup {
         command.arg("--allow-no-backup");
     }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(h.run_dir().join("switch-frontend.log"))
+        .unwrap();
     Frontend(
         command
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
             .spawn()
             .unwrap(),
     )
@@ -177,7 +209,7 @@ fn gate(h: &InstallHarness, name: &str) -> std::path::PathBuf {
     gate
 }
 fn checkpoint(h: &InstallHarness, name: &str) {
-    wait_until(|| {
+    wait_until(h, name, || {
         h.run_dir()
             .join(format!("test-repair-{name}.reached"))
             .exists()
@@ -253,7 +285,7 @@ fn daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup()
             daemon.crash();
             std::fs::remove_file(gate).unwrap();
             let daemon = h.spawn_daemon(&runtime);
-            wait_until(|| {
+            wait_until(&h, "crash recovery result", || {
                 records(&h)[0]["status"] == if committed { "succeeded" } else { "failed" }
             });
             let result = records(&h).pop().unwrap();
@@ -307,7 +339,9 @@ fn disconnected_switch_download_can_be_cancelled_without_changing_installation()
     let runtime = h.daemon_runtime();
     let _daemon = h.spawn_daemon(&runtime);
     let frontend = start_switch(&h, &runtime, &next.base_url, false);
-    wait_until(|| next.request_paths().iter().any(|p| p.ends_with(".zst")));
+    wait_until(&h, "download request", || {
+        next.request_paths().iter().any(|p| p.ends_with(".zst"))
+    });
     drop(frontend);
     let operation = records(&h).pop().unwrap();
     assert_eq!(operation["status"], "running");
@@ -318,7 +352,9 @@ fn disconnected_switch_download_can_be_cancelled_without_changing_installation()
             .output()
             .unwrap(),
     );
-    wait_until(|| records(&h)[0]["status"] == "cancelled");
+    wait_until(&h, "download cancellation", || {
+        records(&h)[0]["status"] == "cancelled"
+    });
     download_gate.store(true, std::sync::atomic::Ordering::SeqCst);
     let result = records(&h).pop().unwrap();
     assert_eq!(result["cancel_cleaned"], true);
@@ -356,10 +392,12 @@ fn switch_rollback_failure_blocks_next_request_until_backup_is_repaired() {
     std::fs::remove_file(gate).unwrap();
     std::fs::write(&backup, b"damaged backup").unwrap();
     let mut daemon = h.spawn_daemon(&runtime);
-    wait_until(|| records(&h)[0]["status"] == "recovering");
+    wait_until(&h, "failed rollback remains retryable", || {
+        records(&h)[0]["status"] == "recovering"
+    });
     assert_eq!(transaction(&h, &operation)["phase"], "rolling_back");
     let queued = start_switch(&h, &runtime, &next.base_url, false);
-    wait_until(|| records(&h).len() == 2);
+    wait_until(&h, "second queued operation", || records(&h).len() == 2);
     let requests = next.request_paths();
     std::thread::sleep(Duration::from_secs(4));
     assert_eq!(records(&h)[1]["status"], "queued");
@@ -378,7 +416,7 @@ fn switch_rollback_failure_blocks_next_request_until_backup_is_repaired() {
     daemon.crash();
     std::fs::write(&backup, bytes).unwrap();
     let _daemon = h.spawn_daemon(&runtime);
-    wait_until(|| records(&h)[0]["status"] == "failed");
+    wait_until(&h, "failed result", || records(&h)[0]["status"] == "failed");
     assert_eq!(records(&h)[0]["exit_code"], 5);
     assert_eq!(transaction(&h, &operation)["phase"], "rolled_back");
     let state: serde_json::Value = serde_json::from_slice(&snapshot_state(&h)).unwrap();
@@ -407,13 +445,13 @@ fn queued_switch_rejects_changed_installation_without_downloading() {
     );
     let _daemon = h.spawn_daemon(&runtime);
     let _frontend = start_switch(&h, &runtime, &next.base_url, false);
-    wait_until(|| !records(&h).is_empty());
+    wait_until(&h, "submitted operation", || !records(&h).is_empty());
     assert_eq!(records(&h)[0]["status"], "queued");
     let mut changed: serde_json::Value = serde_json::from_slice(&original).unwrap();
     changed["service"]["verified"] = false.into();
     std::fs::write(h.state_path(), serde_json::to_vec(&changed).unwrap()).unwrap();
     drop(lock);
-    wait_until(|| records(&h)[0]["status"] == "failed");
+    wait_until(&h, "failed result", || records(&h)[0]["status"] == "failed");
     let record = records(&h).pop().unwrap();
     assert!(
         record["message"]

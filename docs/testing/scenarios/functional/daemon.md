@@ -45,7 +45,7 @@
 **daemon 启动时尽力拉起所有物理以太网卡，保证 flare L2 防失联通道可用**
 
 - 测试层：Rust 单元测试（`network::ifup`，临时 sysfs 目录 + 假 `ip` 命令）
-- 状态：`已覆盖（单元）`
+- 状态：`部分覆盖`
 - 证据：[flare 协议](../../../flare/protocol.md#部署形态)、`lkit-cli/src/network/ifup.rs`
 - 缺口：真实网卡上的行为（对 DOWN 的物理网卡执行 `ip link set dev <name> up`）
   未纳入 fixture E2E
