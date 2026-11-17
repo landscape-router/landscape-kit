@@ -120,8 +120,12 @@ fn firewalld() -> CheckResult {
 }
 
 fn selinux() -> CheckResult {
+    selinux_at(Path::new("/sys/fs/selinux/enforce"))
+}
+
+fn selinux_at(enforce: &Path) -> CheckResult {
     let result = CheckResult::new("security.selinux", "SELinux");
-    match std::fs::read_to_string("/sys/fs/selinux/enforce") {
+    match std::fs::read_to_string(enforce) {
         Ok(raw) => {
             let value = raw.trim();
             if value == "1" {
@@ -140,15 +144,15 @@ fn selinux() -> CheckResult {
                 )
             }
         }
-        Err(_) if Path::new("/sys/fs/selinux").exists() => result.set(
-            Status::Unknown,
-            crate::tr!(crate::keys::SERVICE_UNAVAILABLE),
-            crate::tr!(crate::keys::SERVICE_UNABLE_READ_SELINUX_STATUS),
-        ),
-        Err(_) => result.set(
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => result.set(
             Status::Pass,
             crate::tr!(crate::keys::SERVICE_DISABLED),
             crate::tr!(crate::keys::SERVICE_SELINUX_DISABLED),
+        ),
+        Err(_) => result.set(
+            Status::Unknown,
+            crate::tr!(crate::keys::SERVICE_UNAVAILABLE),
+            crate::tr!(crate::keys::SERVICE_UNABLE_READ_SELINUX_STATUS),
         ),
     }
 }

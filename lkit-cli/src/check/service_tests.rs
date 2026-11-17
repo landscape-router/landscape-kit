@@ -90,3 +90,26 @@ fn stopped_openrc_services_are_distinct_from_query_failures() {
     assert!(fixture.info(&["firewalld"], |_| None).is_none());
     assert!(fixture.info(&["firewalld"], |_| Some(32)).is_none());
 }
+
+#[test]
+fn selinux_empty_mount_point_and_unreadable_interface_are_distinct() {
+    let dir = std::env::temp_dir().join(format!("lkit-selinux-check-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("enforce");
+    assert_eq!(
+        super::selinux_at(&path).status,
+        crate::check::model::Status::Pass
+    );
+    std::fs::write(&path, "1").unwrap();
+    assert_eq!(
+        super::selinux_at(&path).status,
+        crate::check::model::Status::Warning
+    );
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(
+        super::selinux_at(&path).status,
+        crate::check::model::Status::Unknown
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

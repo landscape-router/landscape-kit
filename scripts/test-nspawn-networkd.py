@@ -92,6 +92,12 @@ runtime = json.loads(RUNTIME.read_text())
 runtime.update(sys_class_net=str(sysnet), ip_command=str(ip), network_confirm_timeout_ms=600000)
 runtime['health']['stable_duration_ms'] = 300
 RUNTIME.write_text(json.dumps(runtime))
+# self install intentionally does not persist test-only runtime flags in a service.
+# Apply this override only inside the isolated guest for the networkd scenario.
+override = Path('/etc/systemd/system/lkit.service.d/networkd-fixture.conf')
+override.parent.mkdir(parents=True, exist_ok=True)
+override.write_text('[Service]\nExecStart=\nExecStart=/usr/local/bin/lkit daemon --supervise --test-runtime ' + str(RUNTIME) + '\n')
+ctl('daemon-reload')
 ctl('restart', 'lkit.service')
 wait(lambda: Path('/root/.lkit/run/install-v1.pid').exists())
 password = BASE / 'password'
