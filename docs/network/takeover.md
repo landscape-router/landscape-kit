@@ -80,12 +80,16 @@ Landscape 启动并通过健康检查后安装状态仍不提交。用户运行 
 ## systemd-networkd 接管
 
 networkd 主服务、netlink/varlink 等配套 socket、wait-online 服务及模板构成接管组，
-模板使用 unit 文件状态查询，不作为运行实例启停；已加载的 wait-online 实例逐个保存。
+模板使用 unit 文件状态查询，不作为运行实例启停；已加载的 wait-online 实例逐个保存，支持 systemd 的 `\xHH` 转义实例名。
 不存在的单元跳过。整组运行状态和启用状态先写入事务，再将整组 mask，最后停止。
 接管保留启动链接和 `.network`/`.netdev` 配置，不调用 networkd 的 disable/enable，
 避免 `Also=` 连带改变 socket、网络生成器和 wait-online 的启用配置。
 
-回滚先解除整组屏蔽，再恢复原本运行的单元，随后停止原本不运行的单元，并还原
+回滚仅删除指定单元指向 `/dev/null` 的 mask 并执行 daemon-reload，不调用会连带
+清理链接的 `systemctl unmask`。mask 被外部改成其他链接或文件时拒绝覆盖，保留事务。
+状态保存时检查 mask 路径；同名本地 unit 文件或非 mask 链接会在停止服务前被拒绝，
+避免覆盖自定义 unit。
+先解除整组屏蔽，再恢复原本运行的单元，随后停止原本不运行的单元，并还原
 原有 persistent/runtime mask。恢复可重复执行；任何失败保留事务供 daemon 重试。
 确认后整组保持停用和屏蔽。此支持限定 systemd 后端；OpenRC/SysVinit 不自动接管
 名为 systemd-networkd 的自定义服务脚本。

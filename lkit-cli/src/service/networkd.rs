@@ -146,13 +146,77 @@ fn restore_with(
     Ok(())
 }
 
+/// A vendor definition can be overlaid with a mask. A local definition at the
+/// mask path cannot: reject that layout while capturing, before stopping units.
+pub(crate) fn validate_mask_locations(
+    manager: &systemd::Systemd,
+    before: &HostServiceBefore,
+) -> Result<(), InstallError> {
+    if !before.installed {
+        return Ok(());
+    }
+    mask_target(&manager.system_unit_dir, &before.unit)?;
+    if before.enable_state == "masked-runtime" {
+        mask_target(&manager.run_systemd_dir, &before.unit)?;
+    }
+    Ok(())
+}
+
+fn mask_target(directory: &std::path::Path, unit: &str) -> Result<bool, InstallError> {
+    systemd::validate_unit_name(unit)?;
+    if !contains(unit) {
+        return Err(InstallError::Preflight("invalid networkd mask name".into()));
+    }
+    let path = directory.join(unit);
+    let target = match std::fs::read_link(&path) {
+        Ok(target) => target,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(InstallError::Preflight(format!(
+                "networkd mask path {} conflicts with an existing entry: {error}",
+                path.display()
+            )));
+        }
+    };
+    if target != std::path::Path::new("/dev/null") {
+        return Err(InstallError::Preflight(format!(
+            "refusing to replace networkd mask path {} pointing to {}",
+            path.display(),
+            target.display()
+        )));
+    }
+    Ok(true)
+}
+
+/// Remove only the named mask. `systemctl unmask` also prunes links pointing to
+/// that path, which may include startup links that predate our transaction.
+fn remove_mask(directory: &std::path::Path, unit: &str) -> Result<(), InstallError> {
+    if !mask_target(directory, unit)? {
+        return Ok(());
+    }
+    let path = directory.join(unit);
+    std::fs::remove_file(&path).map_err(InstallError::Io)?;
+    std::fs::File::open(directory)
+        .and_then(|file| file.sync_all())
+        .map_err(InstallError::Io)
+}
+
 fn command(
     systemd: &systemd::Systemd,
     verb: &str,
     before: &HostServiceBefore,
 ) -> Result<(), InstallError> {
     match verb {
-        "mask-runtime" | "unmask-runtime" => {
+        "unmask" | "unmask-runtime" => {
+            let directory = if verb == "unmask-runtime" {
+                &systemd.run_systemd_dir
+            } else {
+                &systemd.system_unit_dir
+            };
+            remove_mask(directory, &before.unit)?;
+            systemd::run_systemctl(systemd, &["daemon-reload"], None)?;
+        }
+        "mask-runtime" => {
             let verb = verb.trim_end_matches("-runtime");
             systemd::run_systemctl(systemd, &[verb, "--runtime", &before.unit], None)?;
         }
@@ -204,6 +268,58 @@ mod tests {
             enable_state: state.into(),
         }
     }
+    #[test]
+    fn escaped_instance_names_remain_literal_filesystem_names() {
+        let dir =
+            std::env::temp_dir().join(format!("lkit-networkd-escape-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let unit = r"systemd-networkd-wait-online@enp\x2ds0.service";
+        std::os::unix::fs::symlink("/dev/null", dir.join(unit)).unwrap();
+        assert!(contains(unit));
+        remove_mask(&dir, unit).unwrap();
+        assert!(
+            systemd::validate_unit_name(r"systemd-networkd-wait-online@enp\xzz.service").is_err()
+        );
+        assert!(
+            systemd::validate_unit_name(r"systemd-networkd-wait-online@enp\x2.service\").is_err()
+        );
+        assert!(
+            systemd::validate_unit_name("systemd-networkd-wait-online@../outside.service").is_err()
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn removing_a_mask_preserves_startup_links_and_refuses_foreign_entries() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("lkit-networkd-mask-{}", uuid::Uuid::now_v7()));
+        let wants = dir.join("multi-user.target.wants");
+        std::fs::create_dir_all(&wants).unwrap();
+        let unit = "systemd-networkd.service";
+        let path = dir.join(unit);
+        let link = wants.join(unit);
+        symlink("../systemd-networkd.service", &link).unwrap();
+        symlink("/dev/null", &path).unwrap();
+        remove_mask(&dir, unit).unwrap();
+        remove_mask(&dir, unit).unwrap();
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            std::path::Path::new("../systemd-networkd.service")
+        );
+        symlink("/foreign/unit", &path).unwrap();
+        assert!(remove_mask(&dir, unit).is_err());
+        assert_eq!(
+            std::fs::read_link(&path).unwrap(),
+            std::path::Path::new("/foreign/unit")
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "foreign unit").unwrap();
+        assert!(remove_mask(&dir, unit).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "foreign unit");
+        assert!(remove_mask(&dir, "systemd-networkd-wait-online@../../outside.service").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn template_is_a_unit_file_without_a_runtime_instance() {
         let snapshot =

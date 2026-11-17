@@ -158,14 +158,20 @@ pub(crate) fn inspect(
     manager: &dyn ServiceManager,
     name: &str,
 ) -> Result<HostServiceBefore, InstallError> {
-    validate_name(name)?;
     if manager.kind() == ServiceManagerKind::Systemd {
+        systemd::validate_unit_name(name)?;
         let manager = systemd::downcast(manager)?;
-        if name == "systemd-networkd-wait-online@.service" {
-            return super::networkd::inspect_template(manager);
+        let before = if name == "systemd-networkd-wait-online@.service" {
+            super::networkd::inspect_template(manager)?
+        } else {
+            systemd::inspect_host_service(manager, name)?
+        };
+        if super::networkd::contains(name) {
+            super::networkd::validate_mask_locations(manager, &before)?;
         }
-        return systemd::inspect_host_service(manager, name);
+        return Ok(before);
     }
+    validate_name(name)?;
     let installed = init_dir(manager)?.join(name).exists();
     let active = installed && command(manager, name, "status")?.status.success();
     let links = matching_links(manager, name)?;

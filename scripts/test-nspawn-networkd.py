@@ -129,6 +129,11 @@ def links():
     return result
 
 
+# Preserve even relative startup links into the persistent unit directory;
+# systemctl unmask may prune these while removing its mask.
+relative_wants = Path('/etc/systemd/system/lkit-networkd-test.target.wants')
+relative_wants.mkdir(exist_ok=True)
+(relative_wants / service).symlink_to('../' + service)
 before = links()
 master, slave = pty.openpty()
 env = dict(os.environ, LKIT_TEST_TTY=os.ttyname(slave), LKIT_LANG='en')

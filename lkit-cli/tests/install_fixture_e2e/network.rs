@@ -468,6 +468,7 @@ fn networkd_takeover_preserves_startup_choices_and_restores_the_group() {
             "systemd-networkd.service",
             "systemd-networkd-wait-online.service",
             "systemd-networkd-wait-online@ens3.service",
+            r"systemd-networkd-wait-online@enp\x2ds0.service",
             "systemd-networkd-wait-online@.service",
         ] {
             h.seed_host_service(unit);
@@ -486,6 +487,7 @@ fn networkd_takeover_preserves_startup_choices_and_restores_the_group() {
             "systemd-networkd.service",
             "systemd-networkd-wait-online.service",
             "systemd-networkd-wait-online@ens3.service",
+            r"systemd-networkd-wait-online@enp\x2ds0.service",
             "systemd-networkd-wait-online@.service",
         ] {
             assert!(states.join(unit).join("masked").exists());

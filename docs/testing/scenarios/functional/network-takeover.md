@@ -141,4 +141,4 @@
 - 测试层：Rust 单元、CLI fixture E2E、真实 systemd
 - 状态：`已覆盖`
 - 证据：[服务组单元测试](../../../../lkit-cli/src/service/networkd.rs)、[网络 fixture](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[真实 systemd 场景](../systemd-smoke.md#sys-07)、[接管规范](../../../network/takeover.md)
-- 说明：检查整组先屏蔽后停止、socket 与服务的不同启用状态、原始 mask、缺失单元及 wait-online 实例。确认保留屏蔽，回滚恢复原始运行状态；网络确认和回滚的 daemon 崩溃场景包含 networkd。启用链接与网络配置保持原样。
+- 说明：检查整组先屏蔽后停止、socket 与服务的不同启用状态、原始 mask、缺失单元及带转义名称的 wait-online 实例。回滚只移除指定 mask，保留指向该路径的相对启动链接；外部改动的文件或链接不被覆盖。确认保留屏蔽，回滚恢复原始运行状态；网络确认和回滚的 daemon 崩溃场景包含 networkd。启用链接与网络配置保持原样。

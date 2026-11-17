@@ -598,14 +598,24 @@ pub(crate) fn unit_property(
     Ok(output.trim().to_string())
 }
 
-fn validate_unit_name(unit: &str) -> Result<(), InstallError> {
-    if unit.is_empty()
-        || unit.len() > 255
-        || !unit.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-' | b'.' | b'@')
-        })
-    {
-        return Err(systemd_error(format!("invalid systemd unit name {unit:?}")));
+pub(super) fn validate_unit_name(unit: &str) -> Result<(), InstallError> {
+    let invalid = || systemd_error(format!("invalid systemd unit name {unit:?}"));
+    if unit.is_empty() || unit.len() > 255 {
+        return Err(invalid());
+    }
+    let mut bytes = unit.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-' | b'.' | b'@') {
+            continue;
+        }
+        if byte == b'\\'
+            && bytes.next() == Some(b'x')
+            && bytes.next().is_some_and(|b| b.is_ascii_hexdigit())
+            && bytes.next().is_some_and(|b| b.is_ascii_hexdigit())
+        {
+            continue;
+        }
+        return Err(invalid());
     }
     Ok(())
 }

@@ -64,7 +64,10 @@ pub(crate) fn assert_host_services_masked(harness: &InstallHarness, units: &[&st
         assert!(state.join("masked").is_file(), "{unit} was not masked");
         assert!(!state.join("active").exists(), "{unit} remains active");
         assert!(!state.join("enabled").exists(), "{unit} remains enabled");
-        assert!(harness.host.join("units").join(unit).is_file());
+        assert!(
+            harness.host.join("units").join(unit).is_file()
+                || state.join("vendor-definition").is_file()
+        );
     }
 }
 
@@ -74,6 +77,9 @@ pub(crate) fn assert_host_services_restored(harness: &InstallHarness, units: &[&
         assert!(state.join("active").is_file(), "{unit} was not restarted");
         assert!(state.join("enabled").is_file(), "{unit} was not re-enabled");
         assert!(!state.join("masked").exists(), "{unit} remains masked");
-        assert!(harness.host.join("units").join(unit).is_file());
+        assert!(
+            harness.host.join("units").join(unit).is_file()
+                || state.join("vendor-definition").is_file()
+        );
     }
 }
