@@ -18,6 +18,13 @@ fn daemon_recovers_an_interrupted_install_transaction() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("daemon-recover", "healthy", 30_000);
     let canonical = prepare_interrupted_install(&harness);
+    // Simulate stale PID files whose PID has been reused by this live test
+    // process. Only the daemon instance lock may prohibit recovery startup.
+    std::fs::create_dir_all(harness.run_dir()).unwrap();
+    let stale_pid = std::process::id().to_string();
+    for name in ["lkit.pid", "network-recovery-v1.pid"] {
+        std::fs::write(harness.run_dir().join(name), &stale_pid).unwrap();
+    }
 
     let mut daemon = spawn_daemon(&harness);
     let transaction_file = harness.transactions_dir().join("t.json");

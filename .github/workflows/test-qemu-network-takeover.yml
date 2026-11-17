@@ -6,7 +6,9 @@ on:
       - Cargo.lock
       - Cargo.toml
       - lkit-cli/**
-      - crates/lkit-repository/**
+      - crates/**
+      - landscape-terrain-proto/**
+      - .cargo/**
       - scripts/test-qemu-network-takeover.sh
       - .github/workflows/test-qemu-network-takeover.yml
   push:
@@ -15,7 +17,9 @@ on:
       - Cargo.lock
       - Cargo.toml
       - lkit-cli/**
-      - crates/lkit-repository/**
+      - crates/**
+      - landscape-terrain-proto/**
+      - .cargo/**
       - scripts/test-qemu-network-takeover.sh
       - .github/workflows/test-qemu-network-takeover.yml
   schedule:

@@ -8,6 +8,7 @@ on:
       - Cargo.lock
       - .cargo/**
       - lkit-cli/**
+      - crates/**
       - landscape-flare/**
       - landscape-terrain-proto/**
       - scripts/build-musl-static.sh
@@ -23,6 +24,7 @@ on:
       - Cargo.lock
       - .cargo/**
       - lkit-cli/**
+      - crates/**
       - landscape-flare/**
       - landscape-terrain-proto/**
       - scripts/build-musl-static.sh

@@ -159,7 +159,7 @@
   `ExecStart=/usr/local/bin/lkit daemon`，注册链接指向全局原件），启用、启动并校验
   MainPID 非零；重复执行时 restart 刷新；systemd 不可用或注册失败返回 `2` 且不遗留
   已启用但未运行的注册。
-- daemon 全局唯一：pidfile `/root/.lkit/run/lkit.pid`，存活实例存在时拒绝启动；恢复
+- daemon 全局唯一：pidfile `/root/.lkit/run/lkit.pid`，实例锁被持有时拒绝重复启动，残留 PID 不阻止启动；恢复
   目标固定为 lkit 地盘，从状态与事务发现 landscape 根。
 - `lkit self upgrade` 从 GitHub Release 下载对应架构二进制与 `SHA256SUMS` 并校验，
   `lkit --version` 自检后原子替换 `/usr/local/bin/lkit`；下载、校验、自检或替换失败

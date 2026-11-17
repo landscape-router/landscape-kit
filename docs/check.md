@@ -204,7 +204,7 @@ systemd 使用 `systemctl`；OpenRC 使用 init 脚本存在性、`rc-service <�
 
 | 标识符 | 检查内容 | 结果规则 |
 | --- | --- | --- |
-| `service.lkit_daemon` | 全局常驻 daemon（`lkit daemon`）是否运行中（读取地盘 pidfile，进程存活即运行中） | root 且未运行为 `error`；非 root 未运行为 `warning`；运行为 `pass` |
+| `service.lkit_daemon` | 全局常驻 daemon（`lkit daemon`）是否运行中（实例锁被持有，且地盘 pidfile 对应有效正 PID 的进程存活） | root 且未运行为 `error`；非 root 未运行为 `warning`；运行为 `pass` |
 
 root 会话的安装与生命周期命令（install/switch/update/repair/restore/reinit/uninstall 等）都委托
 给常驻 daemon 执行，daemon 未运行时这些命令必然失败；该检查在部署前就暴露问题，

@@ -969,6 +969,7 @@ fn operation_language_is_capability_gated_and_scoped_to_execution() {
     );
     cancel(&old.id).unwrap();
     let pid = std::process::id().to_string();
+    let _instance = crate::daemon_supervisor::instance_lock("daemon.lock").unwrap();
     std::fs::write(layout::territory_pidfile(), &pid).unwrap();
     std::fs::write(layout::territory_run_dir().join("operations-v3.pid"), &pid).unwrap();
     let queued = crate::i18n::with_language(crate::i18n::Language::Zh, || f.submit());

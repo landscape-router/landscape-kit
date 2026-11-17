@@ -114,7 +114,8 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 
 `lkit daemon` 是常驻服务本体,固定读取 lkit 地盘 `/root/.lkit/`:
 
-- pidfile 写入 `/root/.lkit/run/lkit.pid`(`0600`,原子替换);已存在存活实例时拒绝启动;
+- daemon 持有 `/root/.lkit/run/daemon.lock` 独占锁，重复启动被锁拒绝；取得锁后原子覆盖 pidfile（`/root/.lkit/run/lkit.pid`，`0600`），残留或被复用的 PID 不阻止恢复；
+- 运行状态与能力检查同时要求实例锁被持有、PID 为有效正数且进程存活；能力标识还须与主 PID 匹配；
 - 收到 `SIGTERM` / `SIGINT` 后清理 pidfile 并退出;
 - 尽力准备 bpffs，失败不阻断 daemon/flare，见[服务启动](../service/runtime-and-health.md#daemon-启动与-bpffs)；
 - OpenRC 将 daemon 输出保存在 root-only 的 `/var/log/lkit.log`（`0600`），其中可能包含初次生成的恢复码；

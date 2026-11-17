@@ -445,14 +445,8 @@ fn write_pidfile(pidfile: &Path) -> Result<(), InstallError> {
             .expect("territory pidfile has a parent directory"),
     )
     .map_err(InstallError::Io)?;
-    if let Ok(existing) = std::fs::read_to_string(pidfile)
-        && let Ok(pid) = existing.trim().parse::<u32>()
-        && process_alive(pid)
-    {
-        return Err(InstallError::ProcessConflict(format!(
-            "another lkit daemon is already running with pid {pid}"
-        )));
-    }
+    // run_inner holds daemon.lock before publishing any PID. A leftover PID
+    // may belong to an unrelated process after a reboot or PID reuse.
     let tmp = pidfile.with_extension("tmp");
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -468,13 +462,28 @@ fn write_pidfile(pidfile: &Path) -> Result<(), InstallError> {
 }
 
 pub(crate) fn is_running() -> bool {
-    std::fs::read_to_string(layout::territory_pidfile())
-        .ok()
-        .and_then(|text| text.trim().parse::<u32>().ok())
-        .is_some_and(process_alive)
+    instance_lock_held()
+        && std::fs::read_to_string(layout::territory_pidfile())
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            .is_some_and(process_alive)
+}
+
+fn instance_lock_held() -> bool {
+    use std::os::fd::AsRawFd;
+    let Ok(file) = std::fs::File::open(layout::territory_run_dir().join("daemon.lock")) else {
+        return false;
+    };
+    // A separate open file description must conflict with the daemon's lock.
+    // Successfully taking the shared lock means no daemon owns the exclusive one.
+    (unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) }) != 0
+        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock
 }
 
 pub(crate) fn process_alive(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
@@ -495,7 +504,11 @@ pub(crate) fn require_capability(name: &str) -> Result<(), InstallError> {
     let number = pid.trim().parse::<i32>().unwrap_or(0);
     let capability =
         std::fs::read_to_string(layout::territory_run_dir().join(name)).unwrap_or_default();
-    if number <= 0 || unsafe { libc::kill(number, 0) } != 0 || capability.trim() != pid.trim() {
+    if number <= 0
+        || !instance_lock_held()
+        || !process_alive(number as u32)
+        || capability.trim() != pid.trim()
+    {
         return Err(InstallError::Preflight("running daemon lacks required recovery capability; upgrade lkit and run `lkit self install`".into()));
     }
     Ok(())
@@ -517,7 +530,14 @@ mod tests {
         std::fs::write(&marker, "0").unwrap();
         assert!(require_capability("service-repair-v1.pid").is_err());
         std::fs::write(&marker, std::process::id().to_string()).unwrap();
+        assert!(require_capability("service-repair-v1.pid").is_err());
+        assert!(!is_running());
+        let instance = crate::daemon_supervisor::instance_lock("daemon.lock").unwrap();
+        assert!(is_running());
         assert!(require_capability("service-repair-v1.pid").is_ok());
+        drop(instance);
+        assert!(!is_running());
+        assert!(require_capability("service-repair-v1.pid").is_err());
         std::fs::write(layout::territory_pidfile(), "0").unwrap();
         assert!(require_capability("service-repair-v1.pid").is_err());
         std::fs::remove_dir_all(temp).unwrap();
@@ -558,16 +578,24 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_start_while_a_live_instance_exists() {
-        let (guard, temp) = territory("conflict");
+    fn instance_lock_rejects_duplicates_and_allows_replacing_reused_pids() {
+        let (_guard, temp) = territory("conflict");
+        let instance = crate::daemon_supervisor::instance_lock("daemon.lock").unwrap();
+        assert!(crate::daemon_supervisor::instance_lock("daemon.lock").is_err());
         let pidfile = layout::territory_pidfile();
+        // This process is alive but the file may be a leftover from another boot.
+        std::fs::write(&pidfile, std::process::id().to_string()).unwrap();
         write_pidfile(&pidfile).unwrap();
-        assert!(matches!(
-            write_pidfile(&pidfile),
-            Err(InstallError::ProcessConflict(_))
-        ));
-        drop(guard);
-        let _ = std::fs::remove_dir_all(&temp);
+        drop(instance);
+        assert!(!is_running());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn invalid_pids_never_address_process_groups() {
+        for pid in [0, i32::MAX as u32 + 1, u32::MAX] {
+            assert!(!process_alive(pid));
+        }
     }
 
     #[test]
