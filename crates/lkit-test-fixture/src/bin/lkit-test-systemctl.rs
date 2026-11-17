@@ -39,6 +39,22 @@ fn run() -> Result<ExitCode> {
 fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode> {
     let mut exit_code = ExitCode::SUCCESS;
     match args {
+        [command, full, legend, unit]
+            if command == "list-unit-files" && full == "--full" && legend == "--no-legend" =>
+        {
+            if load_state(config, unit) != "not-found" {
+                let state = if masked_path(config, unit).is_file() {
+                    std::fs::read_to_string(masked_path(config, unit))?
+                        .trim()
+                        .to_string()
+                } else if unit_is_enabled(config, unit) {
+                    "enabled".into()
+                } else {
+                    "disabled".into()
+                };
+                println!("{unit} {state} disabled");
+            }
+        }
         [command, all, full, plain, legend, pattern]
             if command == "list-units"
                 && all == "--all"

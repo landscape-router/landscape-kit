@@ -468,10 +468,12 @@ fn networkd_takeover_preserves_startup_choices_and_restores_the_group() {
             "systemd-networkd.service",
             "systemd-networkd-wait-online.service",
             "systemd-networkd-wait-online@ens3.service",
+            "systemd-networkd-wait-online@.service",
         ] {
             h.seed_host_service(unit);
         }
         let states = h.host.join("systemd-state/units");
+        std::fs::remove_file(states.join("systemd-networkd-wait-online@.service/active")).unwrap();
         let socket = states.join("systemd-networkd.socket");
         std::fs::remove_file(socket.join("enabled")).unwrap();
         std::fs::remove_file(socket.join("active")).unwrap();
@@ -484,6 +486,7 @@ fn networkd_takeover_preserves_startup_choices_and_restores_the_group() {
             "systemd-networkd.service",
             "systemd-networkd-wait-online.service",
             "systemd-networkd-wait-online@ens3.service",
+            "systemd-networkd-wait-online@.service",
         ] {
             assert!(states.join(unit).join("masked").exists());
             assert!(!states.join(unit).join("active").exists());

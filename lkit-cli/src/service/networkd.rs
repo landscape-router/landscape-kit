@@ -16,6 +16,51 @@ pub(crate) fn contains(unit: &str) -> bool {
         )
 }
 
+const WAIT_TEMPLATE: &str = "systemd-networkd-wait-online@.service";
+
+pub(crate) fn inspect_template(
+    manager: &systemd::Systemd,
+) -> Result<HostServiceBefore, InstallError> {
+    let (_, output) = systemd::run_systemctl(
+        manager,
+        &["list-unit-files", "--full", "--no-legend", WAIT_TEMPLATE],
+        None,
+    )?;
+    template_state(&output)
+}
+
+fn template_state(output: &str) -> Result<HostServiceBefore, InstallError> {
+    let rows: Vec<_> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let state = match rows.as_slice() {
+        [] => "not-found",
+        [line] => {
+            let mut fields = line.split_whitespace();
+            if fields.next() != Some(WAIT_TEMPLATE) {
+                return Err(InstallError::Preflight(
+                    "unexpected networkd template name".into(),
+                ));
+            }
+            fields
+                .next()
+                .ok_or_else(|| InstallError::Preflight("missing networkd template state".into()))?
+        }
+        _ => {
+            return Err(InstallError::Preflight(
+                "ambiguous networkd template state".into(),
+            ));
+        }
+    };
+    Ok(HostServiceBefore {
+        unit: WAIT_TEMPLATE.into(),
+        installed: state != "not-found",
+        active: false,
+        enable_state: state.into(),
+    })
+}
+
 /// Capture instantiated wait-online units as well as the template.
 pub(crate) fn instances(manager: &systemd::Systemd) -> Result<Vec<String>, InstallError> {
     let (_, output) = systemd::run_systemctl(
@@ -158,6 +203,29 @@ mod tests {
             active,
             enable_state: state.into(),
         }
+    }
+    #[test]
+    fn template_is_a_unit_file_without_a_runtime_instance() {
+        let snapshot =
+            template_state("systemd-networkd-wait-online@.service disabled enabled\n").unwrap();
+        assert!(snapshot.installed);
+        assert!(!snapshot.active);
+        assert_eq!(snapshot.enable_state, "disabled");
+        assert!(!template_state("").unwrap().installed);
+        assert!(template_state("foreign.service enabled enabled").is_err());
+        assert!(template_state(WAIT_TEMPLATE).is_err());
+        let mut verbs = vec![];
+        stop_with(std::slice::from_ref(&snapshot), |verb, _| {
+            verbs.push(verb.to_string());
+            Ok(())
+        })
+        .unwrap();
+        restore_with(&[snapshot], |verb, _| {
+            verbs.push(verb.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(verbs, ["mask", "unmask"]);
     }
     #[test]
     fn masks_the_whole_group_before_stopping_and_never_changes_startup_links() {

@@ -80,6 +80,7 @@ Landscape 启动并通过健康检查后安装状态仍不提交。用户运行 
 ## systemd-networkd 接管
 
 networkd 主服务、netlink/varlink 等配套 socket、wait-online 服务及模板构成接管组，
+模板使用 unit 文件状态查询，不作为运行实例启停；已加载的 wait-online 实例逐个保存。
 不存在的单元跳过。整组运行状态和启用状态先写入事务，再将整组 mask，最后停止。
 接管保留启动链接和 `.network`/`.netdev` 配置，不调用 networkd 的 disable/enable，
 避免 `Also=` 连带改变 socket、网络生成器和 wait-online 的启用配置。
