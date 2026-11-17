@@ -7,7 +7,6 @@ directory; stdout contains assertion summaries only.
 """
 
 import argparse
-import copy
 import hashlib
 import ipaddress
 import json
@@ -199,10 +198,14 @@ def seed(api, directory, server):
 
 def mutate(api, directory, server):
     saved = json.loads((directory / "expected.json").read_text())
-    api.call("POST", "/api/v1/dns/redirects", rule(RULE_A, DOMAIN_A, "198.51.100.99"))
+    # Official API edits require the latest update_at optimistic-lock revision.
+    # Normalized backup snapshots deliberately omit it and are comparison-only.
+    changed_rule = api.call("GET", "/api/v1/dns/redirects/" + RULE_A)
+    changed_rule["result_info"] = ["198.51.100.99"]
+    api.call("POST", "/api/v1/dns/redirects", changed_rule)
     api.call("DELETE", "/api/v1/dns/redirects/" + RULE_B)
     api.call("POST", "/api/v1/dns/redirects", rule(RULE_LATER, DOMAIN_LATER, "198.51.100.88"))
-    dhcp = copy.deepcopy(saved["dhcp"])
+    dhcp = api.call("GET", "/api/v1/services/dhcp_v4/br_lan")
     dhcp["config"].update({"address_lease_time": 600, "custom_options": []})
     api.call("PUT", "/api/v1/services/dhcp_v4", dhcp)
     current = api.snapshot()

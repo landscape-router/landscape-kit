@@ -112,8 +112,18 @@ fn switch_ignores_allow_no_backup_while_the_service_runs() {
 }
 
 #[track_caller]
-fn wait_until(h: &InstallHarness, label: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+fn wait_until(h: &InstallHarness, label: &str, ready: impl FnMut() -> bool) {
+    wait_until_with_timeout(h, label, Duration::from_secs(45), ready);
+}
+
+#[track_caller]
+fn wait_until_with_timeout(
+    h: &InstallHarness,
+    label: &str,
+    timeout: Duration,
+    mut ready: impl FnMut() -> bool,
+) {
+    let deadline = std::time::Instant::now() + timeout;
     while !ready() {
         if std::time::Instant::now() >= deadline {
             // Read evidence directly: a stuck CLI must not block timeout diagnostics.
@@ -204,10 +214,42 @@ fn gate(h: &InstallHarness, name: &str) -> std::path::PathBuf {
     gate
 }
 fn checkpoint(h: &InstallHarness, name: &str) {
-    wait_until(h, name, || {
-        h.run_dir()
+    // Reaching late checkpoints includes queueing, hashing the debug binary,
+    // downloading, compressing its protection backup, and the health checks.
+    // The gate's own timeout starts only after the reached marker is written.
+    wait_until_with_timeout(h, name, Duration::from_secs(120), || {
+        if h.run_dir()
             .join(format!("test-repair-{name}.reached"))
             .exists()
+        {
+            return true;
+        }
+        // A failed workflow cannot reach its checkpoint. Read its durable result
+        // directly so neither a stuck CLI nor the longer budget hides failures.
+        for entry in std::fs::read_dir(h.run_dir().join("operations"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json")
+                && let Ok(bytes) = std::fs::read(&path)
+                && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && record["kind"] == "switch"
+            {
+                assert!(
+                    !matches!(
+                        record["status"].as_str(),
+                        Some("succeeded" | "failed" | "cancelled" | "interrupted")
+                    ),
+                    "switch finished before checkpoint {name}: status={} stage={} message={}",
+                    record["status"],
+                    record["stage"],
+                    record["message"]
+                );
+            }
+        }
+        false
     });
 }
 fn snapshot_state(h: &InstallHarness) -> Vec<u8> {

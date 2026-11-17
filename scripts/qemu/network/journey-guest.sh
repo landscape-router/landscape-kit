@@ -60,6 +60,11 @@ PY
     ;;
   offline)
     wan=$(jq -sr 'map(select(.operation == "install" and .network_takeover != null)) | last | .network_takeover.plan.mode.wan' /root/.lkit/transactions/*.json)
+    # QMP returns before the guest necessarily consumes the virtio link event.
+    for _ in $(seq 1 10); do
+      [[ $(cat "/sys/class/net/$wan/carrier") == 0 ]] && break
+      sleep 1
+    done
     [[ $(cat "/sys/class/net/$wan/carrier") == 0 ]]
     if curl --fail --silent --connect-timeout 3 --max-time 8 https://api.github.com >/dev/null 2>&1; then
       echo 'Repository remained reachable while the virtual WAN cable was disconnected' >&2
