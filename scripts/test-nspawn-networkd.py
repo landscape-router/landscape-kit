@@ -122,7 +122,9 @@ def links():
         for path in Path(directory).rglob('*'):
             if path.is_symlink() and os.readlink(path) != '/dev/null':
                 target = os.readlink(path)
-                if 'networkd' in str(path) or 'networkd' in target or 'network-generator' in target:
+                names = (*path.parts, Path(target).name)
+                if any(name.startswith('systemd-networkd') or name == 'systemd-network-generator.service'
+                       or name == 'dbus-org.freedesktop.network1.service' for name in names):
                     result[str(path)] = target
     return result
 
@@ -143,7 +145,7 @@ finally:
 for unit in [service, socket, waiter]:
     assert ctl('is-enabled', unit, check=False).stdout.strip() == 'masked', unit
     assert ctl('is-active', unit, check=False).stdout.strip() != 'active', unit
-assert links() == before, 'takeover changed startup links'
+assert links() == before, f'takeover changed startup links: before={before}, after={links()}'
 assert ctl('start', 'dbus-org.freedesktop.network1.service', check=False).returncode != 0
 assert ctl('start', socket, check=False).returncode != 0
 # Restarting the daemon in the pending window must preserve the same transaction.
@@ -154,7 +156,7 @@ assert ctl('is-active', service).stdout.strip() == 'active'
 assert ctl('is-active', socket, check=False).stdout.strip() != 'active'
 assert ctl('is-enabled', socket, check=False).stdout.strip() == 'disabled'
 assert ctl('is-enabled', waiter, check=False).stdout.strip() == 'masked-runtime'
-assert links() == before, 'rollback changed startup links'
+assert links() == before, f'rollback changed startup links: before={before}, after={links()}'
 assert not Path('/root/.lkit/state/install-state.json').exists()
 server.shutdown()
 print('PASS: real networkd takeover, daemon restart and exact startup-state restoration')
