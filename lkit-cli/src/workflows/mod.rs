@@ -2,6 +2,8 @@
 
 pub(crate) mod install;
 pub(crate) mod migrate;
+#[cfg(test)]
+mod orphan_cleanup_tests;
 pub(crate) mod reinit;
 pub(crate) mod repair;
 pub(crate) mod repair_service;

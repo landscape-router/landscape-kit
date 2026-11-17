@@ -100,7 +100,8 @@ fn repair_associated(
     if !permissions.file_type().is_file() {
         return Err(failure("service definition must be a regular file"));
     }
-    if original == replacement {
+    let needs_refresh = manager.definition_needs_refresh(ManagedService::LandscapeRouter, &path)?;
+    if original == replacement && !needs_refresh {
         return Ok(());
     }
     let mut tx = TransactionFile::new_install(
@@ -129,7 +130,7 @@ fn repair_associated(
         transaction::mark_phase(root, &tx, Phase::Prepared)?;
         transaction::mark_phase(root, &tx, Phase::Activating)?;
         atomic_write(&path, snapshot.replacement.as_bytes(), snapshot.permissions)?;
-        manager.refresh()?;
+        manager.refresh_definition(ManagedService::LandscapeRouter, &path)?;
         verify(root, &snapshot, manager, true)?;
         transaction::mark_phase(root, &tx, Phase::Finalizing)?;
         tx.phase = Phase::Finalizing;
@@ -198,6 +199,9 @@ fn verify(
     };
     if std::fs::read_to_string(definition(root)).map_err(InstallError::Io)? != *expected {
         return Err(failure("service definition verification failed"));
+    }
+    if manager.definition_needs_refresh(ManagedService::LandscapeRouter, &definition(root))? {
+        return Err(failure("published service definition verification failed"));
     }
     if manager.startup_links(ManagedService::LandscapeRouter)? != snapshot.startup_links {
         return Err(failure("service startup links changed during repair"));
@@ -268,7 +272,7 @@ pub(crate) fn recover(
             &snapshot.replacement,
             &root.canonical,
         )?;
-        manager.refresh()?;
+        manager.refresh_definition(ManagedService::LandscapeRouter, &definition(root))?;
         verify(root, &snapshot, manager, true)?;
         return commit(root, tx, &snapshot);
     }
@@ -278,7 +282,7 @@ pub(crate) fn recover(
         snapshot.original.as_bytes(),
         snapshot.permissions,
     )?;
-    manager.refresh()?;
+    manager.refresh_definition(ManagedService::LandscapeRouter, &definition(root))?;
     verify(root, &snapshot, manager, false)?;
     state::write_state(root, &snapshot.state)?;
     transaction::mark_phase(root, tx, Phase::RolledBack)
@@ -297,6 +301,8 @@ mod tests {
         stops: AtomicUsize,
         starts: AtomicUsize,
         registrations: AtomicUsize,
+        needs_publication: std::sync::atomic::AtomicBool,
+        published: std::sync::Mutex<String>,
     }
     impl ServiceManager for Fake {
         fn kind(&self) -> ServiceManagerKind {
@@ -401,6 +407,21 @@ mod tests {
                 Ok(())
             }
         }
+        fn definition_needs_refresh(
+            &self,
+            _: ManagedService,
+            _: &Path,
+        ) -> Result<bool, InstallError> {
+            Ok(self.needs_publication.load(Ordering::SeqCst))
+        }
+        fn refresh_definition(&self, _: ManagedService, origin: &Path) -> Result<(), InstallError> {
+            assert_eq!(origin, self.path);
+            self.refresh()?;
+            *self.published.lock().unwrap() =
+                std::fs::read_to_string(origin).map_err(InstallError::Io)?;
+            self.needs_publication.store(false, Ordering::SeqCst);
+            Ok(())
+        }
     }
     fn setup(
         path: &Path,
@@ -430,6 +451,8 @@ mod tests {
             stops: AtomicUsize::new(0),
             starts: AtomicUsize::new(0),
             registrations: AtomicUsize::new(0),
+            needs_publication: std::sync::atomic::AtomicBool::new(false),
+            published: std::sync::Mutex::new("old definition".into()),
         };
         (root, manager)
     }
@@ -465,6 +488,33 @@ mod tests {
             std::fs::read_to_string(&manager.path).unwrap(),
             "old definition"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unchanged_original_still_publishes_the_boot_definition_transactionally() {
+        let dir =
+            std::env::temp_dir().join(format!("lkit-service-publication-{}", uuid::Uuid::now_v7()));
+        let _guard = layout::test_territory(&dir.join("territory"));
+        let (root, manager) = setup(
+            &dir.join("landscape"),
+            ServiceManagerKind::Systemd,
+            false,
+            false,
+        );
+        atomic_write(&manager.path, b"new startup-check", 0o750).unwrap();
+        let mut installed = state::load_state(&root).unwrap().unwrap();
+        installed.service.definition_sha256 = Some(hash_str("new startup-check"));
+        state::write_state(&root, &installed).unwrap();
+        manager.needs_publication.store(true, Ordering::SeqCst);
+        repair(&root, &manager).unwrap();
+        assert_eq!(*manager.published.lock().unwrap(), "new startup-check");
+        let committed = state::load_state(&root).unwrap().unwrap();
+        assert!(committed.last_transaction_id.is_some());
+        assert_eq!(manager.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(manager.stops.load(Ordering::SeqCst), 0);
+        repair(&root, &manager).unwrap();
+        assert_eq!(state::load_state(&root).unwrap().unwrap(), committed);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -578,6 +628,7 @@ mod tests {
                 "old definition"
             };
             assert_eq!(std::fs::read_to_string(&manager.path).unwrap(), expected);
+            assert_eq!(*manager.published.lock().unwrap(), expected);
             assert_eq!(
                 state::load_state(&root)
                     .unwrap()

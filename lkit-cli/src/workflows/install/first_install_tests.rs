@@ -485,8 +485,19 @@ pub(crate) async fn assert_systemd_first_install(case: &str) {
     let unit_origin = root.canonical.join("service/landscape-router.service");
     assert!(unit_origin.is_file());
     assert_eq!(
-        std::fs::read_link(dir.join("units/landscape-router.service")).unwrap(),
-        unit_origin.canonicalize().unwrap()
+        systemd
+            .query_registration(ManagedService::LandscapeRouter)
+            .unwrap(),
+        crate::service::manager::SystemRegistration::Symlink {
+            target: unit_origin.canonicalize().unwrap()
+        }
+    );
+    let boot_copy = std::fs::read_link(dir.join("units/landscape-router.service")).unwrap();
+    assert!(boot_copy.starts_with(dir.join("lkit-managed")));
+    assert!(
+        std::fs::read_to_string(boot_copy)
+            .unwrap()
+            .contains("RequiresMountsFor=")
     );
 
     let state = super::super::state::load_state(&root).unwrap().unwrap();

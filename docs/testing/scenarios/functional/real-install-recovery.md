@@ -49,7 +49,7 @@ CI 的只读 GitHub token 通过虚拟机内 `0600` 的临时环境文件供 lki
 
 ## JNY-03
 
-**已确认的恢复结果在整机重启后保持可用**
+**已确认恢复及移除 daemon 后的两次整机重启保持业务可用**
 
 - 测试层：真实 QEMU 重启、systemd 自动启动、外部 LAN 客户端
 - 状态：`部分覆盖`
@@ -57,5 +57,10 @@ CI 的只读 GitHub token 通过虚拟机内 `0600` 的临时环境文件供 lki
 - 说明：恢复确认后重新接通 WAN，重启整台虚拟机并检查 boot ID 改变；等待 lkit 和
   Landscape 自动启动。使用新登录令牌重新验证前端、DNS 答案和数据库导出的 DNS、DHCP
   与网络配置，确认没有未终结事务，安装 state 仍关联已提交的 restore 事务，WAN 保持
-  计划中的 IPv4 配置。
+  计划中的 IPv4 配置。systemd 从系统盘的受管启动副本读取定义，等待独立 `/srv`
+  文件系统挂载，不依赖 daemon 在启动后补拉起 Landscape。
+- 说明：随后执行 `lkit self remove`，保留 CLI、Landscape 启动副本与启用状态；检查
+  daemon 注册和进程已删除、`lkit network startup-check` 成功、安装 state 字节不变。
+  再次整机重启，验证 daemon 仍未注册或运行、Landscape 自动启动；独立 LAN 客户端
+  重新登录正式 API，复检前端、DNS 答案和导出的 DNS、DHCP、网络配置。
 - 缺口：OpenRC/SysVinit 上相同业务断言及非正常断电恢复。

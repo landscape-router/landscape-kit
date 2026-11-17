@@ -33,6 +33,8 @@ trait ServiceManager: Send + Sync {
     fn is_active / active_state / start / stop / restart;
     fn stop_and_wait(service, wait_for_exit) -> Result<()>;   // 默认实现:stop + 轮询
     fn refresh(&self) -> Result<()>;                           // 默认 no-op(systemd 覆盖为 daemon-reload)
+    fn refresh_definition(&self, service, origin) -> Result<()>;
+    fn definition_needs_refresh(&self, service, origin) -> Result<bool>;
 
     fn main_pid(&self, service) -> Result<u32>;
 
@@ -54,7 +56,8 @@ trait ServiceManager: Send + Sync {
 - `Availability`:`Available { version }` / `NotDetected`(主机没有运行该 init)/
   `Unavailable(reason)`(看似使用该 init 但环境损坏);
 - `SystemRegistration`:系统注册路径的实时状态(`Missing` / `Symlink { target }` /
-  `Conflict { file_type }`);
+  `Conflict { file_type }`)；`target` 表示受管定义原件的逻辑路径，systemd 后端负责验证
+  启动副本并将物理链接目标映射回该路径；
 - `Registration` / `RegistrationKind`:序列化的事务前注册状态;
 - `ServiceBefore`:受管服务事务前状态(注册 + enabled + active),失败回滚时恢复用。
 
@@ -91,14 +94,48 @@ capture_before(manager: &dyn ServiceManager, service: ManagedService) -> Result<
 - `downcast(manager) -> Result<&Systemd>`:从 `&dyn ServiceManager` 向下转型,
   调用方必须先通过 `probe` 保证可用。
 
+### 定义存储与注册
+
+Landscape 的定义原件位于 `<landscape-root>/service/landscape-router.service`，安装
+状态中的路径和摘要、事务注册快照均使用该原件。systemd 在读取初始启动依赖时必须
+能够访问 unit 内容，因此供 PID 1 读取的副本位于系统盘：
+
+```text
+/etc/systemd/lkit-managed/<sha256-of-absolute-origin>/landscape-router.service
+```
+
+目录名是原件绝对路径字符串的 SHA-256。副本目录位于 systemd unit 搜索路径之外，
+避免同名链接被解析为自指别名；`/etc/systemd/system/landscape-router.service` 指向该
+副本。副本使用带版本的头部保存逻辑原件路径和原件正文摘要，并保留受管定义
+内容及安装根的挂载要求；读取时验证目录身份、头部、摘要、内容和挂载要求。普通文件、
+未知副本、被替换或无法验证的链接均视为归属冲突，不覆盖或删除。原件仍是唯一的
+编辑和状态摘要依据，副本不是另一份可独立修改的配置。
+
+后端对已验证的副本返回逻辑原件路径，工作流及事务不依赖副本的物理位置。已知属于
+同一原件的直接链接可迁移到副本；迁移前检查持久和运行时 `*.wants`／`*.requires`
+成员链接的归属，再保留成员关系并更新目标。不改变 enabled、active，不为原本禁用
+的服务创建启动成员。未知或外部成员冲突时在修改前拒绝。
+
+`refresh_definition(service, origin)` 同步指定原件的启动副本后执行 daemon-reload；
+`definition_needs_refresh` 同时检查原件内容与注册布局，原件字节未变也可能需要同步。
+普通 `refresh()` 只重新加载管理器，不发布其他服务的原件修改。回滚恢复逻辑原件及
+注册时同步对应副本；注销只删除属于本原件的已验证副本，即使原件或注册链接已被
+清理也能幂等收尾。lkit daemon 的原件仍为 `/usr/local/lib/lkit/lkit.service`，它不使用
+Landscape 的启动副本目录。
+
+`is_enabled` 仅将 systemd 的 `enabled`、`enabled-runtime` 视为启用。`linked`、
+`linked-runtime` 和 `alias` 表示可定位的 unit 身份，不表示已配置开机启动。
+
 ### 定义渲染
 
 `render_definition` 按 `ManagedService` 渲染:
 
 - `LandscapeRouter`:`<landscape-root>/current/landscape-webserver --config-dir
   <landscape-root>/data --web <landscape-root>/current/static`,含
-  `LimitMEMLOCK=infinity`;
-- `LkitDaemon`:`/usr/local/bin/lkit daemon`(lkit 全局二进制,unit 原件位于
+  `LimitMEMLOCK=infinity`、`RequiresMountsFor="<canonical-landscape-root>"` 和
+  `ExecStartPre=/usr/local/bin/lkit network startup-check`；启动副本可在安装根尚未挂载时
+  被 PID 1 读取，服务启动须等待该安装根所需的挂载；
+- `LkitDaemon`:`/usr/local/bin/lkit daemon --supervise`(lkit 全局二进制,unit 原件位于
   `/usr/local/lib/lkit/lkit.service`,不复制到任何安装根),
   含 `KillMode=process`——停服时只向主进程发信号,daemon 能完成进行中的委托
   请求,不会通过 cgroup 信号杀死执行子进程(停 lkit.service 自身即停服场景)。

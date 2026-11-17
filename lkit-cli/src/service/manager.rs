@@ -95,7 +95,7 @@ pub(crate) enum Availability {
 pub(crate) enum SystemRegistration {
     /// 不存在注册链接。
     Missing,
-    /// 指向受管定义原件的符号链接,记录原始目标。
+    /// 经后端验证的逻辑定义原件。systemd 可通过开机可读副本注册。
     Symlink { target: PathBuf },
     /// 普通文件或其他无法证明归属的内容,属于所有权冲突。
     Conflict { file_type: String },
@@ -194,6 +194,24 @@ pub(crate) trait ServiceManager: Send + Sync {
     /// 重新加载服务定义(如 systemd daemon-reload);无此概念的后端为 no-op。
     fn refresh(&self) -> Result<(), InstallError> {
         Ok(())
+    }
+
+    /// Publish a verified definition to the backend and refresh its view.
+    fn refresh_definition(
+        &self,
+        _service: ManagedService,
+        _origin: &Path,
+    ) -> Result<(), InstallError> {
+        self.refresh()
+    }
+
+    /// Whether backend publication differs from the installation-local original.
+    fn definition_needs_refresh(
+        &self,
+        _service: ManagedService,
+        _origin: &Path,
+    ) -> Result<bool, InstallError> {
+        Ok(false)
     }
 
     fn main_pid(&self, service: ManagedService) -> Result<u32, InstallError>;

@@ -11,6 +11,7 @@ check::init::tests
 check::openrc::tests
 service::manager::init_detection_tests
 service::host_systemd::tests
+service::systemd::boot::tests
 console::tests::cgroup
 console::tests::daemon
 console::tests::gates
@@ -53,6 +54,8 @@ daemon_supervisor::tests
 daemon::tests
 workflows::repair::tests
 workflows::repair_service::tests
+workflows::uninstall::cleanup::orphan_cleanup_tests
+workflows::migrate::native::orphan_cleanup_tests
 service::host_network::tests
 service::sysvinit::tests
 network::takeover::tests::accepted_confirmation_cannot_be_changed_to_rollback

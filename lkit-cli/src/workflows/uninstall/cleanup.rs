@@ -8,30 +8,27 @@ use crate::service::manager::{ManagedService, ServiceManager, SystemRegistration
 use crate::service::systemd;
 
 /// 幂等停止、disable 并注销受管 Landscape 服务,最后执行定义刷新。
-/// 注册链接缺失视为已注销;指向其他目标的链接属于所有权冲突,阻断。
+/// 注册链接缺失时仍清理后端验证归属的副本;其他目标属于所有权冲突,阻断。
 /// lkit 常驻服务(`lkit.service`)不属于卸载范围,不停止、不注销。
 pub(super) fn deactivate(
     manager: &dyn ServiceManager,
     root: &InstallRoot,
 ) -> Result<(), InstallError> {
-    deactivate_service(manager, root, ManagedService::LandscapeRouter)?;
+    let origin = root.canonical.join("service/landscape-router.service");
+    deactivate_service(manager, &origin)?;
     manager.refresh()?;
     Ok(())
 }
 
-fn deactivate_service(
-    manager: &dyn ServiceManager,
-    root: &InstallRoot,
-    service: ManagedService,
-) -> Result<(), InstallError> {
-    // 从未注册且未运行的服务不触碰 init 系统(真实 systemd 对缺失 unit 的
-    // stop 会报错)。
+fn deactivate_service(manager: &dyn ServiceManager, origin: &Path) -> Result<(), InstallError> {
+    let service = ManagedService::LandscapeRouter;
+    // 缺失且未运行的服务不执行 stop/disable;后端仍需验证并清理孤立副本。
     if matches!(
         manager.query_registration(service)?,
         SystemRegistration::Missing
     ) && !manager.is_active(service).unwrap_or(false)
     {
-        return Ok(());
+        return manager.unregister(service, origin);
     }
     if manager.is_active(service)? {
         manager.stop_and_wait(
@@ -44,7 +41,6 @@ fn deactivate_service(
             }),
         )?;
     }
-    let origin = root.canonical.join("service/landscape-router.service");
     match manager.query_registration(service)? {
         SystemRegistration::Symlink { target } => {
             let origin_canonical = origin.canonicalize().map_err(InstallError::Io)?;
@@ -57,9 +53,9 @@ fn deactivate_service(
             if manager.is_enabled(service)? {
                 manager.disable(service)?;
             }
-            manager.unregister(service, &origin)?;
+            manager.unregister(service, origin)?;
         }
-        SystemRegistration::Missing => {}
+        SystemRegistration::Missing => manager.unregister(service, origin)?,
         SystemRegistration::Conflict { file_type } => {
             return Err(InstallError::Systemd(format!(
                 "cannot unregister {}: {file_type} ownership conflict",
@@ -68,6 +64,32 @@ fn deactivate_service(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod orphan_cleanup_tests {
+    use crate::workflows::orphan_cleanup_tests as shared;
+
+    #[test]
+    fn missing_registration_cleans_owned_orphan_without_original_or_runtime_mutation() {
+        shared::missing_registration_cleans_owned_orphan_without_original_or_runtime_mutation(
+            super::deactivate_service,
+        );
+    }
+
+    #[test]
+    fn missing_registration_preserves_unknown_copy_and_propagates_backend_refusal() {
+        shared::missing_registration_preserves_unknown_copy_and_propagates_backend_refusal(
+            super::deactivate_service,
+        );
+    }
+
+    #[test]
+    fn foreign_registration_does_not_unregister_or_remove_any_copy() {
+        shared::foreign_registration_does_not_unregister_or_remove_any_copy(
+            super::deactivate_service,
+        );
+    }
 }
 
 /// 删除受管内容。landscape 根删除 `current`/`releases`/`service`(与

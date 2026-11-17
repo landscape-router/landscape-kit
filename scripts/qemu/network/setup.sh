@@ -21,6 +21,19 @@ TimeoutStartSec=240
 [Install]
 WantedBy=multi-user.target
 UNIT
+cat >/etc/systemd/system/lkit-qemu-boot-diagnostics.service <<'UNIT'
+[Unit]
+Description=Capture read-only router boot diagnostics over serial
+After=local-fs.target
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/lib/lkit-qemu/boot-diagnostics.sh
+StandardOutput=journal+console
+StandardError=journal+console
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable lkit-qemu-boot-diagnostics.service
 vendor=$(systemctl show --property=FragmentPath --value NetworkManager.service)
 for kind in absolute relative; do
   target=lkit-qemu-$kind.target

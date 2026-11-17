@@ -139,11 +139,16 @@ Landscape 受管 unit 原件（systemd 后端）：
 <landscape-root>/service/landscape-router.service
 ```
 
-系统注册链接（systemd 后端）：
+systemd 启动副本与注册链接：
 
 ```text
-/etc/systemd/system/landscape-router.service
+/etc/systemd/lkit-managed/<sha256-of-absolute-origin>/landscape-router.service
+/etc/systemd/system/landscape-router.service -> 上述启动副本
 ```
+
+副本位于 PID 1 启动时即可读取的系统目录，安装根可以位于单独挂载的文件系统。
+版本化头部绑定逻辑原件路径与正文摘要；后端验证副本归属、内容及挂载要求后，对
+工作流返回原件的逻辑路径。安装状态与事务仍记录原件，副本不接受独立编辑。
 
 lkit 常驻 daemon 的 unit 原件与注册为全局（见 [`lkit self`](../commands/self.md)）：
 
@@ -155,7 +160,10 @@ lkit 常驻 daemon 的 unit 原件与注册为全局（见 [`lkit self`](../comm
 OpenRC/sysvinit 后端使用同名定义原件,注册为 `/etc/init.d/landscape-router.service`
 软链接,内容为 init 脚本(见 [manager.md](manager.md))。
 
-系统路径必须是指向受管原件的软链接。已存在普通文件、其他目标软链接或无法证明归属时，视为所有权冲突并拒绝覆盖。
+systemd 的 Landscape 注册链接必须能证明属于受管原件及其启动副本；已知归属的
+直接原件链接可迁移，迁移保留持久和运行时的启动成员关系及启用、运行状态。
+lkit daemon 和 OpenRC／SysVinit 的注册链接直接指向各自原件。普通文件、外部目标、
+损坏副本或无法证明归属的内容均属于冲突，拒绝覆盖。
 
 unit 至少包含：
 
@@ -163,11 +171,15 @@ unit 至少包含：
 - `User=root`；
 - `Restart=always`；
 - `LimitMEMLOCK=infinity`；
+- `RequiresMountsFor="<canonical-landscape-root>"`；
+- `ExecStartPre=/usr/local/bin/lkit network startup-check`；
 - `WantedBy=multi-user.target`。
 
 v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境文件中保存管理员密码。
 
-创建链接后执行 `daemon-reload`、enable 和 start。systemd 集成或启动失败时安装失败并回滚。
+安装时先发布并验证启动副本与注册链接，再执行 `daemon-reload`、enable 和 start。
+systemd 集成或启动失败时安装失败并回滚。原件刷新与回滚同步副本后才重新加载管理器；
+已提交安装的开机启动由 systemd 处理，不依赖 daemon 在启动后另行拉起 Landscape。
 
 ### unit 用户变更
 
@@ -181,7 +193,8 @@ v1 不传端口参数。不得在 `ExecStart`、`Environment=` 或普通环境�
 - 非交互模式必须使用 `--accept-service-change`；
 - 确认后保留用户内容并更新状态摘要。
 
-系统注册链接不再指向受管原件时属于所有权冲突，普通确认不可绕过。
+系统注册链接不能映射到该受管原件，或启动副本的身份与内容校验失败时，属于
+所有权冲突，普通确认不可绕过。接受原件变更时必须同步并校验其启动副本。
 
 `lkit` 自身需要升级 unit 格式时，应生成目标内容并展示差异后更新受管原件。
 

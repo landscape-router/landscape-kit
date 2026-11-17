@@ -113,11 +113,14 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 注册已不存在时刷新管理器并清理原件，重复移除返回成功。
 
 `remove` 不删除 `/usr/local/bin/lkit`(CLI 由安装脚本管理),不触碰任何 landscape
-安装根与 lkit 地盘元数据(`config.toml`、`backups/`、`transactions/` 保留)。
+安装根与 lkit 地盘元数据(`config.toml`、`backups/`、`transactions/` 保留)。Landscape
+的 systemd 启动副本、注册和启用状态同样保留；它们属于 Landscape 安装。
 
 存在未完成事务时 `self remove` 拒绝移除 daemon，须先完成事务恢复。
 已提交的 Landscape 不以 daemon 存活为持续运行条件；移除 daemon 后，服务启动仍
-调用保留的 lkit CLI 执行恢复检查。需要新建接管、reinit 或委托修改时，必须先重新
+调用保留的 lkit CLI 执行恢复检查。启用的 systemd 服务在整机重启时从系统盘启动副本
+读取定义，等待安装根挂载后正常启动，不需要 daemon 补拉起。手工停止的服务不会因
+daemon 重启而被主动启动。需要新建接管、reinit 或委托修改时，必须先重新
 部署 daemon。手工删除 `/usr/local/bin/lkit` 会导致受管 Landscape 的启动检查失败。
 
 ## daemon 进程

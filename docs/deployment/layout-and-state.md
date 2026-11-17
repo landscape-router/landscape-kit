@@ -130,6 +130,19 @@ landscape 安装根目录尚不存在时,应解析最近的已存在父目录,�
   不得与已提交安装共享或混淆;
 - `service` 保存 `lkit` 生成或接受管理的 Landscape 服务定义原件。
 
+systemd 的 Landscape 启动定义位于系统盘，保证安装根独立挂载时 PID 1 仍可读取：
+
+```text
+/etc/systemd/system/landscape-router.service
+  -> /etc/systemd/lkit-managed/<sha256-of-absolute-origin>/landscape-router.service
+```
+
+`<sha256-of-absolute-origin>` 是安装根内定义原件绝对路径字符串的 SHA-256。启动副本
+带版本化身份头部、原件正文摘要和安装根挂载要求；原件仍位于 `service/`，安装状态与
+事务记录原件路径和摘要。注册、定义刷新及回滚校验归属后同步副本，不能把两者当作
+独立配置。系统目录中的副本属于 Landscape 安装，`self remove` 不删除它；Landscape
+卸载时清理其已验证副本和注册。详见[服务管理器契约](../service/manager.md#定义存储与注册)。
+
 landscape 地盘不再保存 `state/`、`transactions/`、`backups/`、`logs/`、`run/` 与
 `config.toml`——它们全部位于 lkit 地盘(见上)。lkit 常驻服务也不属于 landscape
 地盘:lkit 二进制与 `lkit.service` 注册均为全局,见
@@ -146,8 +159,8 @@ landscape 地盘及敏感文件由 `root:root` 所有。包含配置、数据库
 ### 卸载语义
 
 `lkit uninstall` 是唯一显式清理入口,完整语义见 [`lkit uninstall`](../commands/uninstall.md)。
-卸载删除 landscape 根下的全部受管内容(`releases/`、`data/`、`service/` 与 `current`),
-并保留 lkit 地盘(`config.toml`、`backups/`、`run/` 与 `transactions/`、`logs/` 目录本身):
+卸载删除 landscape 根下的全部受管内容(`releases/`、`data/`、`service/` 与 `current`)，
+并注销服务、清理属于本安装的 systemd 启动副本；保留 lkit 地盘(`config.toml`、`backups/`、`run/` 与 `transactions/`、`logs/` 目录本身):
 
 - 保护 `.lkb` 存放在 `backups/`,卸载不删除,供用户取走备份;
 - 卸载完成后清理本安装的历史事务与事务日志，保留当前卸载的 `committed` 事务作为

@@ -10,6 +10,9 @@ pub(crate) use super::manager::{
 use super::plan::InstallError;
 use super::transaction::HostServiceBefore;
 
+#[path = "systemd_boot.rs"]
+mod boot;
+
 pub(crate) const UNIT_NAME: &str = "landscape-router.service";
 pub(crate) const LKIT_DAEMON_UNIT_NAME: &str = "lkit.service";
 pub(crate) const SYSTEM_UNIT_DIR: &str = "/etc/systemd/system";
@@ -125,6 +128,29 @@ impl ServiceManager for Systemd {
         daemon_reload(self)
     }
 
+    fn refresh_definition(
+        &self,
+        service: ManagedService,
+        origin: &Path,
+    ) -> Result<(), InstallError> {
+        if service == ManagedService::LandscapeRouter {
+            boot::publish(self, origin, false)?;
+        }
+        daemon_reload(self)
+    }
+
+    fn definition_needs_refresh(
+        &self,
+        service: ManagedService,
+        origin: &Path,
+    ) -> Result<bool, InstallError> {
+        if service == ManagedService::LandscapeRouter {
+            boot::needs_refresh(self, origin)
+        } else {
+            Ok(false)
+        }
+    }
+
     fn main_pid(&self, service: ManagedService) -> Result<u32, InstallError> {
         main_pid_at(self, self.service_name(service))
     }
@@ -207,6 +233,7 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
          Description=Landscape Router\n\
          After=network-online.target lkit.service\n\
          Wants=network-online.target lkit.service\n\
+         {1}\n\
          \n\
          [Service]\n\
          ExecStartPre=/usr/local/bin/lkit network startup-check\n\
@@ -217,7 +244,8 @@ pub(crate) fn render_unit(canonical_root: &Path) -> String {
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
-        canonical_root.display()
+        canonical_root.display(),
+        boot::mount_requirement(canonical_root)
     )
 }
 
@@ -362,7 +390,10 @@ fn query_registration_at(
         Err(error) => Err(InstallError::Io(error)),
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
-                let target = std::fs::read_link(&path).map_err(InstallError::Io)?;
+                let mut target = std::fs::read_link(&path).map_err(InstallError::Io)?;
+                if unit == UNIT_NAME {
+                    target = boot::logical_target(systemd, target)?;
+                }
                 Ok(SystemRegistration::Symlink { target })
             } else {
                 Ok(SystemRegistration::Conflict {
@@ -376,6 +407,10 @@ fn query_registration_at(
 /// 创建系统注册链接(指向受管原件),使用临时链接加原子 rename。
 /// 已存在相同目标链接时视为已注册;其他内容属于所有权冲突。
 fn register_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), InstallError> {
+    if unit == UNIT_NAME {
+        boot::publish(systemd, unit_origin, true)?;
+        return daemon_reload(systemd);
+    }
     let unit_origin = unit_origin.canonicalize().map_err(InstallError::Io)?;
     let path = systemd.system_unit_dir.join(unit);
     match query_registration_at(systemd, unit)? {
@@ -403,6 +438,10 @@ fn register_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), 
 
 /// 移除系统注册链接(仅当它指向受管原件),并执行 daemon-reload。
 fn unregister_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<(), InstallError> {
+    if unit == UNIT_NAME {
+        boot::unregister(systemd, unit_origin)?;
+        return daemon_reload(systemd);
+    }
     // 受管原件尚未写入(如切换期取消的回滚)时无法 canonicalize,回退原值:
     // 不存在原件也不可能存在指向它的注册链接,比较自然不匹配。
     let unit_origin = unit_origin
@@ -427,14 +466,19 @@ fn unregister_at(systemd: &Systemd, unit: &str, unit_origin: &Path) -> Result<()
 fn is_enabled_at(systemd: &Systemd, unit: &str) -> Result<bool, InstallError> {
     let output = systemctl_output(systemd, &["is-enabled", unit])?;
     let state = String::from_utf8_lossy(&output.stdout);
+    parse_enabled_state(state.trim())
+        .ok_or_else(|| query_error(systemd, &["is-enabled", unit], &output, state.trim()))
+}
+
+fn parse_enabled_state(state: &str) -> Option<bool> {
     match state.trim() {
-        "enabled" | "enabled-runtime" | "linked" | "linked-runtime" | "alias" => Ok(true),
+        "enabled" | "enabled-runtime" => Some(true),
         "disabled" | "static" | "indirect" | "masked" | "masked-runtime" | "generated"
-        | "transient" | "not-found" => Ok(false),
+        | "transient" | "not-found" | "linked" | "linked-runtime" | "alias" => Some(false),
         // systemd 252 对缺失 unit 将错误写入 stderr 且以非零退出,
         // stdout 为空;管理器可达性由 probe 保证,这里表示未启用。
-        "" => Ok(false),
-        value => Err(query_error(systemd, &["is-enabled", unit], &output, value)),
+        "" => Some(false),
+        _ => None,
     }
 }
 
@@ -765,6 +809,12 @@ fn restore_registration_at(
 ) -> Result<(), InstallError> {
     match &before.registration.kind {
         RegistrationKind::Missing => unregister_at(systemd, unit, unit_origin)?,
+        RegistrationKind::Symlink if unit == UNIT_NAME => {
+            let target = before.registration.target.as_deref().ok_or_else(|| {
+                systemd_error("symlink registration is missing its target".into())
+            })?;
+            boot::publish(systemd, Path::new(target), true)?;
+        }
         RegistrationKind::Symlink => {
             // 受管原件尚未写入时(切换期取消的回滚)无法 canonicalize,回退原值。
             let unit_origin = unit_origin
@@ -788,6 +838,15 @@ fn restore_registration_at(
         enable_at(systemd, unit)?;
     } else if is_enabled_at(systemd, unit).unwrap_or(false) {
         disable_at(systemd, unit)?;
+    }
+    // systemctl disable may also remove the primary linked-unit registration.
+    // Preserve a registered-but-disabled snapshot without creating memberships.
+    if unit == UNIT_NAME && before.registration.kind == RegistrationKind::Symlink {
+        let target =
+            before.registration.target.as_deref().ok_or_else(|| {
+                systemd_error("symlink registration is missing its target".into())
+            })?;
+        boot::publish(systemd, Path::new(target), true)?;
     }
     daemon_reload(systemd)
 }
@@ -954,6 +1013,7 @@ mod tests {
         assert!(validate_unit(&content, root).is_ok());
         assert!(content.contains("After=network-online.target lkit.service\n"));
         assert!(content.contains("Wants=network-online.target lkit.service\n"));
+        assert!(content.contains("RequiresMountsFor=\"/srv/landscape\"\n"));
         assert!(!content.contains("Requires="));
         assert!(!content.contains("BindsTo="));
 
@@ -996,7 +1056,7 @@ mod tests {
         std::fs::create_dir_all(&systemd.system_unit_dir).unwrap();
         let origin = dir.join("service/landscape-router.service");
         std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
-        std::fs::write(&origin, render_unit(Path::new("/srv/landscape"))).unwrap();
+        std::fs::write(&origin, render_unit(&dir)).unwrap();
         let fake = fake_systemctl(&dir, "#!/bin/sh\nexit 0\n");
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         let service = ManagedService::LandscapeRouter;

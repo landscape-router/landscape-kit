@@ -384,7 +384,7 @@ systemctl --version
 grep -E "^PASS.*init[.]backend.*systemd" /var/lib/lkit-qemu/init-check.log
 ' >"$artifact_dir/$scenario-environment.log" 2>&1
   wan_ssh 'systemctl set-environment RUST_BACKTRACE=1 LANDSCAPE_LOG_TERMINAL=true'
-  wan_ssh 'systemctl is-active NetworkManager firewalld systemd-resolved ssh' >/dev/null
+  wan_ssh 'systemctl is-active --quiet NetworkManager && systemctl is-active --quiet firewalld && systemctl is-active --quiet systemd-resolved && systemctl is-active --quiet ssh' >/dev/null
   tar -C "$repo_root/scripts/qemu/network" -cf - . | wan_ssh 'tar -C /var/lib/lkit-qemu -xf - && bash /var/lib/lkit-qemu/setup.sh'
 }
 
@@ -495,6 +495,28 @@ restore_real_backup() {
   journey_guest committed
 }
 
+reboot_restored_vm() {
+  local daemon=$1
+  local readiness='systemctl is-active --quiet landscape-router.service'
+  [[ $daemon != present ]] || readiness+=' && systemctl is-active --quiet lkit.service'
+  local previous_boot current_boot
+  previous_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id')
+  lan_ssh 'systemctl reboot' >/dev/null 2>&1 || true
+  local deadline=$((SECONDS + 240))
+  local rebooted=false
+  while (( SECONDS < deadline )); do
+    if current_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [[ $current_boot != "$previous_boot" ]]; then
+      if lan_ssh "$readiness" >/dev/null 2>&1; then
+        rebooted=true
+        break
+      fi
+    fi
+    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
+    sleep 2
+  done
+  [[ $rebooted == true ]] || { echo "restored VM did not return after a real reboot (daemon $daemon)" >&2; return 1; }
+}
+
 run_real_backup_journey() {
   journey_guest identity
   journey_api seed
@@ -514,26 +536,20 @@ run_real_backup_journey() {
   journey_api link-up
   assert_confirmed_wan_plan restored
 
-  local previous_boot current_boot
-  previous_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id')
-  lan_ssh 'systemctl reboot' >/dev/null 2>&1 || true
-  local deadline=$((SECONDS + 240))
-  local rebooted=false
-  while (( SECONDS < deadline )); do
-    if current_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [[ $current_boot != "$previous_boot" ]]; then
-      if lan_ssh 'systemctl is-active --quiet lkit.service landscape-router.service' >/dev/null 2>&1; then
-        rebooted=true
-        break
-      fi
-    fi
-    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
-    sleep 2
-  done
-  [[ $rebooted == true ]] || { echo 'restored VM did not return after a real reboot' >&2; return 1; }
+  reboot_restored_vm present
   journey_api assert
   journey_guest committed
   assert_confirmed_wan_plan rebooted
   printf '%s\n' 'PASS: restored official Landscape configuration and external LAN service survive a full VM reboot' \
+    | tee -a "$artifact_dir/journey-assertions.log"
+
+  journey_guest remove-daemon
+  journey_api assert
+  reboot_restored_vm absent
+  journey_guest daemon-absent
+  journey_api assert
+  assert_confirmed_wan_plan without-daemon
+  printf '%s\n' 'PASS: committed Landscape boots from its separate filesystem without the lkit daemon and retains real LAN service' \
     | tee -a "$artifact_dir/journey-assertions.log"
 }
 
@@ -548,7 +564,7 @@ rollback_ready=false
 rollback_deadline=$((SECONDS + 300))
 while (( SECONDS < rollback_deadline )); do
   if wan_ssh \
-    "jq -e '.phase == \"rolled_back\"' /root/.lkit/transactions/*.json >/dev/null && systemctl is-active --quiet NetworkManager firewalld systemd-resolved" \
+    "jq -e '.phase == \"rolled_back\"' /root/.lkit/transactions/*.json >/dev/null && systemctl is-active --quiet NetworkManager && systemctl is-active --quiet firewalld && systemctl is-active --quiet systemd-resolved" \
     >/dev/null 2>&1; then
     rollback_ready=true
     break

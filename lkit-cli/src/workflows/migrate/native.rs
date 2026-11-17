@@ -236,25 +236,7 @@ pub(crate) fn recover(
             })
     });
     if !original_restored {
-        let registration = manager.query_registration(service)?;
-        if registration != super::super::manager::SystemRegistration::Missing {
-            if registration
-                != (super::super::manager::SystemRegistration::Symlink {
-                    target: origin.clone(),
-                })
-            {
-                return Err(refused(
-                    "migration recovery found an unrelated service registration",
-                ));
-            }
-            if manager.is_active(service)? {
-                manager.stop_and_wait(service, &|| {
-                    manager.is_active(service).is_ok_and(|active| !active)
-                })?;
-            }
-            manager.disable(service)?;
-            manager.unregister(service, &origin)?;
-        }
+        deactivate_service(manager, &origin)?;
     }
     if let Some(path) = &tx.resolv_conf_backup {
         super::super::resolv::restore(manager.resolv_conf(), &layout::territory_relative(path))?;
@@ -292,6 +274,58 @@ pub(crate) fn recover(
             .map_err(InstallError::Io)?;
     }
     super::super::transaction::mark_phase(root, tx, Phase::RolledBack)
+}
+
+fn deactivate_service(manager: &dyn ServiceManager, origin: &Path) -> Result<(), InstallError> {
+    use crate::service::manager::SystemRegistration;
+
+    let service = ManagedService::LandscapeRouter;
+    let registration = manager.query_registration(service)?;
+    if registration != SystemRegistration::Missing {
+        if registration
+            != (SystemRegistration::Symlink {
+                target: origin.to_path_buf(),
+            })
+        {
+            return Err(refused(
+                "migration recovery found an unrelated service registration",
+            ));
+        }
+        if manager.is_active(service)? {
+            manager.stop_and_wait(service, &|| {
+                manager.is_active(service).is_ok_and(|active| !active)
+            })?;
+        }
+        manager.disable(service)?;
+    }
+    // A missing registration can still leave a verified boot definition behind.
+    manager.unregister(service, origin)
+}
+
+#[cfg(test)]
+mod orphan_cleanup_tests {
+    use crate::workflows::orphan_cleanup_tests as shared;
+
+    #[test]
+    fn missing_registration_cleans_owned_orphan_without_original_or_runtime_mutation() {
+        shared::missing_registration_cleans_owned_orphan_without_original_or_runtime_mutation(
+            super::deactivate_service,
+        );
+    }
+
+    #[test]
+    fn missing_registration_preserves_unknown_copy_and_propagates_backend_refusal() {
+        shared::missing_registration_preserves_unknown_copy_and_propagates_backend_refusal(
+            super::deactivate_service,
+        );
+    }
+
+    #[test]
+    fn foreign_registration_does_not_unregister_or_remove_any_copy() {
+        shared::foreign_registration_does_not_unregister_or_remove_any_copy(
+            super::deactivate_service,
+        );
+    }
 }
 
 #[cfg(test)]

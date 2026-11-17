@@ -9,7 +9,8 @@ chmod 0700 "$journey"
 
 case "${1:-}" in
   identity)
-    systemctl is-active --quiet lkit.service landscape-router.service
+    systemctl is-active --quiet lkit.service
+    systemctl is-active --quiet landscape-router.service
     python3 - <<'PY'
 import hashlib
 import json
@@ -58,6 +59,26 @@ PY
     lkit backup verify --file "$journey/original.lkb"
     echo 'PASS: exported backup remains usable after its original catalog entry is deleted'
     ;;
+  remove-daemon)
+    cp /root/.lkit/state/install-state.json "$journey/state-before-daemon-remove.json"
+    chmod 0600 "$journey/state-before-daemon-remove.json"
+    lkit self remove
+    bash "$0" daemon-absent
+    ;;
+  daemon-absent)
+    [[ -x /usr/local/bin/lkit ]]
+    [[ ! -e /etc/systemd/system/lkit.service && ! -L /etc/systemd/system/lkit.service ]]
+    [[ ! -e /usr/local/lib/lkit/lkit.service ]]
+    if systemctl is-active --quiet lkit.service; then
+      echo 'lkit daemon is still active after self remove' >&2
+      exit 1
+    fi
+    systemctl is-active --quiet landscape-router.service
+    systemctl is-enabled --quiet landscape-router.service
+    lkit network startup-check
+    cmp "$journey/state-before-daemon-remove.json" /root/.lkit/state/install-state.json
+    echo 'PASS: daemon is removed, CLI startup check succeeds and enabled Landscape retains committed state'
+    ;;
   offline)
     wan=$(jq -sr 'map(select(.operation == "install" and .network_takeover != null)) | last | .network_takeover.plan.mode.wan' /root/.lkit/transactions/*.json)
     # QMP returns before the guest necessarily consumes the virtio link event.
@@ -94,6 +115,10 @@ PY
     exit "$result"
     ;;
   pending-id|pending-file|committed)
+    if [[ $1 == committed ]]; then
+      systemctl is-enabled --quiet lkit.service
+      systemctl is-enabled --quiet landscape-router.service
+    fi
     python3 - "$1" <<'PY'
 import json
 from pathlib import Path
