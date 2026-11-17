@@ -207,6 +207,6 @@
 **实例锁与残留 PID 的一致性**
 
 - 测试层：Rust 单元测试（临时目录、进程内文件锁）、CI fixture E2E
-- 状态：`已覆盖（单元）`
+- 状态：`已覆盖`
 - 证据：[daemon 测试](../../../../lkit-cli/src/daemon.rs)、[残留 PID 下的事务恢复](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)
 - 说明：无实例锁时，残留 PID 即使对应存活进程也不表示 daemon 可用；取得实例锁后覆盖残留 PID；重复实例被锁拒绝；零值与溢出 PID 被拒绝。能力标识随锁释放失效。

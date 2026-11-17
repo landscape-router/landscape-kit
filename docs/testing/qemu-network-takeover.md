@@ -32,6 +32,11 @@ observational，不应加入 branch protection required checks。workflow 使用
 本脚本不直接验证确认超时、提交后重启、断电式终止或 OpenRC／SysVinit 网络接管。
 Alpine QEMU 覆盖 OpenRC 的 daemon 拉起、崩溃恢复和启动顺序，不替代网络接管验收。
 
+NetworkManager 的重启恢复还需要控制 IPv6 RA 时序的验收：daemon 提前拉起 WAN 后，
+内核自动配置的 IPv6 可能使 NetworkManager 采用 external connection，原 DHCP 连接
+没有激活。此时服务 active 和事务 rolled_back 不能证明 WAN IPv4 恢复；
+缺口与断言见 [NET-15](scenarios/functional/network-takeover.md#net-15)。
+
 本地实测应在专用测试主机或独立网络命名空间内运行：脚本会创建 TAP 并配置
 `192.168.10.2/24`。使用容器时，仓库和预编译二进制只读挂载，日志目录单独可写；
 不共享宿主网络、PID 命名空间或 Docker socket。通过 `LKIT_QEMU_ARTIFACT_DIR`
