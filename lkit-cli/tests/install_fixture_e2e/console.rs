@@ -433,7 +433,9 @@ fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
         } else {
             await_console_condition(|| next.request_paths().iter().any(|p| p.ends_with(".zst")));
             terminal
-                .wait_until(|screen| screen.contains("Downloading"))
+                .wait_until(|screen| {
+                    screen.contains("Downloading and verifying the backend binary")
+                })
                 .unwrap();
         }
         let operation = update_operation(&h);

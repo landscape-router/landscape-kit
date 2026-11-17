@@ -18,6 +18,7 @@ pub(crate) mod manage;
 pub(crate) mod migrate;
 pub(crate) mod mirror;
 pub(crate) mod openrc;
+pub(crate) mod operation;
 pub(crate) mod plan;
 pub(crate) mod platform;
 pub(crate) mod ports;

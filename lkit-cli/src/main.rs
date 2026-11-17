@@ -67,6 +67,7 @@ async fn async_main() -> ExitCode {
         configured_language(&matches),
     ));
     interaction::interactive::configure(cli.non_interactive);
+    cli::configure_debug(cli.debug);
     let Some(command) = cli.command else {
         if cli.non_interactive {
             eprintln!(

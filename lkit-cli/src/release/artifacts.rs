@@ -1,3 +1,5 @@
+use crate::daemon_operations::timeline::Step;
+use crate::workflows::operation_control as control;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -27,7 +29,10 @@ pub(crate) async fn build_release(
     let releases_dir = root.canonical.join("releases");
     std::fs::create_dir_all(&releases_dir).map_err(InstallError::Io)?;
     let final_path = releases_dir.join(version.to_string());
+    control::step(Step::CheckingCache);
     if let Some(built) = reuse_existing_release(&final_path, release)? {
+        control::step(Step::ReusingCache);
+        control::step(Step::PreparingFrontend);
         crate::frontend::apply_frontend(version, &final_path).await?;
         return Ok(built);
     }
@@ -40,6 +45,7 @@ pub(crate) async fn build_release(
             return Err(error);
         }
     };
+    control::step(Step::PreparingFrontend);
     if let Err(error) = crate::frontend::apply_frontend(version, &tmp).await {
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(error);
@@ -112,6 +118,7 @@ pub(crate) async fn fetch_webserver_asset(
 ) -> Result<BuiltRelease, InstallError> {
     let client = DownloadClient::new()?;
     let webserver = &release.assets.webserver;
+    control::step(Step::DownloadingBinary);
     let webserver_raw = target_dir.join("webserver.download");
     client
         .download_asset(
@@ -121,6 +128,7 @@ pub(crate) async fn fetch_webserver_asset(
             &webserver_raw,
         )
         .await?;
+    control::step(Step::UnpackingBinary);
     let webserver_binary = target_dir.join(WEBSERVER_BINARY);
     match webserver.encoding {
         AssetEncoding::Zstd => {
@@ -149,6 +157,7 @@ pub(crate) async fn fetch_static_asset(
     target_dir: &Path,
 ) -> Result<(), InstallError> {
     let client = DownloadClient::new()?;
+    control::step(Step::DownloadingStatic);
     let static_archive = &release.assets.static_archive;
     let static_zip = target_dir.join("static.zip");
     client
@@ -159,6 +168,7 @@ pub(crate) async fn fetch_static_asset(
             &static_zip,
         )
         .await?;
+    control::step(Step::UnpackingStatic);
     extract_static_archive(
         &release.version,
         &static_zip,

@@ -709,11 +709,15 @@ fn native_install_download_can_be_cancelled_or_observed_after_cli_disconnect() {
                 let _ = self.0.wait();
             }
         }
+        let debug_log = h.world.path("install-debug.log");
         let observer = Observer(
             h.command()
                 .args([
                     "install",
                     "--non-interactive",
+                    "--debug",
+                    "--lang",
+                    "en",
                     "--version",
                     VERSION,
                     "--repository",
@@ -725,6 +729,7 @@ fn native_install_download_can_be_cancelled_or_observed_after_cli_disconnect() {
                 .arg(&h.password)
                 .arg("--test-runtime")
                 .arg(&runtime)
+                .stderr(std::fs::File::create(&debug_log).unwrap())
                 .spawn()
                 .unwrap(),
         );
@@ -752,6 +757,11 @@ fn native_install_download_can_be_cancelled_or_observed_after_cli_disconnect() {
                     .iter()
                     .any(|p| p.ends_with(".zst"))
         });
+        wait(&mut || {
+            std::fs::read_to_string(&debug_log)
+                .unwrap()
+                .contains("Downloading and verifying the backend binary")
+        });
         let before = record().unwrap();
         drop(observer);
         if cancel {
@@ -768,6 +778,39 @@ fn native_install_download_can_be_cancelled_or_observed_after_cli_disconnect() {
         });
         assert_eq!(h.state_path().exists(), !cancel);
         assert_eq!(record().unwrap()["id"], before["id"]);
+        let id = before["id"].as_str().unwrap();
+        let diagnostic = h
+            .command()
+            .args(["--lang", "en", "operation", "status", id, "--debug"])
+            .output()
+            .unwrap();
+        assert_success(&diagnostic);
+        let receipt: serde_json::Value = serde_json::from_slice(&diagnostic.stdout).unwrap();
+        assert_eq!(receipt["id"], before["id"]);
+        let logs = String::from_utf8_lossy(&diagnostic.stderr);
+        assert!(
+            logs.contains("Downloading and verifying the backend binary"),
+            "{logs}"
+        );
+        if !cancel {
+            assert!(
+                logs.contains("Waiting for initialization, ports and API health checks"),
+                "{logs}"
+            );
+            assert!(
+                logs.contains("Persisting installation state and committing the transaction"),
+                "{logs}"
+            );
+        }
+        let password = std::fs::read_to_string(&h.password).unwrap();
+        assert!(!logs.contains(password.trim()));
+        let normal = h
+            .command()
+            .args(["operation", "status", id])
+            .output()
+            .unwrap();
+        assert_success(&normal);
+        assert!(!String::from_utf8_lossy(&normal.stderr).contains("[debug]"));
         if cancel {
             assert_eq!(record().unwrap()["cancel_cleaned"], true);
             assert!(!h.install_root.join("current").exists());

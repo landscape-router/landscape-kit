@@ -115,3 +115,12 @@ pub(crate) fn message(message: &str) -> Result<(), InstallError> {
     }
     Ok(())
 }
+
+pub(crate) fn step(step: crate::daemon_operations::timeline::Step) {
+    if let Some(id) = id() {
+        crate::daemon_operations::timeline::record(
+            &id,
+            crate::daemon_operations::timeline::Event::Step(step),
+        );
+    }
+}

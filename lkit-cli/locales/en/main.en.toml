@@ -79,3 +79,5 @@ main.frontend_add_name_help = "Optional display name"
 main.frontend_add_activate_help = "Activate this source immediately"
 main.frontend_select_id_help = "Source id to activate, or official for the official frontend"
 main.frontend_remove_id_help = "Source id to remove"
+
+main.debug_help = "Show daemon operation steps and diagnostic state on stderr"

@@ -192,3 +192,12 @@
 - 状态：`已覆盖`
 - 证据：[CLI 参数约束](../../../../lkit-cli/src/cli.rs)、[队列测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[终端隔离](../../../../lkit-cli/src/interaction/interactive.rs)、[业务 fixture](../../../../lkit-cli/tests/install_fixture_e2e/)、[真实 systemd 场景](../systemd-smoke.md#sys-03)
 - 说明：所有生命周期请求使用结构化参数，拒绝内部 worker 参数、迁移 resume 和网络计划文件传输参数。daemon 禁止读取终端；fixture 覆盖安装、重初始化、迁移、切换、修复、恢复、卸载及网络确认／回滚的持久化操作。真实 systemd 场景验证前端退出、daemon 崩溃恢复和运行中可执行路径被删除后继续执行。
+
+## DAE-18
+
+**恢复终态说明与事务结果一致**
+
+- 测试层：Rust 单元
+- 状态：`已覆盖`
+- 证据：[操作队列测试](../../../../lkit-cli/src/daemon_operations/tests.rs)、[daemon 规范](../../../service/daemon.md)
+- 说明：网络确认或回滚完成后，原操作说明与最终状态一致；恢复重试期间保留错误说明，恢复完成后替换过期错误。终态摘要使用操作绑定的语言。

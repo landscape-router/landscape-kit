@@ -772,6 +772,9 @@ fn reinit_waits_for_network_confirmation_and_updates_the_original_receipt_after_
         associate(&mut record, &tx).unwrap();
         tx.phase = transaction::Phase::AwaitingNetworkConfirmation;
         f.write_tx(&tx);
+        record.language = Some(crate::i18n::Language::Zh);
+        save(&record).unwrap();
+        set_message(&record.id, "等待网络确认；请运行 lkit network confirm").unwrap();
         reconcile(&mut record, Some(Ok(()))).unwrap();
         assert_eq!(
             record.status,
@@ -801,6 +804,21 @@ fn reinit_waits_for_network_confirmation_and_updates_the_original_receipt_after_
             })
         );
         assert!(record.status.terminal());
+        assert!(
+            !record
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("network confirm")
+        );
+        assert_eq!(
+            record.message.as_deref(),
+            Some(if outcome == transaction::Phase::Committed {
+                "操作已成功完成"
+            } else {
+                "操作已回滚，恢复已完成"
+            })
+        );
     }
 }
 
@@ -978,4 +996,29 @@ fn operation_language_is_capability_gated_and_scoped_to_execution() {
     let mut value = serde_json::to_value(&queued).unwrap();
     value["language"] = "invalid".into();
     assert!(serde_json::from_value::<Record>(value).is_err());
+}
+
+#[test]
+fn recovery_retry_replaces_obsolete_errors_only_when_recovery_finishes() {
+    let f = Fixture::new();
+    f.submit();
+    let mut record = claim().unwrap().unwrap();
+    record.language = Some(crate::i18n::Language::En);
+    save(&record).unwrap();
+    let mut tx = f.transaction(&mut record);
+    tx.phase = transaction::Phase::RollingBack;
+    f.write_tx(&tx);
+    reconcile(&mut record, Some(Err("restore service failed".into()))).unwrap();
+    assert_eq!(record.status, Status::Recovering);
+    assert_eq!(record.message.as_deref(), Some("restore service failed"));
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(record.message.as_deref(), Some("restore service failed"));
+    tx.phase = transaction::Phase::RolledBack;
+    f.write_tx(&tx);
+    reconcile(&mut record, None).unwrap();
+    assert_eq!(
+        record.message.as_deref(),
+        Some("Operation rolled back; recovery completed")
+    );
+    assert_eq!(record.status, Status::Failed);
 }

@@ -15,6 +15,20 @@ enum Action {
 
 pub fn run(args: &OperationCommand) -> ExitCode {
     use crate::daemon_operations as operations;
+    if crate::cli::debug_enabled()
+        && let Action::Status { id } = &args.action
+        && let Ok(record) = operations::read(id)
+    {
+        eprintln!("{}", operations::timeline::debug_snapshot(&record));
+        match operations::timeline::read_events(id) {
+            Ok(entries) => {
+                for entry in entries {
+                    eprintln!("[debug] {}", entry.display());
+                }
+            }
+            Err(_) => eprintln!("[debug] operation timeline unavailable"),
+        }
+    }
     let result = match &args.action {
         Action::Status { id } => operations::read(id).and_then(|r| {
             serde_json::to_string_pretty(&r)

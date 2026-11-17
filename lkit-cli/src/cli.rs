@@ -11,11 +11,22 @@ pub(crate) struct Cli {
     /// Do not open a terminal or prompt for input
     #[arg(long, global = true)]
     pub(crate) non_interactive: bool,
+    /// Show daemon operation steps and diagnostic state on stderr
+    #[arg(long, global = true)]
+    pub(crate) debug: bool,
     /// Output language override: en or zh; unsupported values use English
     #[arg(long, global = true, value_name = "LANG")]
     pub(crate) lang: Option<String>,
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
+}
+
+static DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn configure_debug(enabled: bool) {
+    DEBUG.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+pub(crate) fn debug_enabled() -> bool {
+    DEBUG.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// 读取配置预设的语言。宽容读取:`config.toml` 缺失或损坏时一律返回 `None`,
@@ -28,6 +39,9 @@ pub(crate) fn localized_command() -> clap::Command {
     let command = Cli::command()
         .mut_arg("non_interactive", |arg| {
             arg.help(crate::tr_static!(keys::MAIN_NON_INTERACTIVE_HELP))
+        })
+        .mut_arg("debug", |arg| {
+            arg.help(crate::tr_static!("main.debug_help"))
         })
         .mut_arg("lang", |arg| {
             arg.help(crate::tr_static!(keys::MAIN_LANG_HELP))
@@ -383,6 +397,20 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::Cli;
+
+    #[test]
+    fn debug_is_global_and_does_not_enable_non_interactive_mode() {
+        for args in [
+            vec!["lkit", "--debug", "install"],
+            vec!["lkit", "install", "--debug"],
+            vec!["lkit", "operation", "status", "id", "--debug"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(cli.debug);
+            assert!(!cli.non_interactive);
+        }
+        assert!(!Cli::try_parse_from(["lkit", "install"]).unwrap().debug);
+    }
 
     #[test]
     fn rejects_removed_worker_transport_arguments() {

@@ -23,7 +23,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |
 | Ratatui 管理控制台 | `UI-01` 至 `UI-21` | [console.md](functional/console.md) |
 | 命令行本地化 | `I18N-01` 至 `I18N-08` | [i18n.md](functional/i18n.md) |
-| 首次安装 | `INS-01` 至 `INS-05`、`INS-07` 至 `INS-20` | [install.md](functional/install.md) |
+| 首次安装 | `INS-01` 至 `INS-05`、`INS-07` 至 `INS-21` | [install.md](functional/install.md) |
 | 手工部署迁移 | `MIG-01` 至 `MIG-12` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-11` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-14` | [switch.md](functional/switch.md) |
@@ -42,7 +42,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-12` | [self.md](functional/self.md) |
 | Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
-| daemon 自动恢复 | `DAE-01` 至 `DAE-17` | [daemon.md](functional/daemon.md) |
+| daemon 自动恢复 | `DAE-01` 至 `DAE-18` | [daemon.md](functional/daemon.md) |
 | Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-35` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
 
 ## 第二部分：systemd 兼容性 Smoke

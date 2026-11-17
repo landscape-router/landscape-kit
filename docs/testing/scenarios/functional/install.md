@@ -188,3 +188,13 @@
   密码文件清理、前端断开后继续执行。CI 在激活、安装状态写入、提交结果写入前及
   网络确认窗口中强杀 daemon，检查原操作 ID、回滚前数据和最终事务结果。
 - 缺口：原生首次安装的真实 TUI 端到端和 OpenRC／SysVinit 故障注入尚未单独覆盖。
+
+## INS-21
+
+**安装步骤时间线与诊断输出**
+
+- 测试层：Rust 单元、CLI fixture E2E、TUI fixture E2E
+- 状态：`已覆盖`
+- 证据：[时间线单元测试](../../../../lkit-cli/src/daemon_operations/timeline.rs)、[安装 fixture](../../../../lkit-cli/tests/install_fixture_e2e/install.rs)、[TUI fixture](../../../../lkit-cli/tests/install_fixture_e2e/console.rs)、[输出约定](../../../commands/output-and-exit-codes.md)
+- 说明：时间线保留最近 128 条类型化步骤，文件权限为 0600；日志损坏不改变操作结果。安装前端退出后，`operation status --debug` 仍显示下载、健康检查和提交步骤，标准输出保持 JSON，诊断不包含密码。TUI 更新场景验证共用观察器实时显示后端下载详情。
+- 缺口：首次安装向导的完整 TUI 场景尚未单独覆盖。

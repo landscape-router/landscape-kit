@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon_operations::timeline::Step;
 use crate::daemon_operations::{Record, Stage};
 use crate::deployment::{
     state as installation,
@@ -238,6 +239,7 @@ pub(crate) async fn run_operation(
     runtime: &InstallRuntime,
     record: &Record,
 ) -> Result<u8, InstallError> {
+    control::step(Step::CheckingInstallation);
     let args = record
         .install
         .as_ref()
@@ -282,6 +284,7 @@ pub(crate) async fn run_operation(
         admin_user: args.admin_user.clone(),
         password,
     };
+    control::step(Step::ResolvingVersion);
     let source = args.repository.clone().resolve()?;
     let provider = crate::release::repository::provider_for(source.kind, &source.location)?;
     let architecture = Architecture::host().ok_or_else(|| failure("unsupported architecture"))?;
@@ -304,6 +307,7 @@ pub(crate) async fn run_operation(
         let built =
             control::download(crate::workflows::switch::build_staged(&root, &tx, &release)).await?;
         control::phase(Stage::Preparing)?;
+        control::step(Step::SavingRecovery);
         snapshot(&root, &tx, manager.kind())?;
         tx.systemd_before = Some(capture_before(manager, ManagedService::LandscapeRouter)?);
         let backup = format!("backups/{}/host/resolv.conf", tx.transaction_id);
@@ -323,6 +327,7 @@ pub(crate) async fn run_operation(
             canonical: staged.clone(),
             install_root: staged,
         };
+        control::step(Step::WritingConfiguration);
         let init = build_init_config(
             &staged_root,
             &release.version,
@@ -337,6 +342,7 @@ pub(crate) async fn run_operation(
             .canonical
             .join("releases")
             .join(format!(".native-install-{}.tmp", tx.transaction_id));
+        control::step(Step::PublishingRelease);
         copy_tree(&source, &temp)?;
         repair_snapshot::sync_tree(&temp)?;
         remove(&target)?;
@@ -352,6 +358,7 @@ pub(crate) async fn run_operation(
             crate::network::takeover::arm_recovery(&root, network, runtime)?;
             transaction::mark_phase(&root, &tx, Phase::Stopping)?;
             control::phase(Stage::Stopping)?;
+            control::step(Step::TakingOverNetwork);
             crate::network::takeover::stop_host_services(network, manager)?;
             crate::network::takeover::clear_selected_lan_addresses(
                 &network.plan,
@@ -360,14 +367,17 @@ pub(crate) async fn run_operation(
         }
         transaction::mark_phase(&root, &tx, Phase::Activating)?;
         control::phase(Stage::Activating)?;
+        control::step(Step::ActivatingRelease);
         activate_current(&root, &release.version)?;
         #[cfg(feature = "test-support")]
         control::checkpoint("install-activated")?;
+        control::step(Step::RegisteringService);
         manager.register(
             ManagedService::LandscapeRouter,
             &root.canonical.join("service/landscape-router.service"),
         )?;
         manager.enable(ManagedService::LandscapeRouter)?;
+        control::step(Step::StartingService);
         manager.start(ManagedService::LandscapeRouter)?;
         transaction::mark_phase(&root, &tx, Phase::Verifying)?;
         control::phase(Stage::Verifying)?;
@@ -387,7 +397,9 @@ pub(crate) async fn run_operation(
             startup_timeout: health.startup_timeout,
             stable_duration: health.stable_duration,
         };
+        control::step(Step::WaitingForHealth);
         health::wait_for_startup(&options).await?;
+        control::step(Step::ObservingStability);
         health::observe_stable(&options).await?;
         let activation = UnitActivation {
             unit_sha: unit_sha.clone(),
@@ -408,12 +420,14 @@ pub(crate) async fn run_operation(
         let mut installed = build_state(&root, &release, architecture, &built, &activation);
         installed.last_transaction_id = Some(tx.transaction_id.clone());
         if let Some(network) = &tx.network_takeover {
+            control::step(Step::SavingPendingState);
             crate::network::takeover::write_pending_state(&root, network, &installed)?;
             transaction::mark_phase(&root, &tx, Phase::AwaitingNetworkConfirmation)?;
             #[cfg(feature = "test-support")]
             control::checkpoint("install-awaiting")?;
             Ok(true)
         } else {
+            control::step(Step::Committing);
             installation::write_state(&root, &installed)?;
             #[cfg(feature = "test-support")]
             control::checkpoint("install-state-written")?;
@@ -435,6 +449,7 @@ pub(crate) async fn run_operation(
         Err(error) => {
             let stored = transaction::find_unfinished(&root)?;
             if let Some(tx) = stored {
+                control::step(Step::Restoring);
                 recover(&root, &tx, manager)?;
             }
             Err(error)

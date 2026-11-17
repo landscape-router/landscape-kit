@@ -79,3 +79,5 @@ main.frontend_add_name_help = "可选展示名"
 main.frontend_add_activate_help = "立即激活该源"
 main.frontend_select_id_help = "要激活的源 id，或 official 表示官方前端"
 main.frontend_remove_id_help = "要移除的源 id"
+
+main.debug_help = "在 stderr 显示 daemon 操作步骤和诊断状态"

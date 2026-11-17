@@ -1,6 +1,7 @@
 //! Durable, typed operations executed by the daemon without an lkit child.
 mod install;
 mod migrate;
+pub(crate) mod timeline;
 pub(crate) use install::{InstallRequest, submit_install_and_wait};
 pub(crate) use migrate::{MigrateRequest, SourceIdentity, submit_migrate_and_wait};
 pub(crate) mod reinit;
@@ -617,7 +618,10 @@ pub(crate) fn set_stage(id: &str, stage: Stage) -> Result<(), InstallError> {
     record.stage = stage;
     record.cancellable = stage == Stage::Downloading && record.kind != Kind::Service;
     record.revision += 1;
-    save(&record)
+    save(&record)?;
+    drop(_guard);
+    timeline::record(id, timeline::Event::Stage(stage));
+    Ok(())
 }
 pub(crate) fn set_progress(id: &str, position: u64, total: u64) -> Result<(), InstallError> {
     let _guard = queue_lock()?;
@@ -687,6 +691,9 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
         save(record)?;
     }
     record.exit_code = exit_code.or(record.exit_code);
+    let previous_status = record.status;
+    let recovered = result.is_none();
+    let execution_failed = result.as_ref().is_some_and(|r| r.is_err());
     let evidence = read_transaction(record).and_then(|tx| {
         if record.cancel_requested
             && !record.cancel_cleaned
@@ -757,9 +764,31 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
             _ => record.exit_code.unwrap_or(1),
         });
     }
+    if record.status.terminal()
+        && (recovered || (record.status == Status::Succeeded && execution_failed))
+    {
+        let key = match record.status {
+            Status::Succeeded => Some(crate::keys::operation::COMPLETED),
+            Status::Failed if rolled_back => Some(crate::keys::operation::ROLLED_BACK),
+            Status::Failed => Some(crate::keys::operation::FAILED),
+            Status::Interrupted => Some(crate::keys::operation::INTERRUPTED),
+            _ => None,
+        };
+        if let Some(key) = key {
+            record.message = Some(crate::i18n::with_language(
+                record.language.unwrap_or_else(crate::i18n::current),
+                || crate::tr!(key),
+            ));
+        }
+    }
     record.revision += 1;
     let _guard = queue_lock()?;
-    save(record)
+    save(record)?;
+    drop(_guard);
+    if record.status != previous_status {
+        timeline::record(&record.id, timeline::Event::Status(record.status));
+    }
+    Ok(())
 }
 
 /// Returns whether an operation was executed or remains blocked on recovery.
@@ -856,6 +885,7 @@ fn execute_record(
     mut record: Record,
     mut execute: impl FnMut(&mut Record) -> Result<(), InstallError>,
 ) -> Result<bool, InstallError> {
+    timeline::record(&record.id, timeline::Event::Status(Status::Running));
     let language = record.language.unwrap_or_else(crate::i18n::current);
     let result = crate::i18n::with_language(language, || execute(&mut record)).map_err(|e| {
         record.exit_code = record.exit_code.or(Some(match e {
@@ -1145,9 +1175,46 @@ async fn wait_for_result(
     let mut unavailable_since = None;
     let mut displayed = None;
     let mut displayed_message = None;
+    let mut event_sequence = 0;
+    let mut debug_revision = None;
+    let mut log_error_reported = false;
     loop {
         let current = read(&record.id)?;
         let outcome = observed_outcome(&current);
+        if presentation.is_some() || crate::cli::debug_enabled() {
+            match timeline::read_events(&record.id) {
+                Ok(entries) => {
+                    for entry in entries.iter().filter(|e| e.sequence > event_sequence) {
+                        let line = entry.display();
+                        if let Some(screen) = &mut presentation {
+                            screen.capture_log(&line);
+                        } else {
+                            eprintln!("[debug] {line}");
+                        }
+                    }
+                    if let Some(entry) = entries.last() {
+                        event_sequence = entry.sequence;
+                    }
+                }
+                Err(_) if !log_error_reported => {
+                    let warning = "operation timeline unavailable; continuing to observe the operation record";
+                    if let Some(screen) = &mut presentation {
+                        screen.capture_log(warning);
+                    } else {
+                        eprintln!("[debug] {warning}");
+                    }
+                    log_error_reported = true;
+                }
+                Err(_) => {}
+            }
+        }
+        if presentation.is_none()
+            && crate::cli::debug_enabled()
+            && debug_revision != Some(current.revision)
+        {
+            eprintln!("{}", timeline::debug_snapshot(&current));
+            debug_revision = Some(current.revision);
+        }
         let mut closed = false;
         if let Some(screen) = &mut presentation {
             if last_revision != Some(current.revision) {
