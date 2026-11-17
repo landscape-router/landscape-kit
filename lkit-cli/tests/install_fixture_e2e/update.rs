@@ -136,6 +136,7 @@ fn records(h: &InstallHarness) -> Vec<serde_json::Value> {
     assert_success(&output);
     serde_json::from_slice(&output.stdout).unwrap()
 }
+#[track_caller]
 fn wait_until(mut ready: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
     while !ready() {
@@ -333,11 +334,7 @@ fn update_operations_recover_after_frontend_and_daemon_exit() {
         let mut pty = Pty::open();
         pty.master.write_all(b"yes\n").unwrap();
         let frontend = start(&h, &runtime, &pty, Some(&next.base_url));
-        wait_until(|| {
-            h.run_dir()
-                .join(format!("test-repair-{point}.reached"))
-                .exists()
-        });
+        wait_for_checkpoint(&h, point, "switch");
         let operation = records(&h).pop().unwrap();
         assert_eq!(operation["status"], "running");
         assert!(

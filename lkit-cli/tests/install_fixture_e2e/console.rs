@@ -418,11 +418,7 @@ fn console_update_submits_once_and_obeys_detach_and_cancellation_boundaries() {
             .wait_until(|screen| screen.contains("stop watching"))
             .unwrap();
         if mode == "activating" {
-            await_console_condition(|| {
-                h.run_dir()
-                    .join("test-repair-switch-activated.reached")
-                    .exists()
-            });
+            wait_for_checkpoint(&h, "switch-activated", "switch");
             terminal
                 .wait_until(|screen| screen.contains("Activating"))
                 .unwrap();

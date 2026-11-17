@@ -112,42 +112,11 @@ fn switch_ignores_allow_no_backup_while_the_service_runs() {
 }
 
 #[track_caller]
-fn wait_until(h: &InstallHarness, label: &str, ready: impl FnMut() -> bool) {
-    wait_until_with_timeout(h, label, Duration::from_secs(45), ready);
-}
-
-#[track_caller]
-fn wait_until_with_timeout(
-    h: &InstallHarness,
-    label: &str,
-    timeout: Duration,
-    mut ready: impl FnMut() -> bool,
-) {
-    let deadline = std::time::Instant::now() + timeout;
+fn wait_until(h: &InstallHarness, label: &str, mut ready: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
     while !ready() {
         if std::time::Instant::now() >= deadline {
-            // Read evidence directly: a stuck CLI must not block timeout diagnostics.
-            // TestWorld exports bounded, redacted logs during panic cleanup.
-            for directory in [h.run_dir().join("operations"), h.transactions_dir()] {
-                for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                        continue;
-                    }
-                    if let Ok(bytes) = std::fs::read(&path)
-                        && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
-                    {
-                        eprintln!(
-                            "{}: status={} stage={} phase={} message={}",
-                            path.display(),
-                            record["status"],
-                            record["stage"],
-                            record["phase"],
-                            record["message"]
-                        );
-                    }
-                }
-            }
+            print_operation_diagnostics(h);
             panic!("timed out waiting for switch: {label}");
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -213,45 +182,6 @@ fn gate(h: &InstallHarness, name: &str) -> std::path::PathBuf {
     std::fs::write(&gate, b"pause").unwrap();
     gate
 }
-fn checkpoint(h: &InstallHarness, name: &str) {
-    // Reaching late checkpoints includes queueing, hashing the debug binary,
-    // downloading, compressing its protection backup, and the health checks.
-    // The gate's own timeout starts only after the reached marker is written.
-    wait_until_with_timeout(h, name, Duration::from_secs(120), || {
-        if h.run_dir()
-            .join(format!("test-repair-{name}.reached"))
-            .exists()
-        {
-            return true;
-        }
-        // A failed workflow cannot reach its checkpoint. Read its durable result
-        // directly so neither a stuck CLI nor the longer budget hides failures.
-        for entry in std::fs::read_dir(h.run_dir().join("operations"))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("json")
-                && let Ok(bytes) = std::fs::read(&path)
-                && let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes)
-                && record["kind"] == "switch"
-            {
-                assert!(
-                    !matches!(
-                        record["status"].as_str(),
-                        Some("succeeded" | "failed" | "cancelled" | "interrupted")
-                    ),
-                    "switch finished before checkpoint {name}: status={} stage={} message={}",
-                    record["status"],
-                    record["stage"],
-                    record["message"]
-                );
-            }
-        }
-        false
-    });
-}
 fn snapshot_state(h: &InstallHarness) -> Vec<u8> {
     std::fs::read(h.state_path()).unwrap()
 }
@@ -298,7 +228,7 @@ fn daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup()
             let gate = gate(&h, point);
             let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, point);
             let frontend = start_switch(&h, &runtime, &next.base_url, no_backup);
-            checkpoint(&h, point);
+            wait_for_checkpoint(&h, point, "switch");
             let operation = records(&h).pop().unwrap();
             assert_eq!(operation["status"], "running");
             assert_eq!(operation["cancellable"], false);
@@ -444,7 +374,7 @@ fn switch_rollback_failure_blocks_next_request_until_backup_is_repaired() {
     let gate = gate(&h, "switch-activated");
     let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, "switch-activated");
     let frontend = start_switch(&h, &runtime, &next.base_url, false);
-    checkpoint(&h, "switch-activated");
+    wait_for_checkpoint(&h, "switch-activated", "switch");
     let operation = records(&h).pop().unwrap();
     let tx = transaction(&h, &operation);
     let backup = h.territory.join(tx["backup"]["path"].as_str().unwrap());

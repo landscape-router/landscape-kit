@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Mutex;
 
+mod checkpoints;
 mod harness;
 mod ports;
 mod pty;
@@ -9,6 +10,7 @@ mod repo;
 mod transactions;
 pub(crate) mod world;
 
+pub(crate) use self::checkpoints::{print_operation_diagnostics, wait_for_checkpoint};
 pub(crate) use self::harness::{InstallHarness, write_valid_state_at};
 pub(crate) use self::ports::TestPorts;
 pub(crate) use self::pty::{Pty, attach_pty};

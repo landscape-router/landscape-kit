@@ -1,5 +1,6 @@
 use super::support::{
     E2E_LOCK, InstallHarness, RepositoryServer, TestPorts, e2e_enabled, repository_files,
+    wait_for_checkpoint,
 };
 use std::{
     os::{fd::AsRawFd, unix::fs::PermissionsExt},
@@ -482,13 +483,6 @@ fn checkpoint_gate(h: &InstallHarness, name: &str) -> std::path::PathBuf {
     std::fs::write(&gate, b"pause").unwrap();
     gate
 }
-fn await_checkpoint(h: &InstallHarness, name: &str) {
-    wait_until(|| {
-        h.run_dir()
-            .join(format!("test-repair-{name}.reached"))
-            .exists()
-    });
-}
 fn operation_by_id(h: &InstallHarness, id: &str) -> serde_json::Value {
     records(h).into_iter().find(|r| r["id"] == id).unwrap()
 }
@@ -517,7 +511,7 @@ fn static_crash_windows_restore_pages_archive_and_state_together() {
             let gate = checkpoint_gate(&h, checkpoint);
             let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, checkpoint);
             let frontend = start_repair(&h, &runtime, "static", &h.repository.base_url);
-            await_checkpoint(&h, checkpoint);
+            wait_for_checkpoint(&h, checkpoint, "repair_static");
             let operation = records(&h).pop().unwrap();
             assert_eq!(operation["status"], "running");
             assert_eq!(transaction(&h, &operation)["phase"], "activating");
@@ -562,7 +556,7 @@ fn committed_repairs_recover_missing_results_without_replaying_side_effects() {
         let gate = checkpoint_gate(&h, "before-result");
         let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, "before-result");
         let frontend = start_repair(&h, &runtime, target, &h.repository.base_url);
-        await_checkpoint(&h, "before-result");
+        wait_for_checkpoint(&h, "before-result", &format!("repair_{target}"));
         let operation = records(&h).pop().unwrap();
         assert_eq!(operation["status"], "running");
         assert_eq!(transaction(&h, &operation)["phase"], "committed");
@@ -639,7 +633,7 @@ fn failed_static_rollback_blocks_mutations_and_resumes_after_filesystem_repair()
     let gate = checkpoint_gate(&h, "static-removed");
     let mut daemon = h.spawn_daemon_at_checkpoint(&runtime, "static-removed");
     let frontend = start_repair(&h, &runtime, "static", &h.repository.base_url);
-    await_checkpoint(&h, "static-removed");
+    wait_for_checkpoint(&h, "static-removed", "repair_static");
     let operation = records(&h).pop().unwrap();
     let id = operation["id"].as_str().unwrap();
     drop(frontend);
