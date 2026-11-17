@@ -35,7 +35,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
 | 初始化系统与 Cgroup 准备 | `INIT-01` 至 `INIT-04` | [init.md](functional/init.md) |
 | 安全与环境检查 | `SEC-01` 至 `SEC-03`、`ENV-01` 至 `ENV-04` | [security-and-environment.md](functional/security-and-environment.md) |
-| 网络接管 | `NET-01` 至 `NET-13` | [network-takeover.md](functional/network-takeover.md) |
+| 网络接管 | `NET-01` 至 `NET-14` | [network-takeover.md](functional/network-takeover.md) |
 | 宿主网络适配 | `HNET-01` 至 `HNET-08` | [hostnet.md](functional/hostnet.md) |
 | 主机换源 | `MIR-01` 至 `MIR-13` | [mirror.md](functional/mirror.md) |
 | 常用软件安装 | `SFT-01` 至 `SFT-07` | [software.md](functional/software.md) |
@@ -52,7 +52,7 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
-| 真实 manager 与网络兼容性 | `SYS-01` 至 `SYS-06` | [systemd-smoke.md](systemd-smoke.md) |
+| 真实 manager 与网络兼容性 | `SYS-01` 至 `SYS-07` | [systemd-smoke.md](systemd-smoke.md) |
 
 ## 当前优先缺口
 

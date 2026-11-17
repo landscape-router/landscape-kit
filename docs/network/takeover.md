@@ -5,7 +5,7 @@
 `lkit install --takeover-network` 是首次安装的显式破坏性模式，要求 root、真实可通信的
 服务管理器（systemd、OpenRC 或 SysVinit）、启用且运行中的 lkit daemon 和交互终端。网卡始终由用户选择，lkit 不按默认路由或接口名自动决定 WAN/LAN。
 无线、loopback 和虚拟接口不列入选择。不受支持的活动网络管理器
-（`systemd-networkd`、wicked、connman 或独立 dhcpcd），或 SELinux 已加载/配置为 enabled/permissive
+（wicked、connman 或独立 dhcpcd），或 SELinux 已加载/配置为 enabled/permissive
 时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
@@ -15,10 +15,10 @@ lkit 不检查桥接是否存在。
 三个后端的控制台安装均进入网络向导。网络接管的恢复契约见
 [daemon 网络接管恢复](daemon-recovery.md)。
 
-systemd 支持 NetworkManager、Debian ifupdown、firewalld 和 systemd-resolved；
+systemd 支持 systemd-networkd、NetworkManager、Debian ifupdown、firewalld 和 systemd-resolved；
 OpenRC/SysVinit 支持 `NetworkManager`、`networking` 和 `firewalld` 服务脚本。
 不存在的服务不操作。服务状态无法可靠查询时在接管前失败。systemd 使用
-stop/disable/mask；OpenRC/SysVinit 停止服务并保存、移除其开机链接，回滚恢复原始
+stop/disable/mask（networkd 服务组按下述规则处理）；OpenRC/SysVinit 停止服务并保存、移除其开机链接，回滚恢复原始
 runlevel、链接顺序及运行状态。接管不卸载软件包，不收集 PPPoE 凭据或 MTU。
 
 初始化配置的生成方式按目标 release 版本区分:≥ 0.25.1 时 lkit 调用目标 release 目录下
@@ -75,3 +75,15 @@ Landscape 启动并通过健康检查后安装状态仍不提交。用户运行 
 完成接口与健康复检后提交事务。期限内未确认或确认前主机重启触发自动回滚；daemon
 自身重启继续原期限。回滚失败保留 `rolling_back` 并重试。已接受确认的 `finalizing`
 继续提交。旧事务的 systemd 恢复 unit 在处理完成时清理。
+
+## systemd-networkd 接管
+
+networkd 主服务、netlink/varlink 等配套 socket、wait-online 服务及模板构成接管组，
+不存在的单元跳过。整组运行状态和启用状态先写入事务，再将整组 mask，最后停止。
+接管保留启动链接和 `.network`/`.netdev` 配置，不调用 networkd 的 disable/enable，
+避免 `Also=` 连带改变 socket、网络生成器和 wait-online 的启用配置。
+
+回滚先解除整组屏蔽，再恢复原本运行的单元，随后停止原本不运行的单元，并还原
+原有 persistent/runtime mask。恢复可重复执行；任何失败保留事务供 daemon 重试。
+确认后整组保持停用和屏蔽。此支持限定 systemd 后端；OpenRC/SysVinit 不自动接管
+名为 systemd-networkd 的自定义服务脚本。

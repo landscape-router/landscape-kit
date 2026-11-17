@@ -4,7 +4,7 @@
 
 `lkit-hostnet` 是独立于 lkit-cli 的纯库 crate，负责"把选中的网络接口从宿主网络管理器中
 摘除，并在回滚/卸载时恢复"。当前只实现 ifupdown 适配器；NetworkManager 和
-systemd-networkd 仍是后续阶段。
+systemd-networkd 的按接口配置适配仍是后续阶段。整组 networkd 服务的停止与恢复由 lkit-cli 的网络接管流程处理。
 
 当前托管网络管理的整体行为见[网络接管](takeover.md)；本文档描述 `lkit-hostnet` 本身的
 设计与测试。

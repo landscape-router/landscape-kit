@@ -40,3 +40,6 @@ operation.completed = "Operation completed successfully"
 operation.rolled_back = "Operation rolled back; recovery completed"
 operation.failed = "Operation failed; transaction processing has ended"
 operation.interrupted = "Operation interrupted without a conclusive transaction result"
+
+operation.step.stopping_networkd = "Masking and stopping the networkd service group"
+operation.step.restoring_networkd = "Restoring the networkd service group"

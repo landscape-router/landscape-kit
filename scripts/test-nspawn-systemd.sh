@@ -86,8 +86,10 @@ done
 mmdebstrap \
   --variant=minbase \
   --keyring="$archive_keyring" \
-  --include=systemd,systemd-sysv,dbus,bash,util-linux,procps,iproute2,ca-certificates,python3 \
+  --include=systemd,systemd-sysv,systemd-networkd,dbus,bash,util-linux,procps,iproute2,ca-certificates,python3,zstd \
   trixie "$rootfs"
+
+install -D -m 0644 "$repo_root/scripts/test-nspawn-networkd.py" "$rootfs/var/lib/lkit-nspawn/networkd-test.py"
 
 install -D -m 0755 "$prebuilt_dir/lkit" "$rootfs/usr/local/bin/lkit"
 install -D -m 0755 "$prebuilt_dir/landscape-webserver" \
@@ -610,4 +612,7 @@ machine_shell 'LKIT_LANG=zh /usr/local/bin/lkit --non-interactive uninstall --ye
 wait_receipt succeeded
 machine_shell 'python3 /var/lib/lkit-nspawn/operation.py language'
 
-echo "PASS: systemd-nspawn registration, lifecycle and native daemon operations"
+echo "== native N-1: real networkd takeover and rollback"
+machine_shell "python3 /var/lib/lkit-nspawn/networkd-test.py"
+
+echo "PASS: systemd-nspawn registration, lifecycle, networkd and native daemon operations"

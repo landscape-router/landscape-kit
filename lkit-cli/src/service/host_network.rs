@@ -14,6 +14,13 @@ fn error(message: impl Into<String>) -> InstallError {
 pub(crate) fn names(manager: &dyn ServiceManager) -> &'static [&'static str] {
     match manager.kind() {
         ServiceManagerKind::Systemd => &[
+            "systemd-networkd.socket",
+            "systemd-networkd-varlink.socket",
+            "systemd-networkd-varlink-metrics.socket",
+            "systemd-networkd-resolve-hook.socket",
+            "systemd-networkd.service",
+            "systemd-networkd-wait-online.service",
+            "systemd-networkd-wait-online@.service",
             "NetworkManager.service",
             "networking.service",
             "firewalld.service",
@@ -37,7 +44,7 @@ fn validate_name(name: &str) -> Result<(), InstallError> {
     if name.is_empty()
         || !name
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.@".contains(&b))
         || name == "."
         || name == ".."
     {
@@ -320,6 +327,23 @@ pub(crate) fn remove_managed_startup_links(
     }
     for (path, _) in links {
         std::fs::remove_file(path).map_err(InstallError::Io)?;
+    }
+    Ok(())
+}
+
+/// Networkd must be restored as a group before services can pull in its sockets.
+pub(crate) fn restore_all(
+    manager: &dyn ServiceManager,
+    services: &[HostServiceBefore],
+) -> Result<(), InstallError> {
+    if manager.kind() == ServiceManagerKind::Systemd {
+        super::networkd::restore(systemd::downcast(manager)?, services)?;
+    }
+    for before in services {
+        if manager.kind() != ServiceManagerKind::Systemd || !super::networkd::contains(&before.unit)
+        {
+            restore(manager, before)?;
+        }
     }
     Ok(())
 }

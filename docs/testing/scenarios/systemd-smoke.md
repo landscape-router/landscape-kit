@@ -54,3 +54,12 @@
 - 测试层：QEMU/KVM
 - 状态：`低频 smoke`
 - 证据：[QEMU 网络接管](../qemu-network-takeover.md)
+
+## SYS-07
+
+**真实 networkd 接管与原始启动状态恢复**
+
+- 测试层：systemd-nspawn CI
+- 状态：`已覆盖`
+- 证据：[nspawn 入口](../../../scripts/test-nspawn-systemd.sh)、[networkd 场景](../../../scripts/test-nspawn-networkd.py)
+- 说明：在隔离网络的 Debian guest 中运行真实 networkd、systemctl 和 lkit daemon。服务启用且运行、socket 禁用且停止、wait-online runtime mask；首次安装接管后检查屏蔽及启动链接，验证 D-Bus 别名与 socket 无法拉起服务，重启 daemon 后回滚并核对原始链接及运行状态。网络发现与 Landscape 使用 fixture，不在宿主机运行。

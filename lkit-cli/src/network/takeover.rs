@@ -41,6 +41,11 @@ pub(crate) fn preflight(runtime: &InstallRuntime) -> Result<(), InstallError> {
         ));
     }
     for unit in UNKNOWN_NETWORK_MANAGERS {
+        if unit == "systemd-networkd.service"
+            && manager.kind() == crate::service::manager::ServiceManagerKind::Systemd
+        {
+            continue;
+        }
         let name = if manager.kind() == crate::service::manager::ServiceManagerKind::Systemd {
             unit
         } else {
@@ -62,10 +67,16 @@ pub(crate) fn prepare_transaction(
     runtime: &InstallRuntime,
 ) -> Result<transaction::NetworkTakeoverTransaction, InstallError> {
     let manager = runtime.service_manager.as_ref();
-    let host_services = host_network::names(manager)
+    let mut host_services = host_network::names(manager)
         .iter()
         .map(|unit| host_network::inspect(manager, unit))
         .collect::<Result<Vec<_>, _>>()?;
+    if manager.kind() == crate::service::manager::ServiceManagerKind::Systemd {
+        for unit in crate::service::networkd::instances(systemd::downcast(manager)?)? {
+            host_services.push(host_network::inspect(manager, &unit)?);
+        }
+    }
+
     let stem = format!("lkit-network-{}", transaction_id);
     let timeout = ChronoDuration::from_std(runtime.network_confirm_timeout).map_err(|_| {
         InstallError::ParameterUsage("network confirmation timeout is too large".into())
@@ -133,8 +144,17 @@ pub(crate) fn stop_host_services(
     network: &transaction::NetworkTakeoverTransaction,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    let systemd = manager.kind() == crate::service::manager::ServiceManagerKind::Systemd;
+    if systemd {
+        crate::service::networkd::stop(
+            crate::service::systemd::downcast(manager)?,
+            &network.host_services,
+        )?;
+    }
     for before in network.host_services.iter().rev() {
-        host_network::stop(manager, before)?;
+        if !systemd || !crate::service::networkd::contains(&before.unit) {
+            host_network::stop(manager, before)?;
+        }
     }
     Ok(())
 }
@@ -144,9 +164,7 @@ pub(crate) fn cleanup_failed_takeover(
     network: &transaction::NetworkTakeoverTransaction,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
-    for before in &network.host_services {
-        host_network::restore(manager, before)?;
-    }
+    host_network::restore_all(manager, &network.host_services)?;
     cleanup_recovery(root, network, manager, false)
 }
 
@@ -455,9 +473,10 @@ pub(crate) async fn rollback(
                     &pending,
                     runtime.service_manager.as_ref(),
                 )?;
-                for before in &network.host_services {
-                    host_network::restore(runtime.service_manager.as_ref(), before)?;
-                }
+                host_network::restore_all(
+                    runtime.service_manager.as_ref(),
+                    &network.host_services,
+                )?;
                 cleanup_recovery(root, &network, runtime.service_manager.as_ref(), automatic)?;
             }
             transaction::Operation::Reinit => {

@@ -54,6 +54,7 @@ jobs:
             check::init::tests \
             check::openrc::tests \
             service::manager::init_detection_tests \
+            service::networkd::tests \
             console::tests::cgroup \
             console::tests::gates \
             console::tests::install \

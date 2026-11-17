@@ -826,7 +826,7 @@ fn restore_registration_link_at(
     })
 }
 
-fn run_systemctl(
+pub(super) fn run_systemctl(
     systemd: &Systemd,
     args: &[&str],
     _env: Option<&[(&str, &str)]>,

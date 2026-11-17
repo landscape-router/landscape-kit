@@ -251,6 +251,8 @@ fn daemon_rolls_back_expired_or_rebooted_network_takeover() {
     for reboot in [false, true] {
         let harness = InstallHarness::new("daemon-network-recovery", "healthy", 30_000);
         harness.seed_host_services();
+        harness.seed_host_service("systemd-networkd.service");
+        harness.seed_host_service("systemd-networkd.socket");
         let output = harness.run_takeover();
         assert!(
             output.status.success(),
@@ -295,6 +297,10 @@ fn daemon_rolls_back_expired_or_rebooted_network_takeover() {
             "daemon must finish automatic network rollback",
         );
         terminate(&mut daemon);
+        super::support::assert_host_services_restored(
+            &harness,
+            &["systemd-networkd.service", "systemd-networkd.socket"],
+        );
         assert!(!harness.install_root.join("data").exists());
         assert!(!harness.install_root.join("current").exists());
     }

@@ -336,13 +336,14 @@ fn network_takeover_rejects_other_active_network_manager() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-unknown-manager", "healthy", 10_000);
-    harness.seed_host_service("systemd-networkd.service");
+    harness.seed_host_service("wicked.service");
 
     let output = harness.run_takeover();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains(
-        "preflight check failed: unknown network manager systemd-networkd.service is active"
-    ));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("preflight check failed: unknown network manager wicked.service is active")
+    );
     assert!(
         !harness.transactions_dir().exists(),
         "preflight created a transaction before rejecting an unknown manager"
@@ -363,6 +364,8 @@ fn native_network_actions_survive_observer_disconnect_and_daemon_crash() {
     ] {
         let h = InstallHarness::new("network-native-crash", "healthy", 10_000);
         h.seed_host_services();
+        h.seed_host_service("systemd-networkd.service");
+        h.seed_host_service("systemd-networkd.socket");
         let mut config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&h.runtime_config).unwrap()).unwrap();
         config["network_confirm_timeout_ms"] = 180_000.into();
@@ -433,6 +436,8 @@ fn native_network_actions_survive_observer_disconnect_and_daemon_crash() {
         if action == "rollback" {
             assert!(!h.install_root.join("data").exists());
             for unit in [
+                "systemd-networkd.service",
+                "systemd-networkd.socket",
                 "NetworkManager.service",
                 "firewalld.service",
                 "systemd-resolved.service",
@@ -446,6 +451,69 @@ fn native_network_actions_survive_observer_disconnect_and_daemon_crash() {
                     "active"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn networkd_takeover_preserves_startup_choices_and_restores_the_group() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for confirm in [false, true] {
+        let h = InstallHarness::new("networkd-takeover", "healthy", 10_000);
+        for unit in [
+            "systemd-networkd.socket",
+            "systemd-networkd.service",
+            "systemd-networkd-wait-online.service",
+            "systemd-networkd-wait-online@ens3.service",
+        ] {
+            h.seed_host_service(unit);
+        }
+        let states = h.host.join("systemd-state/units");
+        let socket = states.join("systemd-networkd.socket");
+        std::fs::remove_file(socket.join("enabled")).unwrap();
+        std::fs::remove_file(socket.join("active")).unwrap();
+        let wait = states.join("systemd-networkd-wait-online.service");
+        std::fs::remove_file(wait.join("active")).unwrap();
+        std::fs::write(wait.join("masked"), "masked-runtime\n").unwrap();
+        assert_success(&h.run_takeover());
+        for unit in [
+            "systemd-networkd.socket",
+            "systemd-networkd.service",
+            "systemd-networkd-wait-online.service",
+            "systemd-networkd-wait-online@ens3.service",
+        ] {
+            assert!(states.join(unit).join("masked").exists());
+            assert!(!states.join(unit).join("active").exists());
+        }
+        assert!(!socket.join("enabled").exists());
+        assert!(states.join("systemd-networkd.service/enabled").exists());
+        if confirm {
+            assert_success(&h.network_command(&["confirm"]));
+            assert!(states.join("systemd-networkd.service/masked").exists());
+        } else {
+            assert_success(&h.network_command(&["rollback", "--automatic"]));
+            assert!(states.join("systemd-networkd.service/active").exists());
+            assert!(!states.join("systemd-networkd.service/masked").exists());
+            assert!(!socket.join("active").exists());
+            assert!(!socket.join("enabled").exists());
+            assert!(!socket.join("masked").exists());
+            assert_eq!(
+                std::fs::read_to_string(wait.join("masked")).unwrap().trim(),
+                "masked-runtime"
+            );
+        }
+        let calls = std::fs::read_to_string(h.world.path("systemctl-calls.jsonl")).unwrap();
+        for line in calls
+            .lines()
+            .filter(|line| line.contains("systemd-networkd"))
+        {
+            assert!(
+                !line.contains("[\"disable\"") && !line.contains("[\"enable\""),
+                "{line}"
+            );
         }
     }
 }

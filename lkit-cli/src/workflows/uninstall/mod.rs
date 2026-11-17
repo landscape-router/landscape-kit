@@ -20,7 +20,8 @@ pub(crate) use self::cleanup::{cleanup_runtime_dirs, host_network_services_maske
 use self::cleanup::{deactivate, remove_managed_contents};
 
 /// 网络接管可能停止/disable/mask 的宿主网络服务,用于卸载前的接管特征警告。
-const NETWORK_SERVICE_UNITS: [&str; 4] = [
+const NETWORK_SERVICE_UNITS: [&str; 5] = [
+    "systemd-networkd.service",
     "NetworkManager.service",
     "networking.service",
     "firewalld.service",

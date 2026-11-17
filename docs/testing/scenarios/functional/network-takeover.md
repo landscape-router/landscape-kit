@@ -133,3 +133,12 @@
   确认与回滚分别在接受动作后及事务终结但结果尚未写入时强杀 daemon，重启后检查
   原操作 ID 的持久化成功结果；回滚恢复宿主服务并清理未提交的数据。
 - 缺口：原生操作链路的 OpenRC／SysVinit 故障注入矩阵尚未单独覆盖。
+
+## NET-14
+
+**networkd 服务组自动接管、确认与恢复**
+
+- 测试层：Rust 单元、CLI fixture E2E、真实 systemd
+- 状态：`已覆盖`
+- 证据：[服务组单元测试](../../../../lkit-cli/src/service/networkd.rs)、[网络 fixture](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[真实 systemd 场景](../systemd-smoke.md#sys-07)、[接管规范](../../../network/takeover.md)
+- 说明：检查整组先屏蔽后停止、socket 与服务的不同启用状态、原始 mask、缺失单元及 wait-online 实例。确认保留屏蔽，回滚恢复原始运行状态；网络确认和回滚的 daemon 崩溃场景包含 networkd。启用链接与网络配置保持原样。

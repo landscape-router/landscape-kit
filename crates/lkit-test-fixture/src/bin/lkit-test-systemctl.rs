@@ -39,6 +39,24 @@ fn run() -> Result<ExitCode> {
 fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode> {
     let mut exit_code = ExitCode::SUCCESS;
     match args {
+        [command, all, full, plain, legend, pattern]
+            if command == "list-units"
+                && all == "--all"
+                && full == "--full"
+                && plain == "--plain"
+                && legend == "--no-legend"
+                && pattern == "systemd-networkd-wait-online@*.service" =>
+        {
+            for entry in std::fs::read_dir(&config.unit_dir)? {
+                let name = entry?.file_name().to_string_lossy().into_owned();
+                if name.starts_with("systemd-networkd-wait-online@")
+                    && name.ends_with(".service")
+                    && !name.ends_with("@.service")
+                {
+                    println!("{name} loaded inactive dead fixture");
+                }
+            }
+        }
         [show, property] if show == "show" && property == "--property=Version" => {
             println!("Version={}", config.systemd_version);
         }
@@ -71,7 +89,10 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         }
         [command, unit] if command == "is-enabled" => {
             if masked_path(config, unit).is_file() {
-                println!("masked");
+                println!(
+                    "{}",
+                    std::fs::read_to_string(masked_path(config, unit))?.trim()
+                );
                 exit_code = ExitCode::from(1);
             } else if unit_is_enabled(config, unit) {
                 println!("enabled");
@@ -114,6 +135,13 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
             write_marker(&masked_path(config, unit), b"masked\n")?;
         }
         [command, unit] if command == "unmask" => {
+            remove_if_exists(&masked_path(config, unit))?;
+        }
+        [command, runtime, unit] if command == "mask" && runtime == "--runtime" => {
+            ensure_installed(config, unit)?;
+            write_marker(&masked_path(config, unit), b"masked-runtime\n")?;
+        }
+        [command, runtime, unit] if command == "unmask" && runtime == "--runtime" => {
             remove_if_exists(&masked_path(config, unit))?;
         }
         [command, unit] if command == "start" => {

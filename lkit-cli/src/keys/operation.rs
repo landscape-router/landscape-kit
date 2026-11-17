@@ -40,3 +40,6 @@ pub(crate) const COMPLETED: &str = "operation.completed";
 pub(crate) const ROLLED_BACK: &str = "operation.rolled_back";
 pub(crate) const FAILED: &str = "operation.failed";
 pub(crate) const INTERRUPTED: &str = "operation.interrupted";
+
+pub(crate) const STEP_STOPPING_NETWORKD: &str = "operation.step.stopping_networkd";
+pub(crate) const STEP_RESTORING_NETWORKD: &str = "operation.step.restoring_networkd";

@@ -40,3 +40,6 @@ operation.completed = "操作已成功完成"
 operation.rolled_back = "操作已回滚，恢复已完成"
 operation.failed = "操作失败，事务处理已结束"
 operation.interrupted = "操作中断，缺少确定事务结果的依据"
+
+operation.step.stopping_networkd = "屏蔽并停止 networkd 服务组"
+operation.step.restoring_networkd = "恢复 networkd 服务组原始状态"
