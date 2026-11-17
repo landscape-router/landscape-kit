@@ -265,6 +265,19 @@ Landscape。
 
 ## 手工 restore
 
+事务 JSON、previous-state、可移植 `.lkb` 和解包验证现场保存在 lkit 地盘。需要原子移动
+的活动目录保存在安装根的 `releases/.lkit-transactions/<transaction-id>/`，权限为
+`0700`：restore/reinit 使用 `previous-data`，升级及后端修复回滚使用 `failed-data`，
+release 替换使用 `replaced-release`。静态修复先把已校验资产复制到这个文件系统内，
+完成准备后才以 rename 替换活动静态目录。安装根与 lkit 地盘可以处于不同文件系统，
+活动目录移动不使用复制后删除的降级路径。激活和回滚 `current` 都在安装根创建独占的
+临时链接，原子替换后同步安装根目录；失败时仅清理本次创建的临时链接。
+
+事务的 `install_workspace` 在修改活动现场前持久化，只接受绑定事务 ID 的上述相对路径，
+拒绝越界、其他安装根和工作目录软链接。字段缺失的事务按地盘事务目录布局恢复，不猜测
+或迁移其数据位置；此类事务遇到跨文件系统恢复失败时保留现场并报告错误。未激活的
+工作目录随准备取消清理，已激活目录保留用于恢复和诊断，卸载随受管 releases 清理。
+
 `lkit restore` 只接受已有且 state/current 一致的安装，目标可以是同版本、较低版本或较高
 版本，不经过仓库下载。命令先完整验证目标备份与架构，交互模式确认当前版本、目标版本、
 backup ID 以及 minimal scope 不包含 SQLite 数据文件（数据库在恢复后按 init 配置重建）；
@@ -314,10 +327,10 @@ systemd 环境中目标版本启动或健康检查失败时：
 1. 将事务标记为 `rolling_back`；
 2. 停止失败版本；
 3. 保留失败日志和现场；
-4. 将失败后的 `data/` 原子移动到 `transactions/<transaction-id>/failed-data/`；
+4. 将失败后的 `data/` 原子移动到安装根 `releases/.lkit-transactions/<transaction-id>/failed-data/`；
 5. 创建新的空 `data/`；
 6. 在事务临时目录校验并安全解包 `.lkb`（校验归档路径、条目类型和 `static.zip` 条目存在且为普通文件）；
-7. 用备份内二进制和静态目录重建 `releases/<from_version>`；若该目录已存在，先移动到 `transactions/<transaction-id>/replaced-release/`，不得原地覆盖；
+7. 用备份内二进制和静态目录重建 `releases/<from_version>`；若该目录已存在，先移动到安装根 `releases/.lkit-transactions/<transaction-id>/replaced-release/`，不得原地覆盖；
 8. 将备份内 `geo_tmp/` 恢复到新 `data/geo_tmp/`；
 9. 将 API 导出的配置写为新 `data/landscape_init.toml`，权限 `0600`；
 10. 确保新 data 中不存在数据库、`landscape.toml` 和 `landscape_init.lock`；

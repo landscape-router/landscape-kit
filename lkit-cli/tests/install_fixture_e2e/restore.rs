@@ -124,7 +124,8 @@ fn native_restore_recovers_after_activation_and_committed_result_loss() {
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for point in ["restore-activated", "before-result"] {
-        let h = InstallHarness::new("restore-crash", "healthy", 30_000);
+        let (h, _territory) =
+            InstallHarness::new("restore-crash", "healthy", 30_000).with_tmpfs_territory();
         assert_success(&h.run());
         let backup = backup(&h);
         // Same-version recovery must restore the exact original data, not re-import the target.

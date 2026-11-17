@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand};
 
 use crate::deployment::config::{
-    FrontendSource, RepositorySourceKind, load_frontend, save_frontend,
+    FrontendSource, RepositorySourceKind, load_frontend, update_frontend,
 };
 use crate::deployment::plan::InstallError;
 
@@ -76,23 +76,24 @@ fn add(args: &FrontendAdd) -> Result<(), InstallError> {
         )));
     }
     let (kind, normalized) = normalize_location(&args.location)?;
-    let mut section = load_frontend()?.unwrap_or_default();
-    if section.sources.iter().any(|source| source.id == args.id) {
-        return Err(InstallError::ParameterUsage(format!(
-            "a frontend source with id {:?} already exists",
-            args.id
-        )));
-    }
-    section.sources.push(FrontendSource {
-        id: args.id.clone(),
-        name: args.name.clone(),
-        kind,
-        location: normalized,
-    });
-    if args.activate {
-        section.active = Some(args.id.clone());
-    }
-    save_frontend(&section)?;
+    update_frontend(|section| {
+        if section.sources.iter().any(|source| source.id == args.id) {
+            return Err(InstallError::ParameterUsage(format!(
+                "a frontend source with id {:?} already exists",
+                args.id
+            )));
+        }
+        section.sources.push(FrontendSource {
+            id: args.id.clone(),
+            name: args.name.clone(),
+            kind,
+            location: normalized,
+        });
+        if args.activate {
+            section.active = Some(args.id.clone());
+        }
+        Ok(())
+    })?;
     println!(
         "frontend: {} source {:?} registered",
         if args.activate { "activated" } else { "added" },
@@ -112,27 +113,30 @@ fn add(args: &FrontendAdd) -> Result<(), InstallError> {
 }
 
 fn select(args: &FrontendSelect) -> Result<(), InstallError> {
-    let mut section = load_frontend()?.unwrap_or_default();
+    update_frontend(|section| {
+        if args.id == crate::deployment::config::FRONTEND_OFFICIAL {
+            section.active = None;
+        } else {
+            if !section.sources.iter().any(|source| source.id == args.id) {
+                return Err(InstallError::ParameterUsage(format!(
+                    "unknown frontend source {:?}; valid values are: official, {}",
+                    args.id,
+                    section
+                        .sources
+                        .iter()
+                        .map(|source| source.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+            section.active = Some(args.id.clone());
+        }
+        Ok(())
+    })?;
     if args.id == crate::deployment::config::FRONTEND_OFFICIAL {
-        section.active = None;
-        save_frontend(&section)?;
         println!("frontend: switched to the official frontend");
         return Ok(());
     }
-    if !section.sources.iter().any(|source| source.id == args.id) {
-        return Err(InstallError::ParameterUsage(format!(
-            "unknown frontend source {:?}; valid values are: official, {}",
-            args.id,
-            section
-                .sources
-                .iter()
-                .map(|source| source.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
-    }
-    section.active = Some(args.id.clone());
-    save_frontend(&section)?;
     println!(
         "frontend: activated source {:?}; it takes effect on the next install/update/switch or `lkit repair static`",
         args.id
@@ -141,25 +145,26 @@ fn select(args: &FrontendSelect) -> Result<(), InstallError> {
 }
 
 fn remove(args: &FrontendRemove) -> Result<(), InstallError> {
-    let mut section = load_frontend()?.unwrap_or_default();
-    let Some(index) = section
-        .sources
-        .iter()
-        .position(|source| source.id == args.id)
-    else {
-        return Err(InstallError::ParameterUsage(format!(
-            "unknown frontend source {:?}",
-            args.id
-        )));
-    };
-    if section.active.as_deref() == Some(args.id.as_str()) {
-        return Err(InstallError::ParameterUsage(format!(
-            "source {:?} is active; select another source or `official` before removing it",
-            args.id
-        )));
-    }
-    section.sources.remove(index);
-    save_frontend(&section)?;
+    update_frontend(|section| {
+        let Some(index) = section
+            .sources
+            .iter()
+            .position(|source| source.id == args.id)
+        else {
+            return Err(InstallError::ParameterUsage(format!(
+                "unknown frontend source {:?}",
+                args.id
+            )));
+        };
+        if section.active.as_deref() == Some(args.id.as_str()) {
+            return Err(InstallError::ParameterUsage(format!(
+                "source {:?} is active; select another source or `official` before removing it",
+                args.id
+            )));
+        }
+        section.sources.remove(index);
+        Ok(())
+    })?;
     println!("frontend: removed source {:?}", args.id);
     Ok(())
 }

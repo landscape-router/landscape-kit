@@ -11,6 +11,14 @@ fn error(message: impl Into<String>) -> InstallError {
     InstallError::Preflight(message.into())
 }
 
+pub(crate) const NETWORK_MANAGER_INIT_NAMES: &[&str] = &["networkmanager", "NetworkManager"];
+const INIT_NETWORK_SERVICES: &[&str] = &[
+    NETWORK_MANAGER_INIT_NAMES[0],
+    NETWORK_MANAGER_INIT_NAMES[1],
+    "networking",
+    "firewalld",
+];
+
 pub(crate) fn names(manager: &dyn ServiceManager) -> &'static [&'static str] {
     match manager.kind() {
         ServiceManagerKind::Systemd => &[
@@ -26,8 +34,50 @@ pub(crate) fn names(manager: &dyn ServiceManager) -> &'static [&'static str] {
             "firewalld.service",
             "systemd-resolved.service",
         ],
-        _ => &["NetworkManager", "networking", "firewalld"],
+        _ => INIT_NETWORK_SERVICES,
     }
+}
+
+/// Service identities differ by distribution; snapshots keep the actual name.
+pub(crate) fn is_network_manager(name: &str) -> bool {
+    NETWORK_MANAGER_INIT_NAMES.contains(&name) || name == "NetworkManager.service"
+}
+
+pub(crate) fn inspect_all(
+    manager: &dyn ServiceManager,
+) -> Result<Vec<HostServiceBefore>, InstallError> {
+    let mut services = names(manager)
+        .iter()
+        .map(|name| inspect(manager, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    if manager.kind() == ServiceManagerKind::Systemd {
+        for name in super::networkd::instances(systemd::downcast(manager)?)? {
+            services.push(inspect(manager, &name)?);
+        }
+    }
+    Ok(services)
+}
+
+/// Reinitialization must not race any manager or its boot/socket activation path.
+/// An empty service set is valid only after the caller proves committed takeover.
+pub(crate) fn require_taken_over(
+    manager: &dyn ServiceManager,
+    services: &[HostServiceBefore],
+) -> Result<(), InstallError> {
+    for service in services.iter().filter(|service| service.installed) {
+        let blocked = if manager.kind() == ServiceManagerKind::Systemd {
+            service.enable_state == "masked"
+        } else {
+            snapshot(manager, service)?.links.is_empty()
+        };
+        if service.active || !blocked {
+            return Err(error(format!(
+                "host network service {} is not fully taken over; reinit requires stopped services with persistent activation disabled",
+                service.unit
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn init_dir(manager: &dyn ServiceManager) -> Result<&Path, InstallError> {
@@ -171,9 +221,19 @@ pub(crate) fn inspect(
         }
         return Ok(before);
     }
+    inspect_init_with(manager, name, |name| {
+        Ok(command(manager, name, "status")?.status.success())
+    })
+}
+
+fn inspect_init_with(
+    manager: &dyn ServiceManager,
+    name: &str,
+    mut active: impl FnMut(&str) -> Result<bool, InstallError>,
+) -> Result<HostServiceBefore, InstallError> {
     validate_name(name)?;
     let installed = init_dir(manager)?.join(name).exists();
-    let active = installed && command(manager, name, "status")?.status.success();
+    let active = installed && active(name)?;
     let links = matching_links(manager, name)?;
     let before = HostServiceBefore {
         unit: name.into(),
@@ -382,6 +442,124 @@ pub(crate) fn restore_all(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reinit_rejects_partial_takeover_and_runtime_only_masks() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("lkit-reinit-host-state-{}", uuid::Uuid::now_v7()));
+        let manager = systemd::Systemd {
+            systemctl: root.join("must-not-run"),
+            system_unit_dir: root.join("units"),
+            run_systemd_dir: root.join("run"),
+            pid1_is_systemd: true,
+            resolv_conf: root.join("resolv.conf"),
+        };
+        let stopped = HostServiceBefore {
+            unit: "firewalld.service".into(),
+            installed: true,
+            active: false,
+            enable_state: "masked".into(),
+        };
+        for (active, enabled) in [
+            (true, "masked"),
+            (false, "enabled"),
+            (false, "disabled"),
+            (false, "masked-runtime"),
+            (false, "static"),
+        ] {
+            let other = HostServiceBefore {
+                unit: "NetworkManager.service".into(),
+                installed: true,
+                active,
+                enable_state: enabled.into(),
+            };
+            assert!(
+                require_taken_over(&manager, &[stopped.clone(), other]).is_err(),
+                "{active}/{enabled}"
+            );
+        }
+        assert!(require_taken_over(&manager, &[stopped]).is_ok());
+        assert!(require_taken_over(&manager, &[]).is_ok());
+    }
+
+    #[test]
+    fn lowercase_networkmanager_preserves_name_links_and_running_state() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("lkit-openrc-nm-alias-{}", uuid::Uuid::now_v7()));
+        let init = root.join("init.d");
+        std::fs::create_dir_all(&init).unwrap();
+        std::fs::write(init.join("networkmanager"), "fixture").unwrap();
+        let manager = Openrc {
+            init_d_dir: init,
+            rc_service: root.join("must-not-run"),
+            rc_update: root.join("must-not-run"),
+            resolv_conf: root.join("resolv.conf"),
+        };
+        assert!(names(&manager).contains(&"networkmanager"));
+        assert!(is_network_manager("networkmanager"));
+        for level in ["boot", "default"] {
+            let dir = root.join("runlevels").join(level);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::os::unix::fs::symlink("../../init.d/networkmanager", dir.join("networkmanager"))
+                .unwrap();
+        }
+        let links = matching_links(&manager, "networkmanager").unwrap();
+        let mut queried = Vec::new();
+        let services = names(&manager)
+            .iter()
+            .map(|name| {
+                inspect_init_with(&manager, name, |name| {
+                    queried.push(name.to_owned());
+                    Ok(true)
+                })
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(queried, ["networkmanager"]);
+        let before = services
+            .into_iter()
+            .find(|service| service.installed)
+            .unwrap();
+        assert_eq!(before.unit, "networkmanager");
+        assert!(before.active);
+        assert!(require_taken_over(&manager, std::slice::from_ref(&before)).is_err());
+        let mut active = true;
+        stop_with(&manager, &before, |verb| {
+            if verb == "stop" {
+                active = false;
+            }
+            Ok(active)
+        })
+        .unwrap();
+        assert!(!active);
+        assert!(
+            matching_links(&manager, "networkmanager")
+                .unwrap()
+                .is_empty()
+        );
+        let stopped = HostServiceBefore {
+            active: false,
+            enable_state: serde_json::to_string(&StartupLinks {
+                backend: ServiceManagerKind::Openrc,
+                links: Vec::new(),
+            })
+            .unwrap(),
+            ..before.clone()
+        };
+        assert!(require_taken_over(&manager, &[stopped]).is_ok());
+        restore_with(&manager, &before, |verb| {
+            if verb == "start" {
+                active = true;
+            }
+            Ok(active)
+        })
+        .unwrap();
+        assert!(active);
+        assert_eq!(matching_links(&manager, "networkmanager").unwrap(), links);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn unregister_removes_owned_startup_links_and_rejects_foreign_links() {
         use super::*;

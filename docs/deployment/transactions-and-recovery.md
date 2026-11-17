@@ -2,7 +2,7 @@
 
 ## 事务文件
 
-### Schema v5
+### 公共字段与版本
 
 每次首次安装、同版本修复、版本切换、restore 或卸载创建:
 
@@ -10,8 +10,9 @@
 /root/.lkit/transactions/<transaction-id>.json
 ```
 
-事务文件位于 lkit 地盘(见[安装布局与状态](layout-and-state.md)),不随 landscape
-卸载删除。事务中的路径字段按基准分为两类:
+事务文件位于 lkit 地盘（见[安装布局与状态](layout-and-state.md)）；卸载清理本根历史，
+保留当前卸载的提交记录供 daemon 核实结果。读取支持 schema v1 至 v13，具体操作版本见下文。
+事务中的路径字段按基准分为两类：
 
 - 带 `backups/`、`transactions/`、`logs/` 前缀的字段相对 **lkit 地盘**(与事务文件
   同目录体系);
@@ -64,6 +65,15 @@
 - `switch`；
 - `restore`；
 - `uninstall`。
+
+daemon 原生重初始化与迁移的 operation 分别为 `reinit` 和 `migrate`。
+
+修复、切换、恢复和重初始化可记录 `install_workspace`，值必须恰为
+`releases/.lkit-transactions/<transaction-id>`，相对该事务的 landscape 安装根。
+新事务在修改活动目录前保存该字段，需要原子移动的 data、release 和 static 现场使用
+这个同文件系统目录；JSON、状态快照、下载与 `.lkb` 仍放在 lkit 地盘。工作目录必须为
+受管根内真实目录，权限 `0700`，拒绝越界、其他事务身份和软链接。缺少该字段的事务
+沿用其地盘内现场，恢复时不通过目录存在性猜测另一种布局。
 
 `phase` 只允许：
 
@@ -330,7 +340,8 @@ binary、static 和初始化观测 repair 区分。
 未知版本或修复类型不得按普通 repair 清理。失败恢复数据在事务终结前不得删除。
 
 服务定义修复使用 schema v6、`operation: repair_service`；资产修复使用 schema v7、
-`operation: repair`；daemon switch 使用 v8，其他事务写 v5，读取支持 v1 至 v8。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
+`operation: repair`；daemon switch 使用 v8，restore/uninstall/reinit/install/migrate 分别使用
+v9/v10/v11/v12/v13。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
 原定义、目标定义、原权限、服务状态、OpenRC／SysVinit 精确启动链接及安装状态。
 `preparing` 未修改定义，可标记失败；`prepared`、`activating`、`verifying` 与
 `rolling_back` 恢复原定义；`finalizing` 校验并续做提交。恢复遇到外部定义修改或

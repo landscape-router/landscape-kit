@@ -168,7 +168,7 @@ fn query_failed_reason() -> String {
 fn unit_info(unit: &str) -> Option<UnitInfo> {
     if crate::deployment::cgroup::is_openrc() {
         let scripts: &[&str] = match unit {
-            "NetworkManager.service" => &["networkmanager", "NetworkManager"],
+            "NetworkManager.service" => crate::service::host_network::NETWORK_MANAGER_INIT_NAMES,
             "systemd-resolved.service" => &["systemd-resolved"],
             "firewalld.service" => &["firewalld"],
             _ => return None,

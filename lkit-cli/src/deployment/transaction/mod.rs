@@ -2,6 +2,7 @@ mod cleanup;
 mod file;
 pub(crate) mod recovery;
 pub(crate) mod validation;
+pub(crate) mod workspace;
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -179,6 +180,10 @@ pub(crate) struct TransactionFile {
     #[serde(default)]
     pub uninstall_keep_data: bool,
     pub static_backup: Option<StaticBackupRef>,
+    /// Install-root-relative workspace for atomic moves of live directories.
+    /// Missing means the legacy territory transaction directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_workspace: Option<String>,
     pub systemd_before: Option<ServiceBefore>,
     pub resolv_conf_backup: Option<String>,
     #[serde(default)]
@@ -215,6 +220,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -250,6 +256,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -287,6 +294,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -336,6 +344,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -373,6 +382,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -409,6 +419,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -446,6 +457,7 @@ impl TransactionFile {
             no_backup: false,
             uninstall_keep_data: false,
             static_backup: None,
+            install_workspace: None,
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
@@ -631,6 +643,42 @@ pub(crate) fn find_committed_operation(
         }
     }
     Ok(None)
+}
+
+/// The latest committed installation boundary decides takeover provenance.
+/// A new plain install/migration or uninstall invalidates older takeover history;
+/// failed attempts and ordinary version/asset changes do not.
+pub(crate) fn latest_committed_network_takeover(
+    root: &InstallRoot,
+) -> Result<Option<TransactionFile>, InstallError> {
+    let entries = match std::fs::read_dir(layout::territory_transactions_dir()) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    let mut latest: Option<TransactionFile> = None;
+    for entry in entries {
+        let path = entry.map_err(InstallError::Io)?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json")
+            || is_foreign_terminal_transaction(&path, root)
+        {
+            continue;
+        }
+        let transaction = load_transaction_file(root, &path)?;
+        if transaction.phase == Phase::Committed
+            && matches!(
+                transaction.operation,
+                Operation::Install | Operation::Reinit | Operation::Migrate | Operation::Uninstall
+            )
+            && latest.as_ref().is_none_or(|previous| {
+                (transaction.started_at, &transaction.transaction_id)
+                    > (previous.started_at, &previous.transaction_id)
+            })
+        {
+            latest = Some(transaction);
+        }
+    }
+    Ok(latest.filter(|transaction| transaction.network_takeover.is_some()))
 }
 
 pub(crate) async fn recover_interrupted<P: super::health::DocsProbe>(

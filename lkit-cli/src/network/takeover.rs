@@ -67,15 +67,7 @@ pub(crate) fn prepare_transaction(
     runtime: &InstallRuntime,
 ) -> Result<transaction::NetworkTakeoverTransaction, InstallError> {
     let manager = runtime.service_manager.as_ref();
-    let mut host_services = host_network::names(manager)
-        .iter()
-        .map(|unit| host_network::inspect(manager, unit))
-        .collect::<Result<Vec<_>, _>>()?;
-    if manager.kind() == crate::service::manager::ServiceManagerKind::Systemd {
-        for unit in crate::service::networkd::instances(systemd::downcast(manager)?)? {
-            host_services.push(host_network::inspect(manager, &unit)?);
-        }
-    }
+    let host_services = host_network::inspect_all(manager)?;
 
     let stem = format!("lkit-network-{}", transaction_id);
     let timeout = ChronoDuration::from_std(runtime.network_confirm_timeout).map_err(|_| {
@@ -94,6 +86,33 @@ pub(crate) fn prepare_transaction(
         recovery_binary: "service/lkit-network-recovery".into(),
         pending_state: format!("transactions/{transaction_id}/pending-install-state.json"),
     })
+}
+
+pub(crate) fn require_existing_takeover(
+    root: &InstallRoot,
+    installed: &state::InstallState,
+    manager: &dyn ServiceManager,
+) -> Result<(), InstallError> {
+    require_takeover_identity(root, installed, manager.kind())?;
+    host_network::require_taken_over(manager, &host_network::inspect_all(manager)?)
+}
+
+/// The console can check durable eligibility without querying host services on every frame.
+/// Submission and daemon execution must also call `require_existing_takeover`.
+pub(crate) fn require_takeover_identity(
+    root: &InstallRoot,
+    installed: &state::InstallState,
+    manager: crate::service::manager::ServiceManagerKind,
+) -> Result<(), InstallError> {
+    transaction::latest_committed_network_takeover(root)?.ok_or_else(|| {
+        InstallError::ParameterUsage(crate::tr!(crate::keys::REINIT_REQUIRES_NETWORK_TAKEOVER))
+    })?;
+    if installed.service.manager != manager {
+        return Err(InstallError::Preflight(
+            "network takeover service backend does not match the current backend".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn refresh_confirmation_deadline(
@@ -770,5 +789,206 @@ mod tests {
             selected_macs: Vec::new(),
         };
         assert!(clear_selected_lan_addresses(&plan, Path::new("/bin/false")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+    use crate::service::manager::ServiceManagerKind;
+
+    fn setup() -> (layout::TerritoryOverride, std::path::PathBuf, InstallRoot) {
+        let temp =
+            std::env::temp_dir().join(format!("lkit-takeover-proof-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(temp.join("landscape")).unwrap();
+        let guard = layout::test_territory(&temp.join("territory"));
+        std::fs::create_dir_all(layout::territory_transactions_dir()).unwrap();
+        let root = InstallRoot {
+            install_root: temp.join("landscape"),
+            canonical: temp.join("landscape"),
+        };
+        (guard, temp, root)
+    }
+
+    fn install(root: &InstallRoot, takeover: bool, age: i64) -> transaction::TransactionFile {
+        let mut tx =
+            transaction::TransactionFile::new_install(root, &semver::Version::new(1, 0, 0))
+                .unwrap();
+        tx.started_at = Utc::now() - ChronoDuration::days(age);
+        tx.updated_at = tx.started_at;
+        tx.phase = transaction::Phase::Committed;
+        if takeover {
+            tx.network_takeover = Some(transaction::NetworkTakeoverTransaction {
+                boot_id: Some(uuid::Uuid::now_v7().to_string()),
+                plan: NetworkPlan {
+                    mode: NetworkMode::WanDhcp { wan: "eth0".into() },
+                    selected_macs: vec![super::super::config::SelectedInterface {
+                        name: "eth0".into(),
+                        mac: "02:00:00:00:00:01".into(),
+                    }],
+                },
+                host_services: Vec::new(),
+                network_manager: Some(Vec::new()),
+                preserve_startup_links: true,
+                confirmation_deadline: Utc::now(),
+                rollback_service: "test-rollback.service".into(),
+                rollback_timer: "test-rollback.timer".into(),
+                boot_rollback_service: "test-boot.service".into(),
+                recovery_binary: "service/lkit-network-recovery".into(),
+                pending_state: format!(
+                    "transactions/{}/pending-install-state.json",
+                    tx.transaction_id
+                ),
+            });
+        }
+        tx
+    }
+
+    fn save(tx: &transaction::TransactionFile) {
+        transaction::validate_transaction(tx).unwrap();
+        std::fs::write(
+            layout::territory_transactions_dir().join(format!("{}.json", tx.transaction_id)),
+            serde_json::to_vec(tx).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn takeover_requires_committed_provenance_for_the_current_installation() {
+        let (_guard, temp, root) = setup();
+        assert!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .is_none()
+        );
+        let old = install(&root, true, 3);
+        save(&old);
+        assert_eq!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .unwrap()
+                .transaction_id,
+            old.transaction_id
+        );
+        let mut failed = install(&root, false, 2);
+        failed.phase = transaction::Phase::Failed;
+        save(&failed);
+        assert!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .is_some()
+        );
+        save(&install(&root, false, 1));
+        assert!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn uninstall_and_migration_invalidate_prior_takeover_but_asset_changes_do_not() {
+        let (_guard, temp, root) = setup();
+        save(&install(&root, true, 5));
+        let version = semver::Version::new(1, 0, 0);
+        let mut repair = transaction::TransactionFile::new_repair_static(&root).unwrap();
+        repair.phase = transaction::Phase::Committed;
+        save(&repair);
+        assert!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .is_some()
+        );
+        let mut uninstall = transaction::TransactionFile::new_uninstall(&root, &version).unwrap();
+        uninstall.phase = transaction::Phase::Committed;
+        uninstall.no_backup = true;
+        save(&uninstall);
+        assert!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .is_none()
+        );
+        let mut fresh = install(&root, true, 0);
+        fresh.started_at = uninstall.started_at + ChronoDuration::seconds(1);
+        fresh.updated_at = fresh.started_at;
+        save(&fresh);
+        let mut migration = transaction::TransactionFile::new_migrate(&root, &version).unwrap();
+        migration.phase = transaction::Phase::Committed;
+        migration.started_at = fresh.started_at + ChronoDuration::seconds(1);
+        migration.updated_at = migration.started_at;
+        migration.backup = Some(transaction::BackupRef {
+            backup_id: uuid::Uuid::now_v7().to_string(),
+            path: "backups/migration.lkb".into(),
+            sha256: "a".repeat(64),
+        });
+        save(&migration);
+        assert!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn reinit_provenance_ignores_foreign_history_and_rejects_corruption() {
+        let (_guard, temp, root) = setup();
+        let mut reinit = install(&root, true, 2);
+        reinit.operation = transaction::Operation::Reinit;
+        reinit.from_version = reinit.target_version.take();
+        reinit.target_release = None;
+        reinit.no_backup = true;
+        save(&reinit);
+        let foreign_root = InstallRoot {
+            install_root: temp.join("other"),
+            canonical: temp.join("other"),
+        };
+        save(&install(&foreign_root, false, 0));
+        assert_eq!(
+            transaction::latest_committed_network_takeover(&root)
+                .unwrap()
+                .unwrap()
+                .transaction_id,
+            reinit.transaction_id
+        );
+        std::fs::write(
+            layout::territory_transactions_dir().join("broken.json"),
+            "{",
+        )
+        .unwrap();
+        assert!(transaction::latest_committed_network_takeover(&root).is_err());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn proven_takeover_without_host_services_is_eligible_and_backend_is_bound() {
+        let (_guard, temp, root) = setup();
+        save(&install(&root, true, 1));
+        let init_dir = temp.join("etc/init.d");
+        std::fs::create_dir_all(&init_dir).unwrap();
+        let manager = crate::service::openrc::Openrc {
+            init_d_dir: init_dir,
+            rc_service: temp.join("must-not-run"),
+            rc_update: temp.join("must-not-run"),
+            resolv_conf: temp.join("resolv.conf"),
+        };
+        let mut installed: state::InstallState = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "layout_version": 2,
+            "install_root": root.install_root, "canonical_install_root": root.canonical,
+            "active_version": "1.0.0",
+            "assets": {
+                "webserver": {"architecture": "x86_64", "sha256": "a".repeat(64), "size": 1},
+                "static_archive": {"sha256": "b".repeat(64), "size": 1}
+            },
+            "initialization": {"status": "complete", "lock_present": true, "initialized_at": Utc::now()},
+            "service": {"manager": "openrc", "registered": true, "enabled": true, "verified": true,
+                "definition_path": "service/landscape-router.service", "definition_sha256": "c".repeat(64)},
+            "last_transaction_id": null, "committed_at": Utc::now()
+        })).unwrap();
+        assert!(require_existing_takeover(&root, &installed, &manager).is_ok());
+        installed.service.manager = ServiceManagerKind::Sysvinit;
+        assert!(require_existing_takeover(&root, &installed, &manager).is_err());
+        std::fs::remove_dir_all(temp).unwrap();
     }
 }

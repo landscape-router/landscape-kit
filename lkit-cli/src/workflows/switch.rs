@@ -108,6 +108,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
         super::transaction::TransactionFile::new_switch(root, &from_version, &release.version)?;
     let mut transaction = transaction;
     transaction.no_backup = service_stopped;
+    crate::deployment::transaction::workspace::select(&mut transaction);
     if native {
         transaction.schema_version = 8;
         control::associate(&transaction)?;
@@ -116,6 +117,7 @@ pub(crate) async fn switch_version<P: DocsProbe>(
     let mut activated = false;
 
     let result: Result<(), InstallError> = async {
+        super::transaction::workspace::prepare(root, &transaction)?;
         let built = if native {
             control::download(build_staged(root, &transaction, &release)).await?
         } else {
@@ -474,6 +476,7 @@ pub(crate) fn cleanup_preparing(
     root: &InstallRoot,
     tx: &super::transaction::TransactionFile,
 ) -> Result<(), InstallError> {
+    super::transaction::workspace::cleanup_preparing(root, tx)?;
     let dir = layout::territory_transactions_dir().join(&tx.transaction_id);
     match std::fs::remove_dir_all(dir) {
         Ok(()) => {}

@@ -151,6 +151,9 @@
 - 状态：`已覆盖`
 - 证据：[连接恢复单元测试](../../../../lkit-cli/src/network/network_manager.rs)、[QEMU 入口](../../../../scripts/test-qemu-network-takeover.sh)、[恢复故障注入](../../../../scripts/qemu/network/recovery-check.sh)
 - 说明：NetworkManager 启动前等待 WAN 收到 RA；原 DHCP profile 暂时缺失时事务保持 rolling_back，待恢复 profile 后 daemon 自动激活原 UUID，恢复 IPv4、默认网关和 WAN SSH。单元测试验证接口身份变化、连接删除、IPv6-only、DHCP 尚未完成时不重复激活、旧快照兼容、采集期间连接变化、多连接中单个激活失败不阻塞其他连接恢复。
+- 说明：隔离单元按 Alpine 的 `networkmanager` 脚本名称发现活动服务，验证原名与多个
+  runlevel 链接的停止/恢复；小写、大写和 systemd 名称均要求 NetworkManager 连接快照。
+- 缺口：Alpine/OpenRC 下真实 NetworkManager 网络接管与连接恢复仍需独立 QEMU 场景。
 
 ## NET-16
 

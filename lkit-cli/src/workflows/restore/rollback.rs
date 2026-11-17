@@ -72,7 +72,7 @@ async fn rollback_restore_inner<P: DocsProbe>(
         }
     }
 
-    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
+    let tx_dir = super::super::transaction::workspace::directory(root, transaction)?;
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     restore_replaced_release_if_same_version(root, transaction)?;
@@ -140,7 +140,7 @@ fn restore_replaced_release_if_same_version(
     if transaction.previous_current.as_deref() != transaction.target_release.as_deref() {
         return Ok(());
     }
-    let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
+    let tx_dir = super::super::transaction::workspace::directory(root, transaction)?;
     let replaced = tx_dir.join("replaced-release");
     if !replaced.is_dir() {
         return Ok(());

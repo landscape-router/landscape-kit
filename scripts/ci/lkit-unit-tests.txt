@@ -1,10 +1,15 @@
 # Reviewed CLI unit test filters; system-level fixtures run separately.
-deployment::config::tests::load_flare_is_independent_of_repository_schema
+deployment::config::tests
+commands::backup::delete::tests
+commands::flare::tests
+flare::server::tests
+backup::rollback::tests::restores_current_without_territory_or_reusing_stale_temporary_links
 check::init::tests
 check::openrc::tests
 service::manager::init_detection_tests
 service::host_systemd::tests
 console::tests::cgroup
+console::tests::daemon
 console::tests::gates
 console::tests::install
 deployment::cgroup::tests
@@ -31,6 +36,8 @@ commands::reinit::native::tests
 console::tests::reinit
 interaction::presentation::screens::reinit::tests
 deployment::transaction::validation::tests
+deployment::transaction::workspace::tests
+network::takeover::eligibility_tests
 commands::network::tests
 commands::uninstall::tests
 workflows::restore::native::tests
@@ -58,7 +65,7 @@ software::docker::tests::apt_source_file
 software::docker::tests::dnf_repo_file
 software::docker::tests::apt_arch_maps_common_architectures
 software::docker::apk_tests
-service::openrc::tests::renders
+service::openrc::tests
 network::network_manager::tests
 commands::lkit_self::tests
 deployment::transaction::recovery::tests

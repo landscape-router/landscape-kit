@@ -220,11 +220,10 @@ fn validate_flare_psk(psk: &str) -> Result<(), InstallError> {
 /// 把 flare psk 写入 `config.toml` 的 `[flare]` 段(保留既有字段),在 daemon
 /// 启动前完成,保证 daemon 首启即用该 psk 托管 flare 服务。
 fn write_flare_psk(psk: &str) -> Result<(), InstallError> {
-    use crate::deployment::config::{default_flare_section, load_flare, save_flare};
-
-    let mut section = load_flare().unwrap_or_else(default_flare_section);
-    section.psk = Some(psk.to_string());
-    save_flare(&section)
+    crate::deployment::config::update_flare(|section| {
+        section.psk = Some(psk.to_string());
+    })
+    .map(|_| ())
 }
 
 /// 交互控制台在 TUI 内执行 `lkit self install`:与 CLI 相同的 root 检查、安装锁
@@ -249,45 +248,18 @@ fn require_manager(runtime: &InstallRuntime) -> Result<&dyn ServiceManager, Inst
 
 fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, InstallError> {
     let manager = require_manager(runtime)?;
-    let service = ManagedService::LkitDaemon;
     let binary = lkit_binary();
-    if !is_executable(&binary) {
-        return Err(InstallError::ParameterUsage(format!(
-            "{} is missing or not executable; install lkit through install.sh first",
-            binary.display()
-        )));
-    }
-    let origin_dir = unit_origin_dir();
-    std::fs::create_dir_all(&origin_dir).map_err(InstallError::Io)?;
-    let origin = origin_dir.join(manager.service_name(service));
-    let content = manager.render_definition(service, &binary)?;
-    manager.validate_definition(service, &content, &binary)?;
-    let mode = if manager.kind() == ServiceManagerKind::Systemd {
-        0o600
-    } else {
-        0o755
-    };
-    write_unit_origin(&origin, &content, mode)?;
-    if let Some(psk) = flare_psk {
-        write_flare_psk(psk)?;
-    }
-    let result = (|| -> Result<(), InstallError> {
-        manager.register(service, &origin)?;
-        manager.enable(service)?;
-        let previous_pid =
-            std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
-        if manager.is_active(service)? {
-            manager.restart(service)?;
-        } else {
-            manager.start(service)?;
-        }
-        // Backgrounding init scripts can return before exec is visible in
-        // /proc. This only verifies process existence, not bpffs readiness.
+    let origin = unit_origin_dir().join(manager.service_name(ManagedService::LkitDaemon));
+    let previous_pid = std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
+    install_with(manager, &binary, &origin, flare_psk, || {
+        // Backgrounding init scripts can return before exec is visible in /proc.
         for _ in 0..30 {
             let current_pid =
                 std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
             if current_pid != previous_pid
-                && manager.main_pid(service).is_ok_and(|pid| pid != 0)
+                && manager
+                    .main_pid(ManagedService::LkitDaemon)
+                    .is_ok_and(|pid| pid != 0)
                 && crate::daemon::require_capability("service-repair-v1.pid").is_ok()
             {
                 return Ok(());
@@ -297,23 +269,202 @@ fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, 
         Err(InstallError::Systemd(
             "lkit daemon did not produce a main pid after start".into(),
         ))
-    })();
-    if let Err(error) = result {
-        cleanup_partial_install(manager, service, &origin);
-        return Err(error);
-    }
+    })?;
     Ok(crate::tr!(crate::keys::SELF_INSTALLED))
 }
 
-/// 注册/启动失败后的尽力清理:停止、注销并删除定义原件。
-fn cleanup_partial_install(manager: &dyn ServiceManager, service: ManagedService, origin: &Path) {
-    let _ = manager.stop(service);
-    if manager.is_enabled(service).unwrap_or(false) {
-        let _ = manager.disable(service);
+struct InstallBefore {
+    registered: bool,
+    definition: Option<(String, u32)>,
+    enabled: bool,
+    active: bool,
+    startup_links: Option<Vec<(PathBuf, PathBuf)>>,
+}
+
+/// A same-named service belongs to lkit only when its registration points at our
+/// regular definition file. Never follow a foreign definition symlink.
+fn owned_registration(manager: &dyn ServiceManager, origin: &Path) -> Result<bool, InstallError> {
+    let expected = origin
+        .canonicalize()
+        .unwrap_or_else(|_| origin.to_path_buf());
+    match manager.query_registration(ManagedService::LkitDaemon)? {
+        SystemRegistration::Missing => Ok(false),
+        SystemRegistration::Symlink { target } if target == expected => Ok(true),
+        _ => Err(InstallError::Preflight(
+            "lkit service registration is an ownership conflict; refusing modification".into(),
+        )),
     }
-    let _ = manager.unregister(service, origin);
-    let _ = manager.refresh();
-    let _ = remove_file_if_present(origin);
+}
+
+fn existing_definition(origin: &Path) -> Result<Option<(String, u32)>, InstallError> {
+    match std::fs::symlink_metadata(origin) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(Some((
+            std::fs::read_to_string(origin).map_err(InstallError::Io)?,
+            metadata.permissions().mode() & 0o7777,
+        ))),
+        Ok(_) => Err(InstallError::Preflight(format!(
+            "{} is not a regular managed service definition",
+            origin.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(InstallError::Io(error)),
+    }
+}
+
+fn install_with(
+    manager: &dyn ServiceManager,
+    binary: &Path,
+    origin: &Path,
+    flare_psk: Option<&str>,
+    ready: impl FnOnce() -> Result<(), InstallError>,
+) -> Result<(), InstallError> {
+    let service = ManagedService::LkitDaemon;
+    if !is_executable(binary) {
+        return Err(InstallError::ParameterUsage(format!(
+            "{} is missing or not executable; install lkit through install.sh first",
+            binary.display()
+        )));
+    }
+    let registered = owned_registration(manager, origin)?;
+    let definition = existing_definition(origin)?;
+    if !registered && let Some((content, _)) = &definition {
+        // A definition left by an interrupted first install may be reused only
+        // when its contents still identify the managed executable.
+        manager.validate_definition(service, content, binary)?;
+    }
+    let before = InstallBefore {
+        registered,
+        definition,
+        enabled: manager.is_enabled(service)?,
+        active: manager.is_active(service)?,
+        startup_links: manager
+            .startup_links(service)?
+            .map(|links| {
+                serde_json::from_str(&links).map_err(|error| {
+                    InstallError::CorruptedState(format!("invalid startup links: {error}"))
+                })
+            })
+            .transpose()?,
+    };
+    if !registered
+        && (before.active
+            || before.enabled
+            || before
+                .startup_links
+                .as_ref()
+                .is_some_and(|links| !links.is_empty()))
+    {
+        return Err(InstallError::Preflight(
+            "unregistered lkit service has running state or startup links; refusing takeover"
+                .into(),
+        ));
+    }
+    let content = manager.render_definition(service, binary)?;
+    manager.validate_definition(service, &content, binary)?;
+    let mode = if manager.kind() == ServiceManagerKind::Systemd {
+        0o600
+    } else {
+        0o755
+    };
+    std::fs::create_dir_all(origin.parent().expect("service definition has a parent"))
+        .map_err(InstallError::Io)?;
+    let result = (|| {
+        write_unit_origin(origin, &content, mode)?;
+        if let Some(psk) = flare_psk {
+            write_flare_psk(psk)?;
+        }
+        manager.register(service, origin)?;
+        if !before.enabled {
+            manager.enable(service)?;
+        }
+        if before.active {
+            manager.restart(service)?;
+        } else {
+            manager.start(service)?;
+        }
+        ready()
+    })();
+    if let Err(error) = result {
+        if let Err(recovery) = restore_install_before(manager, origin, &before) {
+            return Err(InstallError::Systemd(format!(
+                "{error}; restoring the previous lkit service failed: {recovery}; service definition retained"
+            )));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn restore_install_before(
+    manager: &dyn ServiceManager,
+    origin: &Path,
+    before: &InstallBefore,
+) -> Result<(), InstallError> {
+    let service = ManagedService::LkitDaemon;
+    let registered = owned_registration(manager, origin)?;
+    if before.registered {
+        let current = existing_definition(origin)?;
+        if let Some((definition, mode)) = &before.definition {
+            write_unit_origin(origin, definition, *mode)?;
+        } else if current.is_none() {
+            return Err(InstallError::Preflight(
+                "owned lkit service definition could not be recreated".into(),
+            ));
+        }
+        // An owned dangling registration is a valid recovery entry. When no old
+        // definition existed, retain the new valid definition for the next retry.
+        if !registered {
+            manager.register(service, origin)?;
+        }
+        manager.refresh()?;
+        restore_enabled(manager, origin, before)?;
+        if before.active {
+            // A failed restart may have stopped the old daemon already. Start
+            // with the restored definition; start is idempotent if still active.
+            manager.start(service)?;
+        } else if manager.is_active(service)? {
+            manager.stop_and_wait(service, &|| matches!(manager.is_active(service), Ok(false)))?;
+        }
+    } else {
+        if registered {
+            if manager.is_active(service)? {
+                manager
+                    .stop_and_wait(service, &|| matches!(manager.is_active(service), Ok(false)))?;
+            }
+            if manager.is_enabled(service)? {
+                manager.disable(service)?;
+            }
+            manager.unregister(service, origin)?;
+            manager.refresh()?;
+        }
+        if let Some((definition, mode)) = &before.definition {
+            write_unit_origin(origin, definition, *mode)?;
+        } else {
+            remove_file_if_present(origin)?;
+        }
+    }
+    Ok(())
+}
+
+fn restore_enabled(
+    manager: &dyn ServiceManager,
+    origin: &Path,
+    before: &InstallBefore,
+) -> Result<(), InstallError> {
+    let service = ManagedService::LkitDaemon;
+    if let Some(links) = &before.startup_links {
+        crate::service::host_network::remove_managed_startup_links(manager, service, origin)?;
+        for (path, target) in links {
+            std::os::unix::fs::symlink(target, path).map_err(InstallError::Io)?;
+        }
+    } else if manager.is_enabled(service)? != before.enabled {
+        if before.enabled {
+            manager.enable(service)?;
+        } else {
+            manager.disable(service)?;
+        }
+    }
+    Ok(())
 }
 
 fn remove(runtime: &InstallRuntime) -> Result<String, InstallError> {
@@ -361,6 +512,12 @@ fn upgrade_asset_name(architecture: Architecture) -> &'static str {
 }
 
 async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), InstallError> {
+    let manager = runtime.service_manager.as_ref();
+    if matches!(manager.probe(), Availability::Available { .. }) {
+        let origin = unit_origin_dir().join(manager.service_name(ManagedService::LkitDaemon));
+        owned_registration(manager, &origin)?;
+        existing_definition(&origin)?;
+    }
     let architecture = Architecture::host().ok_or_else(|| {
         InstallError::UnsupportedPlatform(format!(
             "lkit self upgrade does not support architecture {}",
@@ -525,20 +682,23 @@ fn refresh_daemon(runtime: &InstallRuntime) -> Result<(), InstallError> {
     if !matches!(manager.probe(), Availability::Available { .. }) {
         return Ok(());
     }
+    let origin = unit_origin_dir().join(manager.service_name(ManagedService::LkitDaemon));
+    refresh_daemon_at(manager, &origin)
+}
+
+fn refresh_daemon_at(manager: &dyn ServiceManager, origin: &Path) -> Result<(), InstallError> {
     let service = ManagedService::LkitDaemon;
-    match manager.query_registration(service)? {
-        SystemRegistration::Symlink { .. } => {
-            if manager.is_active(service)? {
-                manager.restart(service)?;
-            }
+    let registered = owned_registration(manager, origin)?;
+    existing_definition(origin)?;
+    if registered {
+        if manager.is_active(service)? {
+            manager.restart(service)?;
         }
-        SystemRegistration::Missing => {
-            println!(
-                "self: {}",
-                crate::tr!(crate::keys::SELF_DAEMON_NOT_INSTALLED_HINT)
-            );
-        }
-        SystemRegistration::Conflict { .. } => {}
+    } else {
+        println!(
+            "self: {}",
+            crate::tr!(crate::keys::SELF_DAEMON_NOT_INSTALLED_HINT)
+        );
     }
     Ok(())
 }
@@ -931,6 +1091,404 @@ mod tests {
         runtime
     }
 
+    struct FakeState {
+        registration: SystemRegistration,
+        active: bool,
+        enabled: bool,
+        fail: Option<&'static str>,
+        calls: Vec<&'static str>,
+    }
+    struct FakeService {
+        path: PathBuf,
+        state: std::sync::Mutex<FakeState>,
+    }
+    impl FakeService {
+        fn action(&self, name: &'static str) -> Result<(), InstallError> {
+            let mut state = self.state.lock().unwrap();
+            state.calls.push(name);
+            if state.fail == Some(name) {
+                state.fail = None;
+                return Err(InstallError::Systemd(format!("injected {name} failure")));
+            }
+            match name {
+                "start" | "restart" => state.active = true,
+                "stop" => state.active = false,
+                "enable" => state.enabled = true,
+                "disable" => state.enabled = false,
+                "register" => {
+                    state.registration = SystemRegistration::Symlink {
+                        target: self.path.clone(),
+                    }
+                }
+                "unregister" => state.registration = SystemRegistration::Missing,
+                _ => {}
+            }
+            Ok(())
+        }
+    }
+    impl ServiceManager for FakeService {
+        fn kind(&self) -> ServiceManagerKind {
+            ServiceManagerKind::Systemd
+        }
+        fn probe(&self) -> Availability {
+            Availability::Available {
+                version: "fake".into(),
+            }
+        }
+        fn service_name(&self, _: ManagedService) -> &str {
+            "lkit.service"
+        }
+        fn render_definition(&self, _: ManagedService, _: &Path) -> Result<String, InstallError> {
+            Ok("managed new definition".into())
+        }
+        fn validate_definition(
+            &self,
+            _: ManagedService,
+            text: &str,
+            _: &Path,
+        ) -> Result<(), InstallError> {
+            if text.starts_with("managed ") {
+                Ok(())
+            } else {
+                Err(InstallError::Preflight("foreign definition".into()))
+            }
+        }
+        fn query_registration(
+            &self,
+            _: ManagedService,
+        ) -> Result<SystemRegistration, InstallError> {
+            Ok(self.state.lock().unwrap().registration.clone())
+        }
+        fn register(&self, _: ManagedService, _: &Path) -> Result<(), InstallError> {
+            self.action("register")
+        }
+        fn unregister(&self, _: ManagedService, _: &Path) -> Result<(), InstallError> {
+            self.action("unregister")
+        }
+        fn is_enabled(&self, _: ManagedService) -> Result<bool, InstallError> {
+            Ok(self.state.lock().unwrap().enabled)
+        }
+        fn enable(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.action("enable")
+        }
+        fn disable(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.action("disable")
+        }
+        fn is_active(&self, _: ManagedService) -> Result<bool, InstallError> {
+            Ok(self.state.lock().unwrap().active)
+        }
+        fn active_state(&self, service: ManagedService) -> Result<String, InstallError> {
+            Ok(if self.is_active(service)? {
+                "active"
+            } else {
+                "inactive"
+            }
+            .into())
+        }
+        fn start(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.action("start")
+        }
+        fn stop(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.action("stop")
+        }
+        fn restart(&self, _: ManagedService) -> Result<(), InstallError> {
+            self.action("restart")
+        }
+        fn refresh(&self) -> Result<(), InstallError> {
+            self.action("refresh")
+        }
+        fn main_pid(&self, _: ManagedService) -> Result<u32, InstallError> {
+            Ok(1)
+        }
+        fn restore_registration(
+            &self,
+            _: ManagedService,
+            _: &crate::service::manager::ServiceBefore,
+            _: &Path,
+        ) -> Result<(), InstallError> {
+            panic!("unexpected generic restore")
+        }
+        fn resolv_conf(&self) -> &Path {
+            &self.path
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+    fn installation_fixture(
+        registered: bool,
+        active: bool,
+        enabled: bool,
+    ) -> (PathBuf, PathBuf, FakeService) {
+        let dir = std::env::temp_dir().join(format!("lkit-self-install-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let binary = dir.join("lkit");
+        std::fs::write(&binary, b"fixture executable, never executed").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let origin = dir.join("lkit.service");
+        if registered {
+            write_unit_origin(&origin, "managed old definition", 0o640).unwrap();
+        }
+        let manager = FakeService {
+            path: origin.clone(),
+            state: std::sync::Mutex::new(FakeState {
+                registration: if registered {
+                    SystemRegistration::Symlink { target: origin }
+                } else {
+                    SystemRegistration::Missing
+                },
+                active,
+                enabled,
+                fail: None,
+                calls: vec![],
+            }),
+        };
+        (dir, binary, manager)
+    }
+    fn readiness_failure() -> Result<(), InstallError> {
+        Err(InstallError::Systemd("injected readiness failure".into()))
+    }
+
+    #[test]
+    fn install_and_upgrade_reject_foreign_registration_without_mutation() {
+        for registration in [
+            SystemRegistration::Conflict {
+                file_type: "file".into(),
+            },
+            SystemRegistration::Symlink {
+                target: PathBuf::from("/foreign/service"),
+            },
+        ] {
+            let (dir, binary, manager) = installation_fixture(true, true, true);
+            manager.state.lock().unwrap().registration = registration.clone();
+            assert!(
+                install_with(
+                    &manager,
+                    &binary,
+                    &manager.path,
+                    Some("unused-recovery-secret"),
+                    || Ok(())
+                )
+                .is_err()
+            );
+            assert!(refresh_daemon_at(&manager, &manager.path).is_err());
+            let state = manager.state.lock().unwrap();
+            assert_eq!(state.registration, registration);
+            assert!(state.calls.is_empty());
+            assert!(state.active && state.enabled);
+            assert_eq!(
+                std::fs::read_to_string(&manager.path).unwrap(),
+                "managed old definition"
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn install_rejects_foreign_definition_and_symlink_before_registration() {
+        let (dir, binary, manager) = installation_fixture(false, false, false);
+        std::fs::write(&manager.path, "foreign definition").unwrap();
+        assert!(install_with(&manager, &binary, &manager.path, None, || Ok(())).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&manager.path).unwrap(),
+            "foreign definition"
+        );
+        std::fs::remove_file(&manager.path).unwrap();
+        let external = dir.join("external");
+        std::fs::write(&external, "managed external definition").unwrap();
+        std::os::unix::fs::symlink(&external, &manager.path).unwrap();
+        assert!(install_with(&manager, &binary, &manager.path, None, || Ok(())).is_err());
+        assert_eq!(std::fs::read_link(&manager.path).unwrap(), external);
+        assert!(manager.state.lock().unwrap().calls.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn repeated_install_failure_restores_owned_definition_and_service_state() {
+        for (active, enabled, failure) in [
+            (true, true, Some("restart")),
+            (true, true, None),
+            (false, false, Some("start")),
+            (false, false, None),
+        ] {
+            let (dir, binary, manager) = installation_fixture(true, active, enabled);
+            manager.state.lock().unwrap().fail = failure;
+            assert!(
+                install_with(&manager, &binary, &manager.path, None, readiness_failure).is_err()
+            );
+            assert_eq!(
+                std::fs::read_to_string(&manager.path).unwrap(),
+                "managed old definition"
+            );
+            assert_eq!(
+                std::fs::metadata(&manager.path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o640
+            );
+            let state = manager.state.lock().unwrap();
+            assert_eq!(state.active, active);
+            assert_eq!(state.enabled, enabled);
+            assert!(matches!(
+                state.registration,
+                SystemRegistration::Symlink { .. }
+            ));
+            assert!(!state.calls.contains(&"unregister"));
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn owned_dangling_registration_can_be_repaired_and_keeps_definition_on_failure() {
+        for ready_ok in [true, false] {
+            let (dir, binary, manager) = installation_fixture(true, false, true);
+            std::fs::remove_file(&manager.path).unwrap();
+            let result = install_with(&manager, &binary, &manager.path, None, || {
+                if ready_ok {
+                    Ok(())
+                } else {
+                    readiness_failure()
+                }
+            });
+            assert_eq!(result.is_ok(), ready_ok);
+            assert_eq!(
+                std::fs::read_to_string(&manager.path).unwrap(),
+                "managed new definition"
+            );
+            let state = manager.state.lock().unwrap();
+            assert!(matches!(
+                state.registration,
+                SystemRegistration::Symlink { .. }
+            ));
+            assert!(state.enabled);
+            assert_eq!(state.active, ready_ok);
+            assert!(!state.calls.contains(&"unregister"));
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn failure_restores_exact_openrc_and_sysv_runlevel_links() {
+        use crate::service::{openrc::Openrc, sysvinit::Sysvinit};
+        for openrc in [true, false] {
+            let dir =
+                std::env::temp_dir().join(format!("lkit-self-links-{}", uuid::Uuid::now_v7()));
+            let init = dir.join("etc/init.d");
+            std::fs::create_dir_all(&init).unwrap();
+            let origin = dir.join("origin");
+            std::fs::write(&origin, "managed service").unwrap();
+            let registration = init.join("lkit.service");
+            std::os::unix::fs::symlink(&origin, &registration).unwrap();
+            let (old, added) = if openrc {
+                (
+                    vec![
+                        dir.join("etc/runlevels/boot/lkit.service"),
+                        dir.join("etc/runlevels/custom/lkit.service"),
+                    ],
+                    dir.join("etc/runlevels/default/lkit.service"),
+                )
+            } else {
+                (
+                    vec![
+                        dir.join("etc/rc2.d/K20lkit.service"),
+                        dir.join("etc/rc3.d/S41lkit.service"),
+                    ],
+                    dir.join("etc/rc2.d/S20lkit.service"),
+                )
+            };
+            for path in old.iter().chain(std::iter::once(&added)) {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            }
+            let manager: Box<dyn ServiceManager> = if openrc {
+                Box::new(Openrc {
+                    rc_service: dir.join("unused"),
+                    rc_update: dir.join("unused"),
+                    init_d_dir: init,
+                    resolv_conf: dir.join("unused"),
+                })
+            } else {
+                Box::new(Sysvinit {
+                    update_rc_d: dir.join("unused"),
+                    init_d_dir: init,
+                    rc_d_glob: dir.join("etc/rc?.d"),
+                    resolv_conf: dir.join("unused"),
+                })
+            };
+            for path in &old {
+                std::os::unix::fs::symlink(&registration, path).unwrap();
+            }
+            let captured = manager
+                .startup_links(ManagedService::LkitDaemon)
+                .unwrap()
+                .unwrap();
+            std::fs::remove_file(&old[0]).unwrap();
+            std::os::unix::fs::symlink(&registration, &added).unwrap();
+            let before = InstallBefore {
+                registered: true,
+                definition: None,
+                enabled: true,
+                active: false,
+                startup_links: Some(serde_json::from_str(&captured).unwrap()),
+            };
+            restore_enabled(manager.as_ref(), &origin, &before).unwrap();
+            assert_eq!(
+                manager
+                    .startup_links(ManagedService::LkitDaemon)
+                    .unwrap()
+                    .as_deref(),
+                Some(captured.as_str())
+            );
+            assert!(!added.exists());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn first_install_failure_removes_only_new_registration_and_definition() {
+        let (dir, binary, manager) = installation_fixture(false, false, false);
+        assert!(install_with(&manager, &binary, &manager.path, None, readiness_failure).is_err());
+        assert!(!manager.path.exists());
+        let state = manager.state.lock().unwrap();
+        assert_eq!(state.registration, SystemRegistration::Missing);
+        assert!(!state.active && !state.enabled);
+        assert!(state.calls.contains(&"stop"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cleanup_failure_retains_definition_for_retry() {
+        let (dir, binary, manager) = installation_fixture(false, false, false);
+        manager.state.lock().unwrap().fail = Some("stop");
+        let error =
+            install_with(&manager, &binary, &manager.path, None, readiness_failure).unwrap_err();
+        assert!(error.to_string().contains("injected stop failure"));
+        assert!(manager.path.is_file());
+        assert!(matches!(
+            manager.state.lock().unwrap().registration,
+            SystemRegistration::Symlink { .. }
+        ));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn upgrade_refreshes_only_an_owned_running_service() {
+        for (registered, active) in [(false, false), (true, false), (true, true)] {
+            let (dir, _, manager) = installation_fixture(registered, active, true);
+            refresh_daemon_at(&manager, &manager.path).unwrap();
+            assert_eq!(
+                manager.state.lock().unwrap().calls,
+                if registered && active {
+                    vec!["restart"]
+                } else {
+                    vec![]
+                }
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
     #[test]
     fn service_origin_modes_support_systemd_and_executable_init_scripts() {
         let dir = std::env::temp_dir().join(format!("lkit-self-origin-{}", uuid::Uuid::now_v7()));
@@ -1259,12 +1817,14 @@ mod tests {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         set_staged_binary_executable(&staged).unwrap();
-        let output = std::process::Command::new(&staged)
-            .arg("--version")
-            .output()
-            .unwrap();
-
-        assert!(verify_version_output(&output).is_ok());
+        assert_eq!(
+            std::fs::metadata(&staged).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::read(&staged).unwrap(),
+            b"#!/bin/sh\nprintf 'lkit 0.2.0\\n'\n"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

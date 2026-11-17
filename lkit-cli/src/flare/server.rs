@@ -104,6 +104,17 @@ struct ServerConn {
     generation: u64,
     close_after_flush: bool,
     peer_eof_sent: bool,
+    /// Session teardown must also cancel relays blocked on the local service,
+    /// including ones that have already consumed the peer's half-close.
+    relay: Option<tokio::task::AbortHandle>,
+}
+
+impl Drop for ServerConn {
+    fn drop(&mut self) {
+        if let Some(relay) = &self.relay {
+            relay.abort();
+        }
+    }
 }
 
 enum RelayMsg {
@@ -792,16 +803,7 @@ fn pump_peer(
             let (from_tx, from_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
             let generation = peer.next_generation;
             peer.next_generation = peer.next_generation.wrapping_add(1).max(1);
-            peer.conns.insert(
-                h,
-                ServerConn {
-                    from_tx,
-                    generation,
-                    close_after_flush: false,
-                    peer_eof_sent: false,
-                },
-            );
-            landscape_terrain_proto::concurrency::spawn_task(
+            let relay = landscape_terrain_proto::concurrency::spawn_task(
                 crate::task_names::FLARE_CONNECTION,
                 server_conn_task(
                     *peer_mac,
@@ -811,6 +813,16 @@ fn pump_peer(
                     relay_wake.watch((*peer_mac, h, generation), from_rx),
                     peer.allowed.clone(),
                 ),
+            );
+            peer.conns.insert(
+                h,
+                ServerConn {
+                    from_tx,
+                    generation,
+                    close_after_flush: false,
+                    peer_eof_sent: false,
+                    relay: Some(relay.abort_handle()),
+                },
             );
         }
     }
@@ -975,7 +987,9 @@ async fn relay_remote_writer(
             }
         }
     }
-    remote_write.shutdown().await.map_err(|_| ())
+    // A missing producer means the session/connection disappeared, not a TCP
+    // half-close. Only the explicit PeerEof message permits waiting for replies.
+    Err(())
 }
 
 async fn signal_close(
@@ -1000,6 +1014,121 @@ fn devs_display(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RelayFixture {
+        from_tx: mpsc::Sender<RelayMsg>,
+        task: tokio::task::JoinHandle<()>,
+        remote: TcpStream,
+        to_rx: mpsc::Receiver<ServerStackMsg>,
+        handle: SocketHandle,
+    }
+
+    async fn relay_fixture() -> RelayFixture {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = IpStack::new(SERVER_ADDR).add_listener(INTERNAL_PORT);
+        let (from_tx, from_rx) = mpsc::channel(4);
+        let (to_tx, to_rx) = mpsc::channel(4);
+        from_tx
+            .send(RelayMsg::Data(port.to_be_bytes().to_vec()))
+            .await
+            .unwrap();
+        let task = tokio::spawn(server_conn_task(
+            [1; 6],
+            handle,
+            1,
+            to_tx,
+            RelayWake::default().watch(([1; 6], handle, 1), from_rx),
+            Arc::from([port]),
+        ));
+        let (remote, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .expect("relay must connect to the ephemeral local service")
+            .unwrap();
+        RelayFixture {
+            from_tx,
+            task,
+            remote,
+            to_rx,
+            handle,
+        }
+    }
+
+    #[tokio::test]
+    async fn disappearing_relay_channel_closes_the_local_socket() {
+        let RelayFixture {
+            from_tx,
+            task,
+            mut remote,
+            mut to_rx,
+            ..
+        } = relay_fixture().await;
+        drop(from_tx);
+        // Keep the local service open and silent: its EOF must not be needed
+        // for the relay to terminate after losing the session's channel.
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("a vanished session must terminate its relay")
+            .unwrap();
+        assert!(matches!(to_rx.recv().await, Some((_, StackMsg::Close))));
+        assert_eq!(remote.read(&mut [0]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn session_teardown_cancels_half_closed_relays() {
+        // Explicit peer teardown and dropping the entire server both own the
+        // lifetime of the relay, including after a successful TCP half-close.
+        for drop_server in [false, true] {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                let RelayFixture {
+                    from_tx,
+                    task,
+                    mut remote,
+                    mut to_rx,
+                    handle,
+                } = relay_fixture().await;
+                let (to_tx, _) = mpsc::channel(1);
+                let mut peer = new_peer(to_tx, Arc::from([]));
+                peer.conns.insert(
+                    handle,
+                    ServerConn {
+                        from_tx,
+                        generation: 1,
+                        close_after_flush: false,
+                        peer_eof_sent: false,
+                        relay: Some(task.abort_handle()),
+                    },
+                );
+                peer.conns[&handle]
+                    .from_tx
+                    .send(RelayMsg::PeerEof)
+                    .await
+                    .unwrap();
+                assert_eq!(remote.read(&mut [0]).await.unwrap(), 0);
+                assert!(!task.is_finished(), "half-close must preserve replies");
+                remote.write_all(b"reply after EOF").await.unwrap();
+                let mut reply = Vec::new();
+                while reply.len() < b"reply after EOF".len() {
+                    let (_, StackMsg::Data(bytes)) = to_rx.recv().await.unwrap() else {
+                        panic!("half-close must forward the local service's reply");
+                    };
+                    reply.extend(bytes);
+                }
+                assert_eq!(reply, b"reply after EOF");
+                if drop_server {
+                    drop(HashMap::from([([1; 6], peer)]));
+                } else {
+                    teardown_peer(&mut peer, &mut 0);
+                }
+                assert!(task.await.unwrap_err().is_cancelled());
+                // The remote service remains open until after the cancelled
+                // relay is joined, so service cooperation cannot hide leaks.
+                drop(remote);
+            })
+            .await
+            .expect("session teardown must release half-closed relays");
+        }
+    }
 
     #[test]
     fn deadlines_select_only_due_peers_and_teardown_clears_them() {
@@ -1035,6 +1164,7 @@ mod tests {
                 generation: 2,
                 close_after_flush: false,
                 peer_eof_sent: false,
+                relay: None,
             },
         );
         let peers = HashMap::from([([1; 6], peer)]);

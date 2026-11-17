@@ -93,8 +93,8 @@ impl Default for ReinitPanel {
     }
 }
 
-/// 面板适用性：已安装 + systemd 服务管理器 + 宿主网络服务已被接管。
-/// 测试环境通过 `LKIT_TEST_REINIT_ELIGIBLE` 跳过 systemd 探测。
+/// 面板只读接管归属；提交时与 daemon 重新校验宿主服务完整停用状态。
+/// 测试环境通过 `LKIT_TEST_REINIT_ELIGIBLE` 跳过系统探测。
 pub(crate) fn reinit_eligible(app: &ConsoleApp) -> bool {
     let installed_systemd = matches!(
         &app.snapshot,
@@ -116,7 +116,18 @@ pub(crate) fn reinit_eligible(app: &ConsoleApp) -> bool {
         },
         None => runtime,
     };
-    crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref())
+    let Ok(Some(root)) = crate::deployment::state::discover_landscape_root() else {
+        return false;
+    };
+    let Ok(Some(installed)) = crate::deployment::state::load_state(&root) else {
+        return false;
+    };
+    crate::network::takeover::require_takeover_identity(
+        &root,
+        &installed,
+        runtime.service_manager.kind(),
+    )
+    .is_ok()
 }
 
 impl ReinitPanel {

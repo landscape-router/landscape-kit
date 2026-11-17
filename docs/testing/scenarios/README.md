@@ -31,7 +31,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-17` | [backup-and-restore.md](functional/backup-and-restore.md) |
 | 卸载 | `UNI-01` 至 `UNI-14` | [uninstall.md](functional/uninstall.md) |
 | 重新初始化 | `REI-01` 至 `REI-13` | [reinit.md](functional/reinit.md) |
-| 自动备份与回滚 | `RB-01` 至 `RB-07` | [rollback.md](functional/rollback.md) |
+| 自动备份与回滚 | `RB-01` 至 `RB-08` | [rollback.md](functional/rollback.md) |
 | 修复 | `REP-01` 至 `REP-09` | [repair.md](functional/repair.md) |
 | Reconcile 与事务 | `REC-01` 至 `REC-05`、`TX-01` 至 `TX-04` | [reconcile-and-transactions.md](functional/reconcile-and-transactions.md) |
 | 初始化系统与 Cgroup 准备 | `INIT-01` 至 `INIT-04` | [init.md](functional/init.md) |
@@ -41,11 +41,11 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 主机换源 | `MIR-01` 至 `MIR-13` | [mirror.md](functional/mirror.md) |
 | 常用软件安装 | `SFT-01` 至 `SFT-07` | [software.md](functional/software.md) |
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
-| lkit 自身生命周期 | `SS-01` 至 `SS-12` | [self.md](functional/self.md) |
+| lkit 自身生命周期 | `SS-01` 至 `SS-13` | [self.md](functional/self.md) |
 | Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
 | Debian / SysVinit 真实虚拟机 | `SVI-01` 至 `SVI-06` | [sysvinit.md](functional/sysvinit.md) |
-| daemon 自动恢复 | `DAE-01` 至 `DAE-19` | [daemon.md](functional/daemon.md) |
-| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-35` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
+| daemon 自动恢复 | `DAE-01` 至 `DAE-20` | [daemon.md](functional/daemon.md) |
+| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-36` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

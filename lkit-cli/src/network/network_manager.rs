@@ -261,11 +261,7 @@ pub(crate) fn capture(
     services: &[HostServiceBefore],
 ) -> Result<Vec<Connection>, InstallError> {
     // Explicit fixture runtimes have fake services; real NM semantics are tested in QEMU.
-    if runtime.test_runtime_path.is_some()
-        || !services.iter().any(|s| {
-            s.active && matches!(s.unit.as_str(), "NetworkManager" | "NetworkManager.service")
-        })
-    {
+    if runtime.test_runtime_path.is_some() || !has_active_network_manager(services) {
         return Ok(Vec::new());
     }
     capture_with(&mut Nmcli {
@@ -278,9 +274,7 @@ pub(crate) fn restore(
     network: &crate::deployment::transaction::NetworkTakeoverTransaction,
 ) -> Result<(), InstallError> {
     let Some(connections) = &network.network_manager else {
-        if network.host_services.iter().any(|s| {
-            s.active && matches!(s.unit.as_str(), "NetworkManager" | "NetworkManager.service")
-        }) {
+        if has_active_network_manager(&network.host_services) {
             eprintln!(
                 "lkit: legacy transaction has no NetworkManager connection snapshot; verify the original connections and IP connectivity manually"
             );
@@ -299,9 +293,36 @@ pub(crate) fn restore(
     )
 }
 
+fn has_active_network_manager(services: &[HostServiceBefore]) -> bool {
+    services.iter().any(|service| {
+        service.active && crate::service::host_network::is_network_manager(&service.unit)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn all_network_manager_service_aliases_require_connection_snapshots() {
+        for name in ["networkmanager", "NetworkManager", "NetworkManager.service"] {
+            let mut service = HostServiceBefore {
+                unit: name.into(),
+                installed: true,
+                active: true,
+                enable_state: String::new(),
+            };
+            assert!(has_active_network_manager(&[service.clone()]));
+            service.active = false;
+            assert!(!has_active_network_manager(&[service]));
+        }
+        assert!(!has_active_network_manager(&[HostServiceBefore {
+            unit: "networking".into(),
+            installed: true,
+            active: true,
+            enable_state: String::new()
+        }]));
+    }
+
     const UUID: &str = "1c776a18-1caf-4ac8-8f46-5573fb8db501";
     struct Fake {
         active: Vec<(String, String)>,

@@ -10,6 +10,7 @@ use crate::network::config::DEFAULT_MANAGEMENT_CIDR;
 use crate::network::discovery::{DefaultRoute, Interface};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use std::sync::{Arc, Mutex, mpsc};
 use unicode_width::UnicodeWidthStr;
 
 pub(crate) struct LanguageGuard(Language);
@@ -167,14 +168,48 @@ pub(crate) fn installed_snapshot() -> Snapshot {
     }
 }
 
-/// Overview/daemon 弹窗流程测试的固定世界。`Snapshot::load` 在非 root 主机
-/// 直接返回 RootRequired(euid 前置检查),而 root CI 容器里对空地盘探测出
-/// NotInstalled——弹窗测试不关心安装状态,统一钉为 NotInstalled,行为与
-/// 运行环境无关。
-pub(crate) fn overview_app() -> ConsoleApp {
+/// Deterministic deployment replies without a thread or host service operation.
+pub(crate) struct TestDeployOps {
+    result: super::super::daemon_panel::DeployResult,
+    requests: Mutex<Vec<Option<String>>>,
+}
+
+impl TestDeployOps {
+    pub(crate) fn requests(&self) -> Vec<Option<String>> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+impl super::super::daemon_panel::DeployOps for TestDeployOps {
+    fn deploy(
+        &self,
+        psk: Option<String>,
+    ) -> mpsc::Receiver<super::super::daemon_panel::DeployResult> {
+        self.requests.lock().unwrap().push(psk);
+        let (sender, receiver) = mpsc::channel();
+        sender.send(self.result.clone()).unwrap();
+        receiver
+    }
+}
+
+/// Overview/daemon dialog tests use a fixed snapshot and isolated background operations.
+pub(crate) fn overview_app_with_deploy(
+    result: super::super::daemon_panel::DeployResult,
+) -> (ConsoleApp, Arc<TestDeployOps>) {
     let mut app = ConsoleApp::new();
     app.snapshot = Snapshot::NotInstalled;
-    app
+    // A successful deployment reruns preflight; both seams must remain isolated.
+    app.preflight.ops = Arc::new(super::super::preflight::MockPreflightOps::manual());
+    let deploy = Arc::new(TestDeployOps {
+        result,
+        requests: Mutex::new(Vec::new()),
+    });
+    app.deploy_ops = deploy.clone();
+    (app, deploy)
+}
+
+pub(crate) fn overview_app() -> ConsoleApp {
+    overview_app_with_deploy(Err("fixture deployment failed".into())).0
 }
 
 pub(crate) use super::super::backup::{backup_rows, sample_backup_entry, sample_backup_metadata};
@@ -222,34 +257,43 @@ pub(crate) fn resolved(current: &str, target: &str) -> ResolvedUpdate {
     }
 }
 
-/// 整屏快照与布局不变量测试的确定性 daemon 状态:隔离 lkit 地盘并写入指定
-/// 状态的 pidfile(运行 = 当前测试进程的 pid,未运行 = 必定不存在的 pid)。
-/// 守卫存活期间(header 徽标、Overview 常驻服务状态都读该 pidfile),渲染
-/// 结果由夹具唯一决定;`test_territory` 的进程级锁保证与其他 territory 测试串行。
+/// Deterministic daemon readiness in a temporary territory. A running fixture
+/// owns daemon.lock and publishes this test process's PID for the guard lifetime.
 pub(crate) struct DaemonTerritory {
+    _instance_lock: Option<std::fs::File>,
     _guard: crate::deployment::layout::TerritoryOverride,
     path: PathBuf,
 }
 
 impl DaemonTerritory {
     pub(crate) fn new(name: &str, running: bool) -> Self {
-        let territory = std::env::temp_dir().join(format!(
-            "lkit-console-screen-{name}-{}-{running}",
-            std::process::id()
-        ));
+        let pid = if running {
+            std::process::id().to_string()
+        } else {
+            "99999999".into()
+        };
+        Self::with_pidfile(name, &pid)
+    }
+
+    pub(crate) fn with_pidfile(name: &str, content: &str) -> Self {
+        let territory =
+            std::env::temp_dir().join(format!("lkit-console-screen-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&territory);
         std::fs::create_dir_all(territory.join("run")).unwrap();
         let guard = crate::deployment::layout::test_territory(&territory);
         let pidfile = crate::deployment::layout::territory_pidfile();
-        if running {
-            std::fs::write(&pidfile, format!("{}\n", std::process::id())).unwrap();
-        } else {
-            std::fs::write(&pidfile, "99999999\n").unwrap();
-        }
+        std::fs::write(&pidfile, content).unwrap();
+        let instance_lock = (content.trim() == std::process::id().to_string())
+            .then(|| crate::daemon_supervisor::instance_lock("daemon.lock").unwrap());
         Self {
+            _instance_lock: instance_lock,
             _guard: guard,
             path: territory,
         }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
     }
 }
 

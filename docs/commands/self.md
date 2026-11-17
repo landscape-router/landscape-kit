@@ -30,7 +30,9 @@ daemon 进程写 pidfile 到
 
 1. 获取安装锁;
 2. 按主机探测结果使用 systemd、OpenRC 或 SysVinit;
-3. 校验 `/usr/local/bin/lkit` 可执行,把对应服务定义渲染到全局目录
+3. 校验 `/usr/local/bin/lkit` 可执行，检查服务注册归属。外部文件或指向其他原件的注册链接
+   在任何写入和服务动作前拒绝；定义原件不得是符号链接。未注册但已有原件时，须通过
+   受管定义校验。把对应服务定义渲染到全局目录
    `/usr/local/lib/lkit/lkit.service`。systemd unit 为 `0600`；init 脚本为可执行的 `0755`，
    各后端均运行 `/usr/local/bin/lkit daemon --supervise`，不绑定 Landscape 安装根；
 4. （可选）供给 急救恢复码:提供 `--flare-psk-file`(root 所有、`0400`/`0600`
@@ -43,15 +45,20 @@ daemon 进程写 pidfile 到
    OpenRC/SysVinit 为 `/etc/init.d/lkit.service`，均指向全局原件；检查监管进程存在，且实际 daemon 的新 PID 与恢复能力标识匹配。
    后台 init 脚本返回后最多等待 3 秒确认进程出现，不等待 bpffs 准备成功。
 
-重复执行时:若旧 daemon 仍在运行,注册完成后执行 `restart` 使其加载当前二进制;
-注册或启动失败时尽力回滚已注册状态并删除定义原件。`install` 不复制二进制——daemon
-直接使用 `/usr/local/bin/lkit`,升级由 `self upgrade` 负责。
+重复执行时，旧 daemon 正在运行则执行 `restart`；原本停止则启动。修改前保存定义内容、
+权限、启用与运行状态，以及 OpenRC/SysVinit 的完整启动链接。失败时恢复已有受管定义及
+服务状态，不注销原服务。指向受管路径但原件缺失的注册允许通过 `self install` 修复；
+该修复失败时保留新生成的有效定义，并恢复原启用和运行设置，供重试使用。
+首次安装失败只清理本次创建且仍属于 lkit 的注册和定义；
+停止、注销或刷新失败时保留原件并报告清理错误，供排除故障后重试。
+显式供给的 Flare 恢复码保留在配置中，不因服务安装失败而改回旧值。
+`install` 不复制二进制，daemon 使用 `/usr/local/bin/lkit`，升级由 `self upgrade` 负责。
 
 ## upgrade
 
 把 lkit CLI 与 daemon 一起升级到目标版本(默认最新 stable):
 
-1. 获取安装锁;
+1. 获取安装锁；服务管理器可用时先校验注册归属和定义路径类型，外部注册在替换二进制前拒绝；
 2. 解析目标版本：默认使用 GitHub `releases/latest`，只接受正式版；
    `--include-prerelease` 允许从 Release 列表自动选择包含预发布版本（如 RC）在内的最高
    版本；`--version <TAG>` 显式指定版本并优先于自动选择（如 `--version v0.7.1-rc2`），
@@ -65,7 +72,7 @@ daemon 进程写 pidfile 到
 5. 下载并校验成功后,先使暂存二进制可执行并运行 `lkit --version` 自检,再原子替换
    `/usr/local/bin/lkit`;下载、校验、自检或替换失败时保留原二进制。自检启动失败明确
    标注暂存文件路径，提示检查目标架构及解释器／动态加载器，避免仅报告裸 I/O 错误；
-6. 刷新 daemon:若 `lkit.service` 已注册且 `is-active` → `restart` 加载新二进制;
+6. 刷新前再次校验归属；若 `lkit.service` 指向 lkit 全局原件且 `is-active` → `restart` 加载新二进制;
    已注册但未运行 → 不启动;未注册 → 仅更新 CLI,并提示可用 `lkit self install`
    安装 daemon。
 

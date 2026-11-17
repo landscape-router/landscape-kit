@@ -17,7 +17,9 @@ lkit 不检查桥接是否存在。
 [daemon 网络接管恢复](daemon-recovery.md)。
 
 systemd 支持 systemd-networkd、NetworkManager、Debian ifupdown、firewalld 和 systemd-resolved；
-OpenRC/SysVinit 支持 `NetworkManager`、`networking` 和 `firewalld` 服务脚本。
+OpenRC/SysVinit 支持 `networkmanager`／`NetworkManager`、`networking` 和 `firewalld`
+服务脚本。预检查、接管发现与连接快照共用 NetworkManager 服务别名；按实际存在的
+脚本名称分别保存、停止与恢复，不把 Alpine 的小写名称改写成大写。
 不存在的服务不操作。服务状态无法可靠查询时在接管前失败。systemd 使用
 整组先 mask 再 stop，不调用 disable/enable；回滚只移除对应 mask 并保留原启动链接；OpenRC/SysVinit 停止服务并保存、移除其开机链接，回滚恢复原始
 runlevel、链接顺序及运行状态。接管不卸载软件包，不收集 PPPoE 凭据或 MTU。
@@ -103,6 +105,8 @@ UUID、接口、物理接口永久 MAC，以及当时具备的 IP 地址族和�
 连接被删除或连接尚未恢复时，事务保持 `rolling_back`，daemon 重试，不宣告回滚完成。
 只恢复服务进程的 active 状态不能代替连接校验。Flare 所需的网卡拉起保留，
 NetworkManager 不依赖对提前收到 IPv6 RA 的接口自动选对连接。
+systemd 的 `NetworkManager.service` 与 OpenRC/SysVinit 的两种脚本名称使用相同的
+连接保存和恢复规则；任何已发现的活动别名都要求连接快照。
 
 旧事务缺少新快照标识时按原启用状态恢复服务；未记录的自定义启动链接无法重建。
 缺少连接快照时输出需要人工核验连接的提示；

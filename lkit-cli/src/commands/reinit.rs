@@ -168,13 +168,13 @@ async fn run_inline(args: &Reinit) -> ExitCode {
         );
         return ExitCode::from(2);
     };
-    if !crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref())
-    {
-        eprintln!(
-            "reinit: {}",
-            crate::tr!(crate::keys::REINIT_REQUIRES_NETWORK_TAKEOVER)
-        );
-        return ExitCode::from(2);
+    if let Err(error) = crate::network::takeover::require_existing_takeover(
+        &normalized,
+        &state,
+        runtime.service_manager.as_ref(),
+    ) {
+        eprintln!("reinit: {error}");
+        return exit_code(&error);
     }
     if let Err(error) = crate::network::takeover::preflight(&runtime) {
         eprintln!("reinit: {error}");

@@ -100,7 +100,10 @@ magic 正确但版本不认识的帧时，回复一个**明文**的 `VERSION_MIS
   socket；若 EOF 到达时仍有待发送数据，则清空该连接队列后再发送 FIN，避免大传输尾部
   被截断。socket 只有在桥接 channel 排空后才会回收，避免已读数据尚未写回就被丢弃。
   TCP 半关闭会沿链路传播：一侧读到 EOF 后停止该方向写入，但继续回传反方向剩余数据，
-  直到对端也关闭。客户端分配隧道源端口时会避开仍存活（包括 TIME-WAIT）
+  直到对端也关闭。服务端连接的转发任务归所属会话管理；会话超时、销毁或服务端重载时，
+  取消其转发任务并释放本地 socket，即使连接已经半关闭或正在等待本地服务也一样。
+  桥接 channel 消失表示连接销毁，不作为正常 TCP 半关闭继续等待响应。
+  客户端分配隧道源端口时会避开仍存活（包括 TIME-WAIT）
   的连接并在端口范围
   用尽时拒绝新连接。桥接任务的消息同时携带单调递增的连接代号，旧任务的迟到消息
   不会误伤复用同一 `SocketHandle` 的新连接。数据桥接队列有 32 MiB 总量上限，并且只有本地
@@ -161,6 +164,9 @@ TUI 支持英文和中文。启动语言按 `--lang`、`LKIT_LANG`、系统 loca
 | 配置供给 | `lkit flare setup`（Linux） | 带 `--psk/--token/--devices/--ethertype/--forward-ports/--mac/--device-name` 时在既有配置上覆盖并写回 `[flare]` 段；空参打印当前有效配置（含 psk，供分发给 `lflare` 恢复客户端）。daemon 下一周期自动拾取 |
 | 配置供给 | `lkit self install [--flare-psk-file PATH]` | daemon 部署时供给：给 `--flare-psk-file`（root-only 私密文件）则在 daemon 启动前写回 `[flare]` 段（保留既有字段），daemon 首启即用该 psk 托管 flare；未提供时保留既有 `[flare]`，交互终端会提示输入（带用途说明），无终端则回落 daemon 自动生成（恒常启动兜底）。控制台的「部署 daemon」按钮不提示（后台线程），由 daemon 自动生成，用户经 `f` 弹窗或 `lkit flare setup` 管理 |
 | 抓包诊断 | `lkit flare sniff` | 在线设备或 pcap 文件解码 Terrain 帧 |
+
+Flare 任务失败后的重试采用最新有效配置；修正错误网卡等设置无需重启 daemon。
+首次配置持久化失败时，后续周期重新尝试启动；已有通道遇到损坏或清空的配置时保留现役配置。
 
 `[flare]` 段字段：`psk`（急救恢复码，必填，≥12 字符）、`device_name`（默认 `landscape-router`）、
 `mac`、`devices`（默认 `any`）、`ethertype`（默认 `0x88B6`）、`forward_ports`（默认

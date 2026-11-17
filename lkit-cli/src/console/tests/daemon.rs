@@ -2,25 +2,13 @@ use super::super::daemon_panel::PskDialogField;
 use super::super::*;
 use super::support::*;
 use crate::check::model::{CheckGroup, CheckReport, CheckResult, Status, StatusCounts};
-use crate::deployment::layout;
 use crate::i18n::Language;
 use ratatui::backend::TestBackend;
-use std::time::Duration;
 
 /// 隔离 lkit 地盘并写入指定 pidfile 内容,返回守卫。
-fn territory_with_pidfile(
-    name: &str,
-    content: &str,
-) -> (layout::TerritoryOverride, std::path::PathBuf) {
-    let territory = std::env::temp_dir().join(format!(
-        "lkit-console-daemon-test-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&territory);
-    std::fs::create_dir_all(territory.join("run")).unwrap();
-    let guard = layout::test_territory(&territory);
-    let pidfile = layout::territory_pidfile();
-    std::fs::write(&pidfile, content).unwrap();
+fn territory_with_pidfile(name: &str, content: &str) -> (DaemonTerritory, std::path::PathBuf) {
+    let guard = DaemonTerritory::with_pidfile(name, content);
+    let territory = guard.path().to_path_buf();
     (guard, territory)
 }
 
@@ -124,7 +112,7 @@ fn overview_enter_opens_confirm_and_esc_cancels() {
 fn deploy_confirm_runs_in_background_and_writes_the_result_to_the_notice() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy", "99999999\n");
-    let mut app = overview_app();
+    let (mut app, deploy) = overview_app_with_deploy(Err("fixture deployment failed".into()));
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.deploy_daemon_confirming);
@@ -138,20 +126,15 @@ fn deploy_confirm_runs_in_background_and_writes_the_result_to_the_notice() {
     );
     assert!(!app.deploy_daemon_confirming);
 
-    for _ in 0..100 {
-        app.update();
-        if app.deploy_daemon.is_none() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert_eq!(deploy.requests(), [None]);
+    app.update();
     assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
-    // 非 root 测试环境与 CLI 相同:部署要求 root。
     assert!(
-        app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
+        matches!(&app.notice, Notice::Error(message) if message == "fixture deployment failed"),
         "unexpected notice: {}",
         app.notice.text()
     );
+    assert!(matches!(app.preflight.state, PreflightState::NotRun));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
@@ -204,7 +187,7 @@ fn preflight_dialog_shows_deploy_button_when_the_daemon_check_blocks() {
 fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog-enter", "99999999\n");
-    let mut app = overview_app();
+    let (mut app, deploy) = overview_app_with_deploy(Ok("fixture daemon deployed".into()));
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(daemon_blocked_report());
@@ -236,19 +219,15 @@ fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() 
         "confirming must start the daemon deploy in the background"
     );
 
-    for _ in 0..100 {
-        app.update();
-        if app.deploy_daemon.is_none() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert_eq!(deploy.requests(), [None]);
+    app.update();
     assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
     assert!(
-        app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
+        matches!(&app.notice, Notice::Success(message) if message == "fixture daemon deployed"),
         "unexpected notice: {}",
         app.notice.text()
     );
+    assert!(matches!(app.preflight.state, PreflightState::Running(_)));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
@@ -257,7 +236,7 @@ fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() 
 fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("dialog-deploy", "99999999\n");
-    let mut app = overview_app();
+    let (mut app, deploy) = overview_app_with_deploy(Ok("fixture daemon deployed".into()));
     app.menu_index = 1;
     app.focus = Focus::Panel;
     app.preflight.state = PreflightState::Complete(daemon_blocked_report());
@@ -290,19 +269,15 @@ fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() 
         "the psk entered in the dialog must be passed to the deploy"
     );
 
-    for _ in 0..100 {
-        app.update();
-        if app.deploy_daemon.is_none() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert_eq!(deploy.requests(), [Some("an-operator-chosen-code".into())]);
+    app.update();
     assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
     assert!(
-        app.notice.contains("root") || app.notice.contains("daemon deploy worker"),
+        matches!(&app.notice, Notice::Success(message) if message == "fixture daemon deployed"),
         "unexpected notice: {}",
         app.notice.text()
     );
+    assert!(matches!(app.preflight.state, PreflightState::Running(_)));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }
@@ -432,7 +407,7 @@ fn deploy_confirm_shows_the_recovery_code_field_and_explains_its_purpose() {
 fn deploy_confirm_accepts_an_edited_recovery_code_and_starts_the_deploy() {
     let _language = LanguageGuard::set(Language::En);
     let (_guard, territory) = territory_with_pidfile("deploy-flare-edit", "99999999\n");
-    let mut app = overview_app();
+    let (mut app, deploy) = overview_app_with_deploy(Ok("fixture daemon deployed".into()));
     app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     // psk 字段:直接输入进入编辑,Enter 提交编辑。
@@ -455,14 +430,13 @@ fn deploy_confirm_accepts_an_edited_recovery_code_and_starts_the_deploy() {
     );
     assert_eq!(app.deploy_psk, "an-operator-chosen-code");
     assert_eq!(app.deploy_psk_confirmation, "an-operator-chosen-code");
-    for _ in 0..100 {
-        app.update();
-        if app.deploy_daemon.is_none() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert_eq!(deploy.requests(), [Some("an-operator-chosen-code".into())]);
+    app.update();
     assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
+    assert!(
+        matches!(&app.notice, Notice::Success(message) if message == "fixture daemon deployed")
+    );
+    assert!(matches!(app.preflight.state, PreflightState::Running(_)));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
 }

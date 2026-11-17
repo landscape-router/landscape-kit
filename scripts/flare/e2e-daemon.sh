@@ -60,9 +60,25 @@ location = "ThisSeanZhang/landscape"
 [flare]
 psk = "'"$PSK"'"
 token = "'"$TOKEN"'"
+devices = "missing0"
 EOF
     exec /opt/bin/lkit daemon
   '
+
+echo "== failed flare task must adopt corrected configuration without restarting daemon =="
+for _ in $(seq 1 30); do
+  if docker logs "$SRV" 2>&1 | grep 'lkit daemon: flare server failed:' >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if ! docker logs "$SRV" 2>&1 | grep 'lkit daemon: flare server failed:' >/dev/null; then
+  echo 'FAIL: the invalid interface did not exercise flare startup failure'
+  docker logs "$SRV" 2>&1 | tail -20
+  exit 1
+fi
+daemon_pid=$(docker exec "$SRV" cat /tmp/territory/run/lkit.pid)
+docker exec "$SRV" /opt/bin/lkit flare setup --dev eth0
 
 echo "== start client =="
 docker run -d --name "$CLI" --network "$NET" \
@@ -86,6 +102,7 @@ if ! docker logs "$SRV" 2>&1 | grep "server .* ready" >/dev/null; then
   exit 1
 fi
 echo "daemon-hosted flare server ready"
+test "$(docker exec "$SRV" cat /tmp/territory/run/lkit.pid)" = "$daemon_pid"
 
 echo "== bpffs preparation failure must be diagnostic only =="
 if ! docker logs "$SRV" 2>&1 | grep "cannot prepare bpffs at /sys/fs/bpf:.*continuing daemon startup" >/dev/null; then

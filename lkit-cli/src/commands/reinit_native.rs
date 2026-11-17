@@ -59,12 +59,11 @@ async fn submit(args: &Reinit) -> Result<u8, plan::InstallError> {
             "unfinished transaction; inspect lkit network status".into(),
         ));
     }
-    if !crate::workflows::uninstall::host_network_services_masked(runtime.service_manager.as_ref())
-    {
-        return Err(plan::InstallError::ParameterUsage(
-            "reinit requires network takeover".into(),
-        ));
-    }
+    crate::network::takeover::require_existing_takeover(
+        &root,
+        &installed,
+        runtime.service_manager.as_ref(),
+    )?;
     crate::network::takeover::preflight(&runtime)?;
     let credentials = resolve_credentials(args, runtime.managed_uid)?;
     let network = match &args.network_plan {

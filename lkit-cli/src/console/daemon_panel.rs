@@ -174,11 +174,8 @@ impl ConsoleApp {
             self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH));
             return;
         }
-        let mut section = crate::deployment::config::load_flare()
-            .unwrap_or_else(crate::deployment::config::default_flare_section);
-        section.psk = Some(psk);
-        match crate::deployment::config::save_flare(&section) {
-            Ok(()) => {
+        match crate::deployment::config::update_flare(|section| section.psk = Some(psk)) {
+            Ok(_) => {
                 self.show_psk = false;
                 self.show_psk_editing = false;
                 self.notice = Notice::Success(crate::tr!(crate::keys::CONSOLE_FLARE_SAVED));

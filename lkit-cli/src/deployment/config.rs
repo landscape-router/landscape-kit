@@ -365,7 +365,23 @@ pub(crate) fn generate_psk() -> String {
 /// 文件缺失时创建带默认仓库来源与 `[flare]` 的最小配置(与"文件缺失"的默认
 /// 回退语义一致,默认仓库来源与内置缺省相同);TOML 损坏时返回错误且不改动
 /// 原文件。
+#[cfg(test)]
 pub(crate) fn save_flare(section: &FlareSection) -> Result<(), InstallError> {
+    update_flare(|current| *current = section.clone()).map(|_| ())
+}
+
+/// Apply a field-level edit to the latest section while holding the configuration lock.
+pub(crate) fn update_flare(
+    update: impl FnOnce(&mut FlareSection),
+) -> Result<FlareSection, InstallError> {
+    let _lock = config_lock()?;
+    let mut section = load_flare().unwrap_or_else(default_flare_section);
+    update(&mut section);
+    save_flare_locked(&section)?;
+    Ok(section)
+}
+
+fn save_flare_locked(section: &FlareSection) -> Result<(), InstallError> {
     let path = layout::territory_config_file();
     let mut document = match std::fs::read_to_string(&path) {
         Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
@@ -430,7 +446,24 @@ pub(crate) fn save_flare(section: &FlareSection) -> Result<(), InstallError> {
 /// 用 `toml_edit` 保留注释、未知 section/字段与原有顺序;写回经 tmp + rename
 /// 原子完成。文件缺失时创建带默认仓库来源的最小配置;TOML 损坏时返回错误且
 /// 不改动原文件。
+#[cfg(test)]
 pub(crate) fn save_frontend(section: &FrontendSection) -> Result<(), InstallError> {
+    update_frontend(|current| {
+        *current = section.clone();
+        Ok(())
+    })
+}
+
+pub(crate) fn update_frontend(
+    update: impl FnOnce(&mut FrontendSection) -> Result<(), InstallError>,
+) -> Result<(), InstallError> {
+    let _lock = config_lock()?;
+    let mut section = load_frontend()?.unwrap_or_default();
+    update(&mut section)?;
+    save_frontend_locked(&section)
+}
+
+fn save_frontend_locked(section: &FrontendSection) -> Result<(), InstallError> {
     let path = layout::territory_config_file();
     let mut document = match std::fs::read_to_string(&path) {
         Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
@@ -501,11 +534,12 @@ fn set_optional_string(table: &mut toml_edit::Table, key: &str, value: Option<&s
 /// 把语言预设写回 `config.toml` 的 `[ui] language`。只有交互控制台按 `L` 切换语言时
 /// 调用,CLI 命令只读不写回。用 `toml_edit` 定点修改,保留注释、未知 section/字段与
 /// 原有顺序;写回经 tmp + rename 原子完成,并发读方只会看到旧或新文件,不会撕裂。
-/// 对单字段偏好,并发切换表现为最后写入者生效,无需安装锁。
+/// 配置锁覆盖读取与写回；语言切换不会覆盖其他会话写入的配置段，无需安装锁。
 ///
 /// 文件缺失时创建带默认仓库来源与 `[ui] language` 的最小配置,与"文件缺失"的默认
 /// 回退语义一致;TOML 损坏时返回错误且不改动原文件,会话内切换仍然生效。
 pub(crate) fn write_language(language: Language) -> Result<(), InstallError> {
+    let _lock = config_lock()?;
     let path = layout::territory_config_file();
     let mut document = match std::fs::read_to_string(&path) {
         Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
@@ -547,19 +581,42 @@ pub(crate) fn write_language(language: Language) -> Result<(), InstallError> {
     atomic_write(&path, &document.to_string())
 }
 
-/// 原子写回:独占临时文件写全量内容并 `sync_all`,再 rename 到目标路径。临时文件放在
-/// `run/` 下,失败残留也不会被地盘的顶层内容检查当作未知文件。
+/// Independent of install.lock: serializes UI, CLI and daemon configuration edits.
+fn config_lock() -> Result<std::fs::File, InstallError> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let run_dir = layout::territory_run_dir();
+    std::fs::create_dir_all(&run_dir).map_err(InstallError::Io)?;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(run_dir.join("config.lock"))
+        .map_err(InstallError::Io)?;
+    loop {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(file);
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(InstallError::Io(error));
+        }
+    }
+}
+
+/// Write a unique private temporary file, sync, then atomically replace the config.
 fn atomic_write(path: &Path, content: &str) -> Result<(), InstallError> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     let run_dir = layout::territory_run_dir();
     std::fs::create_dir_all(&run_dir).map_err(InstallError::Io)?;
-    let tmp = run_dir.join("config.toml.tmp");
+    let tmp = run_dir.join(format!("config.{}.tmp", uuid::Uuid::now_v7()));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(&tmp)
         .map_err(InstallError::Io)?;
@@ -571,13 +628,106 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), InstallError> {
         let _ = std::fs::remove_file(&tmp);
         return Err(InstallError::Io(error));
     }
-    std::fs::rename(&tmp, path).map_err(InstallError::Io)
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(InstallError::Io(error));
+    }
+    std::fs::File::open(path.parent().expect("config has a parent"))
+        .and_then(|parent| parent.sync_all())
+        .map_err(InstallError::Io)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::deployment::layout;
+
+    #[test]
+    fn concurrent_field_edits_preserve_other_sections_and_complete_files() {
+        use std::sync::{Arc, Barrier};
+        let (_guard, territory) = setup("concurrent-config");
+        write_language(Language::En).unwrap();
+        let barrier = Arc::new(Barrier::new(4));
+        std::thread::scope(|scope| {
+            for worker in 0..4 {
+                let barrier = barrier.clone();
+                let config = territory.join("config.toml");
+                scope.spawn(move || {
+                    barrier.wait();
+                    for index in 0..20 {
+                        match worker {
+                            0 => write_language(Language::Zh).unwrap(),
+                            1 => {
+                                update_flare(|section| {
+                                    section.psk = Some(format!("recovery-secret-{index}"))
+                                })
+                                .unwrap();
+                            }
+                            2 => {
+                                update_flare(|section| {
+                                    section.devices = Some(format!("eth{index}"))
+                                })
+                                .unwrap();
+                            }
+                            _ => update_frontend(|section| {
+                                section.sources.push(FrontendSource {
+                                    id: format!("source{index}"),
+                                    name: None,
+                                    kind: RepositorySourceKind::Github,
+                                    location: "example/frontend".into(),
+                                });
+                                Ok(())
+                            })
+                            .unwrap(),
+                        }
+                        let text = std::fs::read_to_string(&config).unwrap();
+                        let _: ConfigFile = toml::from_str(&text)
+                            .expect("readers must see a complete configuration");
+                    }
+                });
+            }
+        });
+        assert_eq!(load_language(), Some(Language::Zh));
+        let flare = load_flare().unwrap();
+        assert_eq!(flare.psk.as_deref(), Some("recovery-secret-19"));
+        assert_eq!(flare.devices.as_deref(), Some("eth19"));
+        assert_eq!(load_frontend().unwrap().unwrap().sources.len(), 20);
+        assert!(
+            std::fs::read_dir(territory.join("run"))
+                .unwrap()
+                .all(|entry| {
+                    entry
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_none_or(|ext| ext != "tmp")
+                })
+        );
+        std::fs::remove_dir_all(territory.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn concurrent_frontend_additions_are_not_lost() {
+        let (_guard, territory) = setup("concurrent-frontends");
+        std::thread::scope(|scope| {
+            for id in 0..12 {
+                scope.spawn(move || {
+                    update_frontend(|section| {
+                        section.sources.push(FrontendSource {
+                            id: format!("source{id}"),
+                            name: None,
+                            kind: RepositorySourceKind::Github,
+                            location: "example/frontend".into(),
+                        });
+                        Ok(())
+                    })
+                    .unwrap()
+                });
+            }
+        });
+        assert_eq!(load_frontend().unwrap().unwrap().sources.len(), 12);
+        std::fs::remove_dir_all(territory.parent().unwrap()).unwrap();
+    }
 
     /// 建立隔离测试现场:返回 (守卫, 地盘)。
     fn setup(name: &str) -> (layout::TerritoryOverride, std::path::PathBuf) {

@@ -371,10 +371,10 @@ mod tests {
 #[cfg(target_os = "linux")]
 fn run_setup(args: &SetupArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::deployment::config::{
-        FLARE_PSK_MIN_LENGTH, default_flare_section, load_flare, save_flare,
+        FLARE_PSK_MIN_LENGTH, default_flare_section, load_flare, update_flare,
     };
 
-    let mut section = load_flare().unwrap_or_else(default_flare_section);
+    let section = load_flare().unwrap_or_else(default_flare_section);
     let modifying = args.psk.is_some()
         || args.device_name.is_some()
         || args.mac.is_some()
@@ -399,36 +399,44 @@ fn run_setup(args: &SetupArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    if let Some(psk) = &args.psk {
-        if psk.len() < FLARE_PSK_MIN_LENGTH {
-            return Err(format!(
-                "the flare psk must be at least {FLARE_PSK_MIN_LENGTH} characters"
-            )
-            .into());
-        }
-        section.psk = Some(psk.clone());
-    }
-    if let Some(name) = &args.device_name {
-        section.device_name = name.clone();
-    }
-    if let Some(mac) = args.mac {
-        section.mac = Some(landscape_terrain_proto::transport::fmt_mac(&mac));
+    if args
+        .psk
+        .as_ref()
+        .is_some_and(|psk| psk.len() < FLARE_PSK_MIN_LENGTH)
+    {
+        return Err(
+            format!("the flare psk must be at least {FLARE_PSK_MIN_LENGTH} characters").into(),
+        );
     }
     if let Some(dev) = &args.dev {
         let _ = parse_devs(dev)?;
-        section.devices = Some(dev.clone());
-    }
-    if let Some(ethertype) = args.ethertype {
-        section.ethertype = ethertype;
     }
     if let Some(ports) = &args.forward_ports {
         let _ = parse_port_list(ports)?;
-        section.forward_ports = ports.clone();
     }
-    if let Some(token) = &args.token {
-        section.token = Some(token.clone());
-    }
-    save_flare(&section)?;
+    update_flare(|section| {
+        if let Some(psk) = &args.psk {
+            section.psk = Some(psk.clone());
+        }
+        if let Some(name) = &args.device_name {
+            section.device_name = name.clone();
+        }
+        if let Some(mac) = args.mac {
+            section.mac = Some(landscape_terrain_proto::transport::fmt_mac(&mac));
+        }
+        if let Some(dev) = &args.dev {
+            section.devices = Some(dev.clone());
+        }
+        if let Some(ethertype) = args.ethertype {
+            section.ethertype = ethertype;
+        }
+        if let Some(ports) = &args.forward_ports {
+            section.forward_ports = ports.clone();
+        }
+        if let Some(token) = &args.token {
+            section.token = Some(token.clone());
+        }
+    })?;
     println!("flare: daemon-hosted flare configuration updated (written to config.toml)");
     Ok(())
 }

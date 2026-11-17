@@ -22,7 +22,39 @@ pub(crate) struct InstallHarness {
     pub(crate) repository: RepositoryServer,
 }
 
+/// CI-only second filesystem: executable fixture assets stay on the ordinary
+/// test disk; metadata and portable backups use tmpfs, which may be noexec.
+pub(crate) struct TmpfsTerritory(PathBuf);
+impl Drop for TmpfsTerritory {
+    fn drop(&mut self) {
+        if std::thread::panicking()
+            && let Some(base) = std::env::var_os("LKIT_TEST_ARTIFACT_DIR")
+        {
+            let destination = PathBuf::from(base).join(self.0.file_name().unwrap());
+            let _ = lkit_test_fixture::diagnostics::export(&self.0, &destination);
+        }
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 impl InstallHarness {
+    pub(crate) fn with_tmpfs_territory(mut self) -> (Self, TmpfsTerritory) {
+        use std::os::unix::fs::MetadataExt;
+        assert!(super::e2e_enabled());
+        let directory =
+            PathBuf::from("/dev/shm").join(format!("lkit-crossfs-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let guard = TmpfsTerritory(directory.clone());
+        assert_ne!(
+            std::fs::metadata(&directory).unwrap().dev(),
+            std::fs::metadata(self.world.path("")).unwrap().dev(),
+            "cross-filesystem coverage requires distinct filesystem device IDs"
+        );
+        self.territory = directory;
+        (self, guard)
+    }
+
     pub(crate) fn new(name: &str, scenario: &str, startup_timeout_ms: u64) -> Self {
         let world = TestWorld::new(name);
         let territory = world.path("territory");

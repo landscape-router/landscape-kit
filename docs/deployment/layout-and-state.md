@@ -43,8 +43,8 @@ lkit 自身(CLI 二进制 `/usr/local/bin/lkit` 与常驻 daemon)不属于任何
 
 职责如下:
 
-- `config.toml` 是用户维护的可选配置文件,保存仓库来源偏好;`lkit` 不创建、更新或
-  删除它,见[配置文件](config.md);
+- `config.toml` 保存用户配置与偏好；语言、前端来源和恢复通道的显式配置动作按段写回，
+  daemon 首次供给恢复码也可创建文件，见[配置文件](config.md)；安装及版本切换不修改仓库来源；
 - `state/install-state.json` 只记录最近一次成功提交的安装状态,并记录 landscape
   安装根目录;
 - `transactions` 记录进行中和历史事务阶段;restore 事务还可保留旧 `data/` 和已验证
@@ -77,7 +77,8 @@ CLI 参数和环境变量都表示完整 landscape 安装根目录,不自动追�
 
 ### 路径与软链接
 
-允许 landscape 安装根目录或其父目录包含软链接,例如 `/root/.lkit` 指向其他磁盘。
+允许 landscape 安装根目录或其父目录包含软链接，例如 `/srv/landscape` 指向其他磁盘；
+固定 lkit 地盘 `/root/.lkit` 本身不允许通过软链接重定向。
 
 安装器必须同时记录:
 
@@ -149,9 +150,9 @@ landscape 地盘及敏感文件由 `root:root` 所有。包含配置、数据库
 并保留 lkit 地盘(`config.toml`、`backups/`、`run/` 与 `transactions/`、`logs/` 目录本身):
 
 - 保护 `.lkb` 存放在 `backups/`,卸载不删除,供用户取走备份;
-- 本安装的事务与事务日志在卸载完成后删除(卸载自身的事务记录一并清理):
-  卸载后不再有现场价值,新安装不关注上一个安装的残留;只按事务中的
-  `canonical_install_root` 清理本根记录,不触碰其他安装根的历史;
+- 卸载完成后清理本安装的历史事务与事务日志，保留当前卸载的 `committed` 事务作为
+  daemon 操作回执的完成依据；只按事务中的 `canonical_install_root` 清理本根记录，
+  不触碰其他安装根的历史；
 - `--keep-data` 额外保留 landscape 根的 `data/`;
 - 不存在 `--purge-root`:lkit 地盘不属于 landscape 卸载范围。
 
@@ -166,8 +167,8 @@ lkit 常驻服务(若已安装)不受卸载影响,由 `lkit self remove` 单独�
   提示先 `lkit uninstall`;
 - 状态只记录最近一次成功提交的安装;卸载或损坏状态按各命令规格处理;
 - lkit 常驻 daemon 全局唯一(`lkit.service` 单例),服务对象是固定 lkit 地盘下的
-  状态与事务,不绑定某个 landscape 根;重复安装 daemon 前必须先
-  `lkit self remove`(见[`lkit self`](../commands/self.md))。
+  状态与事务,不绑定某个 landscape 根；重复 `self install` 刷新已有受管服务，
+  外部同名注册必须在任何修改前拒绝，见 [`lkit self`](../commands/self.md)。
 
 ## 并发与原子文件操作
 
@@ -206,6 +207,13 @@ lkit 地盘与安装根可以位于不同文件系统，链接替换不经过地
 
 遇到跨文件系统 rename 时直接失败,不使用复制后删除的非原子降级。v1 保证进程正常
 退出或中断时不会提交部分状态文件,但不承诺任意断电点的完整目录级持久化。
+
+修复、切换、恢复和重初始化事务在第一次现场修改前持久化 `install_workspace`，
+固定为 `releases/.lkit-transactions/<transaction-id>`。需要原子移动的旧 data、失败 data、
+release 和静态目录置于该安装内工作目录，权限 `0700`；事务 JSON、状态快照、下载与
+可移植备份仍在 lkit 地盘。工作目录路径必须匹配事务与安装根，拒绝软链接重定向。
+字段缺失的事务按原地盘目录读取恢复依据，不猜测或移动历史现场；已有跨文件系统
+失败现场仍需按其诊断和备份处理。
 
 ## 仓库与资产下载
 
@@ -277,7 +285,7 @@ lkit 地盘与安装根可以位于不同文件系统，链接替换不经过地
 - `initialization.status` 只允许 `pending` 或 `complete`;首次安装尚未由用户启动时为 `pending`;
 - `initialization.lock_present` 是提交状态时对初始化锁的观察结果;`status: pending` 时必须为 false,`status: complete` 时必须为 true;
 - `initialization.initialized_at` 在 `pending` 时必须为 `null`,在 `complete` 时为 UTC RFC 3339;
-- `service.manager` 只允许 `systemd`;
+- `service.manager` 支持 `systemd`、`openrc`、`sysvinit`；后续操作按记录的后端校验并管理实例；
 - `registered` 表示是否已向服务管理器注册;
 - `enabled` 表示提交时是否设置为开机启动;
 - `verified` 表示最近成功事务实际启动并通过健康检查;

@@ -44,11 +44,8 @@ impl ConsoleApp {
             self.flare.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT);
             return;
         }
-        let mut section = crate::deployment::config::load_flare()
-            .unwrap_or_else(crate::deployment::config::default_flare_section);
-        section.psk = Some(psk);
-        match crate::deployment::config::save_flare(&section) {
-            Ok(()) => {
+        match crate::deployment::config::update_flare(|section| section.psk = Some(psk)) {
+            Ok(_) => {
                 self.flare.open = false;
                 self.notice = Notice::Success(crate::tr!(crate::keys::CONSOLE_FLARE_SAVED));
             }

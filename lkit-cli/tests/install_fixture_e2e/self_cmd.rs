@@ -183,6 +183,114 @@ fn self_remove_retains_origin_on_disable_or_reload_failure_and_can_retry() {
     assert_success(&remove(""));
 }
 
+#[test]
+fn self_install_and_upgrade_reject_foreign_service_without_changing_it() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-install-ownership", "healthy", 30_000);
+    harness.seed_global_lkit_binary();
+    let origin = harness.host.join("usr/local/lib/lkit/lkit.service");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    std::fs::write(&origin, b"original definition").unwrap();
+    let registration = harness.host.join("units/lkit.service");
+    std::fs::write(&registration, b"foreign unit").unwrap();
+    let binary = harness.host.join("usr/local/bin/lkit");
+    let original = std::fs::read(&binary).unwrap();
+    for action in ["install", "upgrade"] {
+        let output = harness
+            .command()
+            .args(["self", action, "--test-runtime"])
+            .arg(&harness.runtime_config)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("ownership conflict"));
+        assert_eq!(std::fs::read(&origin).unwrap(), b"original definition");
+        assert_eq!(std::fs::read(&registration).unwrap(), b"foreign unit");
+        assert_eq!(std::fs::read(&binary).unwrap(), original);
+    }
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    for line in calls.lines() {
+        let args: Vec<String> = serde_json::from_str(line).unwrap();
+        assert!(
+            !args.iter().any(|arg| matches!(
+                arg.as_str(),
+                "stop" | "start" | "restart" | "enable" | "disable" | "daemon-reload"
+            )),
+            "unexpected mutation: {args:?}"
+        );
+    }
+}
+
+#[test]
+fn repeated_self_install_restart_failure_restores_the_original_service() {
+    if !e2e_enabled() {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-repeat-recovery", "healthy", 30_000);
+    harness.seed_global_lkit_binary();
+    assert_success(
+        &harness
+            .command()
+            .args(["self", "install", "--test-runtime"])
+            .arg(&harness.runtime_config)
+            .output()
+            .unwrap(),
+    );
+    let origin = harness.host.join("usr/local/lib/lkit/lkit.service");
+    let original = format!(
+        "{}\n# preserved original service\n",
+        std::fs::read_to_string(&origin).unwrap()
+    );
+    std::fs::write(&origin, &original).unwrap();
+    std::fs::set_permissions(&origin, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let wrapper = harness.world.path("restart-failure-systemctl");
+    std::fs::write(&wrapper, b"#!/bin/sh\nif [ \"$1\" = restart ]; then \"$LKIT_TEST_REAL_SYSTEMCTL\" stop \"$2\"; echo 'injected restart failure' >&2; exit 1; fi\nexec \"$LKIT_TEST_REAL_SYSTEMCTL\" \"$@\"\n").unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&harness.runtime_config).unwrap()).unwrap();
+    let backend = runtime["systemd"]["systemctl"].as_str().unwrap().to_owned();
+    runtime["systemd"]["systemctl"] = wrapper.to_str().unwrap().into();
+    std::fs::write(
+        &harness.runtime_config,
+        serde_json::to_vec(&runtime).unwrap(),
+    )
+    .unwrap();
+    let output = harness
+        .command()
+        .args(["self", "install", "--test-runtime"])
+        .arg(&harness.runtime_config)
+        .env("LKIT_TEST_REAL_SYSTEMCTL", &backend)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("injected restart failure"));
+    assert_eq!(std::fs::read_to_string(&origin).unwrap(), original);
+    assert_eq!(
+        std::fs::metadata(&origin).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert_eq!(
+        std::fs::read_link(harness.host.join("units/lkit.service")).unwrap(),
+        origin
+    );
+    assert_success(&systemctl(&harness.world, &["is-active", "lkit.service"]));
+    assert_success(&systemctl(&harness.world, &["is-enabled", "lkit.service"]));
+    assert_success(
+        &harness
+            .command()
+            .args(["self", "remove", "--test-runtime"])
+            .arg(&harness.runtime_config)
+            .env("LKIT_TEST_REAL_SYSTEMCTL", &backend)
+            .output()
+            .unwrap(),
+    );
+}
+
 /// `self upgrade` 下载、校验、自检并原子替换全局二进制;运行中的 daemon
 /// 必须由 fake systemd 重启并实际从新文件启动。
 #[test]

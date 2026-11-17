@@ -71,6 +71,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
         && transaction.operation == super::transaction::Operation::Switch;
     let managed = asset_repair || native_switch || transaction.schema_version == 9;
     let is_systemd = managed || snapshot.service.manager == StateServiceManager::Systemd;
+    let workspace = super::transaction::workspace::prepare(root, transaction)?;
     if is_systemd {
         systemd.stop_and_wait(
             ManagedService::LandscapeRouter,
@@ -84,7 +85,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
     }
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
-    move_data_aside(&root.canonical.join("data"), &tx_dir.join("failed-data"))?;
+    move_data_aside(&root.canonical.join("data"), &workspace.join("failed-data"))?;
     let data = root.canonical.join("data");
 
     let backup_ref = transaction.backup.as_ref().ok_or_else(|| {
@@ -116,7 +117,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             0o755,
         )?;
     } else {
-        rebuild_release_from_backup(root, &tx_dir, from_version, &restore_dir)?;
+        rebuild_release_from_backup(root, &workspace, from_version, &restore_dir)?;
     }
     let geo_tmp_source = restore_dir.join("geo_tmp");
     if geo_tmp_source.is_dir() {
@@ -397,12 +398,19 @@ fn build_restored_state(
 
 pub(crate) fn restore_current(root: &InstallRoot, target: &str) -> Result<(), InstallError> {
     let current = root.canonical.join("current");
-    let tmp = layout::territory_run_dir().join(".current.tmp");
-    std::fs::create_dir_all(tmp.parent().expect("run dir has a parent"))
-        .map_err(InstallError::Io)?;
-    let _ = std::fs::remove_file(&tmp);
+    // This rename must stay on the installation filesystem. Creating a unique
+    // sibling leaves unrelated stale temporary links untouched.
+    let tmp = root
+        .canonical
+        .join(format!(".current-{}.tmp", uuid::Uuid::now_v7()));
     std::os::unix::fs::symlink(target, &tmp).map_err(InstallError::Io)?;
-    std::fs::rename(&tmp, &current).map_err(InstallError::Io)?;
+    if let Err(error) = std::fs::rename(&tmp, &current) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(InstallError::Io(error));
+    }
+    std::fs::File::open(&root.canonical)
+        .and_then(|directory| directory.sync_all())
+        .map_err(InstallError::Io)?;
     Ok(())
 }
 
@@ -510,6 +518,32 @@ mod tests {
         assert!(data.is_dir());
         assert!(!failed.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restores_current_without_territory_or_reusing_stale_temporary_links() {
+        let dir = temp_dir("current-link");
+        let territory = dir.join("unavailable-territory");
+        std::fs::write(&territory, b"not a directory").unwrap();
+        let _guard = layout::test_territory(&territory);
+        let installation = dir.join("installation");
+        std::fs::create_dir(&installation).unwrap();
+        let root = InstallRoot {
+            install_root: installation.clone(),
+            canonical: installation,
+        };
+        let stale = root.canonical.join(".current-stale.tmp");
+        std::os::unix::fs::symlink("keep-me", &stale).unwrap();
+        std::os::unix::fs::symlink("releases/2.0.0", root.canonical.join("current")).unwrap();
+        restore_current(&root, "releases/1.0.0").unwrap();
+        assert_eq!(
+            std::fs::read_link(root.canonical.join("current")).unwrap(),
+            Path::new("releases/1.0.0")
+        );
+        assert_eq!(std::fs::read_link(stale).unwrap(), Path::new("keep-me"));
+        assert_eq!(std::fs::read_dir(&root.canonical).unwrap().count(), 2);
+        assert_eq!(std::fs::read(&territory).unwrap(), b"not a directory");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]

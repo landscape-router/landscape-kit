@@ -511,14 +511,7 @@ async fn recover_switch<P: DocsProbe>(
 }
 
 fn restore_current_link(root: &InstallRoot, target: &str) -> Result<(), InstallError> {
-    let current = root.canonical.join("current");
-    let tmp = layout::territory_run_dir().join(".current.tmp");
-    std::fs::create_dir_all(tmp.parent().expect("run dir has a parent"))
-        .map_err(InstallError::Io)?;
-    let _ = std::fs::remove_file(&tmp);
-    std::os::unix::fs::symlink(target, &tmp).map_err(InstallError::Io)?;
-    std::fs::rename(&tmp, &current).map_err(InstallError::Io)?;
-    Ok(())
+    crate::backup::rollback::restore_current(root, target)
 }
 
 fn restore_pre_activation_systemd(

@@ -232,31 +232,49 @@ fn initial_flare() -> Option<FlareTask> {
 /// 绝不因配置问题切断恢复通道。
 #[cfg(target_os = "linux")]
 fn reload_flare(running: Option<FlareTask>) -> Option<FlareTask> {
-    let running = running?;
-    if running.handle.is_finished() {
-        // 服务端已退出(正常关闭或启动失败):用同一配置重新拉起。
-        running.handle.abort();
-        drop(running.shutdown);
-        let (shutdown, handle) = spawn_flare_from(&running.section)?;
-        return Some(FlareTask {
+    reload_flare_with(running, spawn_flare_from)
+}
+
+#[cfg(target_os = "linux")]
+fn reload_flare_with(
+    running: Option<FlareTask>,
+    mut spawn: impl FnMut(
+        &crate::deployment::config::FlareSection,
+    ) -> Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    )>,
+) -> Option<FlareTask> {
+    let Some(running) = running else {
+        let section = match effective_flare_config() {
+            Ok(section) => section,
+            Err(error) => {
+                eprintln!("lkit daemon: cannot start flare server; will retry: {error}");
+                return None;
+            }
+        };
+        return spawn(&section).map(|(shutdown, handle)| FlareTask {
             shutdown,
             handle,
-            section: running.section,
+            section,
         });
-    }
-    let Some(current) = crate::deployment::config::load_flare() else {
-        // 配置被删除或损坏:保持现役任务运行。
-        return Some(running);
     };
-    if !flare_needs_restart(&running.section, &current) {
+    // Read corrections before retrying a failed task. Invalid/cleared configuration
+    // retains the last usable section, including while that task is being retried.
+    let current = crate::deployment::config::load_flare().filter(|section| section.psk.is_some());
+    if !running.handle.is_finished()
+        && !current
+            .as_ref()
+            .is_some_and(|section| flare_needs_restart(&running.section, section))
+    {
         return Some(running);
     }
+    let section = current.unwrap_or(running.section);
     drop(running.shutdown);
-    let (shutdown, handle) = spawn_flare_from(&current)?;
-    Some(FlareTask {
+    spawn(&section).map(|(shutdown, handle)| FlareTask {
         shutdown,
         handle,
-        section: current,
+        section,
     })
 }
 
@@ -281,16 +299,20 @@ fn flare_needs_restart(
 /// 生成时打印一次 psk,提示记下保存。
 #[cfg(target_os = "linux")]
 fn effective_flare_config() -> Result<crate::deployment::config::FlareSection, InstallError> {
-    use crate::deployment::config::{default_flare_section, generate_psk, load_flare, save_flare};
+    use crate::deployment::config::{generate_psk, load_flare, update_flare};
 
-    let mut section = match load_flare() {
-        Some(section) => section,
-        None => default_flare_section(),
-    };
-    if section.psk.is_none() {
-        let psk = generate_psk();
-        section.psk = Some(psk.clone());
-        save_flare(&section)?;
+    if let Some(section) = load_flare().filter(|section| section.psk.is_some()) {
+        return Ok(section);
+    }
+    let mut generated = false;
+    let section = update_flare(|section| {
+        if section.psk.is_none() {
+            section.psk = Some(generate_psk());
+            generated = true;
+        }
+    })?;
+    if generated {
+        let psk = section.psk.as_deref().expect("generated recovery psk");
         println!(
             "lkit daemon: generated flare recovery psk (written to {}); a later `lkit install` or `lkit flare setup` replaces it: {psk}",
             layout::territory_config_file().display()
@@ -660,6 +682,90 @@ mod tests {
         );
         drop(guard);
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fake_flare_task() -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (shutdown, receiver) = tokio::sync::oneshot::channel();
+        (
+            shutdown,
+            tokio::spawn(async move {
+                let _ = receiver.await;
+            }),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn failed_flare_restarts_with_corrected_configuration() {
+        let (_guard, temp) = territory("flare-corrected");
+        let old = crate::deployment::config::update_flare(|section| {
+            section.psk = Some("recovery-secret".into());
+            section.devices = Some("missing-device".into());
+        })
+        .unwrap();
+        let (shutdown, _) = tokio::sync::oneshot::channel();
+        let mut failed = FlareTask {
+            shutdown,
+            handle: tokio::spawn(async {}),
+            section: old,
+        };
+        (&mut failed.handle).await.unwrap();
+        crate::deployment::config::update_flare(|section| section.devices = Some("eth0".into()))
+            .unwrap();
+        let restarted = reload_flare_with(Some(failed), |config| {
+            assert_eq!(config.devices.as_deref(), Some("eth0"));
+            Some(fake_flare_task())
+        })
+        .unwrap();
+        assert_eq!(restarted.section.devices.as_deref(), Some("eth0"));
+        drop(restarted.shutdown);
+        restarted.handle.await.unwrap();
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn absent_flare_retries_after_configuration_becomes_writable() {
+        let (_guard, temp) = territory("flare-retry-initial");
+        let config = layout::territory_config_file();
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        // A directory at the config path makes initial persistence fail without
+        // invoking any real service or depending on root permission semantics.
+        std::fs::create_dir(&config).unwrap();
+        let missing = reload_flare_with(None, |_| {
+            panic!("unpersisted credentials must not start a task")
+        });
+        assert!(missing.is_none());
+        std::fs::remove_dir(&config).unwrap();
+        let running = reload_flare_with(missing, |_| Some(fake_flare_task())).unwrap();
+        assert_eq!(
+            crate::deployment::config::load_flare().unwrap(),
+            running.section
+        );
+        drop(running.shutdown);
+        running.handle.await.unwrap();
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn invalid_flare_configuration_preserves_the_live_task() {
+        let (_guard, temp) = territory("flare-keep-live");
+        let running = reload_flare_with(None, |_| Some(fake_flare_task())).unwrap();
+        let task_id = running.handle.id();
+        std::fs::write(layout::territory_config_file(), "invalid toml [[[").unwrap();
+        let kept = reload_flare_with(Some(running), |_| {
+            panic!("live recovery channel must be retained")
+        })
+        .unwrap();
+        assert_eq!(kept.handle.id(), task_id);
+        drop(kept.shutdown);
+        kept.handle.await.unwrap();
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[cfg(target_os = "linux")]

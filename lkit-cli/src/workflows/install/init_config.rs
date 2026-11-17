@@ -18,22 +18,7 @@ pub(crate) fn activate_current(
     root: &InstallRoot,
     version: &semver::Version,
 ) -> Result<(), InstallError> {
-    let current = root.canonical.join("current");
-    // Rename must stay on the installation filesystem, which may differ from
-    // the daemon territory. A unique sibling also avoids touching stale files.
-    let tmp_link = root
-        .canonical
-        .join(format!(".current-{}.tmp", uuid::Uuid::now_v7()));
-    std::os::unix::fs::symlink(format!("releases/{version}"), &tmp_link)
-        .map_err(InstallError::Io)?;
-    if let Err(error) = std::fs::rename(&tmp_link, &current) {
-        let _ = std::fs::remove_file(&tmp_link);
-        return Err(InstallError::Io(error));
-    }
-    std::fs::File::open(&root.canonical)
-        .and_then(|directory| directory.sync_all())
-        .map_err(InstallError::Io)?;
-    Ok(())
+    crate::backup::rollback::restore_current(root, &format!("releases/{version}"))
 }
 
 #[derive(Serialize)]

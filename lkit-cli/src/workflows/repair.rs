@@ -71,6 +71,7 @@ pub(crate) async fn repair_static(
     };
     let mut transaction = TransactionFile::new_repair_static(root)?;
     transaction.schema_version = 7;
+    crate::deployment::transaction::workspace::select(&mut transaction);
     control::associate(&transaction)?;
     super::transaction::begin(root, &transaction)?;
     let live_static = root.canonical.join("current/static");
@@ -93,6 +94,10 @@ pub(crate) async fn repair_static(
             Ok((release, custom_source.is_none()))
         }).await?;
         control::phase(Stage::Preparing)?;
+        let workspace = super::transaction::workspace::prepare(root, &transaction)?;
+        let staged_static = workspace.join("static-new");
+        rollback::copy_tree_into(&new_static, &staged_static)?;
+        super::repair_snapshot::sync_tree(&staged_static)?;
         rollback::copy_tree_into(&live_static, &backup_dir)?;
         transaction.static_backup = Some(StaticBackupRef {
             path: format!("transactions/{}/static-backup", transaction.transaction_id),
@@ -107,11 +112,11 @@ pub(crate) async fn repair_static(
         if official_restored {
             refresh_version_static_zip(root, &state.active_version, &tx_dir.join("static.zip"))?;
         }
-        let replaced = tx_dir.join("static-replaced");
+        let replaced = workspace.join("static-replaced");
         std::fs::rename(&live_static, &replaced).map_err(InstallError::Io)?;
         #[cfg(feature = "test-support")]
         control::checkpoint("static-removed")?;
-        std::fs::rename(&new_static, &live_static).map_err(|error| {
+        std::fs::rename(&staged_static, &live_static).map_err(|error| {
             let _ = std::fs::rename(&replaced, &live_static);
             InstallError::Io(error)
         })?;
@@ -193,6 +198,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
 
     let mut transaction = TransactionFile::new_repair_binary(root, &active)?;
     transaction.schema_version = 7;
+    crate::deployment::transaction::workspace::select(&mut transaction);
     control::associate(&transaction)?;
     super::transaction::begin(root, &transaction)?;
     let mut activated = false;
@@ -200,6 +206,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
     let result: Result<(), InstallError> = async {
         let tx_dir = tx_dir(root, &transaction);
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
+        super::transaction::workspace::prepare(root, &transaction)?;
         let new_binary_dir = tx_dir.join("new-binary");
         std::fs::create_dir_all(&new_binary_dir).map_err(InstallError::Io)?;
         let built = control::download(async {
@@ -535,6 +542,7 @@ pub(crate) fn cleanup_preparing(
     root: &InstallRoot,
     tx: &TransactionFile,
 ) -> Result<(), InstallError> {
+    super::transaction::workspace::cleanup_preparing(root, tx)?;
     let dir = tx_dir(root, tx);
     match std::fs::remove_dir_all(&dir) {
         Ok(()) => {}
@@ -1675,7 +1683,11 @@ mod tests {
         let tx_dir =
             layout::territory_transactions_dir().join(tx["transaction_id"].as_str().unwrap());
         assert!(
-            tx_dir.join("failed-data").is_dir(),
+            install_root
+                .canonical
+                .join(tx["install_workspace"].as_str().unwrap())
+                .join("failed-data")
+                .is_dir(),
             "the interrupted data must be preserved for manual recovery"
         );
         assert!(

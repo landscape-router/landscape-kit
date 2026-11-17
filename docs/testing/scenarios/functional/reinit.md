@@ -4,12 +4,18 @@
 
 **reinit 拒绝未安装、服务后端不受支持 或未接管的安装**
 
-- 测试层：CLI fixture E2E
+- 测试层：Rust 单元、CLI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[reinit 命令规格](../../../commands/reinit.md)、[管理入口](../../../../lkit-cli/src/commands/reinit.rs)、[完整 CLI E2E](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)
 - 说明：无有效状态返回参数错误（退出码 `2`，不写任何文件）；宿主网络服务未接管
   返回参数错误（退出码 `2`，不创建 reinit 事务、状态不动）。
 - 说明：systemd、OpenRC 和 SysVinit 均使用 daemon 恢复契约。
+- 证据：[接管归属单元](../../../../lkit-cli/src/network/takeover.rs)（`eligibility_tests`）、
+  [宿主服务状态单元](../../../../lkit-cli/src/service/host_network.rs)、
+  [reinit fixture](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)（`reinit_rejects_reactivated_host_manager_after_committed_takeover`、`reinit_accepts_proven_takeover_without_installed_host_network_services`）。
+- 说明：已提交接管后重新启动 NetworkManager 会在创建 reinit 事务和修改 data 前拒绝；
+  没有宿主网络服务的有效接管仍可重初始化。单元覆盖一个服务停用而另一个仍活动或可启动、
+  runtime mask、后端变化、历史普通安装/迁移/卸载边界、损坏事务和外国安装根历史。
 
 ## REI-02
 

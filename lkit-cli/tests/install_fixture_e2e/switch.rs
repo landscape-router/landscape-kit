@@ -394,7 +394,8 @@ fn switch_rollback_failure_blocks_next_request_until_backup_is_repaired() {
         return;
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let h = InstallHarness::new("switch-rollback-fault", "healthy", 30_000);
+    let (h, _territory) =
+        InstallHarness::new("switch-rollback-fault", "healthy", 30_000).with_tmpfs_territory();
     assert_success(&h.run());
     let next = RepositoryServer::start(repository_files_for("2.0.0"));
     let runtime = h.daemon_runtime();

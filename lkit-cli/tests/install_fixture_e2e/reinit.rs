@@ -32,7 +32,8 @@ fn reinit_rebuilds_network_config_and_commits_after_confirmation() {
         return;
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let harness = InstallHarness::new("reinit", "healthy", 10_000);
+    let (harness, _territory) =
+        InstallHarness::new("reinit", "healthy", 10_000).with_tmpfs_territory();
     harness.seed_host_services();
     let output = harness.run_takeover();
     assert!(
@@ -526,4 +527,73 @@ fn native_reinit_recovers_activation_and_releases_the_queue_for_network_confirma
         assert_eq!(reinit_record()["id"], before["id"]);
         assert_eq!(reinit_record()["transaction_id"], before["transaction_id"]);
     }
+}
+
+#[test]
+fn reinit_rejects_reactivated_host_manager_after_committed_takeover() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reinit-host-manager-drift", "healthy", 10_000);
+    harness.seed_host_services();
+    assert_success(&harness.run_takeover());
+    assert_success(&harness.network_command(&["confirm"]));
+    let state = std::fs::read(harness.state_path()).unwrap();
+    let data = std::fs::read(harness.install_root.join("data/landscape_init.toml")).unwrap();
+    let before = transaction_count(&harness.territory);
+    // Firewalld remains stopped, but that alone must not authorize reinit.
+    assert_success(&systemctl(
+        &harness.world,
+        &["unmask", "NetworkManager.service"],
+    ));
+    assert_success(&systemctl(
+        &harness.world,
+        &["start", "NetworkManager.service"],
+    ));
+    let output = run_reinit(&harness, &harness.password);
+    assert!(
+        !output.status.success(),
+        "reactivated host manager must block reinit"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("NetworkManager.service"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(transaction_count(&harness.territory), before);
+    assert_eq!(std::fs::read(harness.state_path()).unwrap(), state);
+    assert_eq!(
+        std::fs::read(harness.install_root.join("data/landscape_init.toml")).unwrap(),
+        data
+    );
+}
+
+#[test]
+fn reinit_accepts_proven_takeover_without_installed_host_network_services() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("reinit-no-host-services", "healthy", 10_000);
+    assert_success(&harness.run_takeover());
+    assert_success(&harness.network_command(&["confirm"]));
+    let installed = transaction_of_operation(&harness.territory, "install");
+    assert!(
+        installed["network_takeover"]["host_services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|service| service["installed"] == false)
+    );
+    assert_success(&run_reinit(&harness, &harness.password));
+    assert_eq!(
+        transaction_of_operation(&harness.territory, "reinit")["phase"],
+        "awaiting_network_confirmation"
+    );
+    assert_success(&harness.network_command(&["rollback"]));
+    assert_eq!(
+        transaction_of_operation(&harness.territory, "reinit")["phase"],
+        "rolled_back"
+    );
 }

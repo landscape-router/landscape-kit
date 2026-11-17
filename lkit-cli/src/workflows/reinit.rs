@@ -84,6 +84,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
     confirm_reinit(options.confirm, args, state, network)?;
 
     let mut transaction = super::transaction::TransactionFile::new_reinit(root, &version)?;
+    crate::deployment::transaction::workspace::select(&mut transaction);
     if super::operation_control::active() {
         transaction.schema_version = 11;
         super::operation_control::associate(&transaction)?;
@@ -144,6 +145,7 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
 
     let mut activated = false;
     let result: Result<(), InstallError> = async {
+        let workspace = super::transaction::workspace::prepare(root, &transaction)?;
         super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
         super::operation_control::phase(crate::daemon_operations::Stage::Stopping)?;
 
@@ -161,7 +163,10 @@ pub(crate) async fn reinit_installation<P: DocsProbe>(
 
         activated = true;
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
-        rollback::move_data_aside(&root.canonical.join("data"), &tx_dir.join("previous-data"))?;
+        rollback::move_data_aside(
+            &root.canonical.join("data"),
+            &workspace.join("previous-data"),
+        )?;
         let data = root.canonical.join("data");
         std::fs::create_dir_all(&data).map_err(InstallError::Io)?;
         write_file_atomic(
@@ -465,7 +470,8 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
     }
     let tx_dir = layout::territory_transactions_dir().join(&transaction.transaction_id);
     let data = root.canonical.join("data");
-    let previous_data = tx_dir.join("previous-data");
+    let previous_data =
+        super::transaction::workspace::directory(root, transaction)?.join("previous-data");
     restore_previous_data(&data, &previous_data)?;
     if transaction.network_takeover.is_some() {
         std::fs::write(

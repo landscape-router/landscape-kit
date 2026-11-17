@@ -61,3 +61,21 @@
   Docker E2E S8（确定性 preparing 现场后 `lkit switch` 恢复并标记 failed）与
   S12（restore verifying 阶段 kill 后 `lkit reconcile` 幂等恢复并还原 `data`），
   scripts/docker/lifecycle/run-scenarios.sh
+
+## RB-08
+
+**安装根与 lkit 地盘处于不同文件系统时，修复、恢复和失败回滚保持可用**
+
+- 测试层：Rust 隔离单元、CI Fixture E2E
+- 状态：`已覆盖`
+- 证据：[工作目录校验](../../../../lkit-cli/src/deployment/transaction/workspace.rs)、
+  [current 恢复](../../../../lkit-cli/src/backup/rollback.rs)、
+  [修复成功](../../../../lkit-cli/tests/install_fixture_e2e/repair.rs)、
+  [restore 中断恢复](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、
+  [switch 恢复失败后重试](../../../../lkit-cli/tests/install_fixture_e2e/switch.rs)、
+  [reinit 确认](../../../../lkit-cli/tests/install_fixture_e2e/reinit.rs)。
+- 说明：CI 把地盘放在临时 tmpfs 目录、安装根放在普通测试磁盘，并断言二者设备 ID
+  不同；不把所有路径放在同一个临时目录来代替跨文件系统验证。验证静态和后端修复
+  成功、restore 激活后崩溃恢复旧数据及提交回执、switch 恢复暂时失败后再次恢复，
+  以及 reinit 进入确认并提交。单元覆盖工作目录身份、权限、软链接拒绝、字段缺失的
+  事务兼容读取，以及 current 恢复不依赖地盘且保留无关临时链接。系统场景只由 CI 执行。

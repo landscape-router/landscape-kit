@@ -122,6 +122,7 @@ async fn restore_prepared<P: DocsProbe>(
         .map_err(|error| InstallError::InvalidBackup(format!("invalid backup version: {error}")))?;
     control::phase(Stage::Preparing)?;
     let mut transaction = TransactionFile::new_restore(root, &from_version, &target_version)?;
+    crate::deployment::transaction::workspace::select(&mut transaction);
     if native {
         transaction.schema_version = 9;
         control::associate(&transaction)?;
@@ -213,6 +214,7 @@ async fn restore_prepared<P: DocsProbe>(
 
     let mut activated = false;
     let result: Result<(), InstallError> = async {
+        let workspace = super::transaction::workspace::prepare(root, &transaction)?;
         if is_systemd {
             super::transaction::mark_phase(root, &transaction, Phase::Stopping)?;
             control::phase(Stage::Stopping)?;
@@ -245,11 +247,11 @@ async fn restore_prepared<P: DocsProbe>(
         std::fs::create_dir_all(&tx_dir).map_err(InstallError::Io)?;
         rollback_util::move_data_aside(
             &root.canonical.join("data"),
-            &tx_dir.join("previous-data"),
+            &workspace.join("previous-data"),
         )?;
         rollback_util::rebuild_release_from_backup(
             root,
-            &tx_dir,
+            &workspace,
             &target_version.to_string(),
             &restore_dir,
         )?;

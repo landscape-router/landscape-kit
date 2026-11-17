@@ -278,6 +278,16 @@ fn query_registration_at(path: &Path) -> Result<SystemRegistration, InstallError
 }
 
 fn register_at(path: &Path, origin: &Path) -> Result<(), InstallError> {
+    match query_registration_at(path)? {
+        SystemRegistration::Missing => {}
+        SystemRegistration::Symlink { target } if target == origin => return Ok(()),
+        _ => {
+            return Err(InstallError::Systemd(format!(
+                "{} is an ownership conflict; refusing to overwrite",
+                path.display()
+            )));
+        }
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(InstallError::Io)?;
     }
@@ -401,6 +411,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn registration_rejects_foreign_files_and_links_without_overwriting() {
+        let dir = std::env::temp_dir().join(format!(
+            "lkit-registration-conflict-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("service");
+        let origin = dir.join("origin");
+        std::fs::write(&origin, "managed").unwrap();
+        std::fs::write(&path, "external").unwrap();
+        assert!(register_at(&path, &origin).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "external");
+        std::fs::remove_file(&path).unwrap();
+        let external = dir.join("external");
+        symlink(&external, &path).unwrap();
+        assert!(register_at(&path, &origin).is_err());
+        assert_eq!(std::fs::read_link(&path).unwrap(), external);
+        std::fs::remove_file(&path).unwrap();
+        register_at(&path, &origin).unwrap();
+        register_at(&path, &origin).unwrap();
+        assert_eq!(std::fs::read_link(&path).unwrap(), origin);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

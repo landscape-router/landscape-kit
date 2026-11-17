@@ -4,16 +4,15 @@
 
 ## SS-01
 
-**`self install` 注册全局 daemon：`ExecStart=/usr/local/bin/lkit daemon`，启用并启动**
+**`self install` 注册全局 daemon 监管入口，启用并启动**
 
 - 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
 - 状态：`已覆盖`
 - 证据：[`lkit self`](../../../commands/self.md)
 - 说明：断言全局 unit 原件 `/usr/local/lib/lkit/lkit.service` 的 `ExecStart` 指向
-  `/usr/local/bin/lkit daemon`、fake systemctl 真实拉起 `lkit daemon`（`is-active`/
+  `/usr/local/bin/lkit daemon --supervise`、fake systemctl 真实拉起监管进程与 daemon（`is-active`/
   `is-enabled`/`main.pid` 存活、daemon 写入自身 pidfile 到 `/root/.lkit/run/lkit.pid`）。
-- 缺口：`--install-dir` 已从 `self install` 移除，原断言的 `<root>/service/lkit` 复制
-  与 `--config-dir` 参数不再存在。
+- 说明：`self install` 不接受安装根参数，服务定义使用全局 CLI 二进制。
 
 ## SS-02
 
@@ -78,13 +77,13 @@
 - 证据：[`self_cmd.rs`](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[`lkit self`](../../../commands/self.md#upgrade)
 ## SS-09
 
-**daemon 全局唯一：lkit 地盘 pidfile 存活实例存在时拒绝启动**
+**daemon 全局唯一：地盘实例锁拒绝第二个 daemon**
 
 - 测试层：Rust workflow、Fixture E2E（待补充）
 - 状态：`部分覆盖`
 - 证据：[`lkit self`](../../../commands/self.md)、[安装布局与状态](../../../deployment/layout-and-state.md)
-- 说明：同一 pidfile 存活实例存在时 `self install`/daemon 启动拒绝并返回失败，不产生
-  第二个 daemon。
+- 说明：daemon 以地盘实例锁保证单例，陈旧 PID 文件不阻止恢复；重复 `self install`
+  刷新原服务，不产生第二个并行 daemon。
 ## SS-10
 
 **`self install` 供给急救恢复码：daemon 启动前写入 `[flare]` 段**
@@ -124,3 +123,18 @@
   选项；draft 和不匹配的 API tag 被拒绝。单元测试不启动子进程，只用临时回环端口。
   Fixture E2E 定义稳定/RC 自动发现后的完整校验、自检和替换链路，以及无 stable 时
   默认失败、原二进制和下载请求保持不变。
+
+## SS-13
+
+**自身服务注册冲突拒绝修改，重复安装失败恢复原服务**
+
+- 测试层：Rust 单元（临时目录、注入服务管理器）、Fixture E2E（CI）
+- 状态：`已覆盖`
+- 证据：[self 管理器与文件断言](../../../../lkit-cli/src/commands/self.rs)、
+  [OpenRC 注册](../../../../lkit-cli/src/service/openrc.rs)、[SysVinit 注册](../../../../lkit-cli/src/service/sysvinit.rs)、
+  [self fixture](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)。
+- 说明：外部文件、外部注册链接、定义原件符号链接均在修改前拒绝；升级刷新不得重启
+  外部服务。重复安装的 restart、启动或就绪验证失败恢复旧定义、权限和启用/运行状态；
+  指向受管路径的悬空注册可修复，失败保留新定义以便重试；首次安装失败清理新建服务，
+  清理失败保留原件。OpenRC/SysVinit 注册冲突测试只读写
+  临时目录；服务动作单测使用注入管理器，真实子进程场景由 CI fixture 执行。

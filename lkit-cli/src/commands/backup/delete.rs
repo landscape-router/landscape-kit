@@ -80,8 +80,11 @@ pub(super) fn run_delete(args: &BackupDelete) -> ExitCode {
 
 /// 删除 lkit 地盘备份目录下的备份：ID 必须已通过格式校验，目标必须是
 /// root 所有、权限不宽于 `0600` 的普通文件（不跟随符号链接）。CLI 与
-/// 交互控制台共用。
+/// 交互控制台共用；调用方必须持有安装锁直到删除完成。
 pub(crate) fn delete_backup(_root: &InstallRoot, backup_id: &str) -> Result<(), InstallError> {
+    if !backup_id_format_ok(backup_id) {
+        return Err(InstallError::ParameterUsage("invalid backup ID".into()));
+    }
     let path = crate::deployment::layout::territory_backups_dir().join(format!("{backup_id}.lkb"));
     if !path.is_file() {
         return Err(plan::InstallError::InvalidBackup(format!(
@@ -90,13 +93,141 @@ pub(crate) fn delete_backup(_root: &InstallRoot, backup_id: &str) -> Result<(), 
         )));
     }
     validate_backup_file(&path)?;
+    ensure_unreferenced(backup_id)?;
     std::fs::remove_file(&path).map_err(plan::InstallError::Io)
+}
+
+fn ensure_unreferenced(backup_id: &str) -> Result<(), InstallError> {
+    use crate::deployment::{layout, transaction};
+    let entries = match std::fs::read_dir(layout::territory_transactions_dir()) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    let backup_path = format!("backups/{backup_id}.lkb");
+    for entry in entries {
+        let entry = entry.map_err(InstallError::Io)?;
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        if !entry.file_type().map_err(InstallError::Io)?.is_file() {
+            return Err(InstallError::CorruptedTransaction(format!(
+                "{} is not a regular transaction file; cannot safely delete backups",
+                path.display()
+            )));
+        }
+        let bytes = std::fs::read(&path).map_err(InstallError::Io)?;
+        let tx: transaction::TransactionFile = serde_json::from_slice(&bytes).map_err(|error| {
+            InstallError::CorruptedTransaction(format!(
+                "{}: {error}; cannot safely delete backups",
+                path.display()
+            ))
+        })?;
+        transaction::validate_transaction(&tx)?;
+        if path.file_stem().and_then(|name| name.to_str()) != Some(&tx.transaction_id) {
+            return Err(InstallError::CorruptedTransaction(
+                "transaction filename identity mismatch".into(),
+            ));
+        }
+        if !tx.phase.is_terminal()
+            && [tx.backup.as_ref(), tx.restore_backup.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(|reference| reference.backup_id == backup_id || reference.path == backup_path)
+        {
+            return Err(InstallError::InvalidBackup(format!(
+                "backup {backup_id} is required by unfinished transaction {} ({})",
+                tx.transaction_id,
+                tx.phase.key()
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn recovery_references_protect_backups_until_transaction_finishes() {
+        use crate::deployment::transaction::{BackupRef, Phase, TransactionFile};
+        let (_guard, territory) = setup("delete-recovery");
+        let root = discover_root().unwrap().unwrap();
+        let backup_id = "20260807-131500-ab12cd34";
+        let file = territory.join(format!("backups/{backup_id}.lkb"));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"protected backup").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut tx = TransactionFile::new_switch(
+            &root,
+            &semver::Version::new(1, 2, 3),
+            &semver::Version::new(2, 0, 0),
+        )
+        .unwrap();
+        tx.phase = Phase::RollingBack;
+        tx.backup = Some(BackupRef {
+            backup_id: backup_id.into(),
+            path: format!("backups/{backup_id}.lkb"),
+            sha256: "a".repeat(64),
+        });
+        crate::deployment::transaction::validate_transaction(&tx).unwrap();
+        let tx_path = territory.join(format!("transactions/{}.json", tx.transaction_id));
+        std::fs::create_dir_all(tx_path.parent().unwrap()).unwrap();
+        std::fs::write(&tx_path, serde_json::to_vec(&tx).unwrap()).unwrap();
+        let error = delete_backup(&root, backup_id).unwrap_err().to_string();
+        assert!(error.contains(&tx.transaction_id));
+        assert!(file.exists());
+
+        tx.phase = Phase::RolledBack;
+        std::fs::write(&tx_path, serde_json::to_vec(&tx).unwrap()).unwrap();
+        delete_backup(&root, backup_id).unwrap();
+        assert!(!file.exists());
+        std::fs::remove_dir_all(territory.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn restore_targets_and_unreadable_transaction_history_block_deletion() {
+        use crate::deployment::transaction::{BackupRef, TransactionFile};
+        let (_guard, territory) = setup("delete-restore-reference");
+        let root = discover_root().unwrap().unwrap();
+        let backup_id = "20260807-131500-ab12cd34";
+        let file = territory.join(format!("backups/{backup_id}.lkb"));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"target backup").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut tx = TransactionFile::new_switch(
+            &root,
+            &semver::Version::new(1, 2, 3),
+            &semver::Version::new(2, 0, 0),
+        )
+        .unwrap();
+        tx.operation = crate::deployment::transaction::Operation::Restore;
+        tx.restore_backup = Some(BackupRef {
+            backup_id: backup_id.into(),
+            path: format!("backups/{backup_id}.lkb"),
+            sha256: "a".repeat(64),
+        });
+        crate::deployment::transaction::validate_transaction(&tx).unwrap();
+        let tx_path = territory.join(format!("transactions/{}.json", tx.transaction_id));
+        std::fs::create_dir_all(tx_path.parent().unwrap()).unwrap();
+        std::fs::write(&tx_path, serde_json::to_vec(&tx).unwrap()).unwrap();
+        assert!(
+            delete_backup(&root, backup_id)
+                .unwrap_err()
+                .to_string()
+                .contains("required by unfinished")
+        );
+        std::fs::write(&tx_path, b"broken transaction").unwrap();
+        assert!(matches!(
+            delete_backup(&root, backup_id),
+            Err(InstallError::CorruptedTransaction(_))
+        ));
+        assert!(file.exists());
+        std::fs::remove_dir_all(territory.parent().unwrap()).unwrap();
+    }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(

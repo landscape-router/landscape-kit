@@ -18,9 +18,14 @@ lkit [--non-interactive] reinit
   CLI 在交互终端收集网络计划，TUI 将已确认的结构化计划直接提交；
 - 安装状态存在且已提交;lkit 地盘无有效状态时返回参数错误并提示先执行
   `lkit install`;
-- 服务后端为 systemd、OpenRC 或 SysVinit,且该后端管理的宿主网络服务已被接管
-  (停止且禁用；systemd 同时保留对应 mask 状态);
-  未接管的安装提示不支持,不回退、不隐式接管;
+- 服务后端为 systemd、OpenRC 或 SysVinit，并与安装状态一致。当前安装必须有同一
+  canonical 根的已提交 install/reinit 网络接管事务作为依据；更新或修复不撤销该依据，
+  后续已提交的普通安装、迁移或卸载使更早的接管记录失效。损坏或缺失的依据不能靠
+  “某个网络服务已停止”推断补齐；未接管的安装不隐式接管；
+- 逐一复核当前后端全部已安装宿主网络服务及 networkd 配套 socket、wait-online 实例。
+  它们必须停止，systemd 保持 persistent mask，OpenRC/SysVinit 无开机链接；仅停用
+  一个服务、临时 mask 或重新启用任一服务均不能通过。没有已安装宿主网络服务时，
+  有效的已提交接管依据仍允许 reinit；
 - 无未完成事务;存在待确认的网络接管事务时阻断并提示使用 `lkit network status`、
   `lkit network confirm` 或 `lkit network rollback`。
 
@@ -72,7 +77,7 @@ reinit 不隐式改写服务定义。
    [`--takeover-network`](install.md),见[网络重配置](../network/reinit.md));
 3. 显示破坏性计划摘要并确认(非交互模式由 `--yes` 代替);
 4. 提交绑定安装根、安装状态摘要、当前版本与网络计划的操作；daemon 取得安装锁后
-   重新校验安装和服务归属，再创建保护 `.lkb`(`auto: true`,备注 `reinit 前自动备份`),必须完整落盘并自校验后才能
+   重新校验安装、接管依据和全部宿主服务停用状态，再创建保护 `.lkb`(`auto: true`,备注 `reinit 前自动备份`),必须完整落盘并自校验后才能
    停止服务;`--allow-no-backup` 才允许跳过并记录 `no_backup: true`;
 5. 创建 `preparing` 事务并记录 `systemd_before`、`/etc/resolv.conf` 备份与状态快照;
 6. 更新为 `stopping` 后停止服务并确认进程退出;
@@ -101,8 +106,9 @@ reinit 不隐式改写服务定义。
 
 ## 控制台
 
-管理控制台侧栏提供 Reinit 面板,入口与 CLI 等价:未安装、服务后端不受支持或宿主网络服务
-未接管时禁用。面板复用网络向导与凭据表单,确认摘要后提交结构化操作，由 daemon 直接执行,
+管理控制台侧栏提供 Reinit 面板：未安装、服务后端不受支持或缺少已提交接管依据时禁用。
+渲染只读取持久化身份，不逐帧调用宿主服务管理器。提交前与 daemon 持锁执行时分别
+复核全部宿主服务停用状态。面板复用网络向导与凭据表单,确认摘要后提交结构化操作，由 daemon 直接执行,
 操作期间显示进度;进入 `awaiting_network_confirmation` 后显示待确认提示屏,与网络
 接管一致(可内联运行 `lkit network confirm`)。
 

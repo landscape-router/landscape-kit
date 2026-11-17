@@ -45,11 +45,7 @@ pub(crate) async fn run_operation(
         &std::fs::read_to_string(origin).map_err(InstallError::Io)?,
         &root.canonical,
     )?;
-    if !crate::workflows::uninstall::host_network_services_masked(manager) {
-        return Err(InstallError::Preflight(
-            "reinit requires a network takeover installation".into(),
-        ));
-    }
+    crate::network::takeover::require_existing_takeover(&root, &installed, manager)?;
     crate::network::takeover::preflight(runtime)?;
     crate::network::takeover::verify_interfaces(&args.network, runtime)?;
     let credentials = Credentials {

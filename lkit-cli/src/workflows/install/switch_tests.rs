@@ -1055,8 +1055,11 @@ async fn switches_and_rolls_back_via_lkb_on_health_failure() {
     assert_eq!(tx["operation"], "switch");
     let tx_dir = crate::deployment::layout::territory_transactions_dir()
         .join(tx["transaction_id"].as_str().unwrap());
-    assert!(tx_dir.join("failed-data").is_dir());
-    assert!(tx_dir.join("replaced-release").is_dir());
+    let workspace = root
+        .canonical
+        .join(tx["install_workspace"].as_str().unwrap());
+    assert!(workspace.join("failed-data").is_dir());
+    assert!(workspace.join("replaced-release").is_dir());
     assert!(tx_dir.join("restore").is_dir());
     assert!(
         crate::deployment::layout::territory_backups_dir()
@@ -1184,11 +1187,17 @@ async fn switch_rollback_failure_returns_rollback_failed_and_preserves_diagnosti
     let tx_dir = crate::deployment::layout::territory_transactions_dir()
         .join(tx["transaction_id"].as_str().unwrap());
     assert!(
-        tx_dir.join("failed-data").is_dir(),
+        root.canonical
+            .join(tx["install_workspace"].as_str().unwrap())
+            .join("failed-data")
+            .is_dir(),
         "the interrupted data must be preserved for manual recovery"
     );
     assert!(
-        tx_dir.join("replaced-release").is_dir(),
+        root.canonical
+            .join(tx["install_workspace"].as_str().unwrap())
+            .join("replaced-release")
+            .is_dir(),
         "the failed target release must be preserved for manual recovery"
     );
     assert!(

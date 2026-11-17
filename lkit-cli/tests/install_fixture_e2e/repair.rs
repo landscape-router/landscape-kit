@@ -67,7 +67,8 @@ fn repairs_assets_directly_in_daemon_and_keeps_terminal_results_across_restart()
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for target in ["static", "binary"] {
-        let h = InstallHarness::new("repair-assets", "healthy", 30_000);
+        let (h, _territory) =
+            InstallHarness::new("repair-assets", "healthy", 30_000).with_tmpfs_territory();
         assert_success(&h.run());
         let (asset, original) = alter_asset(&h, target);
         let runtime = h.daemon_runtime();

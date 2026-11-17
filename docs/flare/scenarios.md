@@ -163,6 +163,8 @@
 - 状态：`已覆盖`
 - 证据：[e2e-daemon.sh](../../scripts/flare/e2e-daemon.sh)
 - 说明：服务端容器运行 `lkit daemon`（`LKIT_TERRITORY` + config.toml `[flare]` 段），
+  先配置不存在的网卡，观察任务启动失败，再通过 `flare setup --dev eth0` 修正；
+  daemon PID 保持不变，后续周期启动恢复通道并接受客户端。
   容器将只读 tmpfs 挂在 `/sys/fs/bpf`，断言 daemon 报告 bpffs 准备失败后仍托管 flare；
   `lflare` 客户端完成 DISCOVER→RESP→AUTH_REQ→AUTH_ACK 并建立会话、保持 keepalive 即通过。本场景只验证"daemon 托管方式下能连上"，
    不做端口转发与隧道数据传输。日志检查完整消费 `docker logs` 输出，在 `pipefail`
@@ -175,7 +177,7 @@
 - 测试层：fixture e2e（`install_fixture_e2e`，CI）
 - 状态：`已覆盖`
 - 证据：[self_cmd.rs](../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)（`[flare]` 段断言）、
-   [self.md](../../commands/self.md)、[协议规范](protocol.md)
+   [self.md](../commands/self.md)、[协议规范](protocol.md)
 - 说明：`lkit self install --flare-psk-file`（root-only 私密文件）在 daemon 启动前把
    psk 写入地盘 config.toml 的 `[flare]` 段（0600），daemon 首启即用该 psk 托管 flare；
    未提供时保留既有 `[flare]`，交互终端提示输入，无终端回落 daemon 自动生成。

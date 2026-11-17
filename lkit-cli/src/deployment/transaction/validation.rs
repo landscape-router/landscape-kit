@@ -64,6 +64,16 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             "network confirmation phases require schema version 3".into(),
         ));
     }
+    if let Some(workspace) = &transaction.install_workspace
+        && (workspace != &format!("releases/.lkit-transactions/{}", transaction.transaction_id)
+            || uuid::Uuid::parse_str(&transaction.transaction_id).is_err()
+            || !matches!(
+                transaction.operation,
+                Operation::Repair | Operation::Switch | Operation::Restore | Operation::Reinit
+            ))
+    {
+        return Err(corrupted("invalid installation workspace identity".into()));
+    }
     if transaction.started_at > transaction.updated_at {
         return Err(corrupted("started_at must not be after updated_at".into()));
     }

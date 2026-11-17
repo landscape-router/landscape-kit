@@ -46,3 +46,17 @@
   （`capacity_wakes_ignore_stale_connections_and_coalesce_peers`）。
 - 说明：通知独立于有容量上限的数据路径，消费者读取后、执行可能阻塞的 socket 写入前
   通知；退出时先关闭接收端再通知。多次通知按连接合并，取消等待不会丢失后续通知。
+
+## FLR-36
+
+**会话销毁取消本地转发任务，正常 TCP 半关闭仍保留反向响应**
+
+- 测试层：Rust 隔离单元、临时 loopback 端口
+- 状态：`已覆盖`
+- 证据：[转发任务生命周期](../../../../lkit-cli/src/flare/server.rs)
+  （`disappearing_relay_channel_closes_the_local_socket`、
+  `session_teardown_cancels_half_closed_relays`）、
+  [转发规范](../../../flare/protocol.md#隧道与端口转发)。
+- 说明：本地服务保持连接且不主动关闭时，channel 消失、会话销毁和服务端退出均使
+  转发任务退出。显式 `PeerEof` 只关闭写方向，仍能转发本地服务的响应；之后销毁会话
+  也能取消已经半关闭的任务，避免 Flare 重载后遗留 socket。
