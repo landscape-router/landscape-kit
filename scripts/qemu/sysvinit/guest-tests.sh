@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Destructive assertions run only inside the disposable SysVinit QEMU guest.
-set -euo pipefail
+set -Eeuo pipefail
 [[ -f /etc/lkit-ci-sysvinit && $(hostname) == lkit-sysvinit-ci && $EUID == 0 ]] || {
   echo 'Requires the disposable SysVinit CI guest' >&2
   exit 2
