@@ -16,7 +16,7 @@ fi
 
 required_commands=(
   curl dpkg-deb ip jq mke2fs mmdebstrap python3 qemu-img qemu-system-x86_64
-  sha256sum ssh ssh-keygen timeout
+  scp sha256sum ssh ssh-keygen timeout
 )
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -35,6 +35,9 @@ artifact_dir=${LKIT_QEMU_ARTIFACT_DIR:-$test_root/artifacts}
 mkdir -p "$artifact_dir"
 active_qemu_pid=
 active_tap=
+active_qmp=
+landscape_version=$(jq -r .version "$repo_root/scripts/qemu/network/landscape-release.json")
+cp "$repo_root/scripts/qemu/network/landscape-release.json" "$artifact_dir/landscape-release.json"
 
 cleanup_vm() {
   if [[ -n $active_qemu_pid ]]; then
@@ -49,6 +52,10 @@ cleanup_vm() {
 }
 
 cleanup() {
+  local result=$?
+  if [[ $result -ne 0 && -n $active_qemu_pid ]] && declare -F collect_guest_diagnostics >/dev/null; then
+    collect_guest_diagnostics failure || true
+  fi
   cleanup_vm
   rm -rf "$test_root"
 }
@@ -90,7 +97,7 @@ mmdebstrap \
   --variant=minbase \
   --architectures=amd64 \
   --keyring="$archive_keyring" \
-  --include=systemd,systemd-sysv,dbus,linux-image-cloud-amd64,openssh-server,network-manager,firewalld,systemd-resolved,ppp,iproute2,nftables,curl,ca-certificates,jq,procps,kmod \
+  --include=systemd,systemd-sysv,dbus,linux-image-cloud-amd64,openssh-server,network-manager,firewalld,systemd-resolved,ppp,iproute2,nftables,curl,ca-certificates,jq,procps,kmod,python3 \
   trixie "$rootfs" https://deb.debian.org/debian
 
 install -D -m 0755 "$lkit_binary" "$rootfs/usr/local/bin/lkit"
@@ -100,10 +107,14 @@ chmod 0600 "$rootfs/root/.ssh/authorized_keys"
 install -d -m 0755 "$rootfs/etc/ssh/sshd_config.d"
 printf '%s\n' 'PermitRootLogin prohibit-password' >"$rootfs/etc/ssh/sshd_config.d/90-lkit-qemu.conf"
 printf '%s\n' 'lkit-qemu' >"$rootfs/etc/hostname"
-printf '%s\n' '/dev/vda / ext4 defaults 0 1' >"$rootfs/etc/fstab"
+printf '%s\n' '/dev/vda / ext4 defaults 0 1' '/dev/vdb /srv ext4 defaults 0 2' >"$rootfs/etc/fstab"
+mkdir -p "$rootfs/srv"
+printf '%s\n' 'Disposable QEMU network acceptance guest' >"$rootfs/etc/lkit-qemu-network"
 install -d -m 0700 "$rootfs/var/lib/lkit-qemu"
 printf '%s\n' 'Secret123' >"$rootfs/var/lib/lkit-qemu/password"
 chmod 0600 "$rootfs/var/lib/lkit-qemu/password"
+printf '%s\n' 'Secret123' >"$test_root/journey-password"
+chmod 0600 "$test_root/journey-password"
 
 install -d -m 0700 "$rootfs/etc/NetworkManager/system-connections"
 cat >"$rootfs/etc/NetworkManager/system-connections/wan.nmconnection" <<'EOF'
@@ -231,9 +242,11 @@ nmcli connection show --active
 echo "== landscape journal =="
 journalctl -b --no-pager -u landscape-router.service
 echo "== landscape files =="
-find /var/lib/landscape -maxdepth 4 -type f -printf "%p\n" | sort
+find /srv/landscape -maxdepth 4 -type f -printf "%p\n" | sort
 echo "== landscape logs =="
-find /var/lib/landscape/data/logs -maxdepth 1 -type f -exec sh -c '\''for file do echo "--- $file"; tail -n 300 "$file"; done'\'' sh {} +
+find /srv/landscape/data/logs -maxdepth 1 -type f -exec sh -c '\''for file do echo "--- $file"; tail -n 300 "$file"; done'\'' sh {} +
+echo "== restore command results =="
+for file in /var/lib/lkit-qemu/journey/restore-*.log; do test -f "$file" && { echo "--- $file"; tail -n 100 "$file"; }; done
 echo "== transactions =="
 for file in /root/.lkit/transactions/*.json; do test -f "$file" && { echo "--- $file"; cat "$file"; }; done
 echo "== service state =="
@@ -269,12 +282,13 @@ assert_confirmed_wan_plan() {
   local scenario=$1
   local wan
   local wan_mode
-  if ! wan=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan' /root/.lkit/transactions/*.json"); then
+  local installation='map(select(.operation == "install" and .network_takeover != null)) | last'
+  if ! wan=$(lan_ssh "jq -sr '$installation | .network_takeover.plan.mode.wan' /root/.lkit/transactions/*.json"); then
     collect_guest_diagnostics "$scenario"
     echo "$scenario could not read the confirmed WAN interface" >&2
     return 1
   fi
-  if ! wan_mode=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.mode // \"none\"' /root/.lkit/transactions/*.json"); then
+  if ! wan_mode=$(lan_ssh "jq -sr '$installation | .network_takeover.plan.mode.wan_ipv4.mode // \"none\"' /root/.lkit/transactions/*.json"); then
     collect_guest_diagnostics "$scenario"
     echo "$scenario could not read the confirmed WAN IPv4 mode" >&2
     return 1
@@ -284,12 +298,12 @@ assert_confirmed_wan_plan() {
     static)
       local address
       local prefix
-      address=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.address' /root/.lkit/transactions/*.json") || {
+      address=$(lan_ssh "jq -sr '$installation | .network_takeover.plan.mode.wan_ipv4.address.address' /root/.lkit/transactions/*.json") || {
         collect_guest_diagnostics "$scenario"
         echo "$scenario could not read the confirmed static WAN address" >&2
         return 1
       }
-      prefix=$(lan_ssh "jq -r '.network_takeover.plan.mode.wan_ipv4.address.prefix' /root/.lkit/transactions/*.json") || {
+      prefix=$(lan_ssh "jq -sr '$installation | .network_takeover.plan.mode.wan_ipv4.address.prefix' /root/.lkit/transactions/*.json") || {
         collect_guest_diagnostics "$scenario"
         echo "$scenario could not read the confirmed static WAN prefix" >&2
         return 1
@@ -312,7 +326,11 @@ assert_confirmed_wan_plan() {
 boot_vm() {
   local scenario=$1
   local disk=$test_root/$scenario.ext4
+  local installation_disk=$test_root/$scenario-installation.ext4
   cp --reflink=auto --sparse=always "$base_disk" "$disk"
+  truncate -s 4G "$installation_disk"
+  mke2fs -q -t ext4 -F "$installation_disk"
+  active_qmp=$test_root/$scenario.qmp
   active_tap=lkitlan0
   ip tuntap add dev "$active_tap" mode tap
   ip address add 192.168.10.2/24 dev "$active_tap"
@@ -327,13 +345,15 @@ boot_vm() {
     -kernel "$kernel" \
     -initrd "$initrd" \
     -append 'root=/dev/vda rw console=ttyS0 systemd.log_target=console' \
-    -drive "file=$disk,format=raw,if=virtio,cache=unsafe" \
+    -drive "file=$disk,format=raw,if=virtio,cache=writeback" \
+    -drive "file=$installation_disk,format=raw,if=virtio,cache=writeback" \
     -netdev "user,id=wan,ipv4=on,ipv6=on,hostfwd=tcp:127.0.0.1:${active_ssh_port}-:22" \
     -device virtio-net-pci,netdev=wan,mac=52:54:00:12:34:01 \
     -netdev "tap,id=lan,ifname=$active_tap,script=no,downscript=no" \
     -device virtio-net-pci,netdev=lan,mac=52:54:00:12:34:02 \
     -display none \
     -monitor none \
+    -qmp "unix:$active_qmp,server=on,wait=off" \
     -serial stdio \
     >"$artifact_dir/$scenario-serial.log" 2>&1 &
   active_qemu_pid=$!
@@ -382,10 +402,6 @@ start_takeover() {
   local scenario=$1
   local wan_index
   wan_index=$(interface_selection)
-  local version_args=()
-  if [[ -n ${LKIT_QEMU_LANDSCAPE_VERSION:-} ]]; then
-    version_args=(--version "$LKIT_QEMU_LANDSCAPE_VERSION")
-  fi
   set +e
   wan_ssh 'systemctl is-active --quiet lkit.service || /usr/local/bin/lkit self install' \
     || {
@@ -395,9 +411,9 @@ start_takeover() {
   printf '%s\n1\n\n\n\n' "$wan_index" | timeout 900 ssh "${ssh_common[@]}" \
     -tt -p "$active_ssh_port" root@127.0.0.1 \
     /usr/local/bin/lkit install --takeover-network \
-    --install-dir /var/lib/landscape \
+    --install-dir /srv/landscape \
     --admin-user admin --password-file /var/lib/lkit-qemu/password \
-    "${version_args[@]}" \
+    --version "$landscape_version" \
     >"$artifact_dir/$scenario-install.log" 2>&1
   local install_status=$?
   set -e
@@ -431,6 +447,86 @@ start_takeover() {
   done
 }
 
+journey_api() {
+  python3 "$repo_root/scripts/qemu/network/journey.py" "$1" \
+    --directory "$test_root/journey" --password-file "$test_root/journey-password" \
+    --qmp "$active_qmp" | tee -a "$artifact_dir/journey-assertions.log"
+}
+
+journey_guest() {
+  lan_ssh "bash /var/lib/lkit-qemu/journey-guest.sh $1" \
+    | tee -a "$artifact_dir/journey-assertions.log"
+}
+
+restore_real_backup() {
+  local mode=$1
+  journey_guest "restore-$mode"
+  local deadline=$((SECONDS + 240))
+  local pending=false
+  while (( SECONDS < deadline )); do
+    if lan_ssh "bash /var/lib/lkit-qemu/journey-guest.sh pending-$mode" >/dev/null 2>&1; then
+      pending=true
+      break
+    fi
+    if lan_ssh "test -f /var/lib/lkit-qemu/journey/restore-$mode.exit && test \"\$(cat /var/lib/lkit-qemu/journey/restore-$mode.exit)\" -ne 0" >/dev/null 2>&1; then
+      echo "restore by $mode failed before external confirmation" >&2
+      return 1
+    fi
+    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
+    sleep 2
+  done
+  [[ $pending == true ]] || { echo "restore by $mode never reached confirmation" >&2; return 1; }
+  journey_guest "pending-$mode"
+  journey_guest offline
+  # These are independent LAN-client assertions while the new state is uncommitted.
+  journey_api assert
+  lan_ssh '/usr/local/bin/lkit network confirm' \
+    | tee -a "$artifact_dir/journey-assertions.log"
+  journey_guest committed
+}
+
+run_real_backup_journey() {
+  journey_guest identity
+  journey_api seed
+  journey_guest backup
+  scp "${ssh_common[@]}" root@192.168.10.1:/var/lib/lkit-qemu/journey/original.lkb \
+    "$test_root/journey/original.lkb"
+  chmod 0600 "$test_root/journey/original.lkb"
+  journey_api verify-backup
+  journey_api mutate
+  # Physical WAN disconnection remains effective even when restore rewrites routes.
+  journey_api link-down
+  journey_guest offline
+  restore_real_backup id
+  journey_guest remove-local-backup
+  journey_api mutate
+  restore_real_backup file
+  journey_api link-up
+  assert_confirmed_wan_plan restored
+
+  local previous_boot current_boot
+  previous_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id')
+  lan_ssh 'systemctl reboot' >/dev/null 2>&1 || true
+  local deadline=$((SECONDS + 240))
+  local rebooted=false
+  while (( SECONDS < deadline )); do
+    if current_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [[ $current_boot != "$previous_boot" ]]; then
+      if lan_ssh 'systemctl is-active --quiet lkit.service landscape-router.service' >/dev/null 2>&1; then
+        rebooted=true
+        break
+      fi
+    fi
+    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
+    sleep 2
+  done
+  [[ $rebooted == true ]] || { echo 'restored VM did not return after a real reboot' >&2; return 1; }
+  journey_api assert
+  journey_guest committed
+  assert_confirmed_wan_plan rebooted
+  printf '%s\n' 'PASS: restored official Landscape configuration and external LAN service survive a full VM reboot' \
+    | tee -a "$artifact_dir/journey-assertions.log"
+}
+
 boot_vm reboot-rollback
 start_takeover reboot-rollback
 lan_ssh 'bash -s' >/dev/null <<'GUEST'
@@ -456,7 +552,7 @@ done
   exit 1
 }
 wan_ssh 'test ! -e /root/.lkit/state/install-state.json'
-wan_ssh 'test ! -e /var/lib/landscape/data'
+wan_ssh 'test ! -e /srv/landscape/data'
 wan_ssh 'test -f /var/lib/lkit-qemu/retry-checked && test -f /var/lib/lkit-qemu/ra-observed'
 wan_ssh 'nmcli -t -f UUID,DEVICE connection show --active | grep -q "^1c776a18-1caf-4ac8-8f46-5573fb8db501:"'
 # Variables and command substitutions are evaluated inside the guest.
@@ -475,6 +571,7 @@ assert_confirmed_wan_plan confirm
 lan_ssh "jq -e '.phase == \"committed\"' /root/.lkit/transactions/*.json" >/dev/null
 lan_ssh "jq -e '.active_version != null' /root/.lkit/state/install-state.json" >/dev/null
 lan_ssh "! find /etc/systemd/system -maxdepth 1 -name 'lkit-network-*' | grep -q ."
+run_real_backup_journey
 lan_ssh 'systemctl poweroff' >/dev/null 2>&1 || true
 
 for _ in $(seq 1 60); do
@@ -488,4 +585,4 @@ kill -0 "$active_qemu_pid" >/dev/null 2>&1 && {
 active_qemu_pid=
 cleanup_vm
 
-echo "QEMU network takeover confirmation and reboot rollback passed"
+echo "QEMU official Landscape install, network recovery, configuration backup/restore and reboot acceptance passed"

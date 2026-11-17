@@ -483,7 +483,7 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
     };
     let screen = frame.area();
     let width = 76.min(screen.width.saturating_sub(2));
-    let height = 9.min(screen.height.saturating_sub(2));
+    let height = 18.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -502,6 +502,16 @@ pub(crate) fn render_backup_restore_confirmation(frame: &mut Frame<'_>, app: &mu
                 crate::keys::CONSOLE_BACKUP_RESTORE_MINIMAL_SCOPE
             )),
             Line::raw(""),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_BACKUP_ALLOW_NO_BACKUP,
+                selected = if app.backup.allow_no_backup { "x" } else { " " }
+            )),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_BACKUP_PROTECTION_EXPLANATION
+            )),
+            Line::raw(crate::tr!(
+                crate::keys::CONSOLE_BACKUP_RESTORE_NETWORK_CONFIRMATION
+            )),
             dialog_hint_line(app),
         ])
         .wrap(Wrap { trim: false })

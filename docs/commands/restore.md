@@ -13,6 +13,12 @@ lkit restore (--backup <ID> | --file <PATH>)
 和 minimal scope 的数据损失；非交互模式必须额外提供 `--yes`，否则直接返回参数错误。
 `--yes` 在非交互模式下确认恢复计划与 minimal scope 数据损失。
 
+`.lkb` 包含网络配置，所有恢复均有独立的网络确认窗口。`--yes` 只确认开始恢复，
+不代替应用配置后的连通性确认。本机健康检查通过后，操作进入 `awaiting_confirmation`，
+CLI 返回 `0` 表示正在等待确认；用备份中的管理地址重新连接并检查业务后执行
+`lkit network confirm`，或在控制台确认。`lkit network rollback` 主动恢复原现场。
+超时或确认前整机重启由 daemon 自动回滚；仅重启 daemon 不延长期限。
+
 landscape 根从 `install-state.json` 发现，命令不接收 `--install-dir`；`--backup <ID>`
 解析 lkit 地盘备份目录中的备份，`--file <PATH>` 指向外部复制的 `.lkb`。
 
@@ -61,7 +67,13 @@ restore 使用全局安装事务锁，由 daemon 执行。systemd、OpenRC 和 S
 2. 将当前 `data/` 原子移动到事务目录，作为中断恢复现场；
 3. 从 `.lkb` 重建目标版本 release、空 `data/`、`landscape_init.toml` 和 `geo_tmp`；
 4. 原子切换 `current`，注册并启动目标 unit；
-5. 完成初始化和完整健康检查后提交目标 state。
+5. 完成初始化和完整健康检查后保存待提交 state，开始网络确认窗口；确认后提交目标 state。
+
+确认窗口从本机健康检查通过后开始，时长与网络接管一致。旧 state、data 和 release
+恢复依据一直保留；恢复不重新停止或接管宿主网络服务。确认动作检查本机健康并再次
+核对截止时间，用户负责从恢复后的网络验证访问。确认决定持久化后，即使 daemon 或
+主机中断也继续完成提交；未确认时恢复原 data、release、服务状态及 DNS 文件。
+该能力需要支持 `restore-v2` 的 daemon，旧 daemon 在提交前被拒绝并提示升级。
 
 
 恢复成功后，事务目录中的旧 data 现场保留用于诊断和中断恢复。`.lkb` 不包含 SQLite

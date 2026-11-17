@@ -260,6 +260,13 @@ async fn run_inline(args: &Restore) -> ExitCode {
     )
     .await
     {
+        Ok(RestoreOutcome::AwaitingConfirmation) => {
+            println!(
+                "restore: {}",
+                crate::tr!(crate::keys::RESTORE_AWAITING_CONFIRMATION)
+            );
+            ExitCode::SUCCESS
+        }
         Ok(RestoreOutcome::Committed { version, backup_id }) => {
             println!(
                 "restore: {}",

@@ -108,7 +108,7 @@ async fn run_inner(runtime: InstallRuntime) -> Result<(), InstallError> {
     write_pidfile(&network_operations)?;
     let uninstall_capability = layout::territory_run_dir().join("uninstall-v1.pid");
     write_pidfile(&uninstall_capability)?;
-    let restore_capability = layout::territory_run_dir().join("restore-v1.pid");
+    let restore_capability = layout::territory_run_dir().join("restore-v2.pid");
     write_pidfile(&restore_capability)?;
     let switch_capability = layout::territory_run_dir().join("switch-v1.pid");
     write_pidfile(&switch_capability)?;
@@ -390,7 +390,7 @@ async fn recovery_cycle(runtime: &InstallRuntime) {
                 | transaction::Phase::Finalizing
                 | transaction::Phase::RollingBack
         ))
-        && unfinished.network_takeover.is_some()
+        && unfinished.confirmation_window().is_some()
     {
         if let Err(error) =
             crate::network::recovery::recover(&install_root, &unfinished, runtime).await
@@ -522,7 +522,15 @@ fn resolve_runtime(_args: &Daemon) -> InstallRuntime {
 
 /// Capabilities identify the live daemon, not its init supervisor.
 pub(crate) fn require_capability(name: &str) -> Result<(), InstallError> {
-    let pid = std::fs::read_to_string(layout::territory_pidfile()).map_err(InstallError::Io)?;
+    let pid = match std::fs::read_to_string(layout::territory_pidfile()) {
+        Ok(pid) => pid,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(InstallError::Preflight(
+                "lkit daemon is not running; run `lkit self install` before this command".into(),
+            ));
+        }
+        Err(error) => return Err(InstallError::Io(error)),
+    };
     let number = pid.trim().parse::<i32>().unwrap_or(0);
     let capability =
         std::fs::read_to_string(layout::territory_run_dir().join(name)).unwrap_or_default();
@@ -541,6 +549,18 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
 
     use super::*;
+
+    #[test]
+    fn missing_daemon_pid_explains_the_required_bootstrap() {
+        let (_guard, temp) = territory("missing-capability-pid");
+        let error = require_capability("install-v1.pid").unwrap_err();
+        assert!(matches!(error, InstallError::Preflight(_)));
+        let message = error.to_string();
+        assert!(message.contains("not running"));
+        assert!(message.contains("lkit self install"));
+        assert!(!layout::territory_pidfile().exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn capability_requires_the_live_daemon_pid_and_matching_marker() {

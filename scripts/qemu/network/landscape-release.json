@@ -1,0 +1,8 @@
+{
+  "repository": "ThisSeanZhang/landscape",
+  "version": "0.28.3",
+  "webserver_asset": "landscape-webserver-x86_64",
+  "webserver_sha256": "e48c7de5483a0b19b747bd863c36792213df86bde41c939bcc487228f02b8db7",
+  "static_sha256": "80bbb76feb0389bcccc97cd064f0fba26d43b802d8b7a3fcde67add4ec5f8141",
+  "openapi_sha256": "6ed28634d16d3659af08b2b12184124087b2b21a5dba389f3f82d0ff88da39bd"
+}

@@ -22,8 +22,8 @@ use crate::deployment::layout;
 /// 原 release → 恢复 `current` → 恢复 `data/` → 恢复前服务活跃时启动并做健康检查
 /// → 重新提交恢复前 state。启动必须发生在 current/data 恢复之后。
 ///
-/// 回滚任一步失败时统一把事务标记为 `failed`(退出码 `6` 语义),不留在 `rolling_back`
-/// 让下一条命令再次自动尝试回滚。
+/// daemon 原生恢复在回滚失败时保留 `rolling_back`,由 daemon 重试。
+/// 兼容事务的回滚失败标记为 `failed`。
 pub(crate) async fn rollback_restore<P: DocsProbe>(
     root: &InstallRoot,
     transaction: &TransactionFile,
@@ -31,8 +31,9 @@ pub(crate) async fn rollback_restore<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     mark_phase(root, transaction, Phase::RollingBack)?;
+    super::confirmation::revoke_restored_start(transaction)?;
     let result = rollback_restore_inner(root, transaction, manager, health).await;
-    if result.is_err() && transaction.schema_version != 9 {
+    if result.is_err() && !transaction.is_native_restore() {
         let _ = mark_phase(root, transaction, Phase::Failed);
     }
     result
@@ -45,7 +46,7 @@ async fn rollback_restore_inner<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     let snapshot = rollback_util::read_state_snapshot(root, &transaction.transaction_id)?;
-    let native = transaction.schema_version == 9;
+    let native = transaction.is_native_restore();
     if native && snapshot.service.manager != manager.kind() {
         return Err(InstallError::Preflight(
             "restore recovery backend mismatch".into(),
@@ -76,7 +77,17 @@ async fn rollback_restore_inner<P: DocsProbe>(
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     restore_replaced_release_if_same_version(root, transaction)?;
-    if previous_data.exists() || data.exists() {
+    if transaction.restore_confirmation.is_some()
+        && previous_data.exists()
+        && !super::confirmation::is_previous_data(&previous_data, transaction)?
+    {
+        return Err(InstallError::CorruptedTransaction(
+            "previous data directory identity changed".into(),
+        ));
+    }
+    if super::confirmation::is_previous_data(&previous_data, transaction)?
+        || super::confirmation::is_previous_data(&data, transaction)?
+    {
         // 原现场存在(previous-data 未消费),或上次回滚已经恢复 data
         // (previous-data 已消费、data 在):两种情况下都只做幂等恢复。
         let previous_current = transaction.previous_current.as_deref().ok_or_else(|| {
@@ -88,6 +99,7 @@ async fn rollback_restore_inner<P: DocsProbe>(
         if previous_data.exists() {
             restore_previous_data(&data, &previous_data)?;
         }
+        super::confirmation::permit_restored_start(transaction)?;
         let was_active = transaction
             .systemd_before
             .as_ref()
@@ -123,6 +135,8 @@ async fn rollback_restore_inner<P: DocsProbe>(
         // 事务现场损坏(previous-data 与 data 均不存在):只能使用保护快照或报损坏。
         if transaction.backup.is_some() {
             rollback_util::rollback_switch(root, transaction, &snapshot, manager, health).await
+        } else if transaction.restore_confirmation.is_some() {
+            Err(InstallError::CorruptedTransaction("original restore data is missing and no protection backup exists; refusing to treat target data as recovered".into()))
         } else {
             rollback_util::rollback_no_backup(root, transaction, &snapshot, manager, health).await
         }

@@ -36,10 +36,20 @@ impl ConsoleApp {
                     // 校验失败弹损坏框,只有校验通过才提交 Restore 请求。
                     match &self.backup.verify {
                         BackupVerifyState::Complete(Ok(verified)) => {
-                            if verified.confirmation.request.source != entry.path
-                                || verified.confirmation.request.backup_id != metadata.backup_id
-                                || verified.confirmation.request.target_version
-                                    != metadata.landscape_version
+                            let confirmation = match &verified.confirmation {
+                                Ok(confirmation) => confirmation,
+                                Err(reason) => {
+                                    self.notice = Notice::Error(crate::tr!(
+                                        crate::keys::CONSOLE_BACKUP_RESTORE_UNAVAILABLE,
+                                        reason = reason
+                                    ));
+                                    self.backup.restore_confirming = false;
+                                    return Some(None);
+                                }
+                            };
+                            if confirmation.request.source != entry.path
+                                || confirmation.request.backup_id != metadata.backup_id
+                                || confirmation.request.target_version != metadata.landscape_version
                             {
                                 self.backup.restore_confirming = false;
                                 self.backup.verify = BackupVerifyState::Idle;
@@ -72,7 +82,13 @@ impl ConsoleApp {
                         }
                     }
                 }
-                KeyCode::Esc => self.backup.restore_confirming = false,
+                KeyCode::Char('b' | 'B') => {
+                    self.backup.allow_no_backup = !self.backup.allow_no_backup;
+                }
+                KeyCode::Esc => {
+                    self.backup.restore_confirming = false;
+                    self.backup.allow_no_backup = false;
+                }
                 _ => {}
             }
             return Some(None);
@@ -146,6 +162,7 @@ impl ConsoleApp {
                         if self.backup_corrupt() {
                             self.backup.corrupt_dialog = true;
                         } else {
+                            self.backup.allow_no_backup = false;
                             self.backup.restore_confirming = true;
                         }
                     }
@@ -208,6 +225,7 @@ impl ConsoleApp {
                     if self.backup_corrupt() {
                         self.backup.corrupt_dialog = true;
                     } else {
+                        self.backup.allow_no_backup = false;
                         self.backup.restore_confirming = true;
                     }
                 } else {
@@ -274,11 +292,16 @@ impl ConsoleApp {
         let command = Commands::Restore(crate::commands::restore::Restore {
             backup: Some(backup_id.to_string()),
             file: None,
-            allow_no_backup: false,
+            allow_no_backup: self.backup.allow_no_backup,
             yes: true,
             console_confirmed: true,
             confirmed: match &self.backup.verify {
-                BackupVerifyState::Complete(Ok(verified)) => Some(verified.confirmation.clone()),
+                BackupVerifyState::Complete(Ok(verified)) => {
+                    verified.confirmation.clone().ok().map(|mut confirmation| {
+                        confirmation.request.allow_no_backup = self.backup.allow_no_backup;
+                        confirmation
+                    })
+                }
                 _ => None,
             },
             #[cfg(feature = "test-support")]

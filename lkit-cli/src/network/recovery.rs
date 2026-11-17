@@ -15,18 +15,14 @@ pub(crate) enum Action {
 }
 
 pub(crate) fn action(tx: &TransactionFile, now: DateTime<Utc>, boot_id: &str) -> Action {
-    let Some(network) = &tx.network_takeover else {
+    let Some((deadline, saved_boot)) = tx.confirmation_window() else {
         return Action::Wait;
     };
     match tx.phase {
         Phase::Finalizing => Action::Confirm,
         Phase::RollingBack => Action::Rollback,
         Phase::AwaitingNetworkConfirmation
-            if now >= network.confirmation_deadline
-                || network
-                    .boot_id
-                    .as_deref()
-                    .is_some_and(|saved| saved != boot_id) =>
+            if now >= deadline || saved_boot.is_some_and(|saved| saved != boot_id) =>
         {
             Action::Rollback
         }
@@ -67,7 +63,7 @@ fn startup_check_for(boot: &str) -> Result<(), InstallError> {
     startup_check_at(boot, Utc::now())
 }
 
-fn startup_check_at(boot: &str, now: DateTime<Utc>) -> Result<(), InstallError> {
+pub(crate) fn startup_check_at(boot: &str, now: DateTime<Utc>) -> Result<(), InstallError> {
     let entries = match std::fs::read_dir(layout::territory_transactions_dir()) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -85,10 +81,15 @@ fn startup_check_at(boot: &str, now: DateTime<Utc>) -> Result<(), InstallError> 
         if tx.phase.is_terminal() {
             continue;
         }
-        let Some(network) = &tx.network_takeover else {
+        let Some((deadline, saved_boot)) = tx.confirmation_window() else {
             continue;
         };
-        if tx.phase == Phase::RollingBack && tx.operation == transaction::Operation::Reinit {
+        if tx.phase == Phase::RollingBack
+            && matches!(
+                tx.operation,
+                transaction::Operation::Reinit | transaction::Operation::Restore
+            )
+        {
             let permit = layout::territory_transactions_dir()
                 .join(&tx.transaction_id)
                 .join("restored-boot-id");
@@ -97,13 +98,8 @@ fn startup_check_at(boot: &str, now: DateTime<Utc>) -> Result<(), InstallError> 
             }
         }
         if tx.phase == Phase::RollingBack
-            || (tx.phase == Phase::AwaitingNetworkConfirmation
-                && now >= network.confirmation_deadline)
-            || (tx.phase != Phase::Finalizing
-                && network
-                    .boot_id
-                    .as_deref()
-                    .is_some_and(|saved| saved != boot))
+            || (tx.phase == Phase::AwaitingNetworkConfirmation && now >= deadline)
+            || (tx.phase != Phase::Finalizing && saved_boot.is_some_and(|saved| saved != boot))
         {
             return Err(InstallError::Preflight(
                 "Landscape startup is blocked until lkit completes network recovery".into(),

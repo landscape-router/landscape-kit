@@ -7,3 +7,6 @@ restore.rollback_failed = "自动回滚失败：%{rollback_error}"
 restore.committed = "已从备份 %{backup_id} 恢复到版本 %{version}"
 restore.failed_rolled_back = "恢复版本 %{version} 失败；已自动恢复原安装"
 restore.failed_rollback_failed = "恢复版本 %{version} 失败，且无法自动恢复原安装：%{reason}"
+
+restore.awaiting_confirmation = "备份配置已运行，正在等待网络确认。请通过恢复后的网络验证访问，再执行 lkit network confirm；超时或确认前重启将回滚。可执行 lkit network rollback 撤销恢复。"
+restore.network_address = "备份定义的地址；请验证恢复后的网络访问"

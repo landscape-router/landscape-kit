@@ -36,8 +36,7 @@ pub(crate) trait OperationScreen {
     fn result_key(&self, result: OperationResult) -> &'static str;
     /// 停止请求被忽略时的底栏提示键。
     fn stop_ignored_key(&self) -> &'static str;
-    /// 该操作完成后是否可能产生待确认的网络接管（install/reinit 为 true，
-    /// 其余操作网络已在首次安装时接管，不复用确认窗口）。
+    /// 该操作是否可能等待网络确认（install/reinit/restore 为 true）。
     fn takeover_confirmable(&self) -> bool {
         false
     }

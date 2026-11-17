@@ -215,6 +215,7 @@ fn backup_restore_flow_builds_restore_command() {
     };
     assert_eq!(restore.backup.as_deref(), Some("20260807-131500-ab12cd34"));
     assert!(restore.yes);
+    assert!(!restore.allow_no_backup);
     assert!(
         restore.console_confirmed,
         "the console must mark the restore as confirmed so no TTY prompt appears"
@@ -222,6 +223,116 @@ fn backup_restore_flow_builds_restore_command() {
     let context = restore.confirmed.unwrap();
     assert_eq!(context.request.backup_sha256, "b".repeat(64));
     assert_eq!(context.request.state_identity, "a".repeat(64));
+    assert!(!context.request.allow_no_backup);
+}
+
+#[test]
+fn restore_without_protection_requires_an_explicit_non_sticky_opt_in() {
+    let _language = LanguageGuard::set(Language::En);
+    let mut app = backup_ready_app();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.backup.verify =
+        BackupVerifyState::Complete(Ok(crate::console::backup::sample_verified_backup()));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(!app.backup.allow_no_backup);
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert!(app.backup.allow_no_backup);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(
+        !app.backup.allow_no_backup,
+        "a new confirmation must start protected"
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    let content = terminal_content(&terminal);
+    assert!(content.contains("[x] B:"));
+    assert!(content.contains("protection backup fails"));
+    assert!(content.contains("reconnect and confirm"));
+    let Some(ConsoleAction::Command {
+        command: Commands::Restore(restore),
+    }) = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("expected explicitly confirmed restore");
+    };
+    assert!(restore.allow_no_backup);
+    assert!(restore.confirmed.unwrap().request.allow_no_backup);
+}
+
+#[test]
+fn valid_foreign_architecture_backup_is_not_reported_as_corrupt() {
+    let _language = LanguageGuard::set(Language::En);
+    let dir = std::env::temp_dir().join(format!("lkit-console-foreign-{}", uuid::Uuid::now_v7()));
+    let _territory = crate::deployment::layout::test_territory(&dir);
+    let install = dir.join("install");
+    std::fs::create_dir_all(install.join("static")).unwrap();
+    std::fs::create_dir_all(install.join("geo_tmp")).unwrap();
+    std::fs::create_dir_all(install.join("releases/1.2.3")).unwrap();
+    std::os::unix::fs::symlink("releases/1.2.3", install.join("current")).unwrap();
+    std::fs::write(install.join("webserver"), b"fixture backend").unwrap();
+    std::fs::write(install.join("static/index.html"), b"fixture frontend").unwrap();
+    let state: crate::deployment::state::InstallState = serde_json::from_value(serde_json::json!({
+        "schema_version": 1, "layout_version": 2,
+        "install_root": install, "canonical_install_root": install,
+        "active_version": "1.2.3",
+        "assets": {
+            "webserver": {"architecture": "x86_64", "sha256": "a".repeat(64), "size": 1},
+            "static_archive": {"sha256": "b".repeat(64), "size": 1}
+        },
+        "initialization": {"status": "complete", "lock_present": true, "initialized_at": chrono::Utc::now()},
+        "service": {"manager": "systemd", "registered": true, "enabled": true, "verified": true,
+            "definition_path": "service/landscape-router.service", "definition_sha256": "c".repeat(64)},
+        "last_transaction_id": null, "committed_at": chrono::Utc::now()
+    })).unwrap();
+    crate::deployment::state::write_state(
+        &crate::deployment::root::InstallRoot {
+            install_root: install.clone(),
+            canonical: install.clone(),
+        },
+        &state,
+    )
+    .unwrap();
+    let foreign_arch = if std::env::consts::ARCH == "aarch64" {
+        "x86_64"
+    } else {
+        "aarch64"
+    };
+    let reference = crate::backup::lkb::create_backup(
+        &dir.join("backups"),
+        &semver::Version::new(1, 2, 3),
+        foreign_arch,
+        &install.join("webserver"),
+        "version = \"1.2.3\"\n",
+        &install.join("static"),
+        &install.join("geo_tmp"),
+        "foreign architecture",
+        false,
+        None,
+    )
+    .unwrap();
+    let verified = crate::console::backup::verify_backup(dir.join(reference.path)).unwrap();
+    assert!(
+        verified
+            .confirmation
+            .as_ref()
+            .unwrap_err()
+            .contains("architecture")
+    );
+    let mut app = backup_ready_app();
+    app.backup.verify = BackupVerifyState::Complete(Ok(verified));
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .is_none()
+    );
+    assert!(!app.backup.corrupt_dialog);
+    assert!(!app.backup.restore_confirming);
+    assert!(
+        matches!(&app.notice, Notice::Error(message) if message.contains("integrity verified") && message.contains("architecture"))
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -501,7 +612,12 @@ fn restore_confirmation_rejects_verification_for_another_selected_backup() {
     let mut app = backup_ready_app();
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     let mut verified = crate::console::backup::sample_verified_backup();
-    verified.confirmation.request.target_version = "9.0.0".into();
+    verified
+        .confirmation
+        .as_mut()
+        .unwrap()
+        .request
+        .target_version = "9.0.0".into();
     app.backup.verify = BackupVerifyState::Complete(Ok(verified));
     app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
     assert!(app.backup.restore_confirming);

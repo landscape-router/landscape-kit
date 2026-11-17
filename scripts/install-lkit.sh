@@ -149,5 +149,6 @@ trap - 0 1 2 15
 printf 'install-lkit: installed %s at %s\n' "$version_output" "$install_path"
 
 if [ "$run_landscape_install" = true ]; then
+    "$install_path" self install --non-interactive
     exec "$install_path" install "$@"
 fi

@@ -8,3 +8,6 @@ pub(crate) const RESTORE_ROLLBACK_FAILED: &str = "restore.rollback_failed";
 pub(crate) const RESTORE_COMMITTED: &str = "restore.committed";
 pub(crate) const RESTORE_FAILED_ROLLED_BACK: &str = "restore.failed_rolled_back";
 pub(crate) const RESTORE_FAILED_ROLLBACK_FAILED: &str = "restore.failed_rollback_failed";
+
+pub(crate) const RESTORE_AWAITING_CONFIRMATION: &str = "restore.awaiting_confirmation";
+pub(crate) const RESTORE_NETWORK_ADDRESS: &str = "restore.network_address";

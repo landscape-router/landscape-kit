@@ -208,6 +208,12 @@ pub(crate) const CONSOLE_BACKUP_VERIFIED: &str = "console.backup_verified";
 pub(crate) const CONSOLE_BACKUP_VERIFY_WORKER_STOPPED: &str =
     "console.backup_verify_worker_stopped";
 pub(crate) const CONSOLE_BACKUP_RESTORE_TITLE: &str = "console.backup_restore_title";
+pub(crate) const CONSOLE_BACKUP_RESTORE_UNAVAILABLE: &str = "console.backup_restore_unavailable";
+pub(crate) const CONSOLE_BACKUP_ALLOW_NO_BACKUP: &str = "console.backup_allow_no_backup";
+pub(crate) const CONSOLE_BACKUP_PROTECTION_EXPLANATION: &str =
+    "console.backup_protection_explanation";
+pub(crate) const CONSOLE_BACKUP_RESTORE_NETWORK_CONFIRMATION: &str =
+    "console.backup_restore_network_confirmation";
 pub(crate) const CONSOLE_BACKUP_CORRUPT_DIALOG: &str = "console.backup_corrupt_dialog";
 pub(crate) const CONSOLE_BACKUP_CORRUPT_QUESTION: &str = "console.backup_corrupt_question";
 pub(crate) const CONSOLE_BACKUP_RESTORE_PLAN: &str = "console.backup_restore_plan";

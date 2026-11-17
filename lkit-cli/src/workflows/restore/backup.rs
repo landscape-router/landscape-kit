@@ -79,7 +79,7 @@ pub(crate) fn validate_backup_file(path: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-pub(super) fn check_architecture(
+pub(crate) fn check_architecture(
     state: &InstallState,
     metadata: &BackupMetadata,
 ) -> Result<(), InstallError> {

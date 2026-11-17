@@ -28,10 +28,15 @@ sudo lkit
 
 ```sh
 sudo lkit --non-interactive check
+sudo lkit --non-interactive self install
 sudo lkit --non-interactive install --password-file /root/lkit-password
 ```
 
-指定 Landscape 仓库安装：
+安装 Landscape 前必须先部署 daemon。控制台提供部署入口；CLI 用户先执行
+`self install`。指定 `--non-interactive` 时，尚未配置的急救恢复码自动生成，可用
+`lkit flare setup` 查看。管理员密码文件必须归 root 所有，权限为 `0400` 或 `0600`。
+
+部署 daemon 后，指定 Landscape 仓库安装：
 
 ```sh
 sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
@@ -53,7 +58,7 @@ sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 | 网络与主机设置 | [`network`](docs/commands/network.md)、[`set-mirror`](docs/commands/mirror.md)、[`software`](docs/commands/software.md) |
 | 卸载与 lkit 服务 | [`uninstall`](docs/commands/uninstall.md)、[`self`](docs/commands/self.md) |
 
-`lkit self install` 会将 lkit daemon 注册为 systemd 服务。`lkit self upgrade` 更新 lkit 二进制并重新加载已注册的 daemon；`lkit self remove` 只注销该 daemon，不删除 lkit CLI 或 Landscape 数据。
+`lkit self install` 会通过 systemd、OpenRC 或 SysVinit 注册并启动 lkit daemon。`lkit self upgrade` 更新 lkit 二进制并重新加载已注册且运行的 daemon；`lkit self remove` 只注销该 daemon，不删除 lkit CLI 或 Landscape 数据。
 
 ## Terrain 防失联通道
 

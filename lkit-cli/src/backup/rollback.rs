@@ -69,7 +69,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
         && transaction.operation == super::transaction::Operation::Repair;
     let native_switch = transaction.schema_version == 8
         && transaction.operation == super::transaction::Operation::Switch;
-    let managed = asset_repair || native_switch || transaction.schema_version == 9;
+    let managed = asset_repair || native_switch || transaction.is_native_restore();
     let is_systemd = managed || snapshot.service.manager == StateServiceManager::Systemd;
     let workspace = super::transaction::workspace::prepare(root, transaction)?;
     if is_systemd {
@@ -142,6 +142,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             if let Some(backup) = &transaction.resolv_conf_backup {
                 resolv::restore(systemd.resolv_conf(), &layout::territory_relative(backup))?;
             }
+            crate::workflows::restore::confirmation::permit_restored_start(transaction)?;
             systemd.restore_before(
                 ManagedService::LandscapeRouter,
                 before,
@@ -153,6 +154,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
                 &root.canonical.join("service/landscape-router.service"),
             )?;
             systemd.enable(ManagedService::LandscapeRouter)?;
+            crate::workflows::restore::confirmation::permit_restored_start(transaction)?;
             systemd.start(ManagedService::LandscapeRouter)?;
         }
         let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
@@ -204,7 +206,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
     super::transaction::mark_phase(root, transaction, Phase::RollingBack)?;
-    let native_switch = matches!(transaction.schema_version, 8 | 9);
+    let native_switch = matches!(transaction.schema_version, 8 | 9 | 14);
     let is_systemd = native_switch || previous.service.manager == StateServiceManager::Systemd;
     let mut was_active = false;
     if is_systemd {
@@ -241,6 +243,7 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     restore_current(root, previous_current)?;
 
     if is_systemd && was_active {
+        crate::workflows::restore::confirmation::permit_restored_start(transaction)?;
         systemd.start(ManagedService::LandscapeRouter)?;
         let pid = systemd.main_pid(ManagedService::LandscapeRouter)?;
         if pid == 0 {

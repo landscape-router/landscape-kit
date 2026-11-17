@@ -56,12 +56,14 @@ jobs:
           sudo apt-get install -y e2fsprogs jq mmdebstrap openssh-client python3 qemu-system-x86 qemu-utils shellcheck
 
       - name: Check VM scripts
-        run: shellcheck scripts/test-qemu-network-takeover.sh scripts/qemu/network/*.sh
+        run: |
+          shellcheck scripts/test-qemu-network-takeover.sh scripts/qemu/network/*.sh
+          python3 -c 'import ast,pathlib; [ast.parse(p.read_text(), filename=str(p)) for p in pathlib.Path("scripts/qemu/network").glob("*.py")]'
 
       - name: Build production lkit
         run: cargo build --locked --release -p lkit-cli --bin lkit
 
-      - name: Run real network takeover
+      - name: Run official Landscape install, backup recovery and network takeover
         env:
           LKIT_QEMU_PREBUILT: ${{ github.workspace }}/target/release/lkit
           LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/qemu-network-artifacts

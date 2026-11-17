@@ -26,7 +26,7 @@ pub(crate) use self::cleanup::{
 use self::file::{append_log, load_transaction_file, write_transaction};
 
 pub(crate) const TRANSACTION_SCHEMA_VERSION: u64 = 5;
-pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 13;
+pub(crate) const MAX_TRANSACTION_SCHEMA_VERSION: u64 = 14;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +157,15 @@ pub(crate) struct NetworkTakeoverTransaction {
     pub pending_state: String,
 }
 
+/// Durable guard for applying a backup whose network settings may replace access.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RestoreConfirmation {
+    pub boot_id: String,
+    pub confirmation_deadline: DateTime<Utc>,
+    pub pending_state: String,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct TransactionFile {
     pub schema_version: u64,
@@ -188,6 +197,8 @@ pub(crate) struct TransactionFile {
     pub resolv_conf_backup: Option<String>,
     #[serde(default)]
     pub network_takeover: Option<NetworkTakeoverTransaction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_confirmation: Option<RestoreConfirmation>,
     /// migrate 事务记录被接管的旧部署 systemd unit 事务前状态。
     /// 旧实例为前台进程时保持 None。
     #[serde(default)]
@@ -198,6 +209,21 @@ pub(crate) struct TransactionFile {
 }
 
 impl TransactionFile {
+    pub(crate) fn confirmation_window(&self) -> Option<(DateTime<Utc>, Option<&str>)> {
+        self.restore_confirmation
+            .as_ref()
+            .map(|guard| (guard.confirmation_deadline, Some(guard.boot_id.as_str())))
+            .or_else(|| {
+                self.network_takeover
+                    .as_ref()
+                    .map(|network| (network.confirmation_deadline, network.boot_id.as_deref()))
+            })
+    }
+
+    pub(crate) fn is_native_restore(&self) -> bool {
+        self.operation == Operation::Restore && matches!(self.schema_version, 9 | 14)
+    }
+
     pub(crate) fn new_install(
         root: &InstallRoot,
         version: &semver::Version,
@@ -224,6 +250,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
@@ -260,6 +287,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
@@ -298,6 +326,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
@@ -348,6 +377,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
@@ -386,6 +416,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
@@ -423,6 +454,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,
@@ -461,6 +493,7 @@ impl TransactionFile {
             systemd_before: None,
             resolv_conf_backup: None,
             network_takeover: None,
+            restore_confirmation: None,
             legacy_unit: None,
             log_path: format!("logs/{transaction_id}.log"),
             started_at: now,

@@ -144,7 +144,7 @@ pub(crate) fn current_boot_id() -> Result<String, InstallError> {
     Ok(value.into())
 }
 
-fn require_recovery_daemon(runtime: &InstallRuntime) -> Result<(), InstallError> {
+pub(crate) fn require_recovery_daemon(runtime: &InstallRuntime) -> Result<(), InstallError> {
     if runtime.test_runtime_path.is_some() {
         return Ok(());
     }
@@ -271,6 +271,28 @@ async fn run_command_inner(args: &Network) -> Result<(), InstallError> {
 
 fn status(root: &InstallRoot) -> Result<(), InstallError> {
     if let Some(transaction) = transaction::find_unfinished(root)? {
+        if let Some(guard) = &transaction.restore_confirmation {
+            println!(
+                "network: {} {}",
+                crate::tr!(crate::keys::TAKEOVER_TRANSACTION),
+                transaction.transaction_id
+            );
+            println!(
+                "network: {} {}",
+                crate::tr!(crate::keys::TAKEOVER_PHASE),
+                transaction.phase.key()
+            );
+            println!(
+                "network: {}",
+                crate::tr!(crate::keys::RESTORE_NETWORK_ADDRESS)
+            );
+            println!(
+                "network: {} {}",
+                crate::tr!(crate::keys::TAKEOVER_CONFIRMATION_DEADLINE),
+                guard.confirmation_deadline.to_rfc3339()
+            );
+            return Ok(());
+        }
         let network = transaction.network_takeover.as_ref().ok_or_else(|| {
             InstallError::BlockedByTransaction(format!(
                 "unfinished {} transaction is not a network takeover",
@@ -335,6 +357,9 @@ pub(crate) async fn confirm(
     let mut pending = transaction::find_unfinished(root)?.ok_or_else(|| {
         InstallError::ParameterUsage("no network takeover is awaiting confirmation".into())
     })?;
+    if pending.restore_confirmation.is_some() {
+        return crate::workflows::restore::confirmation::confirm(root, &pending, runtime).await;
+    }
     if pending.phase != transaction::Phase::AwaitingNetworkConfirmation
         && pending.phase != transaction::Phase::Finalizing
     {
@@ -461,6 +486,9 @@ pub(crate) async fn rollback(
     let pending = transaction::find_unfinished(root)?.ok_or_else(|| {
         InstallError::ParameterUsage("no network takeover is available to roll back".into())
     })?;
+    if pending.restore_confirmation.is_some() {
+        return crate::workflows::restore::confirmation::rollback(root, &pending, runtime).await;
+    }
     let network = pending.network_takeover.clone().ok_or_else(|| {
         InstallError::CorruptedTransaction(
             "unfinished transaction has no network takeover state".into(),
@@ -676,6 +704,27 @@ pub(crate) fn validate_action(
     confirm: bool,
 ) -> Result<(), InstallError> {
     use transaction::{Operation, Phase};
+    if let Some(guard) = &tx.restore_confirmation {
+        transaction::validate_transaction(tx)?;
+        if confirm {
+            if !matches!(
+                tx.phase,
+                Phase::AwaitingNetworkConfirmation | Phase::Finalizing
+            ) {
+                return Err(InstallError::ParameterUsage(
+                    "restore is not awaiting network confirmation".into(),
+                ));
+            }
+            if tx.phase == Phase::AwaitingNetworkConfirmation {
+                crate::workflows::restore::confirmation::check_window(guard)?;
+            }
+        } else if !rollback_allowed(tx.phase) {
+            return Err(InstallError::ParameterUsage(
+                "accepted restore confirmation cannot be rolled back".into(),
+            ));
+        }
+        return Ok(());
+    }
     if !matches!(tx.operation, Operation::Install | Operation::Reinit) {
         return Err(InstallError::ParameterUsage(
             "not a network takeover transaction".into(),

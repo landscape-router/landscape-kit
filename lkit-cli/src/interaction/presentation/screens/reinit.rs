@@ -253,7 +253,7 @@ mod tests {
             Some(OperationResult::Success),
             true,
         );
-        assert!(content.contains("Network takeover awaiting confirmation"));
+        assert!(content.contains("Network access awaiting confirmation"));
         assert!(!content.contains("Reinit complete"));
         assert!(!content.contains("The operation finished successfully"));
     }

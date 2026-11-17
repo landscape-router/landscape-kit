@@ -45,7 +45,9 @@ lkit [--non-interactive] install [--version <VERSION>]
 安装不按发行版名称设置白名单；使用 glibc 的 Linux 主机在通过完整运行能力预检后可以
 继续。依赖缺失错误会按检测到的 `apt`、`dnf`/`yum`、`pacman` 或 `zypper` 显示安装建议。
 
-人工安装建议先单独安装 `lkit`，再从终端运行 `sudo lkit`，从管理控制台侧栏进入 Install
+安装前必须运行兼容的 lkit daemon；CLI 使用 `sudo lkit self install` 部署，自动化可用
+`sudo lkit --non-interactive self install`。daemon 未运行时安装返回明确的部署提示。
+人工安装建议先单独安装 `lkit`，再从终端运行 `sudo lkit`，按提示部署 daemon 后从侧栏进入 Install
 面板。`lkit install` 保留为命令模式；没有 `--password-file` 时仍通过 `/dev/tty` 隐藏读取
 密码。无 TTY 的自动化环境必须显式使用 `--non-interactive`，并提供 root 所有且权限为
 `0400` 或 `0600` 的 `--password-file`。

@@ -1,6 +1,9 @@
 # Reviewed CLI unit test filters; system-level fixtures run separately.
 deployment::config::tests
 commands::backup::delete::tests
+commands::backup::create::tests
+commands::backup::tests::create_writes_manual_backup_without_any_service_manager
+commands::backup::tests::create_export_failure_leaves_no_final_file
 commands::flare::tests
 flare::server::tests
 backup::rollback::tests::restores_current_without_territory_or_reusing_stale_temporary_links
@@ -41,6 +44,8 @@ network::takeover::eligibility_tests
 commands::network::tests
 commands::uninstall::tests
 workflows::restore::native::tests
+workflows::restore::confirmation::tests
+interaction::presentation::screens::restore::tests
 workflows::switch::tests
 daemon_operations::tests
 daemon_operations::timeline::tests

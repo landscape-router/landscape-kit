@@ -56,6 +56,10 @@ pub(crate) const PRESENTATION_REPAIR_COMPLETE: &str = "presentation.repair_compl
 pub(crate) const PRESENTATION_REPAIR_FAILED: &str = "presentation.repair_failed";
 pub(crate) const PRESENTATION_REPAIR_CANCELLED: &str = "presentation.repair_cancelled";
 pub(crate) const PRESENTATION_RESTORE_COMPLETE: &str = "presentation.restore_complete";
+pub(crate) const PRESENTATION_RESTORE_AWAITING_CONFIRMATION: &str =
+    "presentation.restore_awaiting_confirmation";
+pub(crate) const PRESENTATION_RESTORE_CONFIRM_NETWORK: &str =
+    "presentation.restore_confirm_network";
 pub(crate) const PRESENTATION_RESTORE_FAILED: &str = "presentation.restore_failed";
 pub(crate) const PRESENTATION_RESTORE_CANCELLED: &str = "presentation.restore_cancelled";
 pub(crate) const PRESENTATION_UNINSTALL_COMPLETE: &str = "presentation.uninstall_complete";

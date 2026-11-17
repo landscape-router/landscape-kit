@@ -567,7 +567,7 @@ fn console_reinit_refreshes_external_confirmation_and_automatic_rollback() {
             .unwrap();
         terminal.send(Key::Enter).unwrap();
         terminal
-            .wait_until(|s| s.contains("Network takeover awaiting confirmation"))
+            .wait_until(|s| s.contains("Network access awaiting confirmation"))
             .unwrap();
         terminal.send(Key::Enter).unwrap();
         let records = || {
@@ -620,7 +620,7 @@ fn console_reinit_refreshes_external_confirmation_and_automatic_rollback() {
         assert!(
             !terminal
                 .screen()
-                .contains("Network takeover awaiting confirmation")
+                .contains("Network access awaiting confirmation")
         );
         let after = records();
         assert_eq!(after["id"], before["id"]);

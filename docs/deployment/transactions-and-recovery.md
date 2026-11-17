@@ -11,7 +11,7 @@
 ```
 
 事务文件位于 lkit 地盘（见[安装布局与状态](layout-and-state.md)）；卸载清理本根历史，
-保留当前卸载的提交记录供 daemon 核实结果。读取支持 schema v1 至 v13，具体操作版本见下文。
+保留当前卸载的提交记录供 daemon 核实结果。读取支持 schema v1 至 v14，具体操作版本见下文。
 事务中的路径字段按基准分为两类：
 
 - 带 `backups/`、`transactions/`、`logs/` 前缀的字段相对 **lkit 地盘**(与事务文件
@@ -103,7 +103,8 @@ daemon 原生重初始化与迁移的 operation 分别为 `reinit` 和 `migrate`
 null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lkit 地盘相对路径，外部路径
 不得直接写入事务文件。交互确认（含 minimal scope 数据损失确认）先于 `begin` 完成：
 用户拒绝或非交互模式缺少 `--yes` 时不创建事务、不写任何文件，`--file` 也不产生
-暂存拷贝。
+暂存拷贝。所有新 restore 在目标健康检查后另行等待网络确认；开始恢复前的确认不允许
+跳过该窗口，目标 state 仅在网络确认被接受后提交。
 
 `uninstall` 时 `from_version` 和 `previous_current` 必须记录当前已提交版本关系，
 `target_version` 和 `target_release` 为 null；`backup` 在默认保护备份成功后记录卸载前
@@ -114,10 +115,10 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 `restore_backup.path` 与 `backup.path` 都必须是 lkit 地盘内的安全相对路径；外部备份先复制
 到本次 restore 事务目录并完成自校验，事务只记录复制后的路径、backup ID 和文件 checksum。
 
-`no_backup` 是布尔字段，只有用户对已停止的 systemd 服务显式使用
-`--allow-no-backup` 的 switch 或 restore 才为 true；此时 `backup` 必须为 null。卸载使用
-`--allow-no-backup` 时同样为 true 且 `backup` 必须为 null。其他事务
-固定为 false。读取旧 v1 文件时缺失该字段按 false 处理。
+`no_backup` 是布尔字段，表示用户显式允许缺少保护 `.lkb`，此时 `backup` 必须为 null。
+`switch` 仅对已经停止的受管服务允许此例外；`restore` 在保护备份无法创建且用户指定
+`--allow-no-backup` 时使用该例外。卸载和 reinit 的显式无备份选项同样记录此字段。
+三个服务管理后端共用这些规则；其他事务固定为 false。读取旧 v1 文件时缺失按 false 处理。
 
 `static_backup` Schema 固定为：
 
@@ -155,6 +156,14 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 的接口与 MAC、网络计划、对应后端的宿主网络服务快照、确认截止时间、主机启动标识
 及待提交安装状态路径。恢复 unit 名和恢复二进制路径仅用于旧事务兼容清理；新事务
 不创建专属恢复 unit。字段不得包含 PPPoE 凭据。
+
+`restore_confirmation` 仅用于 schema v14 的 `restore`，该版本必须提供该对象，旧版本
+不得包含它，也不得同时记录 `network_takeover`。它只保存 `boot_id`、
+`confirmation_deadline` 和 `pending_state`：主机启动标识及事务 ID 必须为有效 UUID，
+待提交状态路径必须恰为 `transactions/<transaction-id>/pending-restore-state.json`，
+相对 lkit 地盘。期限在目标启动并通过健康检查后开始；待确认期间保持旧已提交 state。
+确认读取 pending state 时校验安装根、本次事务 ID 和目标版本，执行后端必须匹配该状态。
+恢复配置不重新接管宿主网络服务，因此不伪造首次接管的网络计划或宿主服务快照。
 
 网络事务的恢复只按[统一恢复契约](../network/daemon-recovery.md)执行：待确认阶段
 等待或回滚，`finalizing` 续做提交，`rolling_back` 重试恢复。不能以通用失败清理
@@ -228,26 +237,27 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
   准备阶段未停止旧实例时标记失败。停止、激活和验证阶段恢复旧 unit、清理未提交新根，
   成功标记 `rolled_back`；恢复失败保持 `rolling_back`，由 daemon 重试。
   `legacy_unit` 为空的前台进程由用户自行重启，源目录保持不变。
-  - `restore` 按阶段恢复：
-    - `preparing`：尚未改变运行状态，清理事务目录并标记 `failed`；
-    - `prepared` 或 `stopping`：`current` 和数据尚未激活，按 `systemd_before` 幂等恢复
-      注册链接、enabled/active 状态，清理事务目录并标记 `failed`；
-    - `activating`、`verifying` 或 `rolling_back`：执行 restore 回滚。systemd 模式回滚
-      顺序固定为：停止目标服务 → 恢复 unit 注册与 enabled 状态（**不启动**）→ 同版本
-      restore 时把被替换的原 release 从事务目录移回 → 恢复 `current` → 恢复 `data/`
-      （幂等，见下）→ 仅在恢复前服务活跃时启动并做完整健康检查 → 重新提交恢复前 state。
-      必要时再使用 `backup` 保护快照；恢复成功标记 `rolled_back`，恢复失败保持未完成阶段并
-      保留目标 release、旧 data 和两个备份引用，daemon 重试恢复；
-    - 回滚恢复 `data/` 必须幂等，调用方按三态判定：`previous-data` 存在 → 移回原位；
-      `previous-data` 缺失且 `data/` 存在 → 视为上次回滚已完成（already-restored），
-      不得再次删除或移动 `data/`，直接继续写 state 与标记 `rolled_back`；两者均缺失 →
-      事务损坏，走保护快照分支或报损坏；
-    - 同版本 restore（`previous_current` 与 `target_release` 相同）回滚时，若事务目录
-      存在 `replaced-release`，必须先把原 release 移回 `releases/<版本>`，确保回滚后的
-      release 内容与回滚前完全一致；
+- `restore` 按阶段恢复：
+  - `preparing`：尚未改变运行状态，清理事务临时内容并标记 `failed`；
+  - schema v14 的 `prepared` 或 `stopping`：进入完整回滚路径，核实原数据并恢复原
+    release、current、data、服务及 DNS，成功标记 `rolled_back` 并保留恢复依据；
+    旧 v9 按 `systemd_before` 恢复原服务和 DNS，清理事务临时内容并标记 `failed`；
+  - `activating`、`verifying` 或 `rolling_back`：停止目标服务，恢复原注册及启用状态但
+    不启动；同版本恢复先移回 `replaced-release`，再恢复 `current` 和原 data，最后仅在
+    原服务活跃时启动并健康检查，写回原 state 后标记 `rolled_back`。systemd、OpenRC、
+    SysVinit 使用同一顺序。必要时使用保护 `.lkb`；恢复失败保留未完成阶段与恢复依据；
+  - schema v14 的原 data 由停止前保存的设备号和 inode 识别。`previous-data` 和活动
+    `data/` 中只有匹配的真实目录才能视为原数据，不能以目录存在性认定回滚完成。
+    原数据丢失时只能使用保护 `.lkb` 重建；无保护备份时阻断恢复，不能放行目标数据；
+  - `awaiting_network_confirmation`：同次主机启动且期限未到时等待用户确认，daemon
+    重启不延长期限；超时或主机启动标识变化进入回滚；
+  - `finalizing`：确认决定已经持久化，校验 pending state 后续做提交，即使期限已到
+    或主机已重启也不撤销确认。state 已写但事务未提交时同样续做；
+  - 旧 schema v9 不含确认窗口，沿用其停止／激活恢复规则；原 data 已移回后按旧格式
+    识别幂等恢复，不补写或猜测 schema v14 的身份依据。
 - `rolling_back`：继续事务已经选择的回滚路径，不重新尝试目标版本；
-- `awaiting_network_confirmation` 或 `finalizing`：普通命令不自动处理，要求使用网络
-  子命令；daemon 对待确认事务监测期限和主机重启，对 finalizing 继续提交；
+- `awaiting_network_confirmation` 或 `finalizing`：普通命令不执行恢复；用户通过网络
+  子命令确认或回滚，daemon 监测待确认期限和主机重启，对 finalizing 继续提交；
 - `committed`：不恢复；
 - `rolled_back`：不重复恢复；
 - `failed`：阻断新安装并要求人工诊断。
@@ -340,8 +350,8 @@ binary、static 和初始化观测 repair 区分。
 未知版本或修复类型不得按普通 repair 清理。失败恢复数据在事务终结前不得删除。
 
 服务定义修复使用 schema v6、`operation: repair_service`；资产修复使用 schema v7、
-`operation: repair`；daemon switch 使用 v8，restore/uninstall/reinit/install/migrate 分别使用
-v9/v10/v11/v12/v13。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
+`operation: repair`；daemon switch 使用 v8，uninstall/reinit/install/migrate 分别使用
+v10/v11/v12/v13，restore 使用 v14 并兼容读取 v9。独立快照为 `transactions/<id>/service-repair.json`，记录格式版本 1、后端、
 原定义、目标定义、原权限、服务状态、OpenRC／SysVinit 精确启动链接及安装状态。
 `preparing` 未修改定义，可标记失败；`prepared`、`activating`、`verifying` 与
 `rolling_back` 恢复原定义；`finalizing` 校验并续做提交。恢复遇到外部定义修改或
@@ -385,16 +395,37 @@ activating／verifying／rolling_back 按旧状态快照回滚；systemd、OpenR
 服务快照恢复。旧版本静态目录和归档保留，`.lkb` 用于恢复二进制及初始化数据。
 无备份回滚不恢复 data。恢复失败保持非终态、保留证据并阻止后续修改。
 
-### 原生 restore 事务（Schema v9）
+### 原生 restore 事务（Schema v14）
 
-restore 事务以 v9 记录，通过操作 ID 关联持久化请求。目标 `.lkb` 在准备阶段复制到
-事务目录并记录摘要；后续执行使用已验证字节。systemd、OpenRC、SysVinit 依安装
-state 的后端执行，恢复时必须与原后端匹配。
+restore 使用 v14，通过操作 ID 关联持久化请求；前端要求 daemon 提供 `restore-v2.pid`
+能力标记。目标 `.lkb` 在准备阶段复制到事务目录并记录摘要，执行使用已验证字节。
+systemd、OpenRC、SysVinit 依安装 state 的后端执行，恢复时必须与原后端匹配。
 
-`preparing` 清理事务临时内容后结束；`prepared`／`stopping` 恢复原服务与 DNS 后结束；
-`activating`／`verifying`／`rolling_back` 恢复旧 release、current、data 与原服务状态。
-清理或恢复失败时保留未完成阶段，daemon 重试并阻止后续修改。`committed` 只补写操作
-结果；不会重新创建备份或导入目标。观察者断开不改变事务。
+`restore_confirmation` 保存当前主机启动标识、截止时间和本事务 pending state 路径。
+激活并通过本机健康检查后保存 pending state，进入 `awaiting_network_confirmation`，
+原已提交 state 保持不变。所有新 restore 均等待显式 `lkit network confirm`；开始恢复
+时的 `--yes`、本机健康检查或 daemon 重启都不能代替用户确认网络可达。期限到达或
+确认前整机重启时回滚。确认复核身份、健康和期限后持久化 `finalizing`，之后只续做
+目标 state 提交；state 已写而 `committed` 尚未落盘的窗口也不能回滚。
+
+`preparing` 中断时清理临时内容并标记 `failed`；`prepared`、`stopping`、`activating`、
+`verifying` 中断都进入完整回滚路径，成功标记 `rolled_back` 并保留恢复依据。
+
+停止服务前，在 lkit 地盘的 `transactions/<id>/previous-data-identity.json` 保存原
+`data/` 的设备号和 inode。需要原子移动的 `previous-data`、`failed-data` 和同版本
+`replaced-release` 使用事务选定的安装文件系统工作目录。回滚先还原原 release 和
+current，再核实并还原原 data；数据已经移回但 daemon 尚未写入下一步时，以目录身份
+识别该结果。软链接、身份变化或缺少身份文件不能当作原数据。原 data 丢失时可用
+保护 `.lkb` 做配置级重建，无可用依据时保留 `rolling_back` 并阻断启动。
+
+每次回滚重试在修改服务或数据前撤销旧启动放行凭据并同步目录；原 release 与数据
+恢复后、启动原服务前写入 `transactions/<id>/restored-boot-id`。启动屏障只在该凭据
+等于当前主机启动标识时允许 `rolling_back` 中的原配置启动；它不能放行仍处于待确认阶段的目标配置。原本停止的
+服务保持停止。恢复失败保留未完成阶段，daemon 重试并阻止后续修改。
+
+读取旧 v9 restore 时保留其原有恢复语义，不创建或推断确认窗口及数据身份；它不能
+使用 v14 的待确认和确认提交阶段。`committed` 只补写操作结果，不重复创建备份或导入
+目标。观察者断开不改变任何版本的事务。
 
 ### 原生 uninstall 事务（Schema v10）
 

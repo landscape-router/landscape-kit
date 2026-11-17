@@ -500,6 +500,219 @@ fn restore_payload_rejects_unbound_inputs_and_queued_cancel_needs_no_backup_io()
     let _ = std::fs::remove_dir_all(temp);
 }
 
+fn claimed_restore(f: &Fixture, schema: u64) -> (Record, transaction::TransactionFile) {
+    let root = normalize_install_root(&f.dir.join("landscape")).unwrap();
+    let request = RestoreRequest {
+        from_version: "1.3.0".into(),
+        state_identity: "a".repeat(64),
+        source: f.dir.join("selected.lkb"),
+        backup_id: "20261117-120000-12345678".into(),
+        backup_sha256: "b".repeat(64),
+        target_version: "1.2.3".into(),
+        allow_no_backup: true,
+    };
+    submit_restore(root.canonical.display().to_string(), request.clone()).unwrap();
+    let mut record = claim().unwrap().unwrap();
+    record.language = Some(crate::i18n::Language::En);
+    save(&record).unwrap();
+    let mut tx = transaction::TransactionFile::new_restore(
+        &root,
+        &semver::Version::new(1, 3, 0),
+        &semver::Version::new(1, 2, 3),
+    )
+    .unwrap();
+    tx.schema_version = schema;
+    tx.no_backup = true;
+    tx.restore_backup = Some(transaction::BackupRef {
+        backup_id: request.backup_id,
+        path: "backups/20261117-120000-12345678.lkb".into(),
+        sha256: request.backup_sha256,
+    });
+    if schema == 14 {
+        tx.restore_confirmation = Some(transaction::RestoreConfirmation {
+            boot_id: "11111111-1111-4111-8111-111111111111".into(),
+            confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(10),
+            pending_state: format!(
+                "transactions/{}/pending-restore-state.json",
+                tx.transaction_id
+            ),
+        });
+    }
+    transaction::validate_transaction(&tx).unwrap();
+    (record, tx)
+}
+
+#[test]
+fn guarded_restore_waits_for_network_resolution_and_updates_both_receipts() {
+    for (kind, outcome, restore_status, network_status) in [
+        (
+            Kind::NetworkConfirm,
+            transaction::Phase::Committed,
+            Status::Succeeded,
+            Status::Succeeded,
+        ),
+        (
+            Kind::NetworkRollback,
+            transaction::Phase::RolledBack,
+            Status::Failed,
+            Status::Succeeded,
+        ),
+        (
+            Kind::NetworkConfirm,
+            transaction::Phase::RolledBack,
+            Status::Failed,
+            Status::Failed,
+        ),
+    ] {
+        let f = Fixture::new();
+        let (mut restore, mut tx) = claimed_restore(&f, 14);
+        let mut wrong = tx.clone();
+        wrong.target_version = Some("2.0.0".into());
+        assert!(associate(&mut restore, &wrong).is_err());
+        associate(&mut restore, &tx).unwrap();
+        tx.phase = transaction::Phase::AwaitingNetworkConfirmation;
+        f.write_tx(&tx);
+        set_message(
+            &restore.id,
+            "Run lkit network confirm to commit this restore",
+        )
+        .unwrap();
+        reconcile(&mut restore, Some(Ok(()))).unwrap();
+        assert_eq!(restore.status, Status::AwaitingConfirmation);
+        assert_eq!(observed_outcome(&restore), Some((0, true)));
+        assert!(cancel(&restore.id).is_err());
+        reconcile(&mut restore, None).unwrap();
+        assert_eq!(restore.status, Status::AwaitingConfirmation);
+        let queued = f.submit();
+        assert!(claim().unwrap().is_none());
+
+        let request = submit_network(
+            restore.install_root.clone(),
+            kind,
+            tx.transaction_id.clone(),
+        )
+        .unwrap();
+        let mut network = claim_kind(true).unwrap().unwrap();
+        assert_eq!(network.id, request.id);
+        wrong = tx.clone();
+        wrong.transaction_id = uuid::Uuid::now_v7().to_string();
+        assert!(associate(&mut network, &wrong).is_err());
+        associate(&mut network, &tx).unwrap();
+        assert_eq!(network.transaction_id, restore.transaction_id);
+
+        tx.phase = outcome;
+        f.write_tx(&tx);
+        reconcile(&mut network, None).unwrap();
+        reconcile(&mut restore, None).unwrap();
+        assert_eq!(read(&network.id).unwrap().status, network_status);
+        assert_eq!(read(&restore.id).unwrap().status, restore_status);
+        assert_eq!(
+            observed_outcome(&restore),
+            Some((
+                if restore_status == Status::Succeeded {
+                    0
+                } else {
+                    5
+                },
+                false
+            ))
+        );
+        assert_eq!(
+            restore.message.as_deref(),
+            Some(if restore_status == Status::Succeeded {
+                "Operation completed successfully"
+            } else {
+                "Operation rolled back; recovery completed"
+            })
+        );
+        assert!(claim_kind(true).unwrap().is_none());
+        assert_eq!(claim().unwrap().unwrap().id, queued.id);
+    }
+}
+
+#[test]
+fn guarded_restore_rollback_failure_blocks_work_until_durable_recovery_finishes() {
+    let f = Fixture::new();
+    let (mut restore, mut tx) = claimed_restore(&f, 14);
+    associate(&mut restore, &tx).unwrap();
+    tx.phase = transaction::Phase::AwaitingNetworkConfirmation;
+    f.write_tx(&tx);
+    reconcile(&mut restore, Some(Ok(()))).unwrap();
+    submit_network(
+        restore.install_root.clone(),
+        Kind::NetworkRollback,
+        tx.transaction_id.clone(),
+    )
+    .unwrap();
+    let mut rollback = claim_kind(true).unwrap().unwrap();
+    associate(&mut rollback, &tx).unwrap();
+    tx.phase = transaction::Phase::RollingBack;
+    f.write_tx(&tx);
+    reconcile(
+        &mut rollback,
+        Some(Err("restoring original service failed".into())),
+    )
+    .unwrap();
+    reconcile(&mut restore, None).unwrap();
+    assert_eq!(rollback.status, Status::Recovering);
+    assert_eq!(rollback.exit_code, Some(6));
+    assert_eq!(restore.status, Status::Recovering);
+    assert_eq!(observed_outcome(&rollback), Some((6, false)));
+    f.submit();
+    assert!(claim().unwrap().is_none());
+    assert!(claim_kind(true).unwrap().is_none());
+    reconcile(&mut rollback, None).unwrap();
+    assert_eq!(
+        rollback.message.as_deref(),
+        Some("restoring original service failed")
+    );
+
+    tx.phase = transaction::Phase::RolledBack;
+    f.write_tx(&tx);
+    reconcile(&mut rollback, None).unwrap();
+    reconcile(&mut restore, None).unwrap();
+    assert_eq!(read(&rollback.id).unwrap().status, Status::Succeeded);
+    assert_eq!(observed_outcome(&rollback), Some((0, false)));
+    assert_eq!(read(&restore.id).unwrap().status, Status::Failed);
+    assert_eq!(observed_outcome(&restore), Some((5, false)));
+    assert!(!rollback.message.as_deref().unwrap().contains("failed"));
+}
+
+#[test]
+fn legacy_restore_receipts_recover_without_a_network_confirmation_window() {
+    for (outcome, expected, code) in [
+        (transaction::Phase::Committed, Status::Succeeded, 0),
+        (transaction::Phase::RolledBack, Status::Failed, 5),
+    ] {
+        let f = Fixture::new();
+        let (mut restore, mut tx) = claimed_restore(&f, 9);
+        associate(&mut restore, &tx).unwrap();
+        tx.phase = transaction::Phase::Verifying;
+        f.write_tx(&tx);
+        reconcile(&mut restore, None).unwrap();
+        assert_eq!(restore.status, Status::Recovering);
+        assert_eq!(tx.confirmation_window(), None);
+        for kind in [Kind::NetworkConfirm, Kind::NetworkRollback] {
+            let request = submit_network(
+                restore.install_root.clone(),
+                kind,
+                tx.transaction_id.clone(),
+            )
+            .unwrap();
+            let mut network = claim_kind(true).unwrap().unwrap();
+            assert_eq!(network.id, request.id);
+            assert!(associate(&mut network, &tx).is_err());
+            reconcile(&mut network, Some(Err("no confirmation window".into()))).unwrap();
+        }
+        tx.phase = outcome;
+        f.write_tx(&tx);
+        reconcile(&mut restore, None).unwrap();
+        assert_eq!(read(&restore.id).unwrap().status, expected);
+        assert_eq!(observed_outcome(&restore), Some((code, false)));
+        assert!(!execute_next(|_| panic!("legacy restore must not replay")).unwrap());
+    }
+}
+
 #[test]
 fn uninstall_receipt_binds_keep_data_and_survives_installation_state_removal() {
     let temp =

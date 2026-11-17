@@ -207,7 +207,7 @@ async fn recover_restore<P: DocsProbe>(
     systemd: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
-    if transaction.schema_version == 9 && transaction.phase != Phase::Preparing {
+    if transaction.is_native_restore() && transaction.phase != Phase::Preparing {
         let snapshot =
             crate::backup::rollback::read_state_snapshot(root, &transaction.transaction_id)?;
         if snapshot.service.manager != systemd.kind() {
@@ -216,9 +216,15 @@ async fn recover_restore<P: DocsProbe>(
             ));
         }
     }
+    if transaction.schema_version == 14
+        && matches!(transaction.phase, Phase::Prepared | Phase::Stopping)
+    {
+        return crate::workflows::restore::rollback_restore(root, transaction, systemd, health)
+            .await;
+    }
     match transaction.phase {
         Phase::Preparing => {
-            if transaction.schema_version == 9 {
+            if transaction.is_native_restore() {
                 match std::fs::remove_dir_all(transaction_dir(root, transaction)) {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -232,7 +238,7 @@ async fn recover_restore<P: DocsProbe>(
         }
         Phase::Prepared | Phase::Stopping => {
             restore_pre_activation_systemd(root, transaction, systemd)?;
-            if transaction.schema_version == 9 {
+            if transaction.is_native_restore() {
                 match std::fs::remove_dir_all(transaction_dir(root, transaction)) {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

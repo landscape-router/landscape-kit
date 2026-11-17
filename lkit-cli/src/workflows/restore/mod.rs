@@ -15,13 +15,15 @@ use crate::daemon_operations::Stage;
 use crate::deployment::layout;
 
 mod backup;
+pub(crate) mod confirmation;
 mod native;
 pub(crate) use native::run_operation;
 mod rollback;
 mod state;
 
+pub(crate) use self::backup::check_architecture;
+use self::backup::resolve_target_backup;
 pub(crate) use self::backup::validate_backup_file;
-use self::backup::{check_architecture, resolve_target_backup};
 pub(crate) use self::rollback::{restore_previous_data, rollback_restore, write_file_atomic};
 use self::state::{build_restore_state, create_protection_backup};
 /// restore 运行参数。
@@ -40,6 +42,7 @@ pub(crate) struct RestoreArgs {
 
 #[derive(Debug)]
 pub(crate) enum RestoreOutcome {
+    AwaitingConfirmation,
     Committed {
         version: semver::Version,
         backup_id: String,
@@ -74,7 +77,7 @@ pub(crate) async fn restore_version<P: DocsProbe>(
 ) -> Result<RestoreOutcome, InstallError> {
     let prepared = prepare_restore(root, state, args)?;
     confirm_plan(args, state, &prepared.metadata, options.confirm)?;
-    restore_prepared(root, state, manager, args, options, prepared).await
+    restore_prepared(root, state, manager, args, options, prepared, None).await
 }
 
 pub(crate) struct PreparedRestore {
@@ -107,6 +110,7 @@ async fn restore_prepared<P: DocsProbe>(
     args: &RestoreArgs,
     options: &RestoreOptions<'_, P>,
     prepared: PreparedRestore,
+    runtime: Option<&crate::deployment::runtime::InstallRuntime>,
 ) -> Result<RestoreOutcome, InstallError> {
     let PreparedRestore {
         bytes,
@@ -124,7 +128,13 @@ async fn restore_prepared<P: DocsProbe>(
     let mut transaction = TransactionFile::new_restore(root, &from_version, &target_version)?;
     crate::deployment::transaction::workspace::select(&mut transaction);
     if native {
-        transaction.schema_version = 9;
+        transaction.schema_version = 14;
+        transaction.restore_confirmation = Some(confirmation::prepare(
+            &transaction.transaction_id,
+            runtime.ok_or_else(|| {
+                InstallError::Preflight("restore requires recovery runtime".into())
+            })?,
+        )?);
         control::associate(&transaction)?;
     }
     super::transaction::begin(root, &transaction)?;
@@ -201,6 +211,7 @@ async fn restore_prepared<P: DocsProbe>(
         None
     };
     rollback_util::write_state_snapshot(root, &transaction.transaction_id, state)?;
+    confirmation::capture_previous_data(root, &transaction)?;
 
     // 停止服务前完成安全解包与完整内容校验(必需条目、权限 0700/0600):
     // 解包失败时服务与现场均未改变,事务直接标记 failed。
@@ -297,6 +308,19 @@ async fn restore_prepared<P: DocsProbe>(
         }
         let new_state =
             build_restore_state(root, state, &transaction, &metadata, &restore_dir, unit_sha)?;
+        if let Some(runtime) = runtime {
+            transaction
+                .restore_confirmation
+                .as_mut()
+                .unwrap()
+                .confirmation_deadline = confirmation::deadline(runtime)?;
+            confirmation::write_pending(&transaction, &new_state)?;
+            super::transaction::persist(root, &transaction)?;
+            super::transaction::mark_phase(root, &transaction, Phase::AwaitingNetworkConfirmation)?;
+            #[cfg(feature = "test-support")]
+            control::checkpoint("restore-awaiting")?;
+            return Ok(());
+        }
         super::state::write_state(root, &new_state)?;
         #[cfg(feature = "test-support")]
         control::checkpoint("restore-state-written")?;
@@ -306,6 +330,7 @@ async fn restore_prepared<P: DocsProbe>(
     .await;
 
     match result {
+        Ok(()) if native => Ok(RestoreOutcome::AwaitingConfirmation),
         Ok(()) => Ok(RestoreOutcome::Committed {
             version: target_version,
             backup_id: metadata.backup_id,

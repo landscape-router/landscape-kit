@@ -148,7 +148,16 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landsc
 sudo lkit
 ```
 
-裸命令进入 Ratatui 管理控制台；自动化仍使用显式 `lkit install` 子命令。
+裸命令进入 Ratatui 管理控制台；首次安装时先按控制台提示部署 daemon。
+自动化需要先部署 daemon，再使用显式 `lkit install` 子命令：
+
+```sh
+sudo lkit --non-interactive self install
+sudo lkit --non-interactive install --password-file /root/lkit-password
+```
+
+密码文件必须归 root 所有，权限为 `0400` 或 `0600`。daemon 未配置急救恢复码时自动
+生成并保存，可用 `lkit flare setup` 查看。安装脚本不带参数时只安装 CLI，不部署 daemon。
 
 显式使用 Landscape 镜像仓库安装：
 
@@ -156,7 +165,9 @@ sudo lkit
 sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 ```
 
-`install` 后面的参数原样传给 `lkit install`。安装器和 `lkit self upgrade` 选择 Linux `x86_64`、`aarch64`、`riscv64`、
+安装脚本带 `install` 时先执行 `lkit self install --non-interactive`，成功后再把
+`install` 后面的参数原样传给 `lkit install`；daemon 部署失败则停止，不开始 Landscape
+安装。安装器和 `lkit self upgrade` 选择 Linux `x86_64`、`aarch64`、`riscv64`、
 `loongarch64` 的 `lkit-<arch>` 静态产物，不依赖宿主 glibc 或 musl 动态加载器。
 这不表示所有发行版的系统服务、网络后端或可选软件都受支持；这些功能仍受各自平台限制。
 安装器自动选择下载工具：

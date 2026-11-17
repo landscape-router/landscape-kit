@@ -19,11 +19,11 @@ pub enum NetworkAction {
     /// Validate the Landscape service startup recovery barrier
     #[command(hide = true)]
     StartupCheck,
-    /// Show a pending or committed network takeover transaction
+    /// Show pending network changes or the committed network takeover
     Status,
-    /// Confirm the network takeover
+    /// Confirm connectivity after installation, reinitialization or restore
     Confirm,
-    /// Restore the host network state saved before takeover
+    /// Roll back unconfirmed installation, reinitialization or restore
     Rollback {
         #[arg(long, hide = true)]
         automatic: bool,

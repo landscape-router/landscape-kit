@@ -155,7 +155,12 @@ cat >"$fixture_directory/lkit-x86_64" <<'SH'
 case "${1:-}" in
   --version) printf 'lkit 0.1.0\n' ;;
   --fixture-architecture) printf 'x86_64\n' ;;
-  install) printf '%s\n' "$@" >"$LKIT_TEST_LOG" ;;
+  self)
+    printf '%s\n' "$@" >>"$LKIT_TEST_LOG"
+    [ "$*" = 'self install --non-interactive' ] || exit 2
+    [ "${FAKE_DAEMON_INSTALL_FAIL:-0}" != 1 ] || exit 1
+    ;;
+  install) printf '%s\n' "$@" >>"$LKIT_TEST_LOG" ;;
   *) exit 2 ;;
 esac
 SH
@@ -165,7 +170,12 @@ cat >"$fixture_directory/lkit-aarch64" <<'SH'
 case "${1:-}" in
   --version) printf 'lkit 0.1.0\n' ;;
   --fixture-architecture) printf 'aarch64\n' ;;
-  install) printf '%s\n' "$@" >"$LKIT_TEST_LOG" ;;
+  self)
+    printf '%s\n' "$@" >>"$LKIT_TEST_LOG"
+    [ "$*" = 'self install --non-interactive' ] || exit 2
+    [ "${FAKE_DAEMON_INSTALL_FAIL:-0}" != 1 ] || exit 1
+    ;;
+  install) printf '%s\n' "$@" >>"$LKIT_TEST_LOG" ;;
   *) exit 2 ;;
 esac
 SH
@@ -214,6 +224,7 @@ run_installer() {
     FAKE_CURL_SOURCE="$fake_bin/curl" \
     FAKE_APK_FAIL="${FAKE_APK_FAIL:-0}" \
     FAKE_APK_SKIP_CURL="${FAKE_APK_SKIP_CURL:-0}" \
+    FAKE_DAEMON_INSTALL_FAIL="${FAKE_DAEMON_INSTALL_FAIL:-0}" \
     FAKE_ID_U="${FAKE_ID_U:-0}" \
     FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
     FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" \
@@ -260,9 +271,20 @@ fi
 
 rm -f "$log"
 run_installer install --version 1.2.3 --repository >/dev/null
-expected_arguments=$'install\n--version\n1.2.3\n--repository'
+expected_arguments=$'self\ninstall\n--non-interactive\ninstall\n--version\n1.2.3\n--repository'
 [[ $(<"$log") == "$expected_arguments" ]] \
-  || fail "lkit install arguments were not preserved"
+  || fail "daemon bootstrap must precede the unchanged lkit install arguments"
+
+rm -f "$log"
+if FAKE_DAEMON_INSTALL_FAIL=1 run_installer install --non-interactive --password-file /fixture/password >/dev/null 2>&1; then
+  fail "Landscape installation continued after daemon bootstrap failed"
+fi
+[[ $(<"$log") == $'self\ninstall\n--non-interactive' ]] \
+  || fail "failed daemon bootstrap must not invoke Landscape installation"
+
+rm -f "$log"
+run_installer >/dev/null
+[[ ! -e "$log" ]] || fail "CLI-only installation must not deploy daemon"
 
 printf 'existing binary\n' >"$destination"
 before=$(sha256sum "$destination")

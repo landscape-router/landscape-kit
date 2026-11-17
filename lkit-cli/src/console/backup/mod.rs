@@ -43,13 +43,14 @@ pub(crate) enum BackupListState {
 #[derive(Clone)]
 pub(crate) struct VerifiedBackup {
     pub message: String,
-    pub confirmation: crate::commands::restore::RestoreConfirmation,
+    /// Integrity can succeed even when this installation cannot restore it.
+    pub confirmation: Result<crate::commands::restore::RestoreConfirmation, String>,
 }
 
 pub(crate) enum BackupVerifyState {
     Idle,
     Running(Receiver<Result<VerifiedBackup, String>>),
-    /// 最近一次完整校验的结果:Ok 表示校验通过,Err 表示备份损坏。
+    /// 完整性校验结果；当前安装的恢复资格保存在成功结果内，单独判断。
     Complete(Result<VerifiedBackup, String>),
 }
 
@@ -129,56 +130,52 @@ impl BackupOps for RealBackupOps {
         landscape_terrain_proto::concurrency::spawn_thread(
             crate::task_names::CONSOLE_BACKUP_VERIFY,
             move || {
-                let result = crate::i18n::with_language(language, || {
-                    let root = crate::deployment::state::discover_landscape_root()
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| "no Landscape installation".to_string())?;
-                    let installed = crate::deployment::state::load_state(&root)
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| "no Landscape installation".to_string())?;
-                    let args = crate::workflows::restore::RestoreArgs {
-                        backup_id: None,
-                        file_path: Some(path.clone()),
-                        yes: false,
-                        console_confirmed: false,
-                        allow_no_backup: false,
-                    };
-                    let prepared =
-                        crate::workflows::restore::prepare_restore(&root, &installed, &args)
-                            .map_err(|e| e.to_string())?;
-                    let confirmation = crate::commands::restore::confirmed_backup(
-                        &root,
-                        &installed,
-                        path.clone(),
-                        &prepared,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let bytes = prepared.bytes;
-                    let metadata = prepared.metadata;
-                    let verify_dir = std::env::temp_dir()
-                        .join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
-                    crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
-                        .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir))
-                        .map(|_| VerifiedBackup {
-                            confirmation,
-                            message: crate::tr!(
-                                crate::keys::CONSOLE_BACKUP_VERIFIED,
-                                backup_id = metadata.backup_id
-                            ),
-                        })
-                        .map_err(|error| {
-                            let _ = std::fs::remove_dir_all(&verify_dir);
-                            error.to_string()
-                        })
-                        .inspect(|_message| {
-                            let _ = std::fs::remove_dir_all(&verify_dir);
-                        })
-                });
+                let result = crate::i18n::with_language(language, || verify_backup(path));
                 let _ = sender.send(result);
             },
         );
         receiver
     }
+}
+
+pub(super) fn verify_backup(path: PathBuf) -> Result<VerifiedBackup, String> {
+    use sha2::{Digest, Sha256};
+    crate::workflows::restore::validate_backup_file(&path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let metadata = crate::backup::lkb::verify_lkb(&bytes).map_err(|e| e.to_string())?;
+    let verify_dir =
+        std::env::temp_dir().join(format!("lkit-backup-tui-verify-{}", uuid::Uuid::now_v7()));
+    let integrity = crate::backup::lkb::create_secure_dir(&verify_dir, 0o700)
+        .and_then(|()| crate::backup::lkb::extract_lkb(&bytes, &verify_dir));
+    let _ = std::fs::remove_dir_all(&verify_dir);
+    integrity.map_err(|e| e.to_string())?;
+    let message = crate::tr!(
+        crate::keys::CONSOLE_BACKUP_VERIFIED,
+        backup_id = metadata.backup_id
+    );
+    let prepared = crate::workflows::restore::PreparedRestore {
+        sha256: crate::release::artifacts::hex(&Sha256::digest(&bytes)),
+        bytes,
+        metadata,
+    };
+    let confirmation = (|| {
+        let root = crate::deployment::state::discover_landscape_root()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "no Landscape installation".to_string())?;
+        let installed = crate::deployment::state::load_state(&root)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "no Landscape installation".to_string())?;
+        crate::workflows::restore::check_architecture(&installed, &prepared.metadata)
+            .map_err(|e| e.to_string())?;
+        crate::workflows::install::parse_stable_version(&prepared.metadata.landscape_version)
+            .map_err(|e| e.to_string())?;
+        crate::commands::restore::confirmed_backup(&root, &installed, path, &prepared)
+            .map_err(|e| e.to_string())
+    })();
+    Ok(VerifiedBackup {
+        message,
+        confirmation,
+    })
 }
 
 fn default_backup_ops() -> Arc<dyn BackupOps> {
@@ -206,6 +203,7 @@ pub(crate) struct BackupPanel {
     pub(crate) corrupt_dialog: bool,
     pub(crate) create: Option<BackupCreateRun>,
     pub(crate) restore_confirming: bool,
+    pub(crate) allow_no_backup: bool,
     pub(crate) delete_confirming: bool,
     pub(crate) delete_target: Option<String>,
 }
@@ -224,6 +222,7 @@ impl Default for BackupPanel {
             corrupt_dialog: false,
             create: None,
             restore_confirming: false,
+            allow_no_backup: false,
             delete_confirming: false,
             delete_target: None,
         }
@@ -245,6 +244,7 @@ impl BackupPanel {
         self.corrupt_dialog = false;
         self.create = None;
         self.restore_confirming = false;
+        self.allow_no_backup = false;
         self.delete_confirming = false;
         self.delete_target = None;
     }
@@ -283,7 +283,13 @@ impl BackupPanel {
             match receiver.try_recv() {
                 Ok(Ok(message)) => {
                     self.verify = BackupVerifyState::Complete(Ok(message.clone()));
-                    *notice = Notice::Success(message.message);
+                    *notice = match message.confirmation {
+                        Ok(_) => Notice::Success(message.message),
+                        Err(reason) => Notice::Info(crate::tr!(
+                            crate::keys::CONSOLE_BACKUP_RESTORE_UNAVAILABLE,
+                            reason = reason
+                        )),
+                    };
                 }
                 Ok(Err(error)) => {
                     self.verify = BackupVerifyState::Complete(Err(error.clone()));

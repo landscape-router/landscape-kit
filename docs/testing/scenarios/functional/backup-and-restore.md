@@ -17,6 +17,7 @@
 - 状态：`已覆盖`
 - 证据：[backup create](../../../commands/backup.md#backup-create)、`create_writes_manual_backup_without_any_service_manager`、`create_export_failure_leaves_no_final_file`（lkit-cli/src/commands/backup/）、`read_api_token` 单测（lkit-cli/src/backup/export.rs）
 - 说明：命令层测试完整走 `backup create` 流程（导出 API、token、归档自校验），断言归档内容为导出配置而非种子文件；导出返回 500 时 `backups/` 不留任何 `.lkb`。
+- 证据：[`unfinished_transactions_block_without_recovery_or_service_calls`](../../../../lkit-cli/src/commands/backup/create.rs) 验证 restore、uninstall 与等待确认的 reinit 事务阻断创建，服务管理器方法禁止调用，事务字节、state、current 和恢复现场保持不变，daemon 不在线也不代为恢复。
 
 ## BKP-03
 
@@ -33,8 +34,8 @@
 
 - 测试层：Rust workflow/CLI
 - 状态：`已覆盖`
-- 证据：[创建顺序与存放](../../../backup/lkb-and-rollback.md#创建顺序与存放)、`output_refuses_existing_files_and_symlinks`、`publish_no_replace_never_overwrites_an_existing_target`
-- 说明：`--output` 拒绝已存在文件和符号链接，写入权限为 `0600`；`.lkb` 同名不覆盖由容器层保证。
+- 证据：[创建顺序与存放](../../../backup/lkb-and-rollback.md#创建顺序与存放)、[`output_refuses_existing_files_and_symlinks`、`output_supports_bare_relative_names_and_cleans_temporary_files_on_failure`、`bad_output_is_rejected_before_export_or_local_backup`、`late_output_collision_retains_and_reports_verified_local_backup`](../../../../lkit-cli/src/commands/backup/create.rs)、`publish_no_replace_never_overwrites_an_existing_target`
+- 说明：`--output backup.lkb` 使用当前目录；已存在文件、符号链接和缺失父目录在导出前拒绝，不生成本地 `.lkb`。输出期间发生文件名冲突时保留对方文件和已验证的本地备份，错误明确报告备份 ID 与路径，临时文件清理。最终权限为 `0600`，发布不覆盖同名文件。
 
 ## BKP-05
 
@@ -255,7 +256,7 @@
 - 测试层：CI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[restore 契约](../../../commands/restore.md)
-- 说明：断言原生 restore 操作、v9 事务、目标备份副本与成功结果，不请求仓库资产。
+- 说明：断言原生 restore 操作、v14 事务与目标备份副本；目标启动后等待网络确认，保留原已提交 state，确认后才提交成功，不请求仓库资产。等待期间 backup create 拒绝且不修改事务或创建备份。
 - 缺口：OpenRC／SysVinit 完整恢复矩阵。
 
 ## RST-16
@@ -270,10 +271,29 @@
 
 ## RST-17
 
-**daemon 激活中断与提交后结果丢失**
+**daemon 激活中断、等待确认重启与确认提交中断**
 
 - 测试层：CI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)
-- 说明：激活后重启恢复原 data；提交后重启补写成功结果。保持同一操作和事务 ID，领取后的取消被拒绝。
+- 说明：激活后重启恢复原 data；等待确认的结果落盘前中断，重启后保留原确认截止时间并补写等待状态；确认已进入 finalizing 或已写 state 后中断，重启继续提交，即使截止时间已经过去也不回滚。保持同一操作和事务 ID，不重复创建保护备份，领取后的取消被拒绝。
 - 缺口：恢复失败后重试与所有持久化边界的故障注入矩阵。
+
+## RST-18
+
+**恢复网络确认超时或跨启动回滚，恢复许可仅绑定当前启动**
+
+- 测试层：隔离单元、CI Fixture E2E
+- 状态：`部分覆盖`
+- 证据：[确认单元测试](../../../../lkit-cli/src/workflows/restore/confirmation_tests.rs)、[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[启动屏障](../../../../lkit-cli/src/network/recovery.rs)
+- 说明：fixture 在等待确认时推进截止时间，断言原 data 恢复、事务 rolled_back、原操作返回 5，之后可正常备份。单元验证 schema14 的事务 ID、boot ID 和 pending state 路径绑定；同启动未超时等待、到期或换启动回滚、finalizing 优先完成；回滚期间没有当前启动的 restored-boot-id 不允许 Landscape 启动。
+- 缺口：真实 Landscape 的网络配置导入、外部客户端失联与虚拟机重启后的完整恢复链路。
+
+## BKP-13
+
+**控制台区分完整性与恢复资格，并明确选择保护备份失败时是否继续**
+
+- 测试层：隔离单元、TUI 组件
+- 状态：`已覆盖`
+- 证据：[控制台备份测试](../../../../lkit-cli/src/console/tests/backup.rs)、[备份面板](../../../../lkit-cli/src/console/backup/mod.rs)、[交互规范](../../../interaction/console.md)
+- 说明：有效的其他架构备份完整性校验通过，但恢复资格失败，不显示损坏弹框或提交恢复。恢复确认默认要求保护备份；B 显式选择失败时继续，选择同时绑定到操作请求和确认上下文，关闭后重新打开恢复确认会复位。确认层解释当前配置快照缺失和恢复后的网络确认要求。

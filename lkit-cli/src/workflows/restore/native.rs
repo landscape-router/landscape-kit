@@ -70,7 +70,21 @@ pub(crate) async fn run_operation(
         },
         health: &health,
     };
-    match restore_prepared(&root, &installed, manager, &args, &options, prepared).await? {
+    match restore_prepared(
+        &root,
+        &installed,
+        manager,
+        &args,
+        &options,
+        prepared,
+        Some(runtime),
+    )
+    .await?
+    {
+        RestoreOutcome::AwaitingConfirmation => {
+            control::message(&crate::tr!(crate::keys::RESTORE_AWAITING_CONFIRMATION))?;
+            Ok(0)
+        }
         RestoreOutcome::Committed { version, backup_id } => {
             control::message(&crate::tr!(
                 crate::keys::RESTORE_COMMITTED,

@@ -125,24 +125,36 @@ CLI 等待进程退出不会中止已接受的操作。daemon 按持久化事务
 
 ### 8. 手工备份与恢复
 
-`lkit backup create` 是不改变运行态的只读管理操作：取得安装锁后读取当前 state、校验
-运行实例和路径，通过配置导出 API 取得 TOML，再按 `.lkb` v1 minimal 规则流式生成并自校验
-最终文件。它不创建业务事务，不停止服务，也不更新 `install-state.json`。
+`lkit backup create` 是不改变运行态的只读管理操作：取得安装锁后拒绝未完成事务，
+不驱动恢复，即使 daemon 不可用也不修改现场。安装可用时读取当前 state、校验运行实例
+和路径，通过配置导出 API 取得 TOML，再按 `.lkb` v1 minimal 规则流式生成并自校验最终
+文件。它不创建业务事务、不停止服务、不更新 `install-state.json`。导出目标先检查；
+后续外部复制失败时保留已验证的本地 `.lkb`，错误明确给出备份 ID 和路径。
 
-`lkit restore` 使用独立的 `restore` 事务：
+`lkit restore` 使用独立的 schema v14 `restore` 事务，所有新恢复都要求网络确认：
 
-1. 在 `preparing` 验证目标 `.lkb`、架构和归档内容；
-2. 默认创建当前实例的保护 `.lkb`，并记录目标备份和保护备份引用；
-3. 保存 `previous_current`、previous-state、systemd 事实和必要的 `/etc/resolv.conf`；
-4. 在 `prepared` 后进入 `stopping`，将旧 `data/` 原子移动到事务目录；
+1. 前端确认目标、备份范围和当前安装身份，daemon 重新验证目标 `.lkb`、架构和归档；
+2. 默认创建当前实例的保护 `.lkb`，记录目标备份、保护备份和独立网络确认依据；
+3. 保存 `previous_current`、原 state、服务事实、必要的 DNS 文件及原 data 的设备号和 inode；
+4. 在 `prepared` 后进入 `stopping`，将旧 `data/` 原子移动到安装文件系统的事务工作目录；
 5. 在 `activating` 从目标备份重建版本目录、空 data、初始化配置和 Geo 缓存；
-6. 进入 `verifying`，通过启动和稳定健康检查后写入目标 state；state 的 `static_archive` 身份从备份内
-   压缩包现场计算，仓库来源记录（`config.toml`）保持不变；
-7. 成功提交后保留旧 data 事务现场和备份，事务进入 `committed`。
+6. 进入 `verifying`，通过启动和稳定健康检查后保存 pending state，开始网络确认窗口。
+   旧已提交 state 保持不变；目标 state 的 `static_archive` 身份从备份内压缩包计算，
+   仓库来源记录（`config.toml`）保持不变；
+7. 用户用备份中的网络重新连接并验证访问后执行 `lkit network confirm`。daemon 复核
+   安装身份、后端、PID、健康、期限与主机启动标识，持久化 `finalizing` 后写入目标
+   state 并提交 `committed`；旧 data 事务现场与备份保留。
 
-目标激活或健康检查失败时进入 `rolling_back`，优先用事务目录中的旧 data 和 state 恢复，
-必要时使用保护 `.lkb`；恢复成功进入 `rolled_back` 并返回 `5`，恢复失败进入 `failed`
-并返回 `6`。`--allow-no-backup` 只跳过保护 `.lkb`，不跳过目标校验、确认或中断恢复事实。
+开始恢复时的 `--yes` 不替代应用后的网络确认。待确认期间 daemon 重启不延长期限；
+期限到达、确认前整机重启或手工回滚均恢复原现场。`finalizing` 表示确认决定已经
+接受，之后 daemon 或主机重启继续提交，不能因期限到达而改为回滚。
+
+目标激活或健康检查失败时进入 `rolling_back`，优先使用身份匹配的原 data、release
+和 state，必要时使用保护 `.lkb` 做配置级重建。每次回滚重试撤销旧启动放行凭据；原
+配置恢复后写入当前主机启动标识，才允许启动原服务。恢复成功进入 `rolled_back` 并
+返回 `5`；恢复失败保留未完成阶段与依据，返回 `6` 并由 daemon 重试。
+`--allow-no-backup` 只允许保护备份失败时继续，不跳过目标校验、用户确认、网络确认或
+中断恢复事实。原 data 丢失且无可用保护备份时阻断恢复，不能将目标 data 误认作旧数据。
 
 ### 9. 卸载
 

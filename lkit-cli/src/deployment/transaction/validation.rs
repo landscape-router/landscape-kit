@@ -23,6 +23,37 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             transaction.schema_version
         )));
     }
+    if transaction.schema_version == 14 {
+        if transaction.operation != Operation::Restore || transaction.restore_confirmation.is_none()
+        {
+            return Err(corrupted("schema v14 requires a guarded restore".into()));
+        }
+    } else if transaction.restore_confirmation.is_some() {
+        return Err(corrupted("restore confirmation requires schema v14".into()));
+    }
+    if transaction.operation == Operation::Restore
+        && transaction.restore_confirmation.is_none()
+        && matches!(
+            transaction.phase,
+            Phase::AwaitingNetworkConfirmation | Phase::Finalizing
+        )
+    {
+        return Err(corrupted(
+            "restore confirmation phases require a restore guard".into(),
+        ));
+    }
+    if let Some(guard) = &transaction.restore_confirmation
+        && (uuid::Uuid::parse_str(&guard.boot_id).is_err()
+            || uuid::Uuid::parse_str(&transaction.transaction_id).is_err()
+            || guard.pending_state
+                != format!(
+                    "transactions/{}/pending-restore-state.json",
+                    transaction.transaction_id
+                )
+            || transaction.network_takeover.is_some())
+    {
+        return Err(corrupted("invalid restore confirmation identity".into()));
+    }
     if transaction.schema_version == 13 && transaction.operation != Operation::Migrate {
         return Err(corrupted("schema v13 requires migrate".into()));
     }

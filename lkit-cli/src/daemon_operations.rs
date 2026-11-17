@@ -537,10 +537,12 @@ fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bo
             }
             Kind::NetworkConfirm | Kind::NetworkRollback => {
                 record.network_transaction.as_deref() == Some(&tx.transaction_id)
-                    && tx.network_takeover.is_some()
+                    && tx.confirmation_window().is_some()
                     && matches!(
                         tx.operation,
-                        transaction::Operation::Install | transaction::Operation::Reinit
+                        transaction::Operation::Install
+                            | transaction::Operation::Reinit
+                            | transaction::Operation::Restore
                     )
             }
             Kind::Switch => {
@@ -563,7 +565,7 @@ fn matches_transaction(record: &Record, tx: &transaction::TransactionFile) -> bo
             }
             Kind::Restore => {
                 tx.operation == transaction::Operation::Restore
-                    && tx.schema_version == 9
+                    && tx.is_native_restore()
                     && record.restore.as_ref().is_some_and(|args| {
                         tx.from_version.as_deref() == Some(&args.from_version)
                             && tx.target_version.as_deref() == Some(&args.target_version)
@@ -708,7 +710,7 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
     record.status = match evidence {
         Ok(_) if record.cancel_cleaned => Status::Cancelled,
         Ok(Some(Phase::AwaitingNetworkConfirmation))
-            if matches!(record.kind, Kind::Reinit | Kind::Install) =>
+            if matches!(record.kind, Kind::Reinit | Kind::Install | Kind::Restore) =>
         {
             Status::AwaitingConfirmation
         }
@@ -1079,9 +1081,9 @@ pub(crate) async fn submit_restore_and_wait(
     args: RestoreRequest,
     full_screen: bool,
 ) -> Result<u8, InstallError> {
-    crate::daemon::require_capability("restore-v1.pid")?;
+    crate::daemon::require_capability("restore-v2.pid")?;
     let record = submit_restore(root, args)?;
-    wait_for_result(record, "restore-v1.pid", full_screen).await
+    wait_for_result(record, "restore-v2.pid", full_screen).await
 }
 pub(crate) async fn submit_confirmed_switch_and_wait(
     runtime: &InstallRuntime,

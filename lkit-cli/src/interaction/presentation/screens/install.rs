@@ -347,9 +347,9 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect();
-        assert!(content.contains("Network takeover awaiting confirmation"));
+        assert!(content.contains("Network access awaiting confirmation"));
         assert!(!content.contains("Installation complete"));
-        assert!(content.contains("Enter Confirm takeover"));
+        assert!(content.contains("Enter Confirm network"));
         assert!(content.contains("Ctrl+C Close"));
     }
 }

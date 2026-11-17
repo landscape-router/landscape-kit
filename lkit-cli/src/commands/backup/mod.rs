@@ -154,7 +154,7 @@ mod tests {
     }
 
     /// 建立隔离测试现场:返回 (守卫, 地盘, landscape 根)。
-    fn setup(
+    pub(super) fn setup(
         name: &str,
     ) -> (
         crate::deployment::layout::TerritoryOverride,
@@ -189,7 +189,7 @@ mod tests {
 
     /// 构造一个初始化完成、`none` service manager 的假安装现场,
     /// 与 `backup create` 读取的路径保持一致。
-    fn fake_install(dir: &std::path::Path) -> InstallState {
+    pub(super) fn fake_install(dir: &std::path::Path) -> InstallState {
         use std::os::unix::fs::symlink;
         let version = "1.2.3";
         let release = dir.join("releases").join(version);
@@ -245,7 +245,7 @@ mod tests {
         }
     }
 
-    fn runtime_file(dir: &std::path::Path, export_base: &str) -> std::path::PathBuf {
+    pub(super) fn runtime_file(dir: &std::path::Path, export_base: &str) -> std::path::PathBuf {
         use std::os::unix::fs::MetadataExt;
         let runtime = dir.join("runtime.json");
         let host = dir.join("host");
@@ -278,7 +278,9 @@ mod tests {
         runtime
     }
 
-    fn export_ok_server(version: &str) -> crate::release::repository::test_server::TestServer {
+    pub(super) fn export_ok_server(
+        version: &str,
+    ) -> crate::release::repository::test_server::TestServer {
         use crate::release::repository::test_server::{TestResponse, TestServer};
         let version = version.to_string();
         TestServer::start(move |path| {

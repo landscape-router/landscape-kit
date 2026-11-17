@@ -21,6 +21,10 @@ impl OperationScreen for RestoreScreen {
         crate::keys::PRESENTATION_OPERATION_IS_APPLYING
     }
 
+    fn takeover_confirmable(&self) -> bool {
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
@@ -32,7 +36,7 @@ impl OperationScreen for RestoreScreen {
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
-        _takeover_pending: bool,
+        takeover_pending: bool,
     ) {
         let [header, body, footer] = Layout::vertical([
             Constraint::Length(3),
@@ -41,6 +45,9 @@ impl OperationScreen for RestoreScreen {
         ])
         .areas(frame.area());
         let header_text = match result {
+            Some(OperationResult::Success) if takeover_pending => {
+                crate::tr!(crate::keys::PRESENTATION_RESTORE_AWAITING_CONFIRMATION)
+            }
             Some(OperationResult::Success) => {
                 crate::tr!(crate::keys::PRESENTATION_RESTORE_COMPLETE)
             }
@@ -60,7 +67,17 @@ impl OperationScreen for RestoreScreen {
         );
         let [progress, log_area] =
             Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(body);
-        if let Some(state) = current {
+        if takeover_pending && matches!(result, Some(OperationResult::Success)) {
+            frame.render_widget(
+                Paragraph::new(crate::tr!(
+                    crate::keys::PRESENTATION_RESTORE_CONFIRM_NETWORK
+                ))
+                .style(Style::default().fg(Color::Yellow))
+                .wrap(Wrap { trim: false })
+                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_STATUS))),
+                progress,
+            );
+        } else if let Some(state) = current {
             let percent = if state.total == 0 {
                 0.0
             } else {
@@ -149,7 +166,11 @@ impl OperationScreen for RestoreScreen {
             log_area,
         );
         let hint = if result.is_some() {
-            crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
+            if takeover_pending {
+                crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_HINT)
+            } else {
+                crate::tr!(crate::keys::PRESENTATION_CTRL_C_CLOSE)
+            }
         } else if confirming_stop {
             crate::tr!(crate::keys::PRESENTATION_ENTER_STOP_ESC_CANCEL)
         } else {
@@ -200,6 +221,15 @@ mod tests {
         step_progress: Option<(u8, u8)>,
         result: Option<OperationResult>,
     ) -> String {
+        render_with_pending(phase, step_progress, result, false)
+    }
+
+    fn render_with_pending(
+        phase: OperationPhase,
+        step_progress: Option<(u8, u8)>,
+        result: Option<OperationResult>,
+        pending: bool,
+    ) -> String {
         let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
         terminal
             .draw(|frame| {
@@ -212,7 +242,7 @@ mod tests {
                     "",
                     false,
                     result,
-                    false,
+                    pending,
                 )
             })
             .unwrap();
@@ -223,6 +253,24 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn pending_restore_requires_network_confirmation_instead_of_claiming_success() {
+        for step_progress in [None, Some((4, 4))] {
+            let content = render_with_pending(
+                OperationPhase::Verifying,
+                step_progress,
+                Some(OperationResult::Success),
+                true,
+            );
+            assert!(content.contains("Restore awaiting network confirmation"));
+            assert!(content.contains("Confirm network access to commit"));
+            assert!(content.contains("Enter Confirm network"));
+            assert!(!content.contains("Restore complete"));
+            assert!(!content.contains("finished successfully"));
+        }
+        assert!(RestoreScreen.takeover_confirmable());
     }
 
     #[test]
@@ -245,7 +293,8 @@ mod tests {
         let content = render(OperationPhase::Verifying, None, None);
         assert!(content.contains("Restoring Landscape"));
         assert!(
-            content.contains("The operation is in progress; stop requests are ignored"),
+            content.contains("Ctrl+C: stop watching")
+                && content.contains("Esc: request cancellation"),
             "the restore page hint must not reuse the installation wording"
         );
         assert!(!content.contains("Installation is in progress"));

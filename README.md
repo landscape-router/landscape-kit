@@ -28,10 +28,16 @@ The bare `lkit` command opens the Ratatui console. Automation should use an expl
 
 ```sh
 sudo lkit --non-interactive check
+sudo lkit --non-interactive self install
 sudo lkit --non-interactive install --password-file /root/lkit-password
 ```
 
-To use a specific Landscape repository:
+Deploying the daemon is required before installing Landscape. The console provides a
+deployment action; CLI users run `self install` first. With `--non-interactive`, it
+generates a recovery secret if none is configured; inspect it with `lkit flare setup`.
+The password file must be root-owned with mode `0400` or `0600`.
+
+To use a specific Landscape repository after deploying the daemon:
 
 ```sh
 sudo lkit install --repository https://l1s3.whileaway.dev/landscape/

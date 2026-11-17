@@ -648,7 +648,7 @@ fn pending_takeover_blocking_screen_renders_instead_of_menu() {
     app.snapshot = pending_takeover_snapshot();
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
-    assert!(content.contains("Network takeover awaiting confirmation"));
+    assert!(content.contains("Network access awaiting confirmation"));
     assert!(content.contains("tx-1"));
     assert!(content.contains("awaiting_network_confirmation"));
     assert!(content.contains("192.168.10.1/24"));

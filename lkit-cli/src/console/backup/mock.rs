@@ -138,7 +138,7 @@ pub(crate) fn backup_rows() -> Vec<BackupEntry> {
 pub(crate) fn sample_verified_backup() -> VerifiedBackup {
     VerifiedBackup {
         message: "verified".into(),
-        confirmation: crate::commands::restore::RestoreConfirmation {
+        confirmation: Ok(crate::commands::restore::RestoreConfirmation {
             root: "/fixture/landscape".into(),
             request: crate::daemon_operations::RestoreRequest {
                 from_version: "1.3.0".into(),
@@ -149,6 +149,6 @@ pub(crate) fn sample_verified_backup() -> VerifiedBackup {
                 target_version: "1.2.3".into(),
                 allow_no_backup: false,
             },
-        },
+        }),
     }
 }

@@ -399,7 +399,7 @@ impl Snapshot {
                 }
             };
             if let Some(transaction) = crate::deployment::transaction::find_unfinished(&root)?
-                && let Some(network) = transaction.network_takeover.as_ref()
+                && let Some((deadline, _)) = transaction.confirmation_window()
                 && matches!(
                     transaction.phase,
                     crate::deployment::transaction::Phase::AwaitingNetworkConfirmation
@@ -410,11 +410,16 @@ impl Snapshot {
                 return Ok(Self::AwaitingNetworkConfirmation {
                     transaction_id: transaction.transaction_id.clone(),
                     phase: transaction.phase.key(),
-                    deadline: network.confirmation_deadline,
-                    management_address: network
-                        .plan
-                        .management_address()
-                        .map(|address| address.to_string()),
+                    deadline,
+                    management_address: if transaction.restore_confirmation.is_some() {
+                        Some(crate::tr!(crate::keys::RESTORE_NETWORK_ADDRESS))
+                    } else {
+                        transaction
+                            .network_takeover
+                            .as_ref()
+                            .and_then(|network| network.plan.management_address())
+                            .map(|address| address.to_string())
+                    },
                 });
             }
             state::load_state(&root).map(|installed| match installed {

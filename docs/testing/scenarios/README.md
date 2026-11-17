@@ -28,7 +28,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 手工部署迁移 | `MIG-01` 至 `MIG-12` | [migrate.md](functional/migrate.md) |
 | 版本更新 | `UP-01` 至 `UP-11` | [update.md](functional/update.md) |
 | 版本升级与切换 | `SW-01` 至 `SW-14` | [switch.md](functional/switch.md) |
-| 备份与恢复 | `BKP-01` 至 `BKP-12`、`RST-01` 至 `RST-17` | [backup-and-restore.md](functional/backup-and-restore.md) |
+| 备份与恢复 | `BKP-01` 至 `BKP-13`、`RST-01` 至 `RST-18` | [backup-and-restore.md](functional/backup-and-restore.md) |
 | 卸载 | `UNI-01` 至 `UNI-14` | [uninstall.md](functional/uninstall.md) |
 | 重新初始化 | `REI-01` 至 `REI-13` | [reinit.md](functional/reinit.md) |
 | 自动备份与回滚 | `RB-01` 至 `RB-08` | [rollback.md](functional/rollback.md) |
@@ -59,6 +59,17 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
 | 真实 manager 与网络兼容性 | `SYS-01` 至 `SYS-07` | [systemd-smoke.md](systemd-smoke.md) |
+
+## 第三部分：正式 Landscape 用户流程验收
+
+真实业务验收在 QEMU 中安装固定摘要的官方 Landscape，通过正式 API 创建配置，
+从独立 LAN 客户端验证业务结果，并执行离线备份恢复和整机重启。它覆盖配置实体的
+真实导出与数据库重建；fixture API、替身数据库文件或服务管理器生命周期通过不能
+替代这些断言。当前实现针对 Debian/systemd，其他后端的业务链保留明确缺口。
+
+| 领域 | 场景 ID | 文档 |
+| --- | --- | --- |
+| 真实安装、业务配置与离线恢复 | `JNY-01` 至 `JNY-03` | [real-install-recovery.md](functional/real-install-recovery.md) |
 
 ## 当前优先缺口
 
