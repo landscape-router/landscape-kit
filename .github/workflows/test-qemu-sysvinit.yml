@@ -1,0 +1,79 @@
+name: QEMU SysVinit lifecycle
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - lkit-cli/**
+      - crates/**
+      - landscape-terrain-proto/**
+      - .cargo/**
+      - scripts/test-qemu-sysvinit.sh
+      - scripts/qemu/sysvinit/**
+      - .github/workflows/test-qemu-sysvinit.yml
+  push:
+    branches: ['**', '!ci-mirror']
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - lkit-cli/**
+      - crates/**
+      - landscape-terrain-proto/**
+      - .cargo/**
+      - scripts/test-qemu-sysvinit.sh
+      - scripts/qemu/sysvinit/**
+      - .github/workflows/test-qemu-sysvinit.yml
+  schedule:
+    - cron: '43 5 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-sysvinit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qemu-sysvinit:
+    name: Debian trixie / real SysVinit lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require hardware virtualization
+        run: |
+          sudo test -c /dev/kvm
+          sudo test -r /dev/kvm
+          sudo test -w /dev/kvm
+
+      - name: Install QEMU test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs mmdebstrap openssh-client python3 qemu-system-x86 shellcheck
+
+      - name: Check VM scripts
+        run: shellcheck scripts/test-qemu-sysvinit.sh scripts/qemu/sysvinit/*.sh
+
+      - name: Build production lkit
+        run: cargo build --locked --release -p lkit-cli --bin lkit
+
+      - name: Run real SysVinit lifecycle
+        env:
+          LKIT_E2E: '1'
+          LKIT_QEMU_PREBUILT: ${{ github.workspace }}/target/release/lkit
+          LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/qemu-sysvinit-artifacts
+        run: |
+          sudo --preserve-env=LKIT_E2E,LKIT_QEMU_PREBUILT,LKIT_QEMU_ARTIFACT_DIR \
+            scripts/test-qemu-sysvinit.sh
+
+      - name: Upload assertions and VM diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qemu-sysvinit-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/qemu-sysvinit-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

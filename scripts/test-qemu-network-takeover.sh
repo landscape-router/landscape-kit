@@ -341,6 +341,18 @@ boot_vm() {
     echo "$scenario VM did not expose SSH through its WAN" >&2
     return 1
   }
+  # Record the actual distribution, PID 1 and lkit backend for this VM.
+  # shellcheck disable=SC2016
+  wan_ssh 'set -eu
+cat /etc/os-release
+uname -r
+readlink /proc/1/exe
+test "$(cat /proc/1/comm)" = systemd
+systemctl --version
+/usr/local/bin/lkit --version
+/usr/local/bin/lkit --lang en check > /var/lib/lkit-qemu/init-check.log 2>&1 || true
+grep -E "^PASS.*init[.]backend.*systemd" /var/lib/lkit-qemu/init-check.log
+' >"$artifact_dir/$scenario-environment.log" 2>&1
   wan_ssh 'systemctl set-environment RUST_BACKTRACE=1 LANDSCAPE_LOG_TERMINAL=true'
   wan_ssh 'systemctl is-active NetworkManager firewalld systemd-resolved ssh' >/dev/null
   tar -C "$repo_root/scripts/qemu/network" -cf - . | wan_ssh 'tar -C /var/lib/lkit-qemu -xf - && bash /var/lib/lkit-qemu/setup.sh'

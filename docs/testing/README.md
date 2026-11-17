@@ -15,6 +15,7 @@ systemd 只承担协议与进程托管的薄集成验证。
 | flare 协议 E2E | `scripts/flare/e2e-docker.sh` 等 5 个脚本 | 普通 Docker 容器、L2 bridge 网络、`NET_RAW`/`NET_ADMIN` | 相关 PR、`dev`、`main`、手动 | Terrain 隧道握手/传输/丢包/白名单/令牌/错误 psk/teardown/重放/重启、多客户端、限速与锁死、daemon 托管连接 |
 | systemd-nspawn 兼容性 smoke | `scripts/test-nspawn-systemd.sh` | root、真实 systemd PID 1 | 低频、手动或 systemd 契约变化时 | unit 注册启停、MainPID、daemon 原生操作、前端断连与崩溃恢复 |
 | QEMU 网络接管 | `scripts/test-qemu-network-takeover.sh` | GitHub-hosted x86_64 KVM、双 virtio 网卡 | 相关 PR、main、每周、手动 | 真实宿主网络服务、br_lan SSH 确认、未确认重启回滚 |
+| QEMU SysVinit | `scripts/test-qemu-sysvinit.sh` | Debian trixie、真实 SysVinit PID 1、x86_64 KVM | 相关 PR、push（除 `ci-mirror`）、每周、手动 | daemon 注册启停、崩溃拉起、启用/禁用后重启、自移除 |
 | 真实 ifupdown 兼容 | `cargo test -p lkit-hostnet --test ifupdown_real` | Debian ifupdown 容器 | 相关 PR、`dev`/`main`、手动 | ifup/ifquery 脚本生成、备份恢复、命令失败回滚 |
 
 ## Actions 运行时
@@ -48,6 +49,7 @@ workflow 使用原生 Node.js 24 的 Actions：`actions/checkout@v7`、
 | hostnet-ifupdown | `test-hostnet-ifupdown.yml` | （无，直接 cargo） | （无） | 真实 ifupdown 兼容性 |
 | qemu-alpine | `test-qemu-alpine.yml` | `test-qemu-alpine.sh`、`docker/alpine/run-tests.sh` | `qemu/alpine/` | Alpine apk 容器、真实 bpffs/OpenRC/Docker VM |
 | qemu-network-takeover | `test-qemu-network-takeover.yml` | `test-qemu-network-takeover.sh` | （无） | KVM 双网卡网络接管 |
+| qemu-sysvinit | `test-qemu-sysvinit.yml` | `test-qemu-sysvinit.sh` | `qemu/sysvinit/` | Debian SysVinit daemon 生命周期与真实重启 |
 | nspawn-systemd | `test-nspawn-systemd.yml` | `test-nspawn-systemd.sh` | （无） | 真实 systemd PID 1 smoke |
 | publish-http-repository | `test-publish-http-repository.yml` | `test-publish-http-repository.sh` | （无） | RustFS 发布集成 |
 
@@ -55,9 +57,9 @@ workflow 使用原生 Node.js 24 的 Actions：`actions/checkout@v7`、
 `scripts/install-lkit.sh` 与 `scripts/test-install-lkit.sh` 属于 install 域，由 `release-lkit.yml`
 在正式 tag 时校验并随产物发布。
 
-触发约定：所有 `test-*` workflow 在 PR 与 push（`dev`/`main`）上按 paths 过滤触发，并支持
-`workflow_dispatch` 手动运行；`qemu-network-takeover` 另有每周 cron，`nspawn-systemd` 有每周
-cron；`release-lkit.yml` 由 `v*` tag 触发，`publish-landscape-mirror.yml` 仅手动触发。
+触发约定：`test-*` workflow 按各自的分支与 paths 过滤 PR/push，并支持
+`workflow_dispatch` 手动运行；`qemu-network-takeover`、`qemu-sysvinit` 与 `nspawn-systemd`
+另有每周 cron；`release-lkit.yml` 由 `v*` tag 触发，`publish-landscape-mirror.yml` 仅手动触发。
 
 fixture E2E 套件（`tests/install_fixture_e2e`）会在宿主机上部署真实服务并生成真实进程，
 只有显式设置 `LKIT_E2E=1` 时才执行；本地误跑（如被 `daemon::` 这类子串过滤器匹配）
@@ -100,9 +102,13 @@ MainPID 语义、前端断开后的原生操作完成及 daemon 崩溃恢复。�
 或在 unit、daemon 执行协议、systemctl 协议适配发生变化时运行；不要求每个业务场景都在
 真实 systemd 下重复执行，避免把宿主环境波动和 rootfs 启动成本变成发布阻塞条件。
 
-QEMU 层覆盖 nspawn 无法验证的真实网卡接管。它要求 `/dev/kvm`，不使用 TCG fallback；
-初期 check 保持 observational。最近 20 次已完成运行全部成功后，workflow 会报告达到
-提升条件，再由仓库管理员将其加入 branch protection required checks。
+QEMU 层分别验证 Debian/systemd 网络接管、Alpine/OpenRC 运行环境与 Debian/SysVinit
+daemon 生命周期，范围见 [服务管理后端验收矩阵](qemu-service-managers.md)。三个入口要求
+`/dev/kvm`，不使用 TCG fallback。Alpine 和 SysVinit 的 daemon 验收不替代完整网络接管；
+Debian 使用 SysVinit 也不代表 Devuan 等其他发行版已经验收。
+
+QEMU 网络接管 check 初期保持 observational。最近 20 次已完成运行全部成功后，workflow
+会报告达到提升条件，再由仓库管理员将其加入 branch protection required checks。
 
 ## 文档
 
@@ -113,6 +119,7 @@ QEMU 层覆盖 nspawn 无法验证的真实网卡接管。它要求 `/dev/kvm`�
 - [flare 协议 E2E](../flare/testing.md)
 - [systemd-nspawn 兼容性 smoke](nspawn-systemd.md)
 - [QEMU/KVM 网络接管](qemu-network-takeover.md)
+- [QEMU 服务管理后端验收](qemu-service-managers.md)
 - [发布、安装与成功切换](scenarios/lifecycle.md)
 - [失败切换与自动回滚](scenarios/rollback.md)
 - [扩展 E2E 场景](scenarios/extended.md)

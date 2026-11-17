@@ -43,6 +43,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | 自定义前端 | `FE-01` 至 `FE-06` | [frontend.md](functional/frontend.md) |
 | lkit 自身生命周期 | `SS-01` 至 `SS-12` | [self.md](functional/self.md) |
 | Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
+| Debian / SysVinit 真实虚拟机 | `SVI-01` 至 `SVI-06` | [sysvinit.md](functional/sysvinit.md) |
 | daemon 自动恢复 | `DAE-01` 至 `DAE-19` | [daemon.md](functional/daemon.md) |
 | Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-35` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
 
@@ -50,6 +51,10 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 
 systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，不为每个业务场景
 建立真实 systemd 副本，也不参与核心功能覆盖率。
+
+三个后端的发行版范围、执行入口与验收边界见
+[QEMU 服务管理后端验收](../qemu-service-managers.md)。Alpine/OpenRC 与 Debian/SysVinit
+的 daemon 生命周期测试不代表完整网络接管已经验收。
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |

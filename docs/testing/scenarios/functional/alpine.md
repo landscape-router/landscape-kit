@@ -16,7 +16,9 @@ namespace/veth，不创建宿主 TAP、桥或 bpffs 挂载。
 Alpine 的 sysfs 服务可能自行挂载 bpffs；测试专用 boot 服务在 VM 内移除该挂载，
 确保 daemon 的挂载兜底被实际执行。测试不在本地正常开发中运行，要求显式 `LKIT_E2E=1`。
 失败保留镜像构建日志、串口、OpenRC、daemon、客户端、Docker/containerd 和挂载诊断。
+`initial.log` 保存发行版、内核、PID 1 可执行文件和 lkit 版本，并验证 lkit 检测到 OpenRC。
 联网容器中的真实 apk 换源与软件安装场景见 [Alpine 测试说明](../../../testing/alpine.md)。
+其他后端及完整网络接管的边界见 [QEMU 服务管理后端验收](../../qemu-service-managers.md)。
 
 ## ALP-01
 

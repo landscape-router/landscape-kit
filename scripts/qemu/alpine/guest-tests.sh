@@ -82,6 +82,11 @@ assert_docker_ready() {
 case "${1:-}" in
     initial)
         echo '== OpenRC identity and mandatory Cgroup boot registration =='
+        cat /etc/os-release
+        uname -r
+        readlink /proc/1/exe
+        openrc --version
+        /usr/local/bin/lkit --version
         assert_cgroup_ready
         # Current mounts remain intact: boot registration is a separate requirement.
         rc-update del cgroups boot

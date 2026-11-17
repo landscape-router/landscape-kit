@@ -69,8 +69,8 @@ jobs:
           sudo --preserve-env=LKIT_QEMU_PREBUILT,LKIT_QEMU_ARTIFACT_DIR \
             scripts/test-qemu-network-takeover.sh
 
-      - name: Upload VM diagnostics on failure
-        if: failure()
+      - name: Upload VM assertions and diagnostics
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: qemu-network-diagnostics-${{ github.run_id }}

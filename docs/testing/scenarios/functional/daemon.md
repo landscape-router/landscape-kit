@@ -90,14 +90,18 @@
 
 **各 init 后端保存宿主服务启动状态并提供 Landscape 启动检查**
 
-- 测试层：Rust 单元、服务定义渲染
+- 测试层：Rust 单元、服务定义渲染、systemd-nspawn、Debian/systemd QEMU
 - 状态：`部分覆盖`
-- 证据：[宿主服务快照](../../../../lkit-cli/src/service/host_network.rs)、[恢复契约](../../../network/daemon-recovery.md)
-- 缺口：三个后端分别在 CI 容器或虚拟机验收：待确认时重启，目标配置启动被阻断；
-  daemon 恢复宿主网络并保留原启用设置；恢复动作失败后重试成功；已确认安装在重启后
-  正常启动。OpenRC 验证多个 runlevel，SysVinit 验证 S/K 链接及顺序，systemd 验证
-  enable/mask 状态。真实重启必须使用虚拟机，fixture 模拟 boot ID 不能替代该验收。
+- 证据：[宿主服务快照](../../../../lkit-cli/src/service/host_network.rs)、[恢复契约](../../../network/daemon-recovery.md)、
+  [真实 systemd 及网络场景 SYS-06/07](../systemd-smoke.md#sys-06)、
+  [跨后端验收边界](../../qemu-service-managers.md#完整网络接管的验收边界)
+- 缺口：OpenRC/SysVinit 的待确认重启、宿主网络恢复、恢复失败重试及已确认安装重启，
+  仍需真实网络接管验收；分别核对 OpenRC 多个 runlevel、SysVinit S/K 链接及顺序。
+  systemd 缺少确认超时、确认后重启及 networkd 管理真实网卡的完整验收。
+  fixture 模拟 boot ID 和 daemon 生命周期 VM 不能替代网络接管的真实重启。
 - 说明：临时目录验证 OpenRC 多 runlevel 与 SysVinit S/K 链接顺序、拒绝越界快照、注销服务清理启动链接和拒绝删除外部链接；注入服务动作验证恢复后的状态检查与失败重试。SysVinit 单测验证 `update-rc.d` 参数顺序、首次启用创建默认链接及真实 `rc?.d` 目录布局的启用检测。服务定义调用统一启动检查。
+  systemd QEMU 验证 NetworkManager 未确认重启回滚及恢复失败重试；nspawn 验证真实
+  networkd 的 enable/mask 和启动链接恢复，网络发现与 Landscape 使用 fixture。
 
 ## DAE-09
 
@@ -146,15 +150,17 @@
 
 **daemon 恢复能力及持续退避重启**
 
-- 测试层：隔离单元、CLI Fixture E2E、systemd-nspawn、Alpine QEMU（CI）
+- 测试层：隔离单元、CLI Fixture E2E、systemd-nspawn、Alpine/OpenRC 与 Debian/SysVinit QEMU（CI）
 - 状态：`部分覆盖`
-- 证据：[能力标识](../../../../lkit-cli/src/daemon.rs)、[退避策略](../../../../lkit-cli/src/daemon_supervisor.rs)、[进程 fixture](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)、[systemd smoke](../../../../scripts/test-nspawn-systemd.sh)、[OpenRC 虚拟机](../../../../scripts/qemu/alpine/guest-tests.sh)
+- 证据：[能力标识](../../../../lkit-cli/src/daemon.rs)、[退避策略](../../../../lkit-cli/src/daemon_supervisor.rs)、[进程 fixture](../../../../lkit-cli/tests/install_fixture_e2e/daemon.rs)、[systemd smoke](../../../../scripts/test-nspawn-systemd.sh)、[OpenRC 虚拟机](../../../../scripts/qemu/alpine/guest-tests.sh)、[SysVinit 虚拟机](sysvinit.md#svi-02)
 - 说明：单元覆盖能力缺失／PID 不符、1s→3s→5s→10s 封顶、无限重试及 5 分钟稳定重置；
   fixture 覆盖实际子进程崩溃、重复封顶拉起、主动停止与退避等待中停止；
   `daemon_handles_stop_after_pid_publication_before_startup_finishes` 在 PID 已发布、
   启动准备尚未结束时发送 SIGTERM，验证干净退出与 PID／能力标记清理。
-  systemd／OpenRC 场景检查监管进程保持不变而 daemon 子进程重新启动。
-- 缺口：SysVinit 真实虚拟机生命周期验收；本地不运行系统级测试，CI 执行结果单独判定。
+  三个真实后端场景检查监管进程保持不变而 daemon 子进程重新启动。SysVinit 还在主动
+  stop 后连续观察 12 秒不再拉起，并验证启用与禁用后的真实重启。
+- 缺口：三个真实后端尚未逐一验证整个退避时间序列与 5 分钟稳定重置；本地正常开发
+  不运行系统级测试，CI 执行结果按提交单独判定。
 
 
 ## DAE-14

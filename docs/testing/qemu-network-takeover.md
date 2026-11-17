@@ -4,6 +4,8 @@
 Debian systemd 根文件系统，并运行两台从同一基线派生的干净虚拟机。虚拟机包含真实
 NetworkManager、firewalld、systemd-resolved、OpenSSH 与两个 virtio 网卡；Landscape
 由生产 `lkit` 从正式 provider 下载，不使用 fake systemctl 或 fake `ip`。
+每台 guest 的 `<scenario>-environment.log` 保存发行版、内核、PID 1 可执行文件和 lkit 版本，
+并断言 PID 1 为 systemd、lkit 检测到 systemd 后端。
 
 第一台虚拟机完成网络接管后从 `192.168.10.1` 建立 SSH，随后在未确认时重启。测试等待
 boot rollback 恢复 WAN SSH 和三个宿主服务，并断言事务为 `rolled_back`、未提交的安装状态
@@ -30,7 +32,9 @@ observational，不应加入 branch protection required checks。workflow 使用
 保存和恢复由 [nspawn smoke](nspawn-systemd.md) 验证，但其接口发现和 Landscape 为 fixture。
 因此 networkd 管理真实网卡时的接管、SSH 重连与重启恢复仍缺少 QEMU 验收。
 本脚本不直接验证确认超时、提交后重启、断电式终止或 OpenRC／SysVinit 网络接管。
-Alpine QEMU 覆盖 OpenRC 的 daemon 拉起、崩溃恢复和启动顺序，不替代网络接管验收。
+Alpine QEMU 覆盖 OpenRC 的 daemon 拉起、崩溃恢复和启动顺序，Debian/SysVinit QEMU
+覆盖 daemon 生命周期与启用/禁用后的重启，均不替代网络接管验收。
+完整范围见 [QEMU 服务管理后端验收](qemu-service-managers.md)。
 
 NetworkManager 重启恢复使用确定性的故障注入：在 daemon 拉起 WAN 后等待 IPv6 RA，
 再启动 NetworkManager；原 WAN profile 暂时移走，断言事务保持 `rolling_back` 且待提交
