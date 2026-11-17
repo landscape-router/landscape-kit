@@ -152,7 +152,7 @@ CLI 等待进程退出不会中止已接受的操作。daemon 按持久化事务
 
 1. 获取安装锁并恢复未完成事务;读取已提交 state(记录 landscape 根),不存在则参数错误;
 2. 交互确认卸载计划与数据损失范围(非交互模式以 `--yes` 代替);网络接管特征警告
-   (宿主网络服务被 stop/disable/mask)只提示不阻断;
+   (宿主网络服务已屏蔽并停止)只提示不阻断;
 3. 默认创建保护 `.lkb`(`uninstall 前自动保护备份`,auto 标记为 true),失败阻断;
    `--allow-no-backup` 显式跳过;
 4. 创建 `preparing` 卸载事务,记录 `systemd_before`、`previous_current`、备份引用和

@@ -140,15 +140,23 @@
 
 - 测试层：Rust 单元、CLI fixture E2E、真实 systemd
 - 状态：`已覆盖`
-- 证据：[服务组单元测试](../../../../lkit-cli/src/service/networkd.rs)、[网络 fixture](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[真实 systemd 场景](../systemd-smoke.md#sys-07)、[接管规范](../../../network/takeover.md)
+- 证据：[服务组单元测试](../../../../lkit-cli/src/service/host_systemd.rs)、[网络 fixture](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[真实 systemd 场景](../systemd-smoke.md#sys-07)、[接管规范](../../../network/takeover.md)
 - 说明：检查整组先屏蔽后停止、socket 与服务的不同启用状态、原始 mask、缺失单元及带转义名称的 wait-online 实例。回滚只移除指定 mask，保留指向该路径的相对启动链接；外部改动的文件或链接不被覆盖。确认保留屏蔽，回滚恢复原始运行状态；网络确认和回滚的 daemon 崩溃场景包含 networkd。启用链接与网络配置保持原样。
 
 ## NET-15
 
 **回滚时 NetworkManager 恢复原 WAN 连接与 IPv4 可达性**
 
-- 测试层：QEMU/KVM、真实 NetworkManager 与 IPv6 RA
-- 状态：`待补充`
-- 证据：[现有 QEMU 入口](../../../../scripts/test-qemu-network-takeover.sh)、[daemon 网卡拉起](../../../../lkit-cli/src/network/ifup.rs)、[宿主服务恢复](../../../../lkit-cli/src/network/takeover.rs)
-- 缺口：确定性控制 RA 在 daemon 拉起 WAN 后、NetworkManager 恢复前到达；断言原 WAN 连接 UUID 被激活、IPv4 地址与默认路由恢复、WAN SSH 可达。现有 QEMU 只检查最终 SSH 与服务状态，未控制此时序。
-- 说明：接口提前获得 IPv6 自动配置时，NetworkManager 可能采用 external connection 而不激活原 DHCP 配置；服务均为 active、事务为 rolled_back 仍可能没有 WAN IPv4。服务恢复不等同于连接恢复。诊断应保留 daemon 与 NetworkManager journal、活动连接 UUID、地址和路由；Flare 可达与 IP 网络恢复分别判定。
+- 测试层：Rust 单元、QEMU/KVM（真实 NetworkManager 与 IPv6 RA）
+- 状态：`已覆盖`
+- 证据：[连接恢复单元测试](../../../../lkit-cli/src/network/network_manager.rs)、[QEMU 入口](../../../../scripts/test-qemu-network-takeover.sh)、[恢复故障注入](../../../../scripts/qemu/network/recovery-check.sh)
+- 说明：NetworkManager 启动前等待 WAN 收到 RA；原 DHCP profile 暂时缺失时事务保持 rolling_back，待恢复 profile 后 daemon 自动激活原 UUID，恢复 IPv4、默认网关和 WAN SSH。单元测试验证接口身份变化、连接删除、IPv6-only、DHCP 尚未完成时不重复激活、旧快照兼容。
+
+## NET-16
+
+**所有 systemd 宿主网络服务先屏蔽再停止，保留原启动链接**
+
+- 测试层：Rust 单元、CLI fixture E2E、QEMU/KVM
+- 状态：`已覆盖`
+- 证据：[宿主服务组](../../../../lkit-cli/src/service/host_systemd.rs)、[回滚 fixture](../../../../lkit-cli/tests/install_fixture_e2e/network.rs)、[自定义启动链接](../../../../scripts/qemu/network/setup.sh)
+- 说明：在停止第一个服务之前屏蔽整组，不调用 disable/enable；恢复只移除精确 mask，检查运行状态并还原原 mask。验证 NetworkManager 的绝对、相对自定义启动链接在真实回滚后完整保留；外部文件冲突不被覆盖。

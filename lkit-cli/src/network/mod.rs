@@ -5,3 +5,5 @@ pub(crate) mod ifup;
 pub(crate) mod takeover;
 
 pub(crate) mod recovery;
+
+pub(crate) mod network_manager;

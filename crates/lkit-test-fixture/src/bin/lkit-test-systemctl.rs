@@ -33,7 +33,7 @@ fn run() -> Result<ExitCode> {
         .with_context(|| format!("create systemctl state dir {}", config.state_dir.display()))?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     append_call_log(&config, &args)?;
-    stage_networkd_vendor_definitions(&config)?;
+    stage_host_vendor_definitions(&config)?;
     dispatch(&config, &args)
 }
 
@@ -157,22 +157,28 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         }
         [command, unit] if command == "mask" => {
             ensure_installed(config, unit)?;
-            if unit.starts_with("systemd-networkd") {
-                networkd_mask(config, unit, false)?;
+            if is_host_service(unit) {
+                host_mask(config, unit, false)?;
             }
             write_marker(&masked_path(config, unit), b"masked\n")?;
         }
         [command, unit] if command == "unmask" => {
+            if is_host_service(unit) {
+                remove_if_exists(&config.unit_dir.join(unit))?;
+            }
             remove_if_exists(&masked_path(config, unit))?;
         }
         [command, runtime, unit] if command == "mask" && runtime == "--runtime" => {
             ensure_installed(config, unit)?;
-            if unit.starts_with("systemd-networkd") {
-                networkd_mask(config, unit, true)?;
+            if is_host_service(unit) {
+                host_mask(config, unit, true)?;
             }
             write_marker(&masked_path(config, unit), b"masked-runtime\n")?;
         }
         [command, runtime, unit] if command == "unmask" && runtime == "--runtime" => {
+            if is_host_service(unit) {
+                remove_if_exists(&host_runtime_dir(config).join(unit))?;
+            }
             remove_if_exists(&masked_path(config, unit))?;
         }
         [command, unit] if command == "start" => {
@@ -187,40 +193,51 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
             stop(config, unit)?;
             start(config, unit)?;
         }
-        [command] if command == "daemon-reload" => sync_networkd_masks(config)?,
+        [command] if command == "daemon-reload" => sync_host_masks(config)?,
         _ => anyhow::bail!("unsupported systemctl arguments: {args:?}"),
     }
     Ok(exit_code)
 }
 
-// Networkd tests model mask files as well as manager state so production can
+// Host service tests model mask files as well as manager state so production can
 // remove a specific mask without invoking unmask's recursive link cleanup.
-fn stage_networkd_vendor_definitions(config: &SystemctlFixtureConfig) -> Result<()> {
+fn is_host_service(unit: &str) -> bool {
+    unit.starts_with("systemd-networkd")
+        || matches!(
+            unit,
+            "NetworkManager.service"
+                | "networking.service"
+                | "firewalld.service"
+                | "systemd-resolved.service"
+        )
+}
+
+fn stage_host_vendor_definitions(config: &SystemctlFixtureConfig) -> Result<()> {
     for entry in std::fs::read_dir(&config.unit_dir)? {
         let entry = entry?;
         let unit = entry.file_name().to_string_lossy().into_owned();
-        if unit.starts_with("systemd-networkd") && entry.file_type()?.is_file() {
+        if is_host_service(&unit) && entry.file_type()?.is_file() {
             let vendor = unit_state_dir(config, &unit).join("vendor-definition");
             std::fs::create_dir_all(vendor.parent().unwrap())?;
             std::fs::rename(entry.path(), vendor)?;
             if let Ok(state) = std::fs::read_to_string(masked_path(config, &unit)) {
-                networkd_mask(config, &unit, state.trim() == "masked-runtime")?;
+                host_mask(config, &unit, state.trim() == "masked-runtime")?;
             }
         }
     }
     Ok(())
 }
-fn networkd_runtime_dir(config: &SystemctlFixtureConfig) -> PathBuf {
+fn host_runtime_dir(config: &SystemctlFixtureConfig) -> PathBuf {
     config.unit_dir.parent().unwrap().join("run/systemd/system")
 }
-fn networkd_mask(config: &SystemctlFixtureConfig, unit: &str, runtime: bool) -> Result<()> {
+fn host_mask(config: &SystemctlFixtureConfig, unit: &str, runtime: bool) -> Result<()> {
     let vendor = unit_state_dir(config, unit).join("vendor-definition");
     let definition = config.unit_dir.join(unit);
     if !vendor.exists() {
         std::fs::copy(&definition, &vendor)?;
     }
     let directory = if runtime {
-        networkd_runtime_dir(config)
+        host_runtime_dir(config)
     } else {
         config.unit_dir.clone()
     };
@@ -230,7 +247,7 @@ fn networkd_mask(config: &SystemctlFixtureConfig, unit: &str, runtime: bool) -> 
     std::os::unix::fs::symlink("/dev/null", path)?;
     Ok(())
 }
-fn sync_networkd_masks(config: &SystemctlFixtureConfig) -> Result<()> {
+fn sync_host_masks(config: &SystemctlFixtureConfig) -> Result<()> {
     let directory = config.state_dir.join("units");
     if !directory.exists() {
         return Ok(());
@@ -243,7 +260,7 @@ fn sync_networkd_masks(config: &SystemctlFixtureConfig) -> Result<()> {
         }
         let unit = entry.file_name().to_string_lossy().into_owned();
         let persistent = config.unit_dir.join(&unit);
-        let runtime = networkd_runtime_dir(config).join(&unit);
+        let runtime = host_runtime_dir(config).join(&unit);
         let is_mask = |path: &Path| {
             std::fs::read_link(path).is_ok_and(|target| target == Path::new("/dev/null"))
         };

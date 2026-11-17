@@ -514,23 +514,6 @@ pub(crate) fn inspect_host_service(
     })
 }
 
-pub(crate) fn stop_disable_mask_host_service(
-    systemd: &Systemd,
-    before: &HostServiceBefore,
-) -> Result<(), InstallError> {
-    if !before.installed {
-        return Ok(());
-    }
-    unit_command(systemd, "stop", &before.unit)?;
-    if matches!(
-        before.enable_state.as_str(),
-        "enabled" | "enabled-runtime" | "linked" | "linked-runtime" | "alias"
-    ) {
-        unit_command(systemd, "disable", &before.unit)?;
-    }
-    unit_command(systemd, "mask", &before.unit)
-}
-
 pub(crate) fn restore_host_service(
     systemd: &Systemd,
     before: &HostServiceBefore,

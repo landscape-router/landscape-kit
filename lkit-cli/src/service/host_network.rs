@@ -166,8 +166,8 @@ pub(crate) fn inspect(
         } else {
             systemd::inspect_host_service(manager, name)?
         };
-        if super::networkd::contains(name) {
-            super::networkd::validate_mask_locations(manager, &before)?;
+        if super::host_systemd::contains(name) {
+            super::host_systemd::validate_mask_locations(manager, &before)?;
         }
         return Ok(before);
     }
@@ -234,7 +234,10 @@ pub(crate) fn stop(
     before: &HostServiceBefore,
 ) -> Result<(), InstallError> {
     if manager.kind() == ServiceManagerKind::Systemd {
-        return systemd::stop_disable_mask_host_service(systemd::downcast(manager)?, before);
+        return super::host_systemd::stop(
+            systemd::downcast(manager)?,
+            std::slice::from_ref(before),
+        );
     }
     stop_with(manager, before, |verb| {
         Ok(command(manager, &before.unit, verb)?.status.success())
@@ -271,7 +274,10 @@ pub(crate) fn restore(
     before: &HostServiceBefore,
 ) -> Result<(), InstallError> {
     if manager.kind() == ServiceManagerKind::Systemd {
-        return systemd::restore_host_service(systemd::downcast(manager)?, before);
+        return super::host_systemd::restore(
+            systemd::downcast(manager)?,
+            std::slice::from_ref(before),
+        );
     }
     restore_with(manager, before, |verb| {
         Ok(command(manager, &before.unit, verb)?.status.success())
@@ -345,15 +351,31 @@ pub(crate) fn remove_managed_startup_links(
 pub(crate) fn restore_all(
     manager: &dyn ServiceManager,
     services: &[HostServiceBefore],
+    preserve_startup_links: bool,
 ) -> Result<(), InstallError> {
     if manager.kind() == ServiceManagerKind::Systemd {
-        super::networkd::restore(systemd::downcast(manager)?, services)?;
+        let backend = systemd::downcast(manager)?;
+        if preserve_startup_links {
+            return super::host_systemd::restore(backend, services);
+        }
+        // Legacy transactions disabled non-networkd units. Their original link
+        // graph is unavailable, so retain the old enable-state restoration.
+        let networkd: Vec<_> = services
+            .iter()
+            .filter(|s| super::networkd::contains(&s.unit))
+            .cloned()
+            .collect();
+        super::host_systemd::restore(backend, &networkd)?;
+        for before in services
+            .iter()
+            .filter(|s| !super::networkd::contains(&s.unit))
+        {
+            systemd::restore_host_service(backend, before)?;
+        }
+        return Ok(());
     }
     for before in services {
-        if manager.kind() != ServiceManagerKind::Systemd || !super::networkd::contains(&before.unit)
-        {
-            restore(manager, before)?;
-        }
+        restore(manager, before)?;
     }
     Ok(())
 }

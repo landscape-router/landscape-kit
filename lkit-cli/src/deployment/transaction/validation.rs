@@ -10,6 +10,13 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
     {
         return Err(corrupted("invalid network recovery boot id".into()));
     }
+    if let Some(connections) = transaction
+        .network_takeover
+        .as_ref()
+        .and_then(|n| n.network_manager.as_ref())
+    {
+        crate::network::network_manager::validate(connections)?;
+    }
     if !(1..=MAX_TRANSACTION_SCHEMA_VERSION).contains(&transaction.schema_version) {
         return Err(corrupted(format!(
             "unsupported transaction schema version {}",

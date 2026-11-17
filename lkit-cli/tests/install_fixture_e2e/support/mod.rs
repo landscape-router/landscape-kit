@@ -63,7 +63,10 @@ pub(crate) fn assert_host_services_masked(harness: &InstallHarness, units: &[&st
         let state = harness.host.join("systemd-state/units").join(unit);
         assert!(state.join("masked").is_file(), "{unit} was not masked");
         assert!(!state.join("active").exists(), "{unit} remains active");
-        assert!(!state.join("enabled").exists(), "{unit} remains enabled");
+        assert!(
+            state.join("enabled").exists(),
+            "{unit} lost its captured startup choice"
+        );
         assert!(
             harness.host.join("units").join(unit).is_file()
                 || state.join("vendor-definition").is_file()

@@ -540,7 +540,7 @@ fn physical_iface<'a>(
     }
 }
 
-fn validate_iface_name(value: &str) -> Result<(), InstallError> {
+pub(crate) fn validate_iface_name(value: &str) -> Result<(), InstallError> {
     if value.is_empty()
         || value.len() > 15
         || !value

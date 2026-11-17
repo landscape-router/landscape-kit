@@ -19,7 +19,7 @@ lkit 不检查桥接是否存在。
 systemd 支持 systemd-networkd、NetworkManager、Debian ifupdown、firewalld 和 systemd-resolved；
 OpenRC/SysVinit 支持 `NetworkManager`、`networking` 和 `firewalld` 服务脚本。
 不存在的服务不操作。服务状态无法可靠查询时在接管前失败。systemd 使用
-stop/disable/mask（networkd 服务组按下述规则处理）；OpenRC/SysVinit 停止服务并保存、移除其开机链接，回滚恢复原始
+整组先 mask 再 stop，不调用 disable/enable；回滚只移除对应 mask 并保留原启动链接；OpenRC/SysVinit 停止服务并保存、移除其开机链接，回滚恢复原始
 runlevel、链接顺序及运行状态。接管不卸载软件包，不收集 PPPoE 凭据或 MTU。
 
 初始化配置的生成方式按目标 release 版本区分:≥ 0.25.1 时 lkit 调用目标 release 目录下
@@ -69,7 +69,7 @@ zone type 为 `undefined`，只通过 controller（上游）关联到 `br_lan`�
 
 ## 确认与回滚
 
-停止宿主网络服务前，lkit 持久化服务状态、确认期限与主机启动标识，并检查 daemon
+停止宿主网络服务前，lkit 持久化服务状态、NetworkManager 活动连接快照、确认期限与主机启动标识，并检查 daemon
 具备恢复能力。确认窗口为 10 分钟，由 daemon 监测；新事务不创建专属恢复 unit。
 
 Landscape 启动并通过健康检查后安装状态仍不提交。用户运行 `lkit network confirm`
@@ -94,3 +94,16 @@ networkd 主服务、netlink/varlink 等配套 socket、wait-online 服务及模
 已停止或不存在的运行实例不执行 stop。恢复可重复执行；任何失败保留事务供 daemon 重试。
 确认后整组保持停用和屏蔽。此支持限定 systemd 后端；OpenRC/SysVinit 不自动接管
 名为 systemd-networkd 的自定义服务脚本。
+
+## NetworkManager 连接恢复
+
+活动的 NetworkManager 必须提供可用的 `nmcli`。接管前保存非 loopback 活动连接的
+UUID、接口、物理接口永久 MAC，以及当时具备的 IP 地址族和默认网关。回滚按 UUID 显式
+激活原连接，并检查绑定接口、地址族和默认网关；DHCP 租约地址允许变化。接口被替换、
+连接被删除或连接尚未恢复时，事务保持 `rolling_back`，daemon 重试，不宣告回滚完成。
+只恢复服务进程的 active 状态不能代替连接校验。Flare 所需的网卡拉起保留，
+NetworkManager 不依赖对提前收到 IPv6 RA 的接口自动选对连接。
+
+旧事务缺少新快照标识时按原启用状态恢复服务；未记录的自定义启动链接无法重建。
+缺少连接快照时输出需要人工核验连接的提示；
+不推断或激活无法证明属于原部署的连接。

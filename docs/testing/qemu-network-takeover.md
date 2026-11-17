@@ -32,10 +32,10 @@ observational，不应加入 branch protection required checks。workflow 使用
 本脚本不直接验证确认超时、提交后重启、断电式终止或 OpenRC／SysVinit 网络接管。
 Alpine QEMU 覆盖 OpenRC 的 daemon 拉起、崩溃恢复和启动顺序，不替代网络接管验收。
 
-NetworkManager 的重启恢复还需要控制 IPv6 RA 时序的验收：daemon 提前拉起 WAN 后，
-内核自动配置的 IPv6 可能使 NetworkManager 采用 external connection，原 DHCP 连接
-没有激活。此时服务 active 和事务 rolled_back 不能证明 WAN IPv4 恢复；
-缺口与断言见 [NET-15](scenarios/functional/network-takeover.md#net-15)。
+NetworkManager 重启恢复使用确定性的故障注入：在 daemon 拉起 WAN 后等待 IPv6 RA，
+再启动 NetworkManager；原 WAN profile 暂时移走，断言事务保持 `rolling_back` 且待提交
+状态未提前清理。放回 profile 后只 reload 配置，由 daemon 自动激活原 UUID，恢复 IPv4、
+默认网关与 WAN SSH。绝对和相对自定义启动链接保持原样。对应 [NET-15/16](scenarios/functional/network-takeover.md#net-15)。
 
 本地实测应在专用测试主机或独立网络命名空间内运行：脚本会创建 TAP 并配置
 `192.168.10.2/24`。使用容器时，仓库和预编译二进制只读挂载，日志目录单独可写；

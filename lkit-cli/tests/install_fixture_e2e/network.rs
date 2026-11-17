@@ -184,6 +184,10 @@ fn automatic_network_rollback_restores_host_services() {
     let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let harness = InstallHarness::new("network-rollback", "healthy", 10_000);
     harness.seed_host_services();
+    let custom = harness.host.join("units/custom.target.wants");
+    std::fs::create_dir_all(&custom).unwrap();
+    let link = custom.join("NetworkManager.service");
+    std::os::unix::fs::symlink("../NetworkManager.service", &link).unwrap();
     let output = harness.run_takeover();
     assert!(
         output.status.success(),
@@ -227,7 +231,42 @@ fn automatic_network_rollback_restores_host_services() {
             "systemd-resolved.service",
         ],
     );
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        PathBuf::from("../NetworkManager.service")
+    );
     let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    let host_units = [
+        "NetworkManager.service",
+        "firewalld.service",
+        "systemd-resolved.service",
+    ];
+    let actions: Vec<Vec<String>> = calls
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let first_stop = actions
+        .iter()
+        .position(|args| {
+            args.first().map(String::as_str) == Some("stop")
+                && args
+                    .last()
+                    .is_some_and(|unit| host_units.contains(&unit.as_str()))
+        })
+        .unwrap();
+    for unit in host_units {
+        assert!(
+            actions[..first_stop]
+                .iter()
+                .any(|args| args == &["mask", unit])
+        );
+        assert!(!actions.iter().any(|args| {
+            args.last().map(String::as_str) == Some(unit)
+                && args
+                    .first()
+                    .is_some_and(|verb| matches!(verb.as_str(), "enable" | "disable" | "unmask"))
+        }));
+    }
     for unit in recovery_units {
         assert!(
             !calls.contains(&format!("[\"stop\",\"{unit}\"]")),

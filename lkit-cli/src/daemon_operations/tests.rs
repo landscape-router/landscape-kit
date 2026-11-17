@@ -548,6 +548,8 @@ fn network_tx(f: &Fixture) -> transaction::TransactionFile {
             }],
         },
         host_services: vec![],
+        network_manager: None,
+        preserve_startup_links: false,
         confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(5),
         rollback_service: "lkit-network-test-rollback.service".into(),
         rollback_timer: "lkit-network-test-rollback.timer".into(),

@@ -213,13 +213,21 @@ wan_ssh() {
 }
 
 lan_ssh() {
+  # Arguments intentionally contain a remote shell command.
+  # shellcheck disable=SC2029
   ssh "${ssh_common[@]}" root@192.168.10.1 "$@"
 }
 
 collect_guest_diagnostics() {
   local scenario=$1
   local output=$artifact_dir/$scenario-guest-diagnostics.log
+  # This script expands variables only inside the guest.
+  # shellcheck disable=SC2016
   local diagnostic_command='set +e
+echo "== recovery journal =="
+journalctl -b --no-pager -u lkit.service -u NetworkManager.service -u lkit-qemu-recovery-check.service
+echo "== NetworkManager connections =="
+nmcli connection show --active
 echo "== landscape journal =="
 journalctl -b --no-pager -u landscape-router.service
 echo "== landscape files =="
@@ -320,7 +328,7 @@ boot_vm() {
     -initrd "$initrd" \
     -append 'root=/dev/vda rw console=ttyS0 systemd.log_target=console' \
     -drive "file=$disk,format=raw,if=virtio,cache=unsafe" \
-    -netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${active_ssh_port}-:22" \
+    -netdev "user,id=wan,ipv4=on,ipv6=on,hostfwd=tcp:127.0.0.1:${active_ssh_port}-:22" \
     -device virtio-net-pci,netdev=wan,mac=52:54:00:12:34:01 \
     -netdev "tap,id=lan,ifname=$active_tap,script=no,downscript=no" \
     -device virtio-net-pci,netdev=lan,mac=52:54:00:12:34:02 \
@@ -335,6 +343,7 @@ boot_vm() {
   }
   wan_ssh 'systemctl set-environment RUST_BACKTRACE=1 LANDSCAPE_LOG_TERMINAL=true'
   wan_ssh 'systemctl is-active NetworkManager firewalld systemd-resolved ssh' >/dev/null
+  tar -C "$repo_root/scripts/qemu/network" -cf - . | wan_ssh 'tar -C /var/lib/lkit-qemu -xf - && bash /var/lib/lkit-qemu/setup.sh'
 }
 
 interface_selection() {
@@ -387,6 +396,7 @@ start_takeover() {
     return 1
   fi
   wait_for_ssh lan || {
+    collect_guest_diagnostics "$scenario"
     echo "$scenario VM did not expose SSH on br_lan" >&2
     return 1
   }
@@ -411,6 +421,10 @@ start_takeover() {
 
 boot_vm reboot-rollback
 start_takeover reboot-rollback
+lan_ssh 'bash -s' >/dev/null <<'GUEST'
+jq -e '[.network_takeover.network_manager[] | select(.uuid == "1c776a18-1caf-4ac8-8f46-5573fb8db501" and .ipv4 and .gateway4)] | length == 1' /root/.lkit/transactions/*.json
+GUEST
+lan_ssh 'mv /etc/NetworkManager/system-connections/wan.nmconnection /var/lib/lkit-qemu/wan.saved; touch /var/lib/lkit-qemu/force-ra; systemctl enable lkit-qemu-recovery-check.service'
 lan_ssh 'systemctl reboot' >/dev/null 2>&1 || true
 rollback_ready=false
 rollback_deadline=$((SECONDS + 300))
@@ -425,11 +439,20 @@ while (( SECONDS < rollback_deadline )); do
   sleep 2
 done
 [[ $rollback_ready == true ]] || {
-  echo "boot recovery did not restore the original host network services" >&2
+  collect_guest_diagnostics reboot-rollback
+  echo "boot recovery did not restore WAN SSH, the transaction and original host services" >&2
   exit 1
 }
 wan_ssh 'test ! -e /root/.lkit/state/install-state.json'
 wan_ssh 'test ! -e /var/lib/landscape/data'
+wan_ssh 'test -f /var/lib/lkit-qemu/retry-checked && test -f /var/lib/lkit-qemu/ra-observed'
+wan_ssh 'nmcli -t -f UUID,DEVICE connection show --active | grep -q "^1c776a18-1caf-4ac8-8f46-5573fb8db501:"'
+# Variables and command substitutions are evaluated inside the guest.
+# shellcheck disable=SC2016
+wan_ssh 'test "$(readlink /etc/systemd/system/lkit-qemu-relative.target.wants/NetworkManager.service)" = ../NetworkManager.service'
+# Variables and command substitutions are evaluated inside the guest.
+# shellcheck disable=SC2016
+wan_ssh 'test "$(readlink /etc/systemd/system/lkit-qemu-absolute.target.wants/NetworkManager.service)" = "$(cat /var/lib/lkit-qemu/network-manager-vendor)"'
 cleanup_vm
 
 boot_vm confirm

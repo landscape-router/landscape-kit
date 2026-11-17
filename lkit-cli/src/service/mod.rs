@@ -11,3 +11,5 @@ pub(crate) mod sysvinit;
 pub(crate) use crate::deployment::{plan, state, transaction};
 
 pub(crate) mod networkd;
+
+pub(crate) mod host_systemd;
