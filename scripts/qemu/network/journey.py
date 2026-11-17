@@ -239,15 +239,25 @@ def verify_backup(directory):
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
         check(metadata["checksum"] == "sha256:" + digest, "backup checksum differs")
         stream.seek(1024 * 1024)
-        with tarfile.open(fileobj=stream, mode="r:gz") as archive:
-            names = {name.removeprefix("./") for name in archive.getnames()}
-            check("landscape_db.sqlite" not in names and "landscape_api_token" not in names, "backup contains runtime-only data")
-            members = {member.name.removeprefix("./"): member for member in archive.getmembers()}
-            binary = archive.extractfile(members["landscape-webserver"])
-            check(hashlib.file_digest(binary, "sha256").hexdigest() == BINARY_SHA256, "backup does not contain the pinned production binary")
-            exported = archive.extractfile(members["landscape_init.toml"]).read().decode()
-            saved = json.loads((directory / "expected.json").read_text())
-            check(export_projection(exported) == saved["export"], "backup omitted or changed real exported configuration")
+        # gzip random access would rewind the enclosing .lkb to byte zero,
+        # where its metadata header (rather than gzip) lives. Read the embedded
+        # archive once from the payload offset, without extracting private data.
+        names = set()
+        binary_digest = None
+        exported = None
+        with tarfile.open(fileobj=stream, mode="r|gz") as archive:
+            for member in archive:
+                name = member.name.removeprefix("./")
+                names.add(name)
+                if name == "landscape-webserver":
+                    binary_digest = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                elif name == "landscape_init.toml":
+                    exported = archive.extractfile(member).read().decode()
+        check("landscape_db.sqlite" not in names and "landscape_api_token" not in names, "backup contains runtime-only data")
+        check(binary_digest == BINARY_SHA256, "backup does not contain the pinned production binary")
+        check(exported is not None, "backup omitted exported configuration")
+        saved = json.loads((directory / "expected.json").read_text())
+        check(export_projection(exported) == saved["export"], "backup omitted or changed real exported configuration")
     print("PASS: exported .lkb checksum, official binary and actual configuration entities verified", flush=True)
 
 
