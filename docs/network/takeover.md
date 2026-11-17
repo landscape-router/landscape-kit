@@ -6,7 +6,8 @@
 服务管理器（systemd、OpenRC 或 SysVinit）、启用且运行中的 lkit daemon 和交互终端。网卡始终由用户选择，lkit 不按默认路由或接口名自动决定 WAN/LAN。
 无线、loopback 和虚拟接口不列入选择。不受支持的活动网络管理器
 （wicked、connman 或独立 dhcpcd），或 SELinux 已加载/配置为 enabled/permissive
-时，在停止服务前失败。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
+时，在停止服务前失败。SELinux 加载状态以内核 `enforce` 接口是否存在判定，空的
+`/sys/fs/selinux` 挂载点不表示已加载。已有 `br_lan` 不阻断安装：Landscape 按新配置接管或清理桥接现场，
 lkit 不检查桥接是否存在。
 
 网络发现和部署运行时通过 PATH 调用完整 iproute2 的 `ip`，不假定它安装在

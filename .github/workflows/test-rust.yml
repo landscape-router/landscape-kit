@@ -95,6 +95,8 @@ jobs:
             service::host_network::tests \
             service::sysvinit::tests \
             network::takeover::tests::accepted_confirmation_cannot_be_changed_to_rollback \
+            network::takeover::tests::selinux_mount_point_without_kernel_interface_is_not_loaded \
+            network::takeover::tests::detects_selinux_config_even_when_not_mounted \
             mirror::apt::parse::tests \
             mirror::apt::apply_tests \
             mirror::dnf::apply_tests \

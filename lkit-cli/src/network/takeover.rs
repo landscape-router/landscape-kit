@@ -589,8 +589,11 @@ fn write_private_json(path: &Path, value: &impl serde::Serialize) -> Result<(), 
 }
 
 fn selinux_enabled(fs_path: &Path, config_path: &Path) -> Result<bool, InstallError> {
-    if fs_path.exists() {
-        return Ok(true);
+    // An empty mount point can exist even when SELinux is not loaded.
+    match std::fs::metadata(fs_path.join("enforce")) {
+        Ok(_) => return Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(InstallError::Io(error)),
     }
     let content = match std::fs::read_to_string(config_path) {
         Ok(content) => content,
@@ -693,6 +696,22 @@ mod tests {
         ] {
             assert!(!rollback_allowed(phase), "{phase:?}");
         }
+    }
+
+    #[test]
+    fn selinux_mount_point_without_kernel_interface_is_not_loaded() {
+        let dir = std::env::temp_dir().join(format!("lkit-selinux-empty-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("config");
+        assert!(!selinux_enabled(&dir, &config).unwrap());
+        for enforcing in ["0", "1"] {
+            std::fs::write(dir.join("enforce"), enforcing).unwrap();
+            assert!(selinux_enabled(&dir, &config).unwrap());
+        }
+        std::fs::remove_file(dir.join("enforce")).unwrap();
+        std::fs::write(&config, "SELINUX=permissive\n").unwrap();
+        assert!(selinux_enabled(&dir, &config).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
