@@ -193,6 +193,9 @@ esac
         std::fs::write(&password, b"Secret123\n").unwrap();
         std::fs::set_permissions(&password, std::fs::Permissions::from_mode(0o600)).unwrap();
         let repository = RepositoryServer::start(repository_files());
+        // The repository must bind while all selected health ports remain held.
+        // Release them only after every in-process fixture listener has started.
+        drop(ports);
         Self {
             world,
             territory,

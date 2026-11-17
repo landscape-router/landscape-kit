@@ -39,10 +39,11 @@ pub(crate) async fn run_operation(
             "service registration is not owned by this installation".into(),
         ));
     }
-    manager.validate_definition(
-        ManagedService::LandscapeRouter,
-        &std::fs::read_to_string(origin).map_err(InstallError::Io)?,
+    validate_service_definition(
+        manager,
         &root.canonical,
+        &std::fs::read_to_string(origin).map_err(InstallError::Io)?,
+        runtime.test_runtime_path.is_some(),
     )?;
     let args = request.workflow_args();
     let prepared = prepare_restore(&root, &installed, &args)?;
@@ -111,6 +112,19 @@ pub(crate) async fn run_operation(
     }
 }
 
+fn validate_service_definition(
+    manager: &dyn ServiceManager,
+    root: &std::path::Path,
+    definition: &str,
+    test_runtime: bool,
+) -> Result<(), InstallError> {
+    manager.validate_definition(ManagedService::LandscapeRouter, definition, root)?;
+    if !test_runtime && !definition.contains("network startup-check") {
+        return Err(InstallError::Preflight("Landscape service definition lacks the recovery startup check; run `lkit repair service` before restore".into()));
+    }
+    Ok(())
+}
+
 impl RestoreRequest {
     pub(crate) fn workflow_args(&self) -> RestoreArgs {
         RestoreArgs {
@@ -126,6 +140,70 @@ impl RestoreRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_requires_recovery_startup_check_for_all_service_backends() {
+        use crate::service::{openrc::Openrc, systemd::Systemd, sysvinit::Sysvinit};
+
+        let temp = super::super::tests::temp_root("native-startup-check");
+        let _guard = layout::test_territory(&temp.join("territory"));
+        let root = temp.join("install");
+        let managers: [Box<dyn ServiceManager>; 3] = [
+            Box::new(Systemd {
+                systemctl: temp.join("systemctl"),
+                system_unit_dir: temp.join("systemd"),
+                run_systemd_dir: temp.join("run/systemd"),
+                pid1_is_systemd: true,
+                resolv_conf: temp.join("resolv.conf"),
+            }),
+            Box::new(Openrc {
+                rc_service: temp.join("rc-service"),
+                rc_update: temp.join("rc-update"),
+                init_d_dir: temp.join("init.d"),
+                resolv_conf: temp.join("resolv.conf"),
+            }),
+            Box::new(Sysvinit {
+                update_rc_d: temp.join("update-rc.d"),
+                init_d_dir: temp.join("init.d"),
+                rc_d_glob: temp.join("rc?.d"),
+                resolv_conf: temp.join("resolv.conf"),
+            }),
+        ];
+        for manager in managers {
+            let definition = manager
+                .render_definition(ManagedService::LandscapeRouter, &root)
+                .unwrap();
+            validate_service_definition(manager.as_ref(), &root, &definition, false).unwrap();
+            let legacy = definition
+                .lines()
+                .filter(|line| !line.contains("network startup-check"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            // General definition validation permits old deployments for repair;
+            // guarded restore requires the independent startup protection.
+            manager
+                .validate_definition(ManagedService::LandscapeRouter, &legacy, &root)
+                .unwrap();
+            let error =
+                validate_service_definition(manager.as_ref(), &root, &legacy, false).unwrap_err();
+            assert!(matches!(error, InstallError::Preflight(_)));
+            assert!(
+                error
+                    .to_string()
+                    .contains("run `lkit repair service` before restore"),
+                "{:?}: {error}",
+                manager.kind()
+            );
+            validate_service_definition(manager.as_ref(), &root, &legacy, true).unwrap();
+            let foreign = legacy.replace("current/landscape-webserver", "foreign/webserver");
+            assert!(
+                validate_service_definition(manager.as_ref(), &root, &foreign, true).is_err(),
+                "fixture bypass must retain executable ownership validation"
+            );
+        }
+        assert!(!layout::territory_transactions_dir().exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn verified_restore_hash_covers_the_exact_bytes_consumed() {

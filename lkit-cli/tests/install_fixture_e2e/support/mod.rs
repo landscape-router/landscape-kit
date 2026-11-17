@@ -10,6 +10,7 @@ mod transactions;
 pub(crate) mod world;
 
 pub(crate) use self::harness::{InstallHarness, write_valid_state_at};
+pub(crate) use self::ports::TestPorts;
 pub(crate) use self::pty::{Pty, attach_pty};
 pub(crate) use self::repo::{
     RepositoryServer, SelfUpgradeFixture, frontend_files_for, repository_files,

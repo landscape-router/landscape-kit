@@ -115,6 +115,16 @@ printf '%s\n' 'Secret123' >"$rootfs/var/lib/lkit-qemu/password"
 chmod 0600 "$rootfs/var/lib/lkit-qemu/password"
 printf '%s\n' 'Secret123' >"$test_root/journey-password"
 chmod 0600 "$test_root/journey-password"
+if [[ -n ${GITHUB_TOKEN:-} ]]; then
+  # The CLI and resident daemon both resolve official release metadata.
+  # Keep CI credentials in the disposable disk, outside logs and artifacts.
+  (umask 077; printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" >"$rootfs/var/lib/lkit-qemu/github.env")
+  install -d -m 0755 "$rootfs/etc/systemd/system/lkit.service.d"
+  cat >"$rootfs/etc/systemd/system/lkit.service.d/github.conf" <<'UNIT'
+[Service]
+EnvironmentFile=/var/lib/lkit-qemu/github.env
+UNIT
+fi
 
 install -d -m 0700 "$rootfs/etc/NetworkManager/system-connections"
 cat >"$rootfs/etc/NetworkManager/system-connections/wan.nmconnection" <<'EOF'
@@ -410,7 +420,7 @@ start_takeover() {
     }
   printf '%s\n1\n\n\n\n' "$wan_index" | timeout 900 ssh "${ssh_common[@]}" \
     -tt -p "$active_ssh_port" root@127.0.0.1 \
-    /usr/local/bin/lkit install --takeover-network \
+    bash /var/lib/lkit-qemu/install.sh --takeover-network \
     --install-dir /srv/landscape \
     --admin-user admin --password-file /var/lib/lkit-qemu/password \
     --version "$landscape_version" \

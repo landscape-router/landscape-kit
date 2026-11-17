@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
@@ -11,6 +12,9 @@ pub(crate) struct RepositoryServer {
     pub(crate) base_url: String,
     requests: Arc<Mutex<Vec<String>>>,
     files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    shutdown: Arc<AtomicBool>,
+    active_stream: Arc<Mutex<Option<TcpStream>>>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl RepositoryServer {
@@ -28,44 +32,74 @@ impl RepositoryServer {
         let request_log = requests.clone();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut request = [0u8; 8192];
-                let Ok(size) = stream.read(&mut request) else {
-                    continue;
-                };
-                let request = String::from_utf8_lossy(&request[..size]);
-                let path = request.split_whitespace().nth(1).unwrap_or("/");
-                request_log.lock().unwrap().push(path.to_string());
-                if let Some((suffix, released)) = &gate
-                    && path.ends_with(suffix)
-                {
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                    while !released.load(std::sync::atomic::Ordering::SeqCst)
-                        && std::time::Instant::now() < deadline
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
+        listener.set_nonblocking(true).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = shutdown.clone();
+        let active_stream = Arc::new(Mutex::new(None));
+        let worker_stream = active_stream.clone();
+        let worker = std::thread::spawn(move || {
+            while !worker_shutdown.load(Ordering::SeqCst) {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
                     }
-                }
-                let (status, reason, body) = match response_files.lock().unwrap().get(path) {
-                    Some(body) => (200, "OK", body.clone()),
-                    None => (404, "Not Found", Vec::new()),
+                    Err(_) => break,
                 };
-                let head = format!(
-                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                if stream.write_all(head.as_bytes()).is_ok() {
-                    let _ = stream.write_all(&body);
-                    let _ = stream.flush();
+                *worker_stream.lock().unwrap() = Some(stream.try_clone().unwrap());
+                if worker_shutdown.load(Ordering::SeqCst) {
+                    break;
                 }
+                // Keep cleanup outside the request body so early returns release
+                // the extra socket as well as the accepted connection.
+                let mut handle_request = || {
+                    let mut request = [0u8; 8192];
+                    let Ok(size) = stream.read(&mut request) else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&request[..size]);
+                    let path = request.split_whitespace().nth(1).unwrap_or("/");
+                    request_log.lock().unwrap().push(path.to_string());
+                    if let Some((suffix, released)) = &gate
+                        && path.ends_with(suffix)
+                    {
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(30);
+                        while !released.load(std::sync::atomic::Ordering::SeqCst)
+                            && !worker_shutdown.load(Ordering::SeqCst)
+                            && std::time::Instant::now() < deadline
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                        }
+                    }
+                    if worker_shutdown.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let (status, reason, body) = match response_files.lock().unwrap().get(path) {
+                        Some(body) => (200, "OK", body.clone()),
+                        None => (404, "Not Found", Vec::new()),
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    if stream.write_all(head.as_bytes()).is_ok() {
+                        let _ = stream.write_all(&body);
+                        let _ = stream.flush();
+                    }
+                };
+                handle_request();
+                *worker_stream.lock().unwrap() = None;
             }
         });
         Self {
             base_url: format!("http://{address}/"),
             requests,
             files,
+            shutdown,
+            active_stream,
+            worker: Some(worker),
         }
     }
 
@@ -75,6 +109,24 @@ impl RepositoryServer {
 
     pub(crate) fn request_paths(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
+    }
+
+    pub(crate) fn has_active_connection(&self) -> bool {
+        self.active_stream.lock().unwrap().is_some()
+    }
+}
+
+impl Drop for RepositoryServer {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        if let Ok(stream) = self.active_stream.lock()
+            && let Some(stream) = stream.as_ref()
+        {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

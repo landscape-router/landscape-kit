@@ -65,10 +65,11 @@ jobs:
 
       - name: Run official Landscape install, backup recovery and network takeover
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           LKIT_QEMU_PREBUILT: ${{ github.workspace }}/target/release/lkit
           LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/qemu-network-artifacts
         run: |
-          sudo --preserve-env=LKIT_QEMU_PREBUILT,LKIT_QEMU_ARTIFACT_DIR \
+          sudo --preserve-env=GITHUB_TOKEN,LKIT_QEMU_PREBUILT,LKIT_QEMU_ARTIFACT_DIR \
             scripts/test-qemu-network-takeover.sh
 
       - name: Upload VM assertions and diagnostics

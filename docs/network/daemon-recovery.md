@@ -123,9 +123,11 @@ restore 回滚恢复原 release、current、data、服务注册及启用／运�
 真实服务操作、开机启动屏障和网络恢复由 CI 的 fixture、容器或虚拟机验证，分别覆盖
 systemd、OpenRC 和 SysVinit。普通开发过程不在宿主执行这些系统级测试。
 
-旧 Landscape 服务定义缺少启动检查时，reinit 在创建事务或修改现场前拒绝执行，
-提示运行 [`lkit repair service`](../commands/repair.md#服务定义修复)。迁移成功后重新
-执行 reinit；迁移失败不放宽启动检查。
+Landscape 服务定义须包含 `lkit network startup-check`，该要求同时适用于 systemd、
+OpenRC 和 SysVinit。缺少启动检查时，reinit 与 restore 在创建事务、保护备份或修改
+现场前拒绝执行，提示运行 [`lkit repair service`](../commands/repair.md#服务定义修复)。
+修复成功后重新确认并执行操作；修复失败不放宽启动检查，`--yes` 与
+`--allow-no-backup` 也不能跳过该检查。
 
 ## 恢复通道配置
 

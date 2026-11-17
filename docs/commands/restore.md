@@ -37,6 +37,13 @@ daemon 持锁后复核安装现场和备份摘要。现场或备份变化时拒�
 ## 恢复前检查
 
 恢复只接受已有有效 `install-state.json` 的安装，不负责空目录安装或新机器灾难重建。
+daemon 在创建恢复事务前检查服务注册归属、服务定义和恢复启动检查。systemd、OpenRC
+与 SysVinit 的 Landscape 服务均须在启动前执行 `lkit network startup-check`，防止
+主机重启后运行尚未确认的配置。服务定义缺少此检查时，恢复拒绝执行并提示先运行
+[`lkit repair service`](repair.md#服务定义修复)，修复成功后重新确认恢复计划；
+`--yes` 与 `--allow-no-backup` 均不能跳过这项检查。拒绝时不创建恢复事务、保护备份，
+也不停止服务或修改安装现场。
+
 在停止服务前完成：
 
 1. 解析并完整验证目标 `.lkb`（header、metadata、checksum）；

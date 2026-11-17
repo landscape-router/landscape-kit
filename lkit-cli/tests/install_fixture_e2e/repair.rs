@@ -1,4 +1,6 @@
-use super::support::{E2E_LOCK, InstallHarness, RepositoryServer, e2e_enabled, repository_files};
+use super::support::{
+    E2E_LOCK, InstallHarness, RepositoryServer, TestPorts, e2e_enabled, repository_files,
+};
 use std::{
     os::{fd::AsRawFd, unix::fs::PermissionsExt},
     process::{Child, Stdio},
@@ -29,6 +31,85 @@ impl Drop for Gate {
         self.0.store(true, Ordering::SeqCst);
     }
 }
+
+#[test]
+fn fixture_health_ports_stay_reserved_until_repository_start() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let ports = TestPorts::reserve();
+    let reserved = [ports.dns, ports.http, ports.https];
+    assert_eq!(
+        reserved
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        3
+    );
+    for port in reserved {
+        assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_err());
+    }
+    assert!(std::net::UdpSocket::bind(("127.0.0.1", ports.dns)).is_err());
+    let repository = RepositoryServer::start(std::collections::HashMap::new());
+    let repository_port = url::Url::parse(&repository.base_url)
+        .unwrap()
+        .port()
+        .unwrap();
+    assert!(!reserved.contains(&repository_port));
+    drop(ports);
+    for port in reserved {
+        std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+    }
+    std::net::UdpSocket::bind(("127.0.0.1", reserved[0])).unwrap();
+}
+
+#[test]
+fn repository_drop_closes_idle_gated_and_incomplete_connections() {
+    use std::io::Write;
+    use std::net::TcpStream;
+
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for scenario in ["idle", "gated", "incomplete"] {
+        let gate = Gate(Arc::new(AtomicBool::new(false)));
+        let repository = RepositoryServer::start_gated(
+            std::collections::HashMap::new(),
+            Some(("asset".into(), gate.0.clone())),
+        );
+        let address = repository
+            .base_url
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        let mut client = (scenario != "idle").then(|| TcpStream::connect(address).unwrap());
+        if scenario == "gated" {
+            client
+                .as_mut()
+                .unwrap()
+                .write_all(b"GET /asset HTTP/1.1\r\n\r\n")
+                .unwrap();
+            wait_until(|| repository.request_paths() == ["/asset"]);
+        }
+        if scenario == "incomplete" {
+            wait_until(|| repository.has_active_connection());
+        }
+        let address = address.to_owned();
+        let started = Instant::now();
+        drop(repository);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{scenario} shutdown blocked"
+        );
+        assert!(
+            TcpStream::connect(address).is_err(),
+            "{scenario} listener leaked after drop"
+        );
+        drop(client);
+    }
+}
+
 fn records(h: &InstallHarness) -> Vec<serde_json::Value> {
     let output = h.command().args(["operation", "list"]).output().unwrap();
     assert!(

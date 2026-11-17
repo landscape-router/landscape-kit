@@ -210,23 +210,25 @@ fn native_restore_recovers_after_activation_and_pending_result_loss() {
         };
         wait(|| record(&h)["status"] == expected);
         let result = record(&h);
-        assert_eq!(
-            result["exit_code"],
-            if point == "before-result" { 0 } else { 5 }
-        );
         assert_eq!(result["transaction_id"], active["transaction_id"]);
         if point == "restore-activated" {
+            assert_eq!(result["exit_code"], 5);
             assert_eq!(
                 std::fs::read(h.install_root.join("data/original-marker")).unwrap(),
                 b"original"
             );
         } else {
+            // The interrupted executor never saved a result. Recovery discovers a
+            // pending transaction, so the receipt has no terminal exit code yet.
+            assert!(result["exit_code"].is_null());
+            assert_eq!(transaction(&h)["phase"], "awaiting_network_confirmation");
             assert_eq!(
                 transaction(&h)["restore_confirmation"]["confirmation_deadline"],
                 deadline
             );
             assert_success(&confirm_command(&h, &runtime).output().unwrap());
             wait(|| record(&h)["status"] == "succeeded");
+            assert_eq!(record(&h)["exit_code"], 0);
         }
     }
 }
