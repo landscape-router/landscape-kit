@@ -86,7 +86,7 @@ done
 mmdebstrap \
   --variant=minbase \
   --keyring="$archive_keyring" \
-  --include=systemd,systemd-sysv,systemd-networkd,dbus,bash,util-linux,procps,iproute2,ca-certificates,python3,zstd \
+  --include=systemd,systemd-sysv,dbus,bash,util-linux,procps,iproute2,ca-certificates,python3,zstd \
   trixie "$rootfs"
 
 install -D -m 0644 "$repo_root/scripts/test-nspawn-networkd.py" "$rootfs/var/lib/lkit-nspawn/networkd-test.py"
