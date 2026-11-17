@@ -7,6 +7,8 @@ mod daemon;
 mod daemon_operations;
 mod daemon_supervisor;
 mod deployment;
+#[cfg(all(test, feature = "test-support"))]
+mod fixture_diagnostics_tests;
 mod flare;
 mod frontend;
 mod i18n;

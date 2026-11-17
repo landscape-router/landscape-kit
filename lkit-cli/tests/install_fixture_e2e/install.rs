@@ -554,6 +554,9 @@ fn native_install_recovers_without_existing_state_and_keeps_the_original_operati
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for point in [
+        "install-before-publish",
+        "install-published",
+        "install-before-start",
         "install-activated",
         "install-state-written",
         "before-result",
@@ -668,7 +671,7 @@ fn native_install_recovers_without_existing_state_and_keeps_the_original_operati
         assert_eq!(h.state_path().exists(), success);
         assert_eq!(record()["id"], before["id"]);
         assert_eq!(record()["transaction_id"], before["transaction_id"]);
-        if point == "install-activated" {
+        if !success && !takeover {
             assert_eq!(
                 std::fs::read(h.install_root.join("data/original-marker")).unwrap(),
                 b"original"

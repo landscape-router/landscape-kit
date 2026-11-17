@@ -83,6 +83,17 @@ pub(crate) async fn download<T>(
 /// fixture territory; production builds contain neither the hook nor its calls.
 #[cfg(feature = "test-support")]
 pub(crate) fn checkpoint(name: &str) -> Result<(), InstallError> {
+    if std::env::var("LKIT_TEST_FAIL_CHECKPOINT").ok().as_deref() == Some(name) {
+        std::fs::write(
+            crate::deployment::layout::territory_run_dir()
+                .join(format!("test-repair-{name}.failed")),
+            b"injected",
+        )
+        .map_err(InstallError::Io)?;
+        return Err(InstallError::Io(std::io::Error::other(format!(
+            "injected fixture failure at {name}"
+        ))));
+    }
     if std::env::var("LKIT_TEST_REPAIR_CHECKPOINT").ok().as_deref() != Some(name) {
         return Ok(());
     }

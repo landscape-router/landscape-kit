@@ -25,13 +25,36 @@ pub fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [command, root, destination] = args.as_slice()
+        && command == "--collect-diagnostics"
+    {
+        for entry in std::fs::read_dir(root)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("lkit-cli-fixture-")
+                && let Err(error) = lkit_test_fixture::diagnostics::export(
+                    &entry.path(),
+                    &Path::new(destination).join(entry.file_name()),
+                )
+            {
+                eprintln!(
+                    "cannot collect remaining fixture {}: {error:#}",
+                    entry.path().display()
+                );
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let config_path = std::env::var_os(SYSTEMCTL_CONFIG_ENV)
         .map(PathBuf::from)
         .context("LKIT_TEST_SYSTEMCTL_CONFIG is not set")?;
     let config = SystemctlFixtureConfig::read(&config_path)?;
     std::fs::create_dir_all(&config.state_dir)
         .with_context(|| format!("create systemctl state dir {}", config.state_dir.display()))?;
-    let args: Vec<String> = std::env::args().skip(1).collect();
     append_call_log(&config, &args)?;
     stage_host_vendor_definitions(&config)?;
     dispatch(&config, &args)

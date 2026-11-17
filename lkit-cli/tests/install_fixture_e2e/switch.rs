@@ -117,12 +117,7 @@ fn wait_until(h: &InstallHarness, label: &str, mut ready: impl FnMut() -> bool) 
     while !ready() {
         if std::time::Instant::now() >= deadline {
             // Read evidence directly: a stuck CLI must not block timeout diagnostics.
-            for name in ["daemon.log", "switch-frontend.log"] {
-                eprintln!(
-                    "{name}:\n{}",
-                    std::fs::read_to_string(h.run_dir().join(name)).unwrap_or_default()
-                );
-            }
+            // TestWorld exports bounded, redacted logs during panic cleanup.
             for directory in [h.run_dir().join("operations"), h.transactions_dir()] {
                 for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
                     let path = entry.path();
@@ -240,7 +235,13 @@ fn daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup()
         return;
     }
     let _guard = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    for point in ["switch-activated", "switch-state-written", "before-result"] {
+    for point in [
+        "switch-stopped",
+        "switch-before-publish",
+        "switch-activated",
+        "switch-state-written",
+        "before-result",
+    ] {
         for no_backup in [false, true] {
             let h = InstallHarness::new("switch-crash", "healthy", 30_000);
             assert_success(&h.run());
@@ -272,7 +273,9 @@ fn daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup()
                 transaction(&h, &operation)["phase"],
                 if committed {
                     "committed"
-                } else if point == "switch-activated" {
+                } else if point == "switch-stopped" {
+                    "stopping"
+                } else if matches!(point, "switch-activated" | "switch-before-publish") {
                     "activating"
                 } else {
                     "verifying"
@@ -289,7 +292,16 @@ fn daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup()
                 records(&h)[0]["status"] == if committed { "succeeded" } else { "failed" }
             });
             let result = records(&h).pop().unwrap();
-            assert_eq!(result["exit_code"], if committed { 0 } else { 5 });
+            assert_eq!(
+                result["exit_code"],
+                if committed {
+                    0
+                } else if point == "switch-stopped" {
+                    1
+                } else {
+                    5
+                }
+            );
             assert_eq!(result["transaction_id"], operation["transaction_id"]);
             if committed {
                 assert_eq!(snapshot_state(&h), target_state);
@@ -308,7 +320,14 @@ fn daemon_switch_recovers_activation_and_commit_crashes_with_or_without_backup()
                     std::fs::read(h.install_root.join("current/static.zip")).unwrap(),
                     old_archive
                 );
-                assert_eq!(transaction(&h, &result)["phase"], "rolled_back");
+                assert_eq!(
+                    transaction(&h, &result)["phase"],
+                    if point == "switch-stopped" {
+                        "failed"
+                    } else {
+                        "rolled_back"
+                    }
+                );
                 let active = systemctl(&h.world, &["is-active", "landscape-router.service"]);
                 assert_eq!(active.status.success(), !no_backup);
             }

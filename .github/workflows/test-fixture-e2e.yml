@@ -3,6 +3,7 @@ name: Test fixture e2e
 on:
   push:
     paths:
+      - scripts/ci/**
       - Cargo.lock
       - Cargo.toml
       - crates/**
@@ -11,6 +12,7 @@ on:
       - .github/workflows/test-rust.yml
   pull_request:
     paths:
+      - scripts/ci/**
       - Cargo.lock
       - Cargo.toml
       - crates/**
@@ -83,6 +85,8 @@ jobs:
             filter: "console"
           - domain: daemon
             filter: "daemon::"
+          - domain: fault-matrix
+            filter: "fault_matrix::"
           - domain: frontend
             filter: "frontend::"
           - domain: install
@@ -123,7 +127,27 @@ jobs:
       - name: Run ${{ matrix.domain }} fixture e2e tests
         env:
           LKIT_E2E: "1"
+          LKIT_TEST_WORLD_DIR: ${{ runner.temp }}/fixture-worlds
+          LKIT_TEST_ARTIFACT_DIR: ${{ runner.temp }}/fixture-diagnostics
         run: |
           test_binary=$(find target/debug/deps -maxdepth 1 -type f -name 'install_fixture_e2e-*' -perm -111 | sort | tail -n 1)
           test -n "$test_binary"
-          "$test_binary" "${{ matrix.filter }}"
+          python3 scripts/ci/run-test-selection.py \
+            --filter '${{ matrix.filter }}' \
+            --report "$LKIT_TEST_ARTIFACT_DIR/test-inventory.json" -- \
+            "$test_binary"
+      - name: Collect remaining fixture worlds
+        if: always()
+        run: |
+          if [[ -x target/debug/lkit-test-systemctl && -d "${{ runner.temp }}/fixture-worlds" ]]; then
+            target/debug/lkit-test-systemctl --collect-diagnostics \
+              "${{ runner.temp }}/fixture-worlds" "${{ runner.temp }}/fixture-diagnostics"
+          fi
+      - name: Upload fixture diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fixture-diagnostics-${{ matrix.domain }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fixture-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7

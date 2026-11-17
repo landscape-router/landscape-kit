@@ -129,8 +129,9 @@
 - 缺口：目标目录发布中途和服务 stop 中途的强杀矩阵。
 - 说明：有 `.lkb` 和显式无备份两种路径均在 current 切换后、state 写入后强杀 daemon；
   重启恢复旧状态、current 和服务 active 状态。无备份路径保持旧服务停止，不从新 state
-  推断旧状态，也不承诺恢复 data。等待超时时输出具体检查点、daemon／前端日志及
-  操作与事务状态；日志保存在 fixture 临时目录，CI 失败日志包含诊断内容。
+  推断旧状态，也不承诺恢复 data。服务停止后、release 发布前的强杀分别验证
+  stopping 与 activating 的恢复分支。等待超时输出具体检查点和状态，脱敏日志与事务摘要
+  归档为 CI artifacts，见[故障矩阵](../../reliability.md#事务故障矩阵)。
 
 ## SW-14
 

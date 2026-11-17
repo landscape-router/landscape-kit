@@ -18,6 +18,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
+| 测试执行与故障诊断 | `TST-01` 至 `TST-03` | [test-infrastructure.md](functional/test-infrastructure.md) |
 | lkit 自发布与引导安装 | `LKR-01` 至 `LKR-04` | [lkit-release.md](functional/lkit-release.md) |
 | musl 跨架构轻量功能测试 | `MUSL-01` 至 `MUSL-05` | [musl.md](functional/musl.md) |
 | Release 发布与仓库 | `PUB-01` 至 `PUB-08` | [publish.md](functional/publish.md) |

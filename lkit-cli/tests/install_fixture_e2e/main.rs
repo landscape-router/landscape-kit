@@ -3,6 +3,7 @@
 mod console;
 mod console_screen;
 mod daemon;
+mod fault_matrix;
 mod frontend;
 mod install;
 mod manager_backends;

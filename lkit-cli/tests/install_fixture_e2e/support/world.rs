@@ -16,7 +16,10 @@ impl TestWorld {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let base = std::env::var_os("LKIT_TEST_WORLD_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let root = base.join(format!(
             "lkit-cli-fixture-{name}-{}-{unique}",
             std::process::id()
         ));
@@ -35,21 +38,30 @@ impl TestWorld {
 
 impl Drop for TestWorld {
     fn drop(&mut self) {
+        // Preserve the failure state before teardown changes service markers.
+        // Export errors must never replace the original test failure or skip cleanup.
+        if std::thread::panicking()
+            && let Some(directory) = std::env::var_os("LKIT_TEST_ARTIFACT_DIR")
+        {
+            let destination = PathBuf::from(directory).join(self.root.file_name().unwrap());
+            if let Err(error) = lkit_test_fixture::diagnostics::export(&self.root, &destination) {
+                eprintln!("fixture diagnostic export failed: {error:#}");
+            } else {
+                eprintln!("fixture failure snapshot: {}", destination.display());
+            }
+        }
         // 停掉 init 替身拉起的 daemon 进程(OpenRC/sysvinit 场景)。
-        if self.init_config.is_file() {
-            let Ok(content) = std::fs::read_to_string(&self.init_config) else {
-                return;
-            };
-            let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) else {
-                return;
-            };
-            if let Some(state_dir) = config["state_dir"].as_str() {
-                let pid_path = PathBuf::from(state_dir).join("pids/lkit.pid");
-                if let Ok(pid) = std::fs::read_to_string(&pid_path)
-                    && let Ok(pid) = pid.trim().parse::<i32>()
-                {
-                    unsafe { libc::kill(pid, libc::SIGTERM) };
-                }
+        if self.init_config.is_file()
+            && let Ok(content) = std::fs::read_to_string(&self.init_config)
+            && let Ok(config) = serde_json::from_str::<serde_json::Value>(&content)
+            && let Some(state_dir) = config["state_dir"].as_str()
+        {
+            let pid_path = PathBuf::from(state_dir).join("pids/lkit.pid");
+            if let Ok(pid) = std::fs::read_to_string(&pid_path)
+                && let Ok(pid) = pid.trim().parse::<i32>()
+                && pid > 1
+            {
+                unsafe { libc::kill(pid, libc::SIGTERM) };
             }
         }
         if self.systemctl_config.is_file() {

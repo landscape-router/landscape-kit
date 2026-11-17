@@ -343,10 +343,14 @@ pub(crate) async fn run_operation(
             .join("releases")
             .join(format!(".native-install-{}.tmp", tx.transaction_id));
         control::step(Step::PublishingRelease);
+        #[cfg(feature = "test-support")]
+        control::checkpoint("install-before-publish")?;
         copy_tree(&source, &temp)?;
         repair_snapshot::sync_tree(&temp)?;
         remove(&target)?;
         std::fs::rename(&temp, &target).map_err(InstallError::Io)?;
+        #[cfg(feature = "test-support")]
+        control::checkpoint("install-published")?;
         write_init_config(&root, &init)?;
         let unit_sha = write_unit_origin(
             &root,
@@ -378,6 +382,8 @@ pub(crate) async fn run_operation(
         )?;
         manager.enable(ManagedService::LandscapeRouter)?;
         control::step(Step::StartingService);
+        #[cfg(feature = "test-support")]
+        control::checkpoint("install-before-start")?;
         manager.start(ManagedService::LandscapeRouter)?;
         transaction::mark_phase(&root, &tx, Phase::Verifying)?;
         control::phase(Stage::Verifying)?;

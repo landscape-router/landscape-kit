@@ -246,22 +246,29 @@ esac
         runtime: &Path,
         pause: bool,
     ) -> DaemonGuard {
-        self.spawn_daemon_with_hooks(runtime, pause, None)
+        self.spawn_daemon_with_hooks(runtime, pause, None, None)
     }
     pub(crate) fn spawn_daemon_at_checkpoint(
         &self,
         runtime: &Path,
         checkpoint: &str,
     ) -> DaemonGuard {
-        self.spawn_daemon_with_hooks(runtime, false, Some(checkpoint))
+        self.spawn_daemon_with_hooks(runtime, false, Some(checkpoint), None)
+    }
+    pub(crate) fn spawn_daemon_with_fault(&self, runtime: &Path, point: &str) -> DaemonGuard {
+        self.spawn_daemon_with_hooks(runtime, false, None, Some(point))
     }
     fn spawn_daemon_with_hooks(
         &self,
         runtime: &Path,
         pause: bool,
         checkpoint: Option<&str>,
+        fault: Option<&str>,
     ) -> DaemonGuard {
         let mut child = self.command();
+        if let Some(point) = fault {
+            child.env("LKIT_TEST_FAIL_CHECKPOINT", point);
+        }
         if let Some(checkpoint) = checkpoint {
             child.env("LKIT_TEST_REPAIR_CHECKPOINT", checkpoint);
         }

@@ -5,6 +5,7 @@ on:
     paths:
       - scripts/lib/mirror-network-guard.sh
       - scripts/test-mirror-network-guard.sh
+      - scripts/ci/**
       - Cargo.lock
       - Cargo.toml
       - landscape-terrain-proto/**
@@ -16,6 +17,7 @@ on:
     paths:
       - scripts/lib/mirror-network-guard.sh
       - scripts/test-mirror-network-guard.sh
+      - scripts/ci/**
       - Cargo.lock
       - Cargo.toml
       - landscape-terrain-proto/**
@@ -47,70 +49,21 @@ jobs:
         run: cargo test --locked -p landscape-terrain-proto --test task_tracing
       - name: Run unit tests
         run: cargo test --locked --workspace --features test-support --lib
-      - name: Run init, Cgroup and mirror CLI unit tests
+      - name: Check test selection runner
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Run reviewed CLI unit tests
         run: |
-          for module in \
-            deployment::config::tests::load_flare_is_independent_of_repository_schema \
-            check::init::tests \
-            check::openrc::tests \
-            service::manager::init_detection_tests \
-            service::networkd::tests \
-            console::tests::cgroup \
-            console::tests::gates \
-            console::tests::install \
-            deployment::cgroup::tests \
-            check::service::tests \
-            check::kernel::tests \
-            commands::lkit_self::upgrade_tests \
-            network::discovery::tests \
-            network::recovery::tests \
-            commands::update::tests \
-            console::tests::update \
-            interaction::presentation::operation::tests \
-            console::tests::backup \
-            console::tests::ops \
-            workflows::migrate::native::tests \
-            workflows::migrate::rollback::recovery_tests \
-            commands::migrate::tests \
-            interaction::interactive::tests::durable_workflows_cannot_open_a_terminal \
-            commands::install::tests \
-            workflows::install::native::tests \
-            workflows::install::init_config::activation_tests \
-            interaction::presentation::screens::install::tests \
-            commands::reinit::tests \
-            commands::reinit::native::tests \
-            console::tests::reinit \
-            interaction::presentation::screens::reinit::tests \
-            deployment::transaction::validation::tests \
-            commands::network::tests \
-            commands::uninstall::tests \
-            workflows::restore::native::tests \
-            workflows::switch::tests \
-            daemon_operations::tests \
-            daemon_operations::timeline::tests \
-            daemon_supervisor::tests \
-            daemon::tests::capability_requires_the_live_daemon_pid_and_matching_marker \
-            workflows::repair::tests \
-            workflows::repair_service::tests \
-            service::host_network::tests \
-            service::sysvinit::tests \
-            network::takeover::tests::accepted_confirmation_cannot_be_changed_to_rollback \
-            network::takeover::tests::selinux_mount_point_without_kernel_interface_is_not_loaded \
-            network::takeover::tests::detects_selinux_config_even_when_not_mounted \
-            mirror::apt::parse::tests \
-            mirror::apt::apply_tests \
-            mirror::dnf::apply_tests \
-            mirror::dnf::parse::tests \
-            mirror::pacman::tests \
-            mirror::apk::tests \
-            mirror::apk::apply_tests \
-            mirror::availability::tests \
-            software::docker::tests::apt_source_file \
-            software::docker::tests::dnf_repo_file \
-            software::docker::tests::apt_arch_maps_common_architectures \
-            software::docker::apk_tests \
-            service::openrc::tests::renders; do
-            cargo test --locked -p lkit-cli --features test-support --bin lkit "$module"
-          done
+          python3 scripts/ci/run-test-selection.py \
+            --manifest scripts/ci/lkit-unit-tests.txt \
+            --report ci-artifacts/cli-unit-inventory.json -- \
+            cargo test --locked -p lkit-cli --features test-support --bin lkit
+      - name: Upload CLI test inventory
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-unit-inventory
+          path: ci-artifacts/cli-unit-inventory.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Run CLI i18n tests
         run: cargo test --locked -p lkit-cli --features test-support --test i18n_cli

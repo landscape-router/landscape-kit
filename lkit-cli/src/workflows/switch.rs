@@ -213,10 +213,14 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 ));
             }
         }
+        #[cfg(feature = "test-support")]
+        control::checkpoint("switch-stopped")?;
         control::phase(Stage::Activating)?;
         super::transaction::mark_phase(root, &transaction, Phase::Activating)?;
         activated = true;
         if native {
+            #[cfg(feature = "test-support")]
+            control::checkpoint("switch-before-publish")?;
             publish_staged(root, &transaction)?;
         }
         activate_current(root, &release.version)?;
@@ -228,6 +232,8 @@ pub(crate) async fn switch_version<P: DocsProbe>(
                 &root.canonical.join("service/landscape-router.service"),
             )?;
             manager.enable(ManagedService::LandscapeRouter)?;
+            #[cfg(feature = "test-support")]
+            control::checkpoint("switch-before-start")?;
             manager.start(ManagedService::LandscapeRouter)?;
             control::phase(Stage::Verifying)?;
             super::transaction::mark_phase(root, &transaction, Phase::Verifying)?;
@@ -261,6 +267,8 @@ pub(crate) async fn switch_version<P: DocsProbe>(
         if native {
             new_state.service.manager = state.service.manager;
         }
+        #[cfg(feature = "test-support")]
+        control::checkpoint("switch-before-state")?;
         super::state::write_state(root, &new_state)?;
         #[cfg(feature = "test-support")]
         control::checkpoint("switch-state-written")?;
