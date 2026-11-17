@@ -62,4 +62,4 @@
 - 测试层：systemd-nspawn CI
 - 状态：`已覆盖`
 - 证据：[nspawn 入口](../../../scripts/test-nspawn-systemd.sh)、[networkd 场景](../../../scripts/test-nspawn-networkd.py)
-- 说明：在隔离网络的 Debian guest 中运行真实 networkd、systemctl 和 lkit daemon。服务启用且运行、socket 禁用且停止、wait-online runtime mask；首次安装接管后检查屏蔽及启动链接（含指向 mask 路径的相对链接），验证 D-Bus 别名与 socket 无法拉起服务，重启 daemon 后回滚并核对原始链接及运行状态。网络发现与 Landscape 使用 fixture，不在宿主机运行。
+- 说明：在隔离网络的 Debian guest 中运行真实 networkd、systemctl 和 lkit daemon。服务启用且运行、socket 禁用且停止、wait-online runtime mask，以及无底层 unit 文件的预设 mask；首次安装接管后检查屏蔽及启动链接（含指向 mask 路径的相对链接），验证 D-Bus 别名与 socket 无法拉起服务，重启 daemon 后回滚并核对原始链接及运行状态。网络发现与 Landscape 使用 fixture，不在宿主机运行。

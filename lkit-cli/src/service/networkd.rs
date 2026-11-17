@@ -206,6 +206,16 @@ fn command(
     verb: &str,
     before: &HostServiceBefore,
 ) -> Result<(), InstallError> {
+    // A pre-existing mask may refer to a unit which is not installed at all.
+    // Once unmasked there is nothing to stop, and systemctl stop would fail.
+    if verb == "stop"
+        && matches!(
+            systemd::unit_property(systemd, &before.unit, "ActiveState")?.as_str(),
+            "inactive" | "failed"
+        )
+    {
+        return Ok(());
+    }
     match verb {
         "unmask" | "unmask-runtime" => {
             let directory = if verb == "unmask-runtime" {
@@ -223,8 +233,13 @@ fn command(
         _ => systemd::unit_command(systemd, verb, &before.unit)?,
     }
     if matches!(verb, "start" | "stop") {
-        let active = systemd::unit_query(systemd, "is-active", &before.unit)? == "active";
-        if active != (verb == "start") {
+        let state = systemd::unit_property(systemd, &before.unit, "ActiveState")?;
+        let reached = if verb == "start" {
+            state == "active"
+        } else {
+            matches!(state.as_str(), "inactive" | "failed")
+        };
+        if !reached {
             return Err(InstallError::Preflight(format!(
                 "networkd unit {} did not reach its requested running state",
                 before.unit

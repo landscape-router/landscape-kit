@@ -90,6 +90,7 @@ networkd 主服务、netlink/varlink 等配套 socket、wait-online 服务及模
 状态保存时检查 mask 路径；同名本地 unit 文件或非 mask 链接会在停止服务前被拒绝，
 避免覆盖自定义 unit。
 先解除整组屏蔽，再恢复原本运行的单元，随后停止原本不运行的单元，并还原
-原有 persistent/runtime mask。恢复可重复执行；任何失败保留事务供 daemon 重试。
+原有 persistent/runtime mask。只有 mask、没有底层 unit 文件的单元也恢复原始屏蔽，
+已停止或不存在的运行实例不执行 stop。恢复可重复执行；任何失败保留事务供 daemon 重试。
 确认后整组保持停用和屏蔽。此支持限定 systemd 后端；OpenRC/SysVinit 不自动接管
 名为 systemd-networkd 的自定义服务脚本。

@@ -106,6 +106,10 @@ password.chmod(0o600)
 service = 'systemd-networkd.service'
 socket = 'systemd-networkd.socket'
 waiter = 'systemd-networkd-wait-online.service'
+# A mask can legitimately exist before its vendor unit has ever been installed.
+absent = 'systemd-networkd-resolve-hook.socket'
+assert ctl('show', '--property=LoadState', '--value', absent).stdout.strip() == 'not-found'
+ctl('mask', absent)
 ctl('unmask', service, socket, waiter)
 ctl('enable', service)
 ctl('disable', socket, waiter)
@@ -162,6 +166,7 @@ assert ctl('is-active', socket, check=False).stdout.strip() != 'active'
 assert ctl('is-enabled', socket, check=False).stdout.strip() == 'disabled'
 assert ctl('is-enabled', waiter, check=False).stdout.strip() == 'masked-runtime'
 assert links() == before, f'rollback changed startup links: before={before}, after={links()}'
+assert ctl('is-enabled', absent, check=False).stdout.strip() == 'masked'
 assert not Path('/root/.lkit/state/install-state.json').exists()
 server.shutdown()
 print('PASS: real networkd takeover, daemon restart and exact startup-state restoration')
