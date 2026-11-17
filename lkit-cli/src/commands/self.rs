@@ -324,16 +324,28 @@ fn remove(runtime: &InstallRuntime) -> Result<String, InstallError> {
     }
     let manager = require_manager(runtime)?;
     let service = ManagedService::LkitDaemon;
-    if manager.is_active(service)? {
-        manager.stop_and_wait(service, &|| !manager.is_active(service).unwrap_or(false))?;
-    }
-    if manager.is_enabled(service).unwrap_or(false) {
-        let _ = manager.disable(service);
-    }
     let origin = unit_origin_dir().join(manager.service_name(service));
-    if let Err(error) = manager.unregister(service, &origin) {
-        eprintln!("self: {error}");
+    let expected = origin.canonicalize().unwrap_or_else(|_| origin.clone());
+    match manager.query_registration(service)? {
+        SystemRegistration::Missing => {}
+        SystemRegistration::Symlink { target } if target == expected => {
+            if manager.is_active(service)? {
+                manager
+                    .stop_and_wait(service, &|| matches!(manager.is_active(service), Ok(false)))?;
+            }
+            if manager.is_enabled(service)? {
+                manager.disable(service)?;
+            }
+            manager.unregister(service, &origin)?;
+        }
+        _ => {
+            return Err(InstallError::Preflight(
+                "lkit service registration is an ownership conflict; refusing removal".into(),
+            ));
+        }
     }
+    // Also refresh on a retry after unregister removed its link but reload failed.
+    manager.refresh()?;
     remove_file_if_present(&origin)?;
     remove_empty_dir_if_present(&unit_origin_dir())?;
     Ok(crate::tr!(crate::keys::SELF_REMOVED))

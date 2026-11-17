@@ -98,9 +98,12 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 停止并注销 lkit daemon,幂等可重复:
 
 1. 获取安装锁;
-2. 停止并等待 lkit daemon 退出;
-3. disable、注销注册链接并执行刷新;
+2. 校验服务注册归属；存在外部注册时拒绝操作，不停止或禁用外部服务；
+3. 停止并等待 lkit daemon 退出，disable、注销注册链接并执行刷新；
 4. 删除 `/usr/local/lib/lkit/lkit.service` 原件(空目录一并移除)。
+
+服务查询、禁用、注销或刷新失败时返回非零退出码，保留定义原件供排除故障后重试。
+注册已不存在时刷新管理器并清理原件，重复移除返回成功。
 
 `remove` 不删除 `/usr/local/bin/lkit`(CLI 由安装脚本管理),不触碰任何 landscape
 安装根与 lkit 地盘元数据(`config.toml`、`backups/`、`transactions/` 保留)。

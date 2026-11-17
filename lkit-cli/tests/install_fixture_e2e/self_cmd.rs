@@ -88,6 +88,101 @@ fn self_installs_and_removes_the_lkit_service() {
     assert_eq!(String::from_utf8_lossy(&inactive.stdout).trim(), "inactive");
 }
 
+#[test]
+fn self_remove_preserves_foreign_registration_and_retries_after_conflict_is_resolved() {
+    if !e2e_enabled() {
+        return;
+    }
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-remove-conflict", "healthy", 30_000);
+    let origin = harness.host.join("usr/local/lib/lkit/lkit.service");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    std::fs::write(&origin, b"managed origin").unwrap();
+    let registration = harness.host.join("units/lkit.service");
+    std::fs::write(&registration, b"foreign unit").unwrap();
+    let remove = || {
+        harness
+            .command()
+            .args(["self", "remove", "--test-runtime"])
+            .arg(&harness.runtime_config)
+            .output()
+            .unwrap()
+    };
+    let output = remove();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ownership conflict"));
+    assert_eq!(std::fs::read(&origin).unwrap(), b"managed origin");
+    assert_eq!(std::fs::read(&registration).unwrap(), b"foreign unit");
+    let calls = std::fs::read_to_string(harness.world.path("systemctl-calls.jsonl")).unwrap();
+    for line in calls.lines() {
+        let args: Vec<String> = serde_json::from_str(line).unwrap();
+        assert!(
+            !args
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "stop" | "disable")),
+            "foreign service must not be mutated: {args:?}"
+        );
+    }
+    // Registration can be repaired by the administrator, then removal is retryable.
+    std::fs::remove_file(&registration).unwrap();
+    std::os::unix::fs::symlink(&origin, &registration).unwrap();
+    assert_success(&remove());
+    assert!(!origin.exists());
+    assert!(std::fs::symlink_metadata(&registration).is_err());
+    assert_success(&remove());
+}
+
+#[test]
+fn self_remove_retains_origin_on_disable_or_reload_failure_and_can_retry() {
+    if !e2e_enabled() {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = E2E_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let harness = InstallHarness::new("self-remove-failure", "healthy", 30_000);
+    let origin = harness.host.join("usr/local/lib/lkit/lkit.service");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    std::fs::write(&origin, b"managed origin").unwrap();
+    let registration = harness.host.join("units/lkit.service");
+    std::os::unix::fs::symlink(&origin, &registration).unwrap();
+    assert_success(&systemctl(&harness.world, &["enable", "lkit.service"]));
+    let wrapper = harness.world.path("failing-systemctl");
+    std::fs::write(&wrapper, b"#!/bin/sh\nif [ \"$1\" = \"$LKIT_TEST_REMOVE_FAIL\" ]; then echo 'injected manager failure' >&2; exit 1; fi\nexec \"$LKIT_TEST_REAL_SYSTEMCTL\" \"$@\"\n").unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut runtime: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&harness.runtime_config).unwrap()).unwrap();
+    let backend = runtime["systemd"]["systemctl"].as_str().unwrap().to_owned();
+    runtime["systemd"]["systemctl"] = wrapper.to_str().unwrap().into();
+    std::fs::write(
+        &harness.runtime_config,
+        serde_json::to_vec(&runtime).unwrap(),
+    )
+    .unwrap();
+    let remove = |fault: &str| {
+        harness
+            .command()
+            .args(["self", "remove", "--test-runtime"])
+            .arg(&harness.runtime_config)
+            .env("LKIT_TEST_REAL_SYSTEMCTL", &backend)
+            .env("LKIT_TEST_REMOVE_FAIL", fault)
+            .output()
+            .unwrap()
+    };
+    for fault in ["disable", "daemon-reload"] {
+        let output = remove(fault);
+        assert!(!output.status.success(), "{fault} failure must be reported");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("injected manager failure"));
+        assert!(origin.exists(), "{fault} failure must retain the origin");
+        if fault == "disable" {
+            assert!(registration.is_symlink());
+        }
+    }
+    assert!(std::fs::symlink_metadata(&registration).is_err());
+    assert_success(&remove(""));
+    assert!(!origin.exists());
+    assert_success(&remove(""));
+}
+
 /// `self upgrade` 下载、校验、自检并原子替换全局二进制;运行中的 daemon
 /// 必须由 fake systemd 重启并实际从新文件启动。
 #[test]

@@ -6,7 +6,7 @@
 
 **`self install` 注册全局 daemon：`ExecStart=/usr/local/bin/lkit daemon`，启用并启动**
 
-- 测试层：Fixture E2E（`install_fixture_e2e::self_service`）
+- 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
 - 状态：`已覆盖`
 - 证据：[`lkit self`](../../../commands/self.md)
 - 说明：断言全局 unit 原件 `/usr/local/lib/lkit/lkit.service` 的 `ExecStart` 指向
@@ -19,11 +19,13 @@
 
 **`self remove` 停止注销并清理全局 unit 原件，幂等可重复**
 
-- 测试层：Fixture E2E（`install_fixture_e2e::self_service`）
+- 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
 - 状态：`已覆盖`
-- 证据：[`lkit self`](../../../commands/self.md)
+- 证据：[`lkit self`](../../../commands/self.md)、[self fixture](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)
 - 说明：断言 daemon 进程退出、注册链接与全局 unit 原件删除、unit 状态恢复 inactive；
-  不删除 `/usr/local/bin/lkit`，不修改 lkit 地盘元数据。
+  不删除 `/usr/local/bin/lkit`，不修改 lkit 地盘元数据。注册冲突时拒绝停止、禁用或删除外部服务，
+  保留原件；修正注册后可重试，重复移除成功。禁用与 daemon-reload 故障注入验证
+  非零退出、原件保留，以及注册链接已删除后的刷新重试。
 
 ## SS-03
 
@@ -37,7 +39,7 @@
 
 **`self install` 在服务后端或受管 CLI 不可用时拒绝修改**
 
-- 测试层：Fixture E2E（`install_fixture_e2e::self_service`）
+- 测试层：Fixture E2E（`install_fixture_e2e::self_cmd`）
 - 状态：`已覆盖`
 - 证据：[self fixture](../../../../lkit-cli/tests/install_fixture_e2e/self_cmd.rs)、[后端准入 fixture](../../../../lkit-cli/tests/install_fixture_e2e/manager_backends.rs)
 - 说明：所选后端不可用，或缺少受管 CLI 时，退出码 `2` 且不写服务原件、不注册、不启动 daemon。OpenRC／SysVinit 准入测试隔离全局 CLI 路径；这些拒绝场景不代表后端生命周期覆盖。
