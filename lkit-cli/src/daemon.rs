@@ -300,12 +300,14 @@ fn flare_needs_restart(
 fn effective_flare_config() -> Result<crate::deployment::config::FlareSection, InstallError> {
     use crate::deployment::config::{read_flare, update_flare};
     let section = match read_flare()? {
-        Some(s) if s.public_discovery.is_some() => s,
+        // A PSK without a discovery field already selects private mode. Returning
+        // the saved section also keeps reload comparisons stable across cycles.
+        Some(s) if s.public_discovery.is_some() || s.psk.is_some() => s,
         _ => update_flare(|s| {
             s.public_discovery.get_or_insert(s.psk.is_none());
         })?,
     };
-    if section.public_discovery == Some(false) && section.psk.as_deref().is_none_or(str::is_empty) {
+    if section.public_discovery != Some(true) && section.psk.as_deref().is_none_or(str::is_empty) {
         return Err(InstallError::CorruptedState(
             "private discovery needs a discovery PSK".into(),
         ));
@@ -673,12 +675,16 @@ mod tests {
             ..default_flare_section()
         })
         .unwrap();
+        let path = layout::territory_config_file();
+        let before = std::fs::read(&path).unwrap();
         let section = effective_flare_config().unwrap();
         assert_eq!(
             section.psk.as_deref(),
             Some("an-existing-recovery-secret"),
             "a configured psk must be reused"
         );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(crate::deployment::config::load_flare(), Some(section));
         drop(guard);
         let _ = std::fs::remove_dir_all(&temp);
     }
