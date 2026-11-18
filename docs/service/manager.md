@@ -64,6 +64,15 @@ trait ServiceManager: Send + Sync {
 - `Enablement`:受管服务的启用事实及后端恢复信息；systemd 保存持久和运行时启动成员及捕获时的 boot ID；
 - `ServiceBefore`:受管服务事务前状态(注册 + 启用快照 + active),失败回滚时恢复用。
 
+`restore_registration` 恢复注册及启用状态，不启动服务。注册快照为 `Missing` 时执行
+注销；为受管链接时先恢复注册，再恢复启用状态。默认 `restore_enablement` 实现在
+当前状态与快照一致时不重复启用或禁用，修改后复查结果，不一致时返回错误。`restore_before`
+在上述步骤成功后恢复 active；需要先恢复数据的工作流只调用 `restore_registration`，
+待原 `current` 和 data 就位后再按原 active 状态启动服务。
+
+OpenRC／SysVinit 的普通受管服务启用快照记录 enabled 布尔值，恢复保证原启用或禁用
+状态，不包含任意自定义 runlevel 集合或 S/K 链接顺序。systemd 使用下述独立启用快照。
+
 ## 事务前状态捕获
 
 ```rust

@@ -187,13 +187,22 @@ pub(crate) trait ServiceManager: Send + Sync {
                 "exact systemd enablement requires the systemd backend".into(),
             ));
         }
-        if before.enabled {
-            self.enable(service)
-        } else if self.is_enabled(service)? {
-            self.disable(service)
-        } else {
-            Ok(())
+        if self.is_enabled(service)? == before.enabled {
+            return Ok(());
         }
+        if before.enabled {
+            self.enable(service)?;
+        } else {
+            self.disable(service)?;
+        }
+        if self.is_enabled(service)? != before.enabled {
+            return Err(InstallError::Systemd(format!(
+                "{} did not reach its captured enabled state ({})",
+                self.service_name(service),
+                before.enabled
+            )));
+        }
+        Ok(())
     }
     fn enable(&self, service: ManagedService) -> Result<(), InstallError>;
     fn disable(&self, service: ManagedService) -> Result<(), InstallError>;
@@ -331,6 +340,10 @@ pub(crate) fn pid_of_command(pattern: &str) -> Option<i64> {
     }
     None
 }
+
+#[cfg(test)]
+#[path = "manager_enablement_restore_tests.rs"]
+mod enablement_restore_tests;
 
 #[cfg(test)]
 mod init_detection_tests {

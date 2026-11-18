@@ -160,6 +160,7 @@ impl ServiceManager for Sysvinit {
             &self.init_d_dir.join(self.service_name(service)),
             before,
             origin,
+            || self.restore_enablement(service, origin, &before.enablement()),
         )
     }
 
@@ -304,6 +305,7 @@ fn restore_registration_at(
     path: &Path,
     before: &ServiceBefore,
     origin: &Path,
+    restore_enablement: impl FnOnce() -> Result<(), InstallError>,
 ) -> Result<(), InstallError> {
     match &before.registration.kind {
         RegistrationKind::Missing => unregister_at(path, origin),
@@ -311,7 +313,7 @@ fn restore_registration_at(
             if std::fs::read_link(path).ok().as_deref() != Some(origin) {
                 register_at(path, origin)?;
             }
-            Ok(())
+            restore_enablement()
         }
     }
 }
@@ -426,6 +428,118 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn registered_before(origin: &Path, enabled: bool) -> ServiceBefore {
+        ServiceBefore {
+            registration: crate::service::manager::Registration {
+                kind: RegistrationKind::Symlink,
+                target: Some(origin.display().to_string()),
+            },
+            enabled,
+            active: true,
+            systemd_links: None,
+        }
+    }
+
+    #[test]
+    fn restore_registration_restores_enabled_and_disabled_states_after_link_creation() {
+        use std::cell::Cell;
+        for desired in [false, true] {
+            let dir = temp_dir(&format!("restore-enabled-{desired}"));
+            let origin = dir.join("managed-service");
+            let path = dir.join("init.d/landscape-router.service");
+            std::fs::write(&origin, "managed definition").unwrap();
+            let before = registered_before(&origin, desired);
+            let enabled = Cell::new(!desired);
+            let calls = Cell::new(0);
+
+            // The first pass repairs the link, the second reuses it. Both must
+            // restore enablement, including an originally disabled active service.
+            for _ in 0..2 {
+                restore_registration_at(&path, &before, &origin, || {
+                    assert_eq!(std::fs::read_link(&path).unwrap(), origin);
+                    enabled.set(before.enabled);
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                })
+                .unwrap();
+                assert_eq!(enabled.get(), desired);
+                assert_eq!(std::fs::read_link(&path).unwrap(), origin);
+            }
+            assert_eq!(calls.get(), 2);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn restore_registration_propagates_enablement_failure_and_allows_retry() {
+        use std::cell::Cell;
+        for desired in [false, true] {
+            let dir = temp_dir(&format!("restore-failure-{desired}"));
+            let origin = dir.join("managed-service");
+            let path = dir.join("init.d/landscape-router.service");
+            std::fs::write(&origin, "managed definition").unwrap();
+            let before = registered_before(&origin, desired);
+            let enabled = Cell::new(!desired);
+            let error = restore_registration_at(&path, &before, &origin, || {
+                assert_eq!(std::fs::read_link(&path).unwrap(), origin);
+                Err(InstallError::Preflight("startup restore failed".into()))
+            })
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                InstallError::Preflight(message) if message == "startup restore failed"
+            ));
+            assert_eq!(enabled.get(), !desired);
+
+            restore_registration_at(&path, &before, &origin, || {
+                enabled.set(before.enabled);
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(enabled.get(), desired);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn missing_or_conflicting_registration_does_not_restore_enablement() {
+        let dir = temp_dir("restore-registration-boundaries");
+        let origin = dir.join("managed-service");
+        let path = dir.join("init.d/landscape-router.service");
+        std::fs::write(&origin, "managed definition").unwrap();
+        register_at(&path, &origin).unwrap();
+        let missing = ServiceBefore {
+            registration: crate::service::manager::Registration {
+                kind: RegistrationKind::Missing,
+                target: None,
+            },
+            enabled: false,
+            active: false,
+            systemd_links: None,
+        };
+        for _ in 0..2 {
+            restore_registration_at(&path, &missing, &origin, || {
+                panic!("missing registration must not restore enablement")
+            })
+            .unwrap();
+            assert_eq!(
+                query_registration_at(&path).unwrap(),
+                SystemRegistration::Missing
+            );
+        }
+
+        std::fs::write(&path, "foreign service").unwrap();
+        let before = registered_before(&origin, true);
+        assert!(
+            restore_registration_at(&path, &before, &origin, || {
+                panic!("registration conflicts must stop before enablement")
+            })
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "foreign service");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -289,11 +289,14 @@
 - 说明：fixture 在等待确认时推进截止时间，断言原 data 恢复、事务 rolled_back、原操作返回 5，之后可正常备份。单元验证 schema14 的事务 ID、boot ID 和 pending state 路径绑定；同启动未超时等待、到期或换启动回滚、finalizing 优先完成；回滚期间没有当前启动的 restored-boot-id 不允许 Landscape 启动。
 - 说明：真实业务回退由 [JNY-04](real-install-recovery.md#jny-04) 验证，包含实际确认超时、
   主动回滚、未确认重启及突然终止 QEMU 后的原配置与外部 LAN 检查。
+- 证据：[启用恢复契约单元](../../../../lkit-cli/src/service/manager_enablement_restore_tests.rs)、[OpenRC 注册恢复单元](../../../../lkit-cli/src/service/openrc.rs)、[SysVinit 注册恢复单元](../../../../lkit-cli/src/service/sysvinit.rs)。
+- 说明：启用恢复单元仅使用内存 fake 与临时目录，覆盖原启用／禁用状态恢复、重复恢复、
+  错误传播和注册冲突；不启动服务进程或操作真实 init 系统。
 - 说明：数据恢复依据事务工作目录及 `data-recovery.json` 的流程进度，不绑定设备号、
   inode 或其他目录身份。场景验证 lkit 正常移动、回滚和中断恢复；事务期间手工搬移、
   替换或清理受管 data、工作目录和进度记录不属于自动恢复保证范围。
-- 缺口：恢复写入边界与重试的故障注入，以及 OpenRC／SysVinit 的同等业务回退，
-  包括恢复前禁用服务的启用状态还原。当前场景不验证任意存储断电点的数据持久性。
+- 缺口：恢复写入边界与重试的故障注入，以及 OpenRC／SysVinit 真实完整 restore／回滚
+  链，包括原本禁用服务的整机恢复验收。当前场景不验证任意存储断电点的数据持久性。
 
 ## BKP-13
 
