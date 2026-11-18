@@ -53,6 +53,57 @@ print('PASS: manual backup ID and exported external file contain identical priva
 PY
     lkit backup verify --backup "$(cat "$journey/backup-id")"
     ;;
+  backup-after-faults)
+    lkit --non-interactive backup create --remark 'QEMU real restore rollback checkpoint' \
+      --output "$journey/after-faults.lkb"
+    lkit backup verify --file "$journey/after-faults.lkb"
+    echo 'PASS: recovered real installation can create and verify a new portable backup'
+    ;;
+  fault-start)
+    python3 "$base/journey.py" fault-state --directory "$journey" --scenario "${2:?scenario required}" --stage prepare
+    bash "$0" restore-file
+    ;;
+  fault-pending|fault-deadline|fault-rolled-back)
+    python3 "$base/journey.py" fault-state --directory "$journey" --scenario "${2:?scenario required}" --stage "${1#fault-}"
+    ;;
+  fault-rollback)
+    rm -f "$journey/rollback.exit"
+    nohup bash "$0" _fault-rollback </dev/null >"$journey/rollback.log" 2>&1 &
+    ;;
+  _fault-rollback)
+    set +e
+    lkit network rollback
+    result=$?
+    printf '%s\n' "$result" >"$journey/rollback.exit"
+    exit "$result"
+    ;;
+  runtime-enable)
+    cp /root/.lkit/state/install-state.json "$journey/state-before-runtime.json"
+    chmod 0600 "$journey/state-before-runtime.json"
+    permanent=/etc/systemd/system/multi-user.target.wants/landscape-router.service
+    [[ -L $permanent ]]
+    [[ $(readlink -f "$permanent") == "$(readlink -f /etc/systemd/system/landscape-router.service)" ]]
+    # Preserve the owned main registration while changing only startup membership.
+    rm -- "$permanent"
+    systemctl daemon-reload
+    systemctl enable --runtime landscape-router.service
+    [[ $(systemctl is-enabled landscape-router.service) == enabled-runtime ]]
+    systemctl is-active --quiet landscape-router.service
+    cmp "$journey/state-before-runtime.json" /root/.lkit/state/install-state.json
+    python3 "$base/journey.py" fault-state --directory "$journey" --stage runtime-save
+    ;;
+  runtime-restored)
+    [[ $(systemctl is-enabled landscape-router.service) == enabled-runtime ]]
+    systemctl is-active --quiet landscape-router.service
+    python3 "$base/journey.py" fault-state --directory "$journey" --stage runtime-check
+    ;;
+  runtime-persistent)
+    systemctl disable --runtime landscape-router.service
+    systemctl enable landscape-router.service
+    [[ $(systemctl is-enabled landscape-router.service) == enabled ]]
+    systemctl is-active --quiet landscape-router.service
+    echo 'PASS: explicit runtime-only rollback check is complete; permanent startup is restored for reboot scenarios'
+    ;;
   remove-local-backup)
     lkit --non-interactive backup delete --backup "$(cat "$journey/backup-id")" --yes
     [[ ! -e /root/.lkit/backups/$(cat "$journey/backup-id").lkb ]]

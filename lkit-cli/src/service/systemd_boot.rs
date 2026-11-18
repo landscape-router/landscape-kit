@@ -190,14 +190,21 @@ fn absolute_link(path: &Path, target: &Path) -> PathBuf {
 }
 
 /// Only the links for this unit are considered; foreign memberships are never rewritten.
-fn startup_links(
+pub(super) fn startup_links(
     systemd: &Systemd,
+    unit: &str,
     origin: &Path,
     copy: &Path,
 ) -> Result<Vec<PathBuf>, InstallError> {
-    let registration = systemd.system_unit_dir.join(UNIT_NAME);
+    let registration = systemd.system_unit_dir.join(unit);
     let mut links = Vec::new();
     for directory in [&systemd.system_unit_dir, &systemd.run_systemd_dir] {
+        match std::fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(InstallError::Io(error)),
+            Ok(_) => return Err(conflict(directory)),
+        }
         let entries = match std::fs::read_dir(directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -211,7 +218,7 @@ fn startup_links(
             {
                 continue;
             }
-            let path = entry.path().join(UNIT_NAME);
+            let path = entry.path().join(unit);
             // A redirected directory with a membership cannot be migrated safely.
             let file_type = entry.file_type().map_err(InstallError::Io)?;
             if !file_type.is_dir() {
@@ -268,7 +275,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), InstallError> {
     result
 }
 
-fn atomic_link(path: &Path, target: &Path) -> Result<(), InstallError> {
+pub(super) fn atomic_link(path: &Path, target: &Path) -> Result<(), InstallError> {
     let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
     symlink(target, &temporary).map_err(InstallError::Io)?;
     let result = std::fs::rename(&temporary, path)
@@ -310,7 +317,7 @@ fn prepare_publication(
             Err(error) => return Err(InstallError::Io(error)),
         }
     }
-    let links = startup_links(systemd, origin, &copy)?;
+    let links = startup_links(systemd, UNIT_NAME, origin, &copy)?;
     let published = match std::fs::symlink_metadata(&copy) {
         Ok(_) => Some(read_copy(systemd, &copy)?.1),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -371,7 +378,7 @@ pub(super) fn unregister(systemd: &Systemd, origin: &Path) -> Result<(), Install
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(InstallError::Io(error)),
     };
-    let links = startup_links(systemd, origin, &copy)?;
+    let links = startup_links(systemd, UNIT_NAME, origin, &copy)?;
     for path in links
         .into_iter()
         .chain([systemd.system_unit_dir.join(UNIT_NAME)])

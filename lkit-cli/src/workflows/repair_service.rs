@@ -206,9 +206,10 @@ fn verify(
     if manager.startup_links(ManagedService::LandscapeRouter)? != snapshot.startup_links {
         return Err(failure("service startup links changed during repair"));
     }
-    if manager.is_enabled(ManagedService::LandscapeRouter)? != snapshot.before.enabled
-        || manager.is_active(ManagedService::LandscapeRouter)? != snapshot.before.active
-    {
+    if !snapshot.before.matches_current_state(
+        &manager.capture_enablement(ManagedService::LandscapeRouter)?,
+        manager.is_active(ManagedService::LandscapeRouter)?,
+    )? {
         return Err(failure("service state changed during definition repair"));
     }
     Ok(())
@@ -219,6 +220,7 @@ fn commit(
     snapshot: &Snapshot,
 ) -> Result<(), InstallError> {
     let mut installed = snapshot.state.clone();
+    installed.service.enabled = snapshot.before.enabled_now()?;
     installed.service.definition_sha256 = Some(hash_str(&snapshot.replacement));
     installed.last_transaction_id = Some(tx.transaction_id.clone());
     installed.committed_at = Some(chrono::Utc::now());
@@ -284,7 +286,9 @@ pub(crate) fn recover(
     )?;
     manager.refresh_definition(ManagedService::LandscapeRouter, &definition(root))?;
     verify(root, &snapshot, manager, false)?;
-    state::write_state(root, &snapshot.state)?;
+    let mut restored = snapshot.state.clone();
+    restored.service.enabled = snapshot.before.enabled_now()?;
+    state::write_state(root, &restored)?;
     transaction::mark_phase(root, tx, Phase::RolledBack)
 }
 

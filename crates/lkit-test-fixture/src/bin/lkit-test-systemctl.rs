@@ -72,7 +72,7 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
                         .trim()
                         .to_string()
                 } else if unit_is_enabled(config, unit) {
-                    "enabled".into()
+                    enable_state(config, unit).into()
                 } else {
                     "disabled".into()
                 };
@@ -143,7 +143,7 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
                 );
                 exit_code = ExitCode::from(1);
             } else if unit_is_enabled(config, unit) {
-                println!("enabled");
+                println!("{}", enable_state(config, unit));
             } else {
                 println!("disabled");
                 exit_code = ExitCode::from(1);
@@ -169,14 +169,17 @@ fn dispatch(config: &SystemctlFixtureConfig, args: &[String]) -> Result<ExitCode
         }
         [command, unit] if command == "enable" => {
             ensure_installed(config, unit)?;
-            write_marker(&enabled_path(config, unit), b"enabled\n")?;
+            enable_unit(config, unit, false)?;
         }
         [command, runtime, unit] if command == "enable" && runtime == "--runtime" => {
             ensure_installed(config, unit)?;
-            write_marker(&enabled_path(config, unit), b"enabled-runtime\n")?;
+            enable_unit(config, unit, true)?;
         }
         [command, unit] if command == "disable" => {
-            remove_if_exists(&enabled_path(config, unit))?;
+            disable_unit(config, unit, false)?;
+        }
+        [command, runtime, unit] if command == "disable" && runtime == "--runtime" => {
+            disable_unit(config, unit, true)?;
         }
         [command, unit] if command == "mask" => {
             ensure_installed(config, unit)?;
@@ -474,7 +477,89 @@ fn unit_is_active(config: &SystemctlFixtureConfig, unit: &str) -> bool {
 }
 
 fn unit_is_enabled(config: &SystemctlFixtureConfig, unit: &str) -> bool {
-    enabled_path(config, unit).is_file()
+    matches!(enable_state(config, unit), "enabled" | "enabled-runtime")
+}
+
+fn is_managed(unit: &str) -> bool {
+    matches!(unit, UNIT_NAME | "lkit.service")
+}
+
+fn memberships(directory: &Path, unit: &str) -> Vec<PathBuf> {
+    std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.ends_with(".wants") || name.ends_with(".requires")
+        })
+        .map(|entry| entry.path().join(unit))
+        .filter(|path| std::fs::symlink_metadata(path).is_ok())
+        .collect()
+}
+
+fn enable_state(config: &SystemctlFixtureConfig, unit: &str) -> &'static str {
+    if is_managed(unit) {
+        // Managed-unit recovery edits actual links. A separate boolean marker
+        // would conceal runtime/persistent restoration errors from the fixture.
+        if !memberships(&config.unit_dir, unit).is_empty() {
+            "enabled"
+        } else if !memberships(&host_runtime_dir(config), unit).is_empty() {
+            "enabled-runtime"
+        } else {
+            "disabled"
+        }
+    } else {
+        match std::fs::read_to_string(enabled_path(config, unit)) {
+            Ok(state) if state.trim() == "enabled-runtime" => "enabled-runtime",
+            Ok(_) => "enabled",
+            Err(_) => "disabled",
+        }
+    }
+}
+
+fn enable_unit(config: &SystemctlFixtureConfig, unit: &str, runtime: bool) -> Result<()> {
+    if !is_managed(unit) {
+        return write_marker(
+            &enabled_path(config, unit),
+            if runtime {
+                b"enabled-runtime\n"
+            } else {
+                b"enabled\n"
+            },
+        );
+    }
+    let directory = if runtime {
+        host_runtime_dir(config)
+    } else {
+        config.unit_dir.clone()
+    };
+    let path = directory.join("multi-user.target.wants").join(unit);
+    std::fs::create_dir_all(path.parent().unwrap())?;
+    if std::fs::symlink_metadata(&path).is_err() {
+        std::os::unix::fs::symlink(config.unit_dir.join(unit), path)?;
+    }
+    Ok(())
+}
+
+fn disable_unit(config: &SystemctlFixtureConfig, unit: &str, runtime: bool) -> Result<()> {
+    if !is_managed(unit) {
+        return remove_if_exists(&enabled_path(config, unit));
+    }
+    let mut paths = memberships(&host_runtime_dir(config), unit);
+    if !runtime {
+        paths.extend(memberships(&config.unit_dir, unit));
+    }
+    for path in paths {
+        anyhow::ensure!(
+            std::fs::symlink_metadata(&path)?.file_type().is_symlink(),
+            "startup membership is not a symlink"
+        );
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 fn unit_state_dir(config: &SystemctlFixtureConfig, unit: &str) -> PathBuf {
@@ -555,5 +640,96 @@ mod tests {
             ]
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn config_in(root: &Path) -> SystemctlFixtureConfig {
+        let config = SystemctlFixtureConfig {
+            schema_version: 1,
+            unit_dir: root.join("system"),
+            state_dir: root.join("state"),
+            landscape_config: None,
+            log_path: root.join("fixture.log"),
+            call_log: None,
+            systemd_version: "252.fixture".into(),
+            spawn_units: Vec::new(),
+        };
+        std::fs::create_dir_all(&config.unit_dir).unwrap();
+        std::fs::create_dir_all(&config.state_dir).unwrap();
+        for unit in [UNIT_NAME, "lkit.service"] {
+            std::fs::write(
+                config.unit_dir.join(unit),
+                "[Install]\nWantedBy=multi-user.target\n",
+            )
+            .unwrap();
+        }
+        config
+    }
+
+    #[test]
+    fn managed_enablement_returns_to_runtime_when_persistent_link_is_removed() {
+        let dir = temp_dir("mixed-enablements");
+        let config = config_in(&dir);
+        for unit in [UNIT_NAME, "lkit.service"] {
+            enable_unit(&config, unit, true).unwrap();
+            assert_eq!(enable_state(&config, unit), "enabled-runtime");
+
+            enable_unit(&config, unit, false).unwrap();
+            assert_eq!(enable_state(&config, unit), "enabled");
+            assert_eq!(memberships(&host_runtime_dir(&config), unit).len(), 1);
+            let persistent = memberships(&config.unit_dir, unit);
+            assert_eq!(persistent.len(), 1);
+
+            std::fs::remove_file(&persistent[0]).unwrap();
+            assert_eq!(enable_state(&config, unit), "enabled-runtime");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn runtime_disable_preserves_persistent_wants_and_requires() {
+        let dir = temp_dir("runtime-disable");
+        let config = config_in(&dir);
+        enable_unit(&config, UNIT_NAME, false).unwrap();
+        enable_unit(&config, UNIT_NAME, true).unwrap();
+        for base in [&config.unit_dir, &host_runtime_dir(&config)] {
+            let requires = base.join("custom.target.requires");
+            std::fs::create_dir_all(&requires).unwrap();
+            std::os::unix::fs::symlink(config.unit_dir.join(UNIT_NAME), requires.join(UNIT_NAME))
+                .unwrap();
+        }
+
+        disable_unit(&config, UNIT_NAME, true).unwrap();
+        assert_eq!(enable_state(&config, UNIT_NAME), "enabled");
+        assert_eq!(memberships(&config.unit_dir, UNIT_NAME).len(), 2);
+        assert!(memberships(&host_runtime_dir(&config), UNIT_NAME).is_empty());
+
+        disable_unit(&config, UNIT_NAME, false).unwrap();
+        assert_eq!(enable_state(&config, UNIT_NAME), "disabled");
+        assert!(memberships(&config.unit_dir, UNIT_NAME).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn managed_queries_follow_links_while_host_queries_retain_markers() {
+        let dir = temp_dir("link-queries");
+        let config = config_in(&dir);
+        write_marker(&enabled_path(&config, UNIT_NAME), b"enabled\n").unwrap();
+        assert_eq!(enable_state(&config, UNIT_NAME), "disabled");
+
+        let requires = host_runtime_dir(&config).join("custom.target.requires");
+        std::fs::create_dir_all(&requires).unwrap();
+        let membership = requires.join(UNIT_NAME);
+        std::os::unix::fs::symlink(config.unit_dir.join(UNIT_NAME), &membership).unwrap();
+        assert_eq!(enable_state(&config, UNIT_NAME), "enabled-runtime");
+        std::fs::remove_file(membership).unwrap();
+        assert_eq!(enable_state(&config, UNIT_NAME), "disabled");
+
+        let host = "NetworkManager.service";
+        enable_unit(&config, host, true).unwrap();
+        assert_eq!(enable_state(&config, host), "enabled-runtime");
+        assert!(memberships(&host_runtime_dir(&config), host).is_empty());
+        disable_unit(&config, host, true).unwrap();
+        assert_eq!(enable_state(&config, host), "disabled");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -129,7 +129,7 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
 
     restore_current(root, &format!("releases/{from_version}"))?;
 
-    let state = if managed {
+    let mut state = if managed {
         snapshot.clone()
     } else {
         build_restored_state(root, transaction, snapshot, &metadata, &restore_dir)?
@@ -185,6 +185,9 @@ pub(crate) async fn rollback_switch<P: DocsProbe>(
             }
             return Err(error);
         }
+    }
+    if managed && let Some(before) = &transaction.systemd_before {
+        state.service.enabled = before.enabled_now()?;
     }
     super::state::write_state(root, &state)?;
     super::transaction::mark_phase(root, transaction, Phase::RolledBack)?;
@@ -267,6 +270,9 @@ pub(crate) async fn rollback_no_backup<P: DocsProbe>(
     }
 
     let mut restored = previous.clone();
+    if let Some(before) = &transaction.systemd_before {
+        restored.service.enabled = before.enabled_now()?;
+    }
     if !native_switch {
         restored.last_transaction_id = Some(transaction.transaction_id.clone());
         restored.committed_at = Some(chrono::Utc::now());
@@ -465,7 +471,114 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::systemd::Systemd;
+    use crate::service::manager::{
+        Availability, ServiceBefore, ServiceManagerKind, SystemRegistration,
+    };
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct MemoryService {
+        root: PathBuf,
+        registration: Mutex<Option<PathBuf>>,
+        enabled: AtomicBool,
+        active: AtomicBool,
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    macro_rules! unexpected_manager_call {
+        ($name:ident($($argument:ident: $kind:ty),*) -> $result:ty) => {
+            fn $name(&self, $(_: $kind),*) -> $result {
+                panic!("asset rollback must not call {}", stringify!($name))
+            }
+        };
+    }
+
+    impl ServiceManager for MemoryService {
+        fn kind(&self) -> ServiceManagerKind {
+            ServiceManagerKind::Systemd
+        }
+        unexpected_manager_call!(probe() -> Availability);
+        fn service_name(&self, service: ManagedService) -> &str {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            "landscape-router.service"
+        }
+        unexpected_manager_call!(render_definition(service: ManagedService, root: &Path) -> Result<String, InstallError>);
+        unexpected_manager_call!(validate_definition(service: ManagedService, content: &str, root: &Path) -> Result<(), InstallError>);
+        fn query_registration(
+            &self,
+            service: ManagedService,
+        ) -> Result<SystemRegistration, InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            Ok(match self.registration.lock().unwrap().as_ref() {
+                Some(target) => SystemRegistration::Symlink {
+                    target: target.clone(),
+                },
+                None => SystemRegistration::Missing,
+            })
+        }
+        fn register(&self, service: ManagedService, origin: &Path) -> Result<(), InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            assert_eq!(origin, self.root.join("service/landscape-router.service"));
+            assert!(origin.is_file());
+            *self.registration.lock().unwrap() = Some(origin.to_path_buf());
+            self.calls.lock().unwrap().push("register");
+            Ok(())
+        }
+        unexpected_manager_call!(unregister(service: ManagedService, origin: &Path) -> Result<(), InstallError>);
+        fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            Ok(self.enabled.load(Ordering::SeqCst))
+        }
+        fn enable(&self, service: ManagedService) -> Result<(), InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            self.enabled.store(true, Ordering::SeqCst);
+            self.calls.lock().unwrap().push("enable");
+            Ok(())
+        }
+        unexpected_manager_call!(disable(service: ManagedService) -> Result<(), InstallError>);
+        fn is_active(&self, service: ManagedService) -> Result<bool, InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            Ok(self.active.load(Ordering::SeqCst))
+        }
+        fn active_state(&self, service: ManagedService) -> Result<String, InstallError> {
+            Ok(if self.is_active(service)? {
+                "active"
+            } else {
+                "inactive"
+            }
+            .into())
+        }
+        fn start(&self, service: ManagedService) -> Result<(), InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            assert!(self.registration.lock().unwrap().is_some());
+            assert!(self.is_enabled(service)?);
+            let data = self.root.join("data");
+            assert!(data.join("landscape_init.toml").is_file());
+            // Simulate initialization only inside the isolated installation.
+            std::fs::write(data.join("landscape_init.lock"), b"").map_err(InstallError::Io)?;
+            std::fs::write(data.join("landscape.toml"), b"").map_err(InstallError::Io)?;
+            self.active.store(true, Ordering::SeqCst);
+            self.calls.lock().unwrap().push("start");
+            Ok(())
+        }
+        fn stop(&self, service: ManagedService) -> Result<(), InstallError> {
+            assert_eq!(service, ManagedService::LandscapeRouter);
+            self.active.store(false, Ordering::SeqCst);
+            self.calls.lock().unwrap().push("stop");
+            Ok(())
+        }
+        unexpected_manager_call!(restart(service: ManagedService) -> Result<(), InstallError>);
+        fn main_pid(&self, service: ManagedService) -> Result<u32, InstallError> {
+            assert!(self.is_active(service)?);
+            Ok(std::process::id())
+        }
+        unexpected_manager_call!(restore_registration(service: ManagedService, before: &ServiceBefore, origin: &Path) -> Result<(), InstallError>);
+        unexpected_manager_call!(resolv_conf() -> &Path);
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
 
     struct AlwaysHealthy;
 
@@ -562,52 +675,13 @@ mod tests {
         let from_version = semver::Version::new(1, 2, 3);
         let target_version = semver::Version::new(2, 0, 0);
 
-        // 有状态假 systemctl:stop/start 维护 state 文件。
-        let fake_dir = dir.join("fake-systemd");
-        std::fs::create_dir_all(fake_dir.join("units")).unwrap();
-        std::fs::create_dir_all(fake_dir.join("run")).unwrap();
-        std::fs::write(fake_dir.join("state"), b"active").unwrap();
-        let script = fake_dir.join("systemctl");
-        std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-STATE_FILE="{}"
-case "$*" in
-  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
-  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
-  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
-  "show --property=MainPID --value landscape-router.service") echo {};;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") cat "$STATE_FILE";;
-  *) exit 0;;
-esac
-"#,
-                fake_dir.join("state").display(),
-                std::process::id()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let systemd = Systemd {
-            systemctl: script,
-            system_unit_dir: fake_dir.join("units"),
-            run_systemd_dir: fake_dir.join("run"),
-            pid1_is_systemd: true,
-            resolv_conf: fake_dir.join("resolv.conf"),
+        let manager = MemoryService {
+            root: dir.clone(),
+            registration: Mutex::new(Some(dir.join("service/landscape-router.service"))),
+            enabled: AtomicBool::new(true),
+            active: AtomicBool::new(true),
+            calls: Mutex::new(Vec::new()),
         };
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let data_dir = dir.join("data");
-        let watcher_stop = stop.clone();
-        let watcher = std::thread::spawn(move || {
-            while !watcher_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                if data_dir.join("landscape_init.toml").is_file() {
-                    let _ = std::fs::write(data_dir.join("landscape_init.lock"), b"");
-                    let _ = std::fs::write(data_dir.join("landscape.toml"), b"");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        });
 
         let backup_source = dir.join("backup-source");
         let backup_binary = backup_source.join("landscape-webserver");
@@ -694,7 +768,7 @@ esac
             stable_duration: std::time::Duration::from_millis(1),
         };
 
-        rollback_switch(&root, &transaction, &snapshot, &systemd, &health)
+        rollback_switch(&root, &transaction, &snapshot, &manager, &health)
             .await
             .unwrap();
 
@@ -762,8 +836,20 @@ esac
             restored.last_transaction_id,
             Some(transaction.transaction_id)
         );
-        stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        watcher.join().unwrap();
+        assert_eq!(
+            *manager.calls.lock().unwrap(),
+            ["stop", "register", "enable", "start"]
+        );
+        assert!(manager.is_active(ManagedService::LandscapeRouter).unwrap());
+        assert!(manager.is_enabled(ManagedService::LandscapeRouter).unwrap());
+        assert_eq!(
+            manager
+                .query_registration(ManagedService::LandscapeRouter)
+                .unwrap(),
+            SystemRegistration::Symlink {
+                target: dir.join("service/landscape-router.service"),
+            }
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,18 @@
+{
+  "repository": "landscape-router/landscape-kit",
+  "asset": "lkit-x86_64",
+  "source": {
+    "tag": "v0.7.1-rc3",
+    "version": "0.7.1-rc3",
+    "commit": "cd700060ca6b9371ba7d588f246ad4830b1836bb",
+    "size": 5960800,
+    "sha256": "62f980bd238a1ecb7b27f7440becf4d6cc1172647e764347a7ab8c48af63dd92"
+  },
+  "released_target": {
+    "tag": "v0.7.1-rc4",
+    "version": "0.7.1-rc4",
+    "commit": "ebf202b1b7018e3fde77e93cc16bc4b505d675d2",
+    "size": 5988768,
+    "sha256": "50a20329e32bebf40767deb0a2456d2343ef18ece228e503ffbc87222cf9aa02"
+  }
+}

@@ -46,7 +46,8 @@ daemon 进程写 pidfile 到
    后台 init 脚本返回后最多等待 3 秒确认进程出现，不等待 bpffs 准备成功。
 
 重复执行时，旧 daemon 正在运行则执行 `restart`；原本停止则启动。修改前保存定义内容、
-权限、启用与运行状态，以及 OpenRC/SysVinit 的完整启动链接。失败时恢复已有受管定义及
+权限、启用与运行状态，以及各后端的启动成员。systemd 区分持久和运行时成员，失败
+恢复不把临时启用改为永久启用；OpenRC/SysVinit 保留完整启动链接。失败时恢复已有受管定义及
 服务状态，不注销原服务。指向受管路径但原件缺失的注册允许通过 `self install` 修复；
 该修复失败时保留新生成的有效定义，并恢复原启用和运行设置，供重试使用。
 首次安装失败只清理本次创建且仍属于 lkit 的注册和定义；
@@ -95,7 +96,13 @@ lkit self upgrade --version v0.7.1-rc2          # 精确指定候选版
 `--include-prerelease` 只影响本次 `self upgrade` / `self update` 的自动选择，不保存到
 配置，不影响安装脚本、`self install` 或 Landscape 的顶层 `update`。
 
-`upgrade` 遇到未完成事务时拒绝降级；已有旧服务入口通过 `self install` 刷新为监管入口。
+`upgrade` 遇到未完成事务时拒绝降级。保留的事务历史含精确 systemd 启用快照时，
+即使事务已终结，也在下载资产和替换二进制前拒绝降级，避免旧 daemon 无法读取历史；
+历史记录损坏或路径类型异常时同样拒绝，不删除记录来绕过检查。
+已有旧服务入口通过 `self install` 刷新为监管入口。
+Landscape 服务定义由 `lkit repair service` 管理；升级 lkit 二进制不自动迁移它。
+旧安装的 systemd 注册仍直接指向安装盘时，应在整机重启前执行该修复，使启动定义在
+安装盘尚未挂载时可被 systemd 读取。修复保留 Landscape 的 PID、启用状态和运行状态。
 `upgrade` 不创建事务、不创建保护备份;daemon 在 `restart` 期间短暂退出,由
 服务管理器执行重启。替换运行中的 daemon 二进制是安全的:进程继续使用已打开的
 旧 inode,重启后加载新文件。

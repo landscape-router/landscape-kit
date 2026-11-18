@@ -508,6 +508,7 @@ pub(crate) async fn recover_native<P: DocsProbe>(
             if let Some(backup) = &tx.resolv_conf_backup {
                 super::resolv::restore(manager.resolv_conf(), &layout::territory_relative(backup))?;
             }
+            write_restored_enablement(root, tx)?;
             cleanup_preparing(root, tx)
         }
         Phase::Activating | Phase::Verifying | Phase::RollingBack => {
@@ -525,6 +526,40 @@ pub(crate) async fn recover_native<P: DocsProbe>(
             "unexpected switch recovery phase".into(),
         )),
     }
+}
+
+/// Persist the effective service fact after all pre-activation recovery succeeds.
+/// This does not create a new installation commit or replace its version identity.
+pub(super) fn write_restored_enablement(
+    root: &InstallRoot,
+    tx: &super::transaction::TransactionFile,
+) -> Result<(), InstallError> {
+    let Some(before) = &tx.systemd_before else {
+        return Ok(());
+    };
+    let previous = super::state::load_state(root)?.ok_or_else(|| {
+        InstallError::CorruptedState(
+            "installation state disappeared during service recovery".into(),
+        )
+    })?;
+    let boot = if before.systemd_links.is_some() {
+        crate::network::takeover::current_boot_id()?
+    } else {
+        String::new()
+    };
+    let restored = restored_enablement_state(&previous, before, &boot)?;
+    super::state::write_state(root, &restored)
+}
+
+fn restored_enablement_state(
+    previous: &InstallState,
+    before: &super::manager::ServiceBefore,
+    boot_id: &str,
+) -> Result<InstallState, InstallError> {
+    before.validate_for_backend(previous.service.manager)?;
+    let mut restored = previous.clone();
+    restored.service.enabled = before.enablement().enabled_for_boot(boot_id);
+    Ok(restored)
 }
 
 /// Called with the installation lock held on the daemon's operation thread.
@@ -653,6 +688,82 @@ pub(crate) async fn run_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn early_recovery_updates_expired_runtime_enablement_without_replacing_commit() {
+        use super::super::manager::{
+            Registration, RegistrationKind, ServiceBefore, SystemdStartupLinks,
+        };
+        use super::super::state::{
+            ArchiveAsset, Assets, InitStatus, InitializationState, ServiceState, StateArchitecture,
+            WebserverAsset,
+        };
+        let previous = InstallState {
+            schema_version: super::super::state::STATE_SCHEMA_VERSION,
+            layout_version: super::super::state::STATE_LAYOUT_VERSION,
+            install_root: "/fixture/installation".into(),
+            canonical_install_root: "/fixture/installation".into(),
+            active_version: "1.2.3".into(),
+            assets: Assets {
+                webserver: WebserverAsset {
+                    architecture: StateArchitecture::X86_64,
+                    sha256: "a".repeat(64),
+                    size: 5,
+                },
+                static_archive: ArchiveAsset {
+                    sha256: "b".repeat(64),
+                    size: 7,
+                },
+            },
+            initialization: InitializationState {
+                status: InitStatus::Complete,
+                lock_present: true,
+                initialized_at: Some(chrono::Utc::now()),
+            },
+            service: ServiceState {
+                manager: StateServiceManager::Systemd,
+                registered: true,
+                enabled: true,
+                verified: true,
+                definition_path: Some("service/landscape-router.service".into()),
+                definition_sha256: Some("c".repeat(64)),
+            },
+            last_transaction_id: Some(uuid::Uuid::now_v7().to_string()),
+            committed_at: Some(chrono::Utc::now()),
+        };
+        let boot = "11111111-1111-4111-8111-111111111111";
+        let next = "22222222-2222-4222-8222-222222222222";
+        let mut before = ServiceBefore {
+            registration: Registration {
+                kind: RegistrationKind::Symlink,
+                target: Some("/fixture/installation/service/landscape-router.service".into()),
+            },
+            enabled: true,
+            active: true,
+            systemd_links: Some(SystemdStartupLinks {
+                version: 1,
+                boot_id: boot.into(),
+                persistent: vec![],
+                runtime: vec!["multi-user.target.wants".into()],
+            }),
+        };
+        assert_eq!(
+            restored_enablement_state(&previous, &before, boot).unwrap(),
+            previous
+        );
+        let restored = restored_enablement_state(&previous, &before, next).unwrap();
+        let mut expected = previous.clone();
+        expected.service.enabled = false;
+        assert_eq!(
+            restored, expected,
+            "only the expired enablement fact changes"
+        );
+        before.systemd_links = None;
+        assert_eq!(
+            restored_enablement_state(&previous, &before, next).unwrap(),
+            previous,
+            "legacy snapshots have no evidence of runtime expiry"
+        );
+    }
     #[test]
     fn cleanup_failure_keeps_switch_transaction_recoverable() {
         let temp =

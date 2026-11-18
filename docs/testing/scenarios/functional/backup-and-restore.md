@@ -41,12 +41,11 @@
 
 **手工备份备注：`--remark`、交互输入与校验**
 
-- 测试层：Rust 单元（pty）
+- 测试层：隔离单元
 - 状态：`部分覆盖`
 - 证据：[backup create](../../../commands/backup.md#backup-create)、`remark_resolution_uses_flag_or_empty_default`、`rejects_invalid_remarks`（lkit-cli/src/backup/lkb.rs）
 - 说明：`--remark` 优先；非交互或无法打开终端时缺省为空；超过 256 字符或含控制字符时返回参数错误 `2`。
 - 缺口：`/dev/tty` 交互提示分支无 pty 测试（flag/非交互默认已有直接断言）。
-- 缺口：交互模式经 `/dev/tty` 提示输入的 pty 路径未覆盖（仓库无 pty 测试设施）。
 
 ## BKP-06
 
@@ -246,7 +245,7 @@
 - 证据：[`backup delete`](../../../commands/backup.md#backup-delete)、`deletes_a_valid_backup_file`、`refuses_unsafe_or_missing_backups_on_delete`、`delete_requires_yes_in_non_interactive_mode`、`delete_rejects_malformed_ids_and_missing_files`（lkit-cli/src/commands/backup/）、`backup_delete_confirms_and_removes_the_backup`、`backup_delete_esc_cancels_confirmation`（lkit-cli/src/console/tests/backup.rs）
 - 说明：`backup delete` 只接受格式合法的备份 ID；目标必须是 root 所有、权限不宽于 `0600` 的普通文件（符号链接与权限不安全条目拒绝删除，不跟随链接）；交互模式要求输入 `yes` 确认、`--yes` 跳过、非交互缺 `--yes` 返回参数错误 `2`，删除前持安装锁。控制台列表/详情按 D 打开删除确认层（展示 ID、版本与永久删除提示），Enter 在控制台内同步删除并刷新列表，Esc 取消且不改动现场。
 - 说明：单元测试验证 `rolling_back` 引用的保护备份和准备中的恢复目标均拒绝删除；事务终结后允许删除，事务损坏时保留备份。恢复周期释放安装锁不解除引用保护。
-- 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的 pty 路径未覆盖（仓库无 pty 测试设施）。
+- 缺口：交互模式经 `/dev/tty` 输入 `yes`/拒绝的路径尚未接入现有 PTY fixture。
 
 
 ## RST-15
@@ -283,11 +282,13 @@
 
 **恢复网络确认超时或跨启动回滚，恢复许可仅绑定当前启动**
 
-- 测试层：隔离单元、CI Fixture E2E
+- 测试层：隔离单元、CI Fixture E2E、真实 Debian/systemd QEMU
 - 状态：`部分覆盖`
 - 证据：[确认单元测试](../../../../lkit-cli/src/workflows/restore/confirmation_tests.rs)、[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[启动屏障](../../../../lkit-cli/src/network/recovery.rs)
 - 说明：fixture 在等待确认时推进截止时间，断言原 data 恢复、事务 rolled_back、原操作返回 5，之后可正常备份。单元验证 schema14 的事务 ID、boot ID 和 pending state 路径绑定；同启动未超时等待、到期或换启动回滚、finalizing 优先完成；回滚期间没有当前启动的 restored-boot-id 不允许 Landscape 启动。
-- 缺口：真实 Landscape 的网络配置导入、外部客户端失联与虚拟机重启后的完整恢复链路。
+- 说明：真实业务回退由 [JNY-04](real-install-recovery.md#jny-04) 验证，包含实际确认超时、
+  主动回滚、未确认重启及突然终止 QEMU 后的原配置与外部 LAN 检查。
+- 缺口：全部恢复写入边界、真实存储错误及 OpenRC／SysVinit 的同等业务回退。
 
 ## BKP-13
 

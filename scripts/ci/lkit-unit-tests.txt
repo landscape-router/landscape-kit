@@ -6,12 +6,14 @@ commands::backup::tests::create_writes_manual_backup_without_any_service_manager
 commands::backup::tests::create_export_failure_leaves_no_final_file
 commands::flare::tests
 flare::server::tests
-backup::rollback::tests::restores_current_without_territory_or_reusing_stale_temporary_links
+backup::rollback::tests
 check::init::tests
 check::openrc::tests
 service::manager::init_detection_tests
 service::host_systemd::tests
 service::systemd::boot::tests
+service::systemd::enablement::tests
+service::manager::enablement::tests
 console::tests::cgroup
 console::tests::daemon
 console::tests::gates
@@ -76,5 +78,6 @@ software::docker::apk_tests
 service::openrc::tests
 network::network_manager::tests
 commands::lkit_self::tests
+commands::lkit_self::upgrade_compat::tests
 deployment::transaction::recovery::tests
 fixture_diagnostics_tests

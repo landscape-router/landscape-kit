@@ -58,7 +58,7 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
-| 真实 manager 与网络兼容性 | `SYS-01` 至 `SYS-07` | [systemd-smoke.md](systemd-smoke.md) |
+| 真实 manager 与网络兼容性 | `SYS-01` 至 `SYS-08` | [systemd-smoke.md](systemd-smoke.md) |
 
 ## 第三部分：正式 Landscape 用户流程验收
 
@@ -69,7 +69,7 @@ systemd smoke 只验证 fake systemctl 无法证明的真实 manager 契约，�
 
 | 领域 | 场景 ID | 文档 |
 | --- | --- | --- |
-| 真实安装、业务配置与离线恢复 | `JNY-01` 至 `JNY-03` | [real-install-recovery.md](functional/real-install-recovery.md) |
+| 真实安装、业务配置与离线恢复 | `JNY-01` 至 `JNY-05` | [real-install-recovery.md](functional/real-install-recovery.md) |
 
 ## 当前优先缺口
 

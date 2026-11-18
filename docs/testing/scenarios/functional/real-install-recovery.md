@@ -44,8 +44,7 @@ CI 的只读 GitHub token 通过虚拟机内 `0600` 的临时环境文件供 lki
   等价恢复，新记录消失，之后执行 `network confirm` 并检查最终提交。
 - 说明：删除原目录内备份、再次修改业务配置，使用仍保留的外部 `.lkb` 执行同样的离线
   恢复与确认。该流程验证外部副本独立可用，恢复不依赖仓库下载。
-- 缺口：不同正式 Landscape 版本间恢复，以及真实业务恢复确认超时、拒绝确认和断电的
-  完整故障矩阵。
+- 缺口：不同正式 Landscape 版本间恢复，以及所有持久化写入边界的断电故障矩阵。
 
 ## JNY-03
 
@@ -63,4 +62,37 @@ CI 的只读 GitHub token 通过虚拟机内 `0600` 的临时环境文件供 lki
   daemon 注册和进程已删除、`lkit network startup-check` 成功、安装 state 字节不变。
   再次整机重启，验证 daemon 仍未注册或运行、Landscape 自动启动；独立 LAN 客户端
   重新登录正式 API，复检前端、DNS 答案和导出的 DNS、DHCP、网络配置。
-- 缺口：OpenRC/SysVinit 上相同业务断言及非正常断电恢复。
+- 缺口：OpenRC/SysVinit 上相同业务断言。
+
+## JNY-04
+
+**待确认恢复经主动回滚、实际超时、重启或突然断电后保留原业务配置**
+
+- 测试层：真实 Debian/systemd QEMU、正式 API、外部 LAN DNS/HTTPS
+- 状态：`部分覆盖`
+- 证据：[故障编排](../../../../scripts/qemu/network/restore-faults.sh)、[持久化证据与业务断言](../../../../scripts/qemu/network/journey.py)、[主机启动与断电入口](../../../../scripts/test-qemu-network-takeover.sh)
+- 说明：修改 DNS 与 DHCP 后保存语义快照，应用原备份并确认已进入待确认状态、旧安装 state 未被提交覆盖。
+  分别执行 `network rollback`、等待生产 600 秒确认窗口真实到期、正常整机重启和强杀
+  QEMU 后使用同一两块磁盘冷启动。冷启动前保持 WAN 断开，不更改事务截止时间或运行测试版 daemon。
+  每次核对原事务和操作身份、回滚终态、安装身份、登录、前端、DNS 答案及导出配置；
+  回滚后的实例可创建并完整验证新的外部备份。
+- 说明：主动回滚前将 Landscape 设置为仅运行时启用；回滚后仍为 `enabled-runtime`，
+  保留原运行时成员且不遗留新增的持久成员。之后显式恢复永久启用，再进行整机重启场景。
+- 缺口：OpenRC／SysVinit 同等故障链；非待确认阶段的所有写入边界、真实磁盘写入错误及宿主存储断电。
+  强杀 QEMU 丢弃 guest 内核状态，但不模拟宿主磁盘缓存丢失。
+
+## JNY-05
+
+**真实旧版本升级、候选接管与独立安装盘上的服务定义迁移**
+
+- 测试层：真实 Debian/systemd QEMU、公开 lkit 发布资产、正式 Landscape
+- 状态：`部分覆盖`
+- 证据：[发布资产固定清单](../../../../scripts/qemu/network/lkit-upgrade-releases.json)、[升级与迁移检查](../../../../scripts/qemu/network/upgrade-guest.py)、[QEMU 编排](../../../../scripts/test-qemu-network-takeover.sh)
+- 说明：用固定摘要的公开 rc3 二进制完成安装与接管确认。为符合该版本的同文件系统
+  要求，首次安装在系统盘 `/srv`；停服后按原路径、内容、权限和所有权迁至第二块磁盘，
+  再启动旧服务。旧 CLI 通过真实 GitHub 元数据和校验清单执行 `self upgrade` 到公开 rc4。
+- 说明：未发布的候选由单独标明的原子替换步骤部署，执行 `self install` 刷新 daemon，
+  再运行 `repair service`。检查实际 daemon 与候选摘要一致、Landscape PID 与启动时间
+  不变、启用及运行状态不变，旧定义迁移为系统盘启动副本。显式停止且禁用后再次修复
+  仍保持停止和禁用。重新启用后整机重启，复核挂载、启动检查及真实业务配置。
+- 缺口：候选发布前不覆盖旧 CLI 直接下载该候选的升级路径；OpenRC／SysVinit 的同等升级链。

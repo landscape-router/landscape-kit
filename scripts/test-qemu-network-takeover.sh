@@ -36,6 +36,11 @@ mkdir -p "$artifact_dir"
 active_qemu_pid=
 active_tap=
 active_qmp=
+active_disk=
+active_installation_disk=
+active_scenario=
+active_boot=0
+active_wan_up=true
 landscape_version=$(jq -r .version "$repo_root/scripts/qemu/network/landscape-release.json")
 cp "$repo_root/scripts/qemu/network/landscape-release.json" "$artifact_dir/landscape-release.json"
 
@@ -111,6 +116,18 @@ printf '%s\n' '/dev/vda / ext4 defaults 0 1' '/dev/vdb /srv ext4 defaults 0 2' >
 mkdir -p "$rootfs/srv"
 printf '%s\n' 'Disposable QEMU network acceptance guest' >"$rootfs/etc/lkit-qemu-network"
 install -d -m 0700 "$rootfs/var/lib/lkit-qemu"
+install -m 0755 "$lkit_binary" "$rootfs/var/lib/lkit-qemu/candidate-lkit"
+sha256sum "$lkit_binary" | cut -d ' ' -f 1 >"$rootfs/var/lib/lkit-qemu/candidate-lkit.sha256"
+upgrade_pin=$repo_root/scripts/qemu/network/lkit-upgrade-releases.json
+legacy_tag=$(jq -r '.source.tag' "$upgrade_pin")
+legacy_asset=$(jq -r '.asset' "$upgrade_pin")
+legacy_sha256=$(jq -r '.source.sha256' "$upgrade_pin")
+curl --fail --location --silent --show-error --retry 3 \
+  "https://github.com/landscape-router/landscape-kit/releases/download/$legacy_tag/$legacy_asset" \
+  --output "$rootfs/var/lib/lkit-qemu/legacy-lkit-rc3"
+printf '%s  %s\n' "$legacy_sha256" "$rootfs/var/lib/lkit-qemu/legacy-lkit-rc3" | sha256sum --check --status
+chmod 0755 "$rootfs/var/lib/lkit-qemu/legacy-lkit-rc3"
+cp "$upgrade_pin" "$artifact_dir/lkit-upgrade-releases.json"
 printf '%s\n' 'Secret123' >"$rootfs/var/lib/lkit-qemu/password"
 chmod 0600 "$rootfs/var/lib/lkit-qemu/password"
 printf '%s\n' 'Secret123' >"$test_root/journey-password"
@@ -333,21 +350,11 @@ assert_confirmed_wan_plan() {
   esac
 }
 
-boot_vm() {
-  local scenario=$1
-  local disk=$test_root/$scenario.ext4
-  local installation_disk=$test_root/$scenario-installation.ext4
-  cp --reflink=auto --sparse=always "$base_disk" "$disk"
-  truncate -s 4G "$installation_disk"
-  mke2fs -q -t ext4 -F "$installation_disk"
-  active_qmp=$test_root/$scenario.qmp
-  active_tap=lkitlan0
-  ip tuntap add dev "$active_tap" mode tap
-  ip address add 192.168.10.2/24 dev "$active_tap"
-  ip link set "$active_tap" up
-  active_ssh_port=$(next_port)
+start_qemu() {
+  active_boot=$((active_boot + 1))
+  active_qmp=$test_root/$active_scenario-$active_boot.qmp
   qemu-system-x86_64 \
-    -name "lkit-$scenario" \
+    -name "lkit-$active_scenario" \
     -machine q35,accel=kvm \
     -cpu host \
     -smp 2 \
@@ -355,18 +362,69 @@ boot_vm() {
     -kernel "$kernel" \
     -initrd "$initrd" \
     -append 'root=/dev/vda rw console=ttyS0 systemd.log_target=console' \
-    -drive "file=$disk,format=raw,if=virtio,cache=writeback" \
-    -drive "file=$installation_disk,format=raw,if=virtio,cache=writeback" \
+    -drive "file=$active_disk,format=raw,if=virtio,cache=writeback" \
+    -drive "file=$active_installation_disk,format=raw,if=virtio,cache=writeback" \
     -netdev "user,id=wan,ipv4=on,ipv6=on,hostfwd=tcp:127.0.0.1:${active_ssh_port}-:22" \
     -device virtio-net-pci,netdev=wan,mac=52:54:00:12:34:01 \
     -netdev "tap,id=lan,ifname=$active_tap,script=no,downscript=no" \
     -device virtio-net-pci,netdev=lan,mac=52:54:00:12:34:02 \
     -display none \
     -monitor none \
+    -S \
     -qmp "unix:$active_qmp,server=on,wait=off" \
     -serial stdio \
-    >"$artifact_dir/$scenario-serial.log" 2>&1 &
+    >"$artifact_dir/$active_scenario-boot-$active_boot-serial.log" 2>&1 &
   active_qemu_pid=$!
+  # Configure carrier while guest CPUs are paused. A cold restart must not
+  # briefly reconnect WAN during an offline recovery acceptance scenario.
+  python3 - "$active_qmp" "$active_wan_up" <<'PY'
+import json
+import socket
+import sys
+import time
+deadline = time.monotonic() + 10
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as monitor:
+    monitor.settimeout(10)
+    while True:
+        try:
+            monitor.connect(sys.argv[1])
+            break
+        except (FileNotFoundError, ConnectionRefusedError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+    stream = monitor.makefile('rwb', buffering=0)
+    assert 'QMP' in json.loads(stream.readline())
+    for command in [
+        {'execute': 'qmp_capabilities'},
+        {'execute': 'set_link', 'arguments': {'name': 'wan', 'up': sys.argv[2] == 'true'}},
+        {'execute': 'cont'},
+    ]:
+        stream.write(json.dumps(command).encode() + b'\n')
+        while True:
+            reply = json.loads(stream.readline())
+            if 'event' not in reply:
+                assert 'return' in reply and 'error' not in reply, reply
+                break
+PY
+}
+
+boot_vm() {
+  local scenario=$1
+  active_scenario=$scenario
+  active_boot=0
+  active_wan_up=true
+  active_disk=$test_root/$scenario.ext4
+  active_installation_disk=$test_root/$scenario-installation.ext4
+  cp --reflink=auto --sparse=always "$base_disk" "$active_disk"
+  truncate -s 4G "$active_installation_disk"
+  mke2fs -q -t ext4 -F "$active_installation_disk"
+  active_tap=lkitlan0
+  ip tuntap add dev "$active_tap" mode tap
+  ip address add 192.168.10.2/24 dev "$active_tap"
+  ip link set "$active_tap" up
+  active_ssh_port=$(next_port)
+  start_qemu
   wait_for_ssh wan || {
     echo "$scenario VM did not expose SSH through its WAN" >&2
     return 1
@@ -461,6 +519,10 @@ journey_api() {
   python3 "$repo_root/scripts/qemu/network/journey.py" "$1" \
     --directory "$test_root/journey" --password-file "$test_root/journey-password" \
     --qmp "$active_qmp" | tee -a "$artifact_dir/journey-assertions.log"
+  case "$1" in
+    link-up) active_wan_up=true ;;
+    link-down) active_wan_up=false ;;
+  esac
 }
 
 journey_guest() {
@@ -517,6 +579,52 @@ reboot_restored_vm() {
   [[ $rebooted == true ]] || { echo "restored VM did not return after a real reboot (daemon $daemon)" >&2; return 1; }
 }
 
+powercut_restored_vm() {
+  local previous_boot current_boot
+  previous_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id')
+  # No guest shutdown or sync: abandon the running kernel and reuse both disks.
+  kill -KILL "$active_qemu_pid"
+  wait "$active_qemu_pid" 2>/dev/null || true
+  active_qemu_pid=
+  start_qemu
+  wait_for_ssh lan
+  local deadline=$((SECONDS + 240))
+  while (( SECONDS < deadline )); do
+    if current_boot=$(lan_ssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && \
+      [[ $current_boot != "$previous_boot" ]] && \
+      lan_ssh 'systemctl is-active --quiet landscape-router.service && systemctl is-active --quiet lkit.service' >/dev/null 2>&1; then
+      printf '%s\n' 'PASS: abruptly terminated VM cold-boots from the same system and installation disks' \
+        | tee -a "$artifact_dir/journey-assertions.log"
+      return
+    fi
+    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
+    sleep 2
+  done
+  echo 'restored VM did not recover after abrupt power loss' >&2
+  return 1
+}
+
+# shellcheck source=scripts/qemu/network/restore-faults.sh
+source "$repo_root/scripts/qemu/network/restore-faults.sh"
+
+upgrade_guest_async() {
+  local action=$1
+  lan_ssh "nohup python3 /var/lib/lkit-qemu/upgrade-guest.py $action </dev/null >/var/lib/lkit-qemu/upgrade-$action.log 2>&1 &"
+  local deadline=$((SECONDS + 360))
+  while (( SECONDS < deadline )); do
+    if lan_ssh "test -f /var/lib/lkit-qemu/upgrade/$action.exit" >/dev/null 2>&1; then
+      lan_ssh "cat /var/lib/lkit-qemu/upgrade-$action.log" | tee -a "$artifact_dir/upgrade-assertions.log"
+      lan_ssh "test \"\$(cat /var/lib/lkit-qemu/upgrade/$action.exit)\" = 0"
+      return
+    fi
+    kill -0 "$active_qemu_pid" >/dev/null 2>&1 || return 1
+    sleep 2
+  done
+  lan_ssh "cat /var/lib/lkit-qemu/upgrade-$action.log" | tee -a "$artifact_dir/upgrade-assertions.log" || true
+  echo "legacy upgrade action $action did not complete" >&2
+  return 1
+}
+
 run_real_backup_journey() {
   journey_guest identity
   journey_api seed
@@ -533,6 +641,7 @@ run_real_backup_journey() {
   journey_guest remove-local-backup
   journey_api mutate
   restore_real_backup file
+  run_restore_fault_journey
   journey_api link-up
   assert_confirmed_wan_plan restored
 
@@ -611,4 +720,20 @@ kill -0 "$active_qemu_pid" >/dev/null 2>&1 && {
 active_qemu_pid=
 cleanup_vm
 
-echo "QEMU official Landscape install, network recovery, configuration backup/restore and reboot acceptance passed"
+boot_vm legacy-upgrade
+wan_ssh 'python3 /var/lib/lkit-qemu/upgrade-guest.py prepare' | tee -a "$artifact_dir/upgrade-assertions.log"
+start_takeover legacy-upgrade
+lan_ssh '/usr/local/bin/lkit network confirm' | tee -a "$artifact_dir/upgrade-assertions.log"
+upgrade_guest_async move-to-disk
+journey_guest identity
+journey_api seed
+upgrade_guest_async upgrade
+journey_api assert
+reboot_restored_vm present
+lan_ssh 'python3 /var/lib/lkit-qemu/upgrade-guest.py assert-rebooted' | tee -a "$artifact_dir/upgrade-assertions.log"
+journey_api assert
+assert_confirmed_wan_plan upgraded
+lan_ssh 'systemctl poweroff' >/dev/null 2>&1 || true
+cleanup_vm
+
+echo "QEMU official installation, upgrade, guarded recovery, power-loss and business acceptance passed"

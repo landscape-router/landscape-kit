@@ -155,6 +155,7 @@ impl ServiceManager for Openrc {
         before: &ServiceBefore,
         origin: &Path,
     ) -> Result<(), InstallError> {
+        before.validate_for_backend(self.kind())?;
         if before.registration.kind == RegistrationKind::Missing {
             return self.unregister(service, origin);
         }

@@ -126,6 +126,9 @@ async fn rollback_restore_inner<P: DocsProbe>(
             observe_stable(&startup).await?;
         }
         let mut restored = snapshot.clone();
+        if let Some(before) = &transaction.systemd_before {
+            restored.service.enabled = before.enabled_now()?;
+        }
         restored.last_transaction_id = Some(transaction.transaction_id.clone());
         restored.committed_at = Some(Utc::now());
         state::write_state(root, &restored)?;

@@ -136,24 +136,44 @@ null。目标备份在进入 `prepared` 前必须已经完整验证并放入 lki
 
 `systemd_before` 固定记录事务开始前的服务状态（JSON 键名保持兼容；Rust 侧类型为
 `ServiceBefore`,由 [`ServiceManager`](../service/manager.md) 的
-`capture_before` 捕获,后续后端接入时结构不变）：
+`capture_before` 捕获）。systemd 使用带版本的启用快照：
 
 ```json
 {
   "registration": {
-    "kind": "missing"
+    "kind": "symlink",
+    "target": "/srv/landscape/service/landscape-router.service"
   },
-  "enabled": false,
-  "active": false
+  "enabled": {
+    "version": 1,
+    "enabled": true,
+    "systemd_links": {
+      "version": 1,
+      "boot_id": "11111111-1111-4111-8111-111111111111",
+      "persistent": [],
+      "runtime": ["multi-user.target.wants"]
+    }
+  },
+  "active": true
 }
 ```
 
 `registration.kind` 只允许 `missing` 或 `symlink`。为 `symlink` 时必须包含绝对字符串
 字段 `target`，记录受管定义原件的逻辑路径。systemd 注册可物理指向系统盘的已验证
 启动副本，后端将它映射回该原件路径；事务不保存启动副本的物理位置。其他文件类型、
-损坏副本或无法证明归属的注册均为冲突，不进入事务。`enabled` 和 `active` 是事务
-开始前通过对应后端查询的事实；systemd 的 `linked`、`linked-runtime`、`alias` 不代表
+损坏副本或无法证明归属的注册均为冲突，不进入事务。`active` 是事务开始前的运行事实；
+启用快照记录持久和运行时成员目录，路径必须是有效的单级 `*.wants`／`*.requires`
+名称，不接受越界、重复成员、未知版本或与启用值矛盾的内容。
+systemd 的 `linked`、`linked-runtime`、`alias` 不代表
 启用，不得据此将原本禁用的服务恢复为启用。
+
+恢复时清理本事务新增的受管成员并重建有效的原成员。运行时成员仅在快照 boot ID
+等于当前启动标识时有效；跨整机重启不重新创建，安装 state 的启用字段反映恢复后事实。
+`prepared`／`stopping` 阶段的 switch 与 binary repair 恢复，在服务和 resolv 恢复成功后
+同步该启用字段，再终结事务；保留原安装版本和提交身份。
+不通过普通 `enable` 把运行时成员转换为永久成员。仅理解布尔值的 daemon 无法读取
+对象形式的 `enabled`，必须拒绝处理，不得忽略精确信息继续恢复。
+OpenRC／SysVinit 及兼容快照可使用布尔 `enabled`；读取这类快照不推测未保存的临时有效期。
 
 恢复注册时，后端从逻辑原件恢复并验证启动副本，保留已有受管启动成员关系，按事务
 事实恢复启用／运行状态。原件缺失或注册链接已清理的首次安装失败现场，只能清理仍能证明

@@ -97,7 +97,8 @@
   [跨后端验收边界](../../qemu-service-managers.md#完整网络接管的验收边界)
 - 缺口：OpenRC/SysVinit 的待确认重启、宿主网络恢复、恢复失败重试及已确认安装重启，
   仍需真实网络接管验收；分别核对 OpenRC 多个 runlevel、SysVinit S/K 链接及顺序。
-  systemd 缺少确认超时、确认后重启及 networkd 管理真实网卡的完整验收。
+  systemd 首次安装接管的实际确认超时及 networkd 管理真实网卡仍缺完整验收；
+  已确认恢复后的重启与 restore 实际超时由 [JNY-03/04](real-install-recovery.md#jny-03) 验证。
   fixture 模拟 boot ID 和 daemon 生命周期 VM 不能替代网络接管的真实重启。
 - 说明：临时目录验证 OpenRC 多 runlevel 与 SysVinit S/K 链接顺序、拒绝越界快照、注销服务清理启动链接和拒绝删除外部链接；注入服务动作验证恢复后的状态检查与失败重试。SysVinit 单测验证 `update-rc.d` 参数顺序、首次启用创建默认链接及真实 `rc?.d` 目录布局的启用检测。服务定义调用统一启动检查。
   systemd QEMU 验证 NetworkManager 未确认重启回滚及恢复失败重试；nspawn 验证真实

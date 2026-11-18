@@ -30,6 +30,8 @@ trait ServiceManager: Send + Sync {
     fn unregister(&self, service, origin) -> Result<()>;
 
     fn is_enabled / enable / disable;
+    fn capture_enablement(service) -> Result<Enablement>;
+    fn restore_enablement(service, origin, before) -> Result<()>;
     fn is_active / active_state / start / stop / restart;
     fn stop_and_wait(service, wait_for_exit) -> Result<()>;   // 默认实现:stop + 轮询
     fn refresh(&self) -> Result<()>;                           // 默认 no-op(systemd 覆盖为 daemon-reload)
@@ -59,7 +61,8 @@ trait ServiceManager: Send + Sync {
   `Conflict { file_type }`)；`target` 表示受管定义原件的逻辑路径，systemd 后端负责验证
   启动副本并将物理链接目标映射回该路径；
 - `Registration` / `RegistrationKind`:序列化的事务前注册状态;
-- `ServiceBefore`:受管服务事务前状态(注册 + enabled + active),失败回滚时恢复用。
+- `Enablement`:受管服务的启用事实及后端恢复信息；systemd 保存持久和运行时启动成员及捕获时的 boot ID；
+- `ServiceBefore`:受管服务事务前状态(注册 + 启用快照 + active),失败回滚时恢复用。
 
 ## 事务前状态捕获
 
@@ -67,8 +70,19 @@ trait ServiceManager: Send + Sync {
 capture_before(manager: &dyn ServiceManager, service: ManagedService) -> Result<ServiceBefore>
 ```
 
-通用实现:查询注册 + enabled + active。注册所有权冲突(`Conflict`)时阻断,
+通用实现:查询注册、捕获启用快照并查询 active。注册所有权冲突(`Conflict`)时阻断,
 不能自动接管。
+
+systemd 的 `enabled` 与 `enabled-runtime` 都表示当前已启用，但恢复必须保留各自的
+有效期。快照分别记录 `/etc/systemd/system` 与 `/run/systemd/system` 的受管
+`*.wants`／`*.requires` 成员。回滚清理事务期间新增的受管成员并恢复原成员；不会通过
+普通 `enable` 将临时启用转为永久启用，也不会覆盖外部链接。持久和临时成员可以同时存在。
+运行时成员绑定捕获时的 boot ID，同次主机启动中的 daemon 重启会恢复它们，整机重启
+后则视为到期，不重新创建。恢复后的启用状态按仍有效的成员计算。
+
+启用快照具有独立版本；含精确信息的快照不能被仅理解布尔值的 daemon 静默恢复。
+读取只含布尔值的兼容快照时保留其原有恢复语义，不推测未记录的成员或临时有效期。
+`self install` 的失败恢复也使用该启用契约；OpenRC／SysVinit 保留各自的完整启动链接。
 
 ## 后端探测顺序
 

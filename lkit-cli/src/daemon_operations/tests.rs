@@ -26,6 +26,7 @@ impl Fixture {
         tx.operation = transaction::Operation::RepairService;
         tx.target_release = None;
         tx.systemd_before = Some(crate::service::manager::ServiceBefore {
+            systemd_links: None,
             active: false,
             enabled: false,
             registration: crate::service::manager::Registration {

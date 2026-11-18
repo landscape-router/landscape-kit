@@ -165,6 +165,9 @@ pub(crate) fn validate_transaction(transaction: &TransactionFile) -> Result<(), 
             "restore_backup sha256 must be 64 lowercase hex characters".into(),
         ));
     }
+    if let Some(systemd_before) = &transaction.systemd_before {
+        systemd_before.validate()?;
+    }
     if let Some(systemd_before) = &transaction.systemd_before
         && systemd_before.registration.kind == RegistrationKind::Symlink
         && systemd_before.registration.target.is_none()

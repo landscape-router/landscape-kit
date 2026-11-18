@@ -15,6 +15,9 @@
 #[path = "self_upgrade_tests.rs"]
 mod upgrade_tests;
 
+#[path = "self_upgrade_compat.rs"]
+mod upgrade_compat;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -32,7 +35,9 @@ use crate::release::repository::Architecture;
 use crate::release::repository::download::{DownloadClient, validate_network_url};
 use crate::release::repository::{Asset, AssetEncoding, RepositoryError};
 use crate::service::manager::ServiceManagerKind;
-use crate::service::manager::{Availability, ManagedService, ServiceManager, SystemRegistration};
+use crate::service::manager::{
+    Availability, Enablement, ManagedService, ServiceManager, SystemRegistration,
+};
 
 /// lkit 自身的 GitHub 仓库(与 landscape-webserver 仓库不同)。
 pub(crate) const LKIT_REPOSITORY: &str = "landscape-router/landscape-kit";
@@ -276,7 +281,7 @@ fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, 
 struct InstallBefore {
     registered: bool,
     definition: Option<(String, u32)>,
-    enabled: bool,
+    enablement: Enablement,
     active: bool,
     startup_links: Option<Vec<(PathBuf, PathBuf)>>,
 }
@@ -335,7 +340,7 @@ fn install_with(
     let before = InstallBefore {
         registered,
         definition,
-        enabled: manager.is_enabled(service)?,
+        enablement: manager.capture_enablement(service)?,
         active: manager.is_active(service)?,
         startup_links: manager
             .startup_links(service)?
@@ -348,7 +353,7 @@ fn install_with(
     };
     if !registered
         && (before.active
-            || before.enabled
+            || before.enablement.enabled
             || before
                 .startup_links
                 .as_ref()
@@ -374,7 +379,7 @@ fn install_with(
             write_flare_psk(psk)?;
         }
         manager.register(service, origin)?;
-        if !before.enabled {
+        if !before.enablement.enabled {
             manager.enable(service)?;
         }
         if before.active {
@@ -457,12 +462,8 @@ fn restore_enabled(
         for (path, target) in links {
             std::os::unix::fs::symlink(target, path).map_err(InstallError::Io)?;
         }
-    } else if manager.is_enabled(service)? != before.enabled {
-        if before.enabled {
-            manager.enable(service)?;
-        } else {
-            manager.disable(service)?;
-        }
+    } else {
+        manager.restore_enablement(service, origin, &before.enablement)?;
     }
     Ok(())
 }
@@ -535,13 +536,15 @@ async fn upgrade(runtime: &InstallRuntime, args: &UpgradeArgs) -> Result<(), Ins
     else {
         return Ok(());
     };
-    if version.cmp_precedence(&current_version()?).is_lt()
-        && crate::deployment::state::discover_landscape_root_from_unfinished_transaction()?
+    if version.cmp_precedence(&current_version()?).is_lt() {
+        if crate::deployment::state::discover_landscape_root_from_unfinished_transaction()?
             .is_some()
-    {
-        return Err(InstallError::Preflight(
-            "finish the pending transaction before downgrading lkit".into(),
-        ));
+        {
+            return Err(InstallError::Preflight(
+                "finish the pending transaction before downgrading lkit".into(),
+            ));
+        }
+        upgrade_compat::ensure_downgrade_compatible()?;
     }
     let asset_name = upgrade_asset_name(architecture);
     let asset = unique_asset(&release.assets, asset_name).ok_or_else(|| {
@@ -1095,6 +1098,8 @@ mod tests {
         registration: SystemRegistration,
         active: bool,
         enabled: bool,
+        captured_enablement: Option<Enablement>,
+        restored_enablement: Option<Enablement>,
         fail: Option<&'static str>,
         calls: Vec<&'static str>,
     }
@@ -1168,6 +1173,26 @@ mod tests {
         fn is_enabled(&self, _: ManagedService) -> Result<bool, InstallError> {
             Ok(self.state.lock().unwrap().enabled)
         }
+        fn capture_enablement(&self, _: ManagedService) -> Result<Enablement, InstallError> {
+            let state = self.state.lock().unwrap();
+            Ok(state.captured_enablement.clone().unwrap_or(Enablement {
+                enabled: state.enabled,
+                systemd_links: None,
+            }))
+        }
+        fn restore_enablement(
+            &self,
+            _: ManagedService,
+            origin: &Path,
+            before: &Enablement,
+        ) -> Result<(), InstallError> {
+            assert_eq!(origin, self.path);
+            let mut state = self.state.lock().unwrap();
+            state.calls.push("restore-enable");
+            state.restored_enablement = Some(before.clone());
+            state.enabled = before.enabled;
+            Ok(())
+        }
         fn enable(&self, _: ManagedService) -> Result<(), InstallError> {
             self.action("enable")
         }
@@ -1239,6 +1264,8 @@ mod tests {
                 },
                 active,
                 enabled,
+                captured_enablement: None,
+                restored_enablement: None,
                 fail: None,
                 calls: vec![],
             }),
@@ -1341,6 +1368,37 @@ mod tests {
     }
 
     #[test]
+    fn failed_self_install_restores_the_exact_enablement_snapshot() {
+        use crate::service::manager::SystemdStartupLinks;
+        for persistent in [vec![], vec!["custom.target.wants".to_string()]] {
+            let (dir, binary, manager) = installation_fixture(true, true, true);
+            let captured = Enablement {
+                enabled: true,
+                systemd_links: Some(SystemdStartupLinks {
+                    version: 1,
+                    boot_id: "0198c3d2-0000-7000-8000-000000000001".into(),
+                    persistent,
+                    runtime: vec!["multi-user.target.wants".into()],
+                }),
+            };
+            manager.state.lock().unwrap().captured_enablement = Some(captured.clone());
+            assert!(
+                install_with(&manager, &binary, &manager.path, None, readiness_failure).is_err()
+            );
+            let state = manager.state.lock().unwrap();
+            assert_eq!(state.restored_enablement, Some(captured));
+            assert!(state.active && state.enabled);
+            assert!(!state.calls.contains(&"enable"));
+            assert!(!state.calls.contains(&"disable"));
+            assert_eq!(
+                std::fs::read_to_string(&manager.path).unwrap(),
+                "managed old definition"
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
     fn owned_dangling_registration_can_be_repaired_and_keeps_definition_on_failure() {
         for ready_ok in [true, false] {
             let (dir, binary, manager) = installation_fixture(true, false, true);
@@ -1428,7 +1486,10 @@ mod tests {
             let before = InstallBefore {
                 registered: true,
                 definition: None,
-                enabled: true,
+                enablement: Enablement {
+                    enabled: true,
+                    systemd_links: None,
+                },
                 active: false,
                 startup_links: Some(serde_json::from_str(&captured).unwrap()),
             };

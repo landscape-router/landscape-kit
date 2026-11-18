@@ -409,7 +409,7 @@ fn build_reinit_state(
                 .ok_or_else(|| {
                     InstallError::CorruptedTransaction("missing original service state".into())
                 })?
-                .enabled,
+                .enabled_now()?,
             verified: true,
             definition_path: Some("service/landscape-router.service".into()),
             definition_sha256: unit_sha.map(str::to_string),
@@ -485,12 +485,22 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
         before,
         &root.canonical.join("service/landscape-router.service"),
     )?;
-    if manager.is_enabled(ManagedService::LandscapeRouter)? != before.enabled {
-        if before.enabled {
-            manager.enable(ManagedService::LandscapeRouter)?;
-        } else {
-            manager.disable(ManagedService::LandscapeRouter)?;
-        }
+    if before.systemd_links.is_none()
+        && manager.is_enabled(ManagedService::LandscapeRouter)? != before.enabled
+    {
+        manager.restore_enablement(
+            ManagedService::LandscapeRouter,
+            &root.canonical.join("service/landscape-router.service"),
+            &before.enablement(),
+        )?;
+    }
+    if !before
+        .enablement()
+        .matches_current(&manager.capture_enablement(ManagedService::LandscapeRouter)?)?
+    {
+        return Err(InstallError::Systemd(
+            "restored service enablement does not match its snapshot".into(),
+        ));
     }
     if before.active {
         manager.start(ManagedService::LandscapeRouter)?;
@@ -518,7 +528,7 @@ pub(crate) async fn rollback_reinit_inner<P: DocsProbe>(
         ));
     }
     let mut restored = snapshot.clone();
-    restored.service.enabled = before.enabled;
+    restored.service.enabled = before.enabled_now()?;
     restored.last_transaction_id = Some(transaction.transaction_id.clone());
     restored.committed_at = Some(Utc::now());
     super::state::write_state(root, &restored)?;

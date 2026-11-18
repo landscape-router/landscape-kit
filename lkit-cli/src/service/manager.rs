@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::deployment::plan::InstallError;
 
+#[path = "manager_enablement.rs"]
+mod enablement;
+pub(crate) use enablement::{Enablement, SystemdStartupLinks};
+
 /// 服务管理器后端标识。序列化在安装状态与事务文件中,
 /// 新增后端时在此增加变体并处理状态 schema 演进。
 ///
@@ -116,11 +120,12 @@ pub(crate) enum RegistrationKind {
 }
 
 /// 受管服务事务前状态,用于失败回滚恢复注册与 enabled/active 事实。
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ServiceBefore {
     pub registration: Registration,
     pub enabled: bool,
     pub active: bool,
+    pub systemd_links: Option<SystemdStartupLinks>,
 }
 
 /// 服务管理器抽象。
@@ -165,6 +170,31 @@ pub(crate) trait ServiceManager: Send + Sync {
         Ok(None)
     }
     fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError>;
+    fn capture_enablement(&self, service: ManagedService) -> Result<Enablement, InstallError> {
+        Ok(Enablement {
+            enabled: self.is_enabled(service)?,
+            systemd_links: None,
+        })
+    }
+    fn restore_enablement(
+        &self,
+        service: ManagedService,
+        _origin: &Path,
+        before: &Enablement,
+    ) -> Result<(), InstallError> {
+        if before.systemd_links.is_some() {
+            return Err(InstallError::Preflight(
+                "exact systemd enablement requires the systemd backend".into(),
+            ));
+        }
+        if before.enabled {
+            self.enable(service)
+        } else if self.is_enabled(service)? {
+            self.disable(service)
+        } else {
+            Ok(())
+        }
+    }
     fn enable(&self, service: ManagedService) -> Result<(), InstallError>;
     fn disable(&self, service: ManagedService) -> Result<(), InstallError>;
     fn is_active(&self, service: ManagedService) -> Result<bool, InstallError>;
@@ -267,11 +297,15 @@ pub(crate) fn capture_before(
             )));
         }
     };
-    Ok(ServiceBefore {
+    let enablement = manager.capture_enablement(service)?;
+    let before = ServiceBefore {
         registration: Registration { kind, target },
-        enabled: manager.is_enabled(service)?,
+        enabled: enablement.enabled,
         active: manager.is_active(service)?,
-    })
+        systemd_links: enablement.systemd_links,
+    };
+    before.validate()?;
+    Ok(before)
 }
 
 /// 扫描 `/proc/*/cmdline`,返回第一个命令行包含 `pattern` 的进程 pid。

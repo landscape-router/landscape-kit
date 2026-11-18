@@ -12,6 +12,8 @@ use super::transaction::HostServiceBefore;
 
 #[path = "systemd_boot.rs"]
 mod boot;
+#[path = "systemd_enablement.rs"]
+mod enablement;
 
 pub(crate) const UNIT_NAME: &str = "landscape-router.service";
 pub(crate) const LKIT_DAEMON_UNIT_NAME: &str = "lkit.service";
@@ -94,6 +96,43 @@ impl ServiceManager for Systemd {
 
     fn is_enabled(&self, service: ManagedService) -> Result<bool, InstallError> {
         is_enabled_at(self, self.service_name(service))
+    }
+
+    fn capture_enablement(
+        &self,
+        service: ManagedService,
+    ) -> Result<super::manager::Enablement, InstallError> {
+        let unit = self.service_name(service);
+        let origin = match query_registration_at(self, unit)? {
+            SystemRegistration::Symlink { target } => Some(target),
+            SystemRegistration::Missing => None,
+            SystemRegistration::Conflict { .. } => {
+                return Err(systemd_error(
+                    "cannot capture foreign service enablement".into(),
+                ));
+            }
+        };
+        let captured = enablement::capture(
+            self,
+            unit,
+            origin.as_deref(),
+            &crate::network::takeover::current_boot_id()?,
+        )?;
+        if captured.enabled != is_enabled_at(self, unit)? {
+            return Err(systemd_error(
+                "service enablement does not match its owned startup links".into(),
+            ));
+        }
+        Ok(captured)
+    }
+
+    fn restore_enablement(
+        &self,
+        service: ManagedService,
+        origin: &Path,
+        before: &super::manager::Enablement,
+    ) -> Result<(), InstallError> {
+        restore_enablement_at(self, self.service_name(service), origin, before)
     }
 
     fn enable(&self, service: ManagedService) -> Result<(), InstallError> {
@@ -807,6 +846,7 @@ fn restore_registration_at(
     before: &ServiceBefore,
     unit_origin: &Path,
 ) -> Result<(), InstallError> {
+    before.validate()?;
     match &before.registration.kind {
         RegistrationKind::Missing => unregister_at(systemd, unit, unit_origin)?,
         RegistrationKind::Symlink if unit == UNIT_NAME => {
@@ -834,11 +874,7 @@ fn restore_registration_at(
             restore_registration_link_at(systemd, unit, Path::new(target))?;
         }
     }
-    if before.enabled {
-        enable_at(systemd, unit)?;
-    } else if is_enabled_at(systemd, unit).unwrap_or(false) {
-        disable_at(systemd, unit)?;
-    }
+    restore_enablement_at(systemd, unit, unit_origin, &before.enablement())?;
     // systemctl disable may also remove the primary linked-unit registration.
     // Preserve a registered-but-disabled snapshot without creating memberships.
     if unit == UNIT_NAME && before.registration.kind == RegistrationKind::Symlink {
@@ -847,6 +883,34 @@ fn restore_registration_at(
                 systemd_error("symlink registration is missing its target".into())
             })?;
         boot::publish(systemd, Path::new(target), true)?;
+    }
+    daemon_reload(systemd)
+}
+
+fn restore_enablement_at(
+    systemd: &Systemd,
+    unit: &str,
+    origin: &Path,
+    before: &super::manager::Enablement,
+) -> Result<(), InstallError> {
+    before.validate()?;
+    if let Some(links) = &before.systemd_links {
+        enablement::restore(
+            systemd,
+            unit,
+            origin,
+            links,
+            &crate::network::takeover::current_boot_id()?,
+        )?;
+    } else if before.enabled {
+        // Legacy records contain no evidence about runtime membership.
+        enable_at(systemd, unit)?;
+    } else if is_enabled_at(systemd, unit)? {
+        let registered = matches!(query_registration_at(systemd, unit)?, SystemRegistration::Symlink { target } if target == origin);
+        disable_at(systemd, unit)?;
+        if registered {
+            register_at(systemd, unit, origin)?;
+        }
     }
     daemon_reload(systemd)
 }

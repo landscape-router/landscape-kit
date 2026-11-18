@@ -315,7 +315,7 @@ pub(crate) async fn repair_binary<P: DocsProbe>(
         new_state.assets.webserver.size = built.webserver_size;
         new_state.service.definition_sha256 = unit_sha;
         new_state.service.verified = true;
-        new_state.service.enabled = transaction.systemd_before.as_ref().unwrap().enabled;
+        new_state.service.enabled = transaction.systemd_before.as_ref().unwrap().enabled_now()?;
         new_state.last_transaction_id = Some(transaction.transaction_id.clone());
         new_state.committed_at = Some(Utc::now());
         super::state::write_state(root, &new_state)?;
@@ -570,6 +570,7 @@ pub(crate) async fn recover_assets<P: DocsProbe>(
             if let Some(backup) = &tx.resolv_conf_backup {
                 super::resolv::restore(manager.resolv_conf(), &layout::territory_relative(backup))?;
             }
+            super::switch::write_restored_enablement(root, tx)?;
             cleanup_preparing(root, tx)
         }
         Phase::Activating | Phase::Verifying | Phase::RollingBack if tx.static_backup.is_some() => {

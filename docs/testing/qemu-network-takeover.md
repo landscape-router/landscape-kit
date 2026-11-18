@@ -1,7 +1,7 @@
 # QEMU/KVM 网络接管测试
 
 `scripts/test-qemu-network-takeover.sh` 在硬件虚拟化的 x86_64 Linux 主机上构建一个
-Debian systemd 根文件系统，并运行两台从同一基线派生的干净虚拟机。虚拟机包含真实
+Debian systemd 根文件系统，并运行三台从同一基线派生的干净虚拟机。虚拟机包含真实
 NetworkManager、firewalld、systemd-resolved、OpenSSH 与两个 virtio 网卡；Landscape
 由生产 `lkit` 从正式 provider 下载，不使用 fake systemctl 或 fake `ip`。
 每台 guest 的 `<scenario>-environment.log` 保存发行版、内核、PID 1 可执行文件和 lkit 版本，
@@ -12,6 +12,17 @@ boot rollback 恢复 WAN SSH 和三个宿主服务，并断言事务为 `rolled_
 和整个 `data/` 已删除。第二台虚拟机再次接管网络，从新 LAN 地址运行 `lkit network
 confirm`，断言事务和安装状态提交且恢复 unit 已清理。测试同时验证确认前保留 WAN
 地址，确认后按事务中的 Static 或 DHCP 计划验证 WAN IPv4 配置。
+
+第二台虚拟机同时执行正式业务备份与离线恢复：按 ID 和外部文件恢复并确认，随后
+逐一验证主动回滚、真实 600 秒超时、未确认整机重启及强杀 QEMU 后冷启动的恢复结果。
+启动恢复时复用原两块磁盘，guest CPU 运行前通过 QMP 保持 WAN 断开；所有场景都从
+独立 LAN 客户端检查登录、前端、DNS 与导出的 DHCP／网络配置。最终再次确认恢复并
+重启，随后移除 daemon 再重启，确认已提交业务仍可自动启动。
+
+第三台虚拟机由真实公开 rc3 安装，停服迁至独立安装盘后通过 `self upgrade` 到公开
+rc4；未发布候选以明确区分的原子替换步骤部署。候选修复旧服务定义时保持运行状态，
+再验证整机重启及业务配置。固定版本、详细断言与剩余边界见
+[真实安装与恢复场景 JNY-01 至 JNY-05](scenarios/functional/real-install-recovery.md)。
 
 测试要求 `/dev/kvm` 可读写并明确拒绝 TCG fallback。本地执行：
 
@@ -31,7 +42,9 @@ observational，不应加入 branch protection required checks。workflow 使用
 该脚本使用 NetworkManager，systemd-networkd 在基线中禁用；networkd 的真实 manager
 保存和恢复由 [nspawn smoke](nspawn-systemd.md) 验证，但其接口发现和 Landscape 为 fixture。
 因此 networkd 管理真实网卡时的接管、SSH 重连与重启恢复仍缺少 QEMU 验收。
-本脚本不直接验证确认超时、提交后重启、断电式终止或 OpenRC／SysVinit 网络接管。
+本脚本的实际超时和突然终止验证针对 restore 待确认阶段；首次安装接管的实际超时、
+所有持久化写入边界，以及 OpenRC／SysVinit 完整网络接管仍需对应验收。
+强杀 QEMU 模拟 guest 丢失内核内存，宿主缓存及物理磁盘仍正常，不等同于存储设备断电。
 Alpine QEMU 覆盖 OpenRC 的 daemon 拉起、崩溃恢复和启动顺序，Debian/SysVinit QEMU
 覆盖 daemon 生命周期与启用/禁用后的重启，均不替代网络接管验收。
 完整范围见 [QEMU 服务管理后端验收](qemu-service-managers.md)。

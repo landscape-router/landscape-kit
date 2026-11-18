@@ -65,3 +65,15 @@
 - 状态：`已覆盖`
 - 证据：[nspawn 入口](../../../scripts/test-nspawn-systemd.sh)、[networkd 场景](../../../scripts/test-nspawn-networkd.py)
 - 说明：在隔离网络的 Debian guest 中运行真实 networkd、systemctl 和 lkit daemon。服务启用且运行、socket 禁用且停止、wait-online runtime mask，以及无底层 unit 文件的预设 mask；首次安装接管后检查屏蔽及启动链接（含指向 mask 路径的相对链接），验证 D-Bus 别名与 socket 无法拉起服务，重启 daemon 后回滚并核对原始链接及运行状态。网络发现与 Landscape 使用 fixture，不在宿主机运行。
+
+## SYS-08
+
+**受管 Landscape 回滚保留仅运行时启用状态**
+
+- 测试层：Debian/systemd QEMU、隔离文件与序列化单元
+- 状态：`部分覆盖`
+- 证据：[真实恢复故障链 JNY-04](functional/real-install-recovery.md#jny-04)、[启用恢复实现](../../../lkit-cli/src/service/systemd_enablement.rs)、[快照格式](../../../lkit-cli/src/service/manager_enablement.rs)
+- 说明：真实 manager 将 Landscape 设为仅运行时启用后执行 restore 与主动回滚，
+  检查运行时成员及业务仍在，未转换为永久启用。单元覆盖持久与运行时成员混合、
+  整机换 boot ID 后临时成员到期、外部链接拒绝和兼容快照读取。
+- 缺口：真实 manager 上混合成员及运行时成员跨整机重启到期的独立验收。
