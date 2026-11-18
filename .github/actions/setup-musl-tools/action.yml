@@ -9,7 +9,9 @@ runs:
   steps:
     - uses: Swatinem/rust-cache@v2
       with:
-        shared-key: musl-tools-${{ hashFiles('.github/actions/setup-musl-tools/action.yml') }}
+        # Cargo downloads and this Ubuntu host tool are independent of the target compiler.
+        shared-key: musl-tools-ubuntu24-${{ hashFiles('Cargo.lock', '.github/actions/setup-musl-tools/action.yml') }}
+        add-rust-environment-hash-key: false
         cache-targets: false
         save-if: ${{ inputs.save-cache }}
     - shell: bash
