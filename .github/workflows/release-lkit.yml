@@ -52,8 +52,8 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
-          key: release-verify
+          shared-key: fixture-e2e-build
+          save-if: false
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -100,16 +100,11 @@ jobs:
             emulator: qemu-loongarch64
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-musl-${{ matrix.target }}
-          cache-on-failure: true
       - name: Install cross-compilation tools
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-user binutils
-          python3 -m pip install --user --break-system-packages ziglang==0.16.0
-          cargo install --locked cargo-zigbuild --version 0.23.4
+      - uses: ./.github/actions/setup-musl-tools
       - name: Build static binaries
         run: bash scripts/build-musl-static.sh '${{ matrix.target }}'
       - name: Smoke test static binaries
@@ -146,12 +141,6 @@ jobs:
     steps:
       - name: Check out landscape-kit
         uses: actions/checkout@v7
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: release-flare-windows
 
       - name: Build distribution binary
         run: cargo build --locked --profile dist -p landscape-flare --bin lflare

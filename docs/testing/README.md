@@ -66,6 +66,10 @@ fixture E2E 套件（`tests/install_fixture_e2e`）会在宿主机上部署真�
 会在宿主机挂起并泄漏进程，CI 的两个入口（`test-fixture-e2e.yml`、`release-lkit.yml`）都已设置
 该变量。
 
+## CI 构建缓存
+
+四个 musl 目标在 Linux x86_64 runner 上共享 Cargo 下载和宿主工具 `cargo-zigbuild`。目标架构的产物在各自作业内构建。默认分支和手动选择的分支由 x86_64 功能测试写入缓存，Alpine 验收与发布构建复用这份缓存。fixture、nspawn 和 Flare 的常规构建缓存由默认分支写入。Flare 和 fixture 的测试可执行文件通过当次运行的构件传递。
+
 ## 核心功能测试
 
 Docker 功能 E2E 使用 `test-support` 构建，并显式配置：

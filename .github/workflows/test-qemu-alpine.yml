@@ -14,6 +14,7 @@ on:
       - scripts/build-musl-static.sh
       - scripts/test-qemu-alpine.sh
       - scripts/qemu/alpine/**
+      - .github/actions/setup-musl-tools/**
       - .github/workflows/test-qemu-alpine.yml
       - scripts/docker/alpine/**
       - scripts/install-lkit.sh
@@ -30,6 +31,7 @@ on:
       - scripts/build-musl-static.sh
       - scripts/test-qemu-alpine.sh
       - scripts/qemu/alpine/**
+      - .github/actions/setup-musl-tools/**
       - .github/workflows/test-qemu-alpine.yml
       - scripts/docker/alpine/**
       - scripts/install-lkit.sh
@@ -64,16 +66,11 @@ jobs:
           lkit_require_mirror_network
       - name: Require KVM
         run: sudo test -c /dev/kvm && sudo test -r /dev/kvm && sudo test -w /dev/kvm
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: qemu-alpine-musl
-          cache-on-failure: true
       - name: Install VM and cross-compilation tools
         run: |
           sudo apt-get update
           sudo apt-get install -y e2fsprogs musl-tools openssh-client python3 qemu-system-x86 shellcheck
-          python3 -m pip install --user --break-system-packages ziglang==0.16.0
-          cargo install --locked cargo-zigbuild --version 0.23.4
+      - uses: ./.github/actions/setup-musl-tools
       - name: Check VM scripts
         run: |
           shellcheck scripts/test-qemu-alpine.sh scripts/qemu/alpine/guest-tests.sh scripts/docker/alpine/run-tests.sh scripts/install-lkit.sh scripts/test-install-lkit.sh scripts/lib/mirror-network-guard.sh scripts/test-mirror-network-guard.sh

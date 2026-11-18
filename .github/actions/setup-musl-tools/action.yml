@@ -1,0 +1,18 @@
+name: Set up musl build tools
+description: Install Zig and cargo-zigbuild and reuse host tools and Cargo downloads across target architectures.
+inputs:
+  save-cache:
+    description: Save downloads and host tools when the job succeeds.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: musl-tools-${{ hashFiles('.github/actions/setup-musl-tools/action.yml') }}
+        cache-targets: false
+        save-if: ${{ inputs.save-cache }}
+    - shell: bash
+      run: |
+        python3 -m pip install --user --break-system-packages ziglang==0.16.0
+        cargo install --locked cargo-zigbuild --version 0.23.4
