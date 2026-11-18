@@ -27,7 +27,7 @@ STATE = Path('/root/.lkit/state/install-state.json')
 CLI = Path('/usr/local/bin/lkit')
 ORIGIN = ROOT / 'service/landscape-router.service'
 UNIT = 'landscape-router.service'
-PIN = json.loads((BASE / 'lkit-upgrade-releases.json').read_text())
+PIN = json.loads(Path(__file__).with_name('lkit-upgrade-releases.json').read_text())
 
 
 def check(condition, message):
@@ -136,12 +136,55 @@ def tree_identity(directory):
     entries = {}
     for path in sorted(directory.rglob('*')):
         metadata = path.lstat()
-        check(not stat.S_ISSOCK(metadata.st_mode), 'unexpected live socket in stopped installation')
+        check(not stat.S_ISSOCK(metadata.st_mode), f'unexpected socket in stopped installation: {path}')
         content = (os.readlink(path) if path.is_symlink()
                    else digest(path) if path.is_file() else None)
         entries[str(path.relative_to(directory))] = [metadata.st_mode, metadata.st_uid,
                                                      metadata.st_gid, content]
     return entries
+
+
+def assert_stopped_services():
+    for unit in (UNIT, 'lkit.service'):
+        facts = dict(line.split('=', 1) for line in run(
+            'systemctl', 'show', unit, '--property=MainPID,ActiveState').splitlines())
+        check(facts['MainPID'] == '0' and facts['ActiveState'] == 'inactive',
+              f'{unit} did not stop before disk migration')
+
+
+def unix_socket_paths(table):
+    lines = table.splitlines()
+    check(lines and lines[0].split() == ['Num', 'RefCount', 'Protocol', 'Flags', 'Type',
+                                        'St', 'Inode', 'Path'], 'invalid /proc/net/unix header')
+    paths = set()
+    for line in lines[1:]:
+        fields = line.split(maxsplit=7)
+        check(len(fields) in (7, 8), 'invalid /proc/net/unix row')
+        if len(fields) == 8:
+            paths.add(fields[7])
+    return paths
+
+
+def remove_stale_registration_socket(root, table):
+    # Landscape 0.28.3 leaves this runtime socket after a clean stop and removes
+    # it before listening again. Do not copy it or remove any other user file.
+    socket = root / 'data/unix_link/register.sock'
+    for directory in reversed(socket.parents):
+        check(stat.S_ISDIR(directory.lstat().st_mode),
+              f'runtime socket ancestor is not a real directory: {directory}')
+    try:
+        metadata = socket.lstat()
+    except FileNotFoundError:
+        return
+    check(stat.S_ISSOCK(metadata.st_mode), f'known runtime socket is not a socket: {socket}')
+    check(str(socket) not in unix_socket_paths(table), f'runtime socket is still held: {socket}')
+    # Preflight the entire /srv migration tree before removing even this known
+    # runtime entry. An unrelated socket must leave every existing file intact.
+    for path in sorted(root.parent.rglob('*')):
+        check(not stat.S_ISSOCK(path.lstat().st_mode) or path == socket,
+              f'unexpected socket in stopped installation: {path}')
+    socket.unlink()
+    print('PASS: removed only the stopped Landscape registration socket after checking /proc/net/unix', flush=True)
 
 
 def prepare():
@@ -168,7 +211,8 @@ def move_to_disk():
           'old release did not create its original installation-local unit registration')
     check(ROOT.stat().st_dev == STATE.stat().st_dev, 'old install was not on the system disk')
     command('systemctl', 'stop', UNIT, 'lkit.service')
-    check(service()['MainPID'] == '0', 'Landscape did not stop before disk migration')
+    assert_stopped_services()
+    remove_stale_registration_socket(ROOT, Path('/proc/net/unix').read_text())
     source = tree_identity(Path('/srv'))
     mount = WORK / 'installation-disk'
     mount.mkdir()
