@@ -2,18 +2,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::login::{LoginReply, Pending};
 use landscape_terrain_proto::ipstack::{
     CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES, SERVER_ADDR,
     SocketHandle, StackMsg,
 };
-use landscape_terrain_proto::protocol::crypto::{
-    Dir, HS_AUTH_ACK, HS_AUTH_NACK, HandshakeKeys, MasterKey, SCRYPT_LOG_N, SessionCrypto,
-    scrypt_log_n_override,
-};
-use landscape_terrain_proto::protocol::frame;
-use landscape_terrain_proto::protocol::session::{self, ServerSession, VerifyResult};
 use landscape_terrain_proto::protocol::{
-    TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN, VERSION,
+    TYPE_AUTH_REQ, TYPE_DATA, TYPE_DISCOVER, TYPE_KEEPALIVE, TYPE_TEARDOWN, frame, v6,
 };
 use landscape_terrain_proto::relay::{RelayReceiver, RelayWake, wait_for_poll};
 use landscape_terrain_proto::transport::{Link, fmt_mac};
@@ -57,38 +52,33 @@ const MAX_PEERS: usize = 4096;
 const MAX_AUTH_FAILS: u32 = 5;
 const AUTH_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_LOCKOUT: Duration = Duration::from_secs(60);
-/// Max auth failures the server counts within AUTH_WINDOW before new
-/// failures stop being recorded for lockout purposes.
-const AUTH_BUDGET: u32 = 25;
 
 pub struct ServerConfig<'a> {
     pub devs: &'a [String],
     pub ethertype: u16,
     pub mac: Option<[u8; 6]>,
-    pub psk: &'a str,
+    pub psk: Option<&'a str>,
     pub device_name: &'a str,
-    /// Ports the server is allowed to dial on 127.0.0.1; also advertised in
-    /// RESP so clients know what they may forward to.
+    /// Ports returned in the authenticated ACK and allowed for forwarding.
     pub forward_ports: &'a [u16],
     /// Discovery token: when non-empty, DISCOVER frames without it are
-    /// ignored (anti-scanning; the psk challenge-response is the real
-    /// security boundary).
+    /// ignored.
     pub discover_token: &'a str,
 }
 
 /// Per-peer connection state, keyed by the client's MAC address.
 struct Peer {
-    sess: ServerSession,
+    sid: Option<u32>,
+    pending: Option<Pending>,
+    login_generation: u64,
+    login_sid: Option<u32>,
+    login_reply: Option<LoginReply>,
     /// Interface used for the established session (pinned on AUTH success).
     ifindex: i32,
-    /// Interface that carried this handshake attempt. Duplicate captures of
-    /// the same DISCOVER reuse it, so every RESP/ACK/NACK for this attempt
-    /// leaves with one identity instead of following the last capture.
-    handshake_ifindex: i32,
     stack: Option<IpStack>,
     poll_at: Option<tokio::time::Instant>,
     listeners: Vec<SocketHandle>,
-    crypto: Option<SessionCrypto>,
+    crypto: Option<v6::Transport>,
     conns: HashMap<SocketHandle, ServerConn>,
     pending_tx: HashMap<SocketHandle, VecDeque<Vec<u8>>>,
     next_generation: u64,
@@ -141,13 +131,17 @@ impl RateBucket {
         }
     }
 
-    fn allow(&mut self) -> bool {
+    fn has_token(&mut self) -> bool {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
         self.last_refill = now;
         self.last_seen = now;
         self.tokens = (self.tokens + elapsed * self.rate).min(self.rate);
-        if self.tokens >= 1.0 {
+        self.tokens >= 1.0
+    }
+
+    fn allow(&mut self) -> bool {
+        if self.has_token() {
             self.tokens -= 1.0;
             true
         } else {
@@ -190,12 +184,6 @@ impl AuthGuard {
         }
     }
 
-    /// Remaining lockout duration, if any (used for the user-facing NACK).
-    fn remaining(&self) -> Option<Duration> {
-        self.locked_until
-            .map(|t| t.saturating_duration_since(Instant::now()))
-    }
-
     fn record_failure(&mut self) {
         self.last_seen = Instant::now();
         let now = Instant::now();
@@ -233,31 +221,19 @@ pub async fn run(
     cfg: &ServerConfig<'_>,
     shutdown: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if cfg.psk.len() < 12 {
-        eprintln!(
-            "warning: psk is only {} chars — it is stretched with scrypt at startup, but prefer a long random secret over a passphrase",
-            cfg.psk.len()
-        );
-    }
     let mut tx = Link::open(cfg.devs, cfg.ethertype, cfg.mac)?;
-    // The psk is stretched into a master key once at startup (scrypt); all
-    // derivations below feed on it, so a weak psk costs an offline attacker
-    // ~32 MiB and ~100 ms per guess instead of a single sha256. The scrypt
-    // exponent override is resolved here, once, so a differing value on a
-    // client is visible in diagnostics instead of silently diverging keys.
-    let log_n = scrypt_log_n_override();
-    if log_n != SCRYPT_LOG_N {
-        println!(
-            "note: LANDSCAPE_TERRAIN_SCRYPT_LOG_N={log_n} override active — clients must be started with the same exponent"
-        );
-    }
-    let master = MasterKey::derive_with_log_n(cfg.psk.as_bytes(), log_n);
+    let private = super::auth::identity()?;
+    let public = v6::public_key(&private);
+    let gate = v6::Discovery::new(cfg.psk);
+    let mut checks = tokio::task::JoinSet::<([u8; 6], u64, Pending, bool)>::new();
+    let mut generation = 0u64;
+    let mut login_rate = RateBucket::new(4.);
     let mut peers: HashMap<[u8; 6], Peer> = HashMap::new();
     let mut rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
     let mut fail_rate: HashMap<[u8; 6], RateBucket> = HashMap::new();
     let mut guards: HashMap<[u8; 6], AuthGuard> = HashMap::new();
     let mut global_rate = RateBucket::new(GLOBAL_RATE_PER_SEC);
-    let mut auth_fail_ts: VecDeque<Instant> = VecDeque::new();
+
     let allowed: Arc<[u16]> = Arc::from(cfg.forward_ports);
     let (to_tx, mut to_rx) = mpsc::channel::<ServerStackMsg>(512);
     let mut pending_tx_bytes = 0usize;
@@ -296,258 +272,181 @@ pub async fn run(
         let deadline = peers.values().filter_map(|peer| peer.poll_at).min();
         tokio::select! {
             _ = &mut shutdown_rx => break,
+            Some(result) = checks.join_next(), if !checks.is_empty() => {
+                let Ok((mac, attempt, mut pending, ok)) = result else {
+                    continue;
+                };
+                let Some(peer) = peers
+                    .get_mut(&mac)
+                    .filter(|p| p.login_generation == attempt)
+                else {
+                    continue;
+                };
+                let (kind, ports) = if ok {
+                    guards.entry(mac).or_default().record_success();
+                    (
+                        frame::TYPE_AUTH_ACK,
+                        cfg.forward_ports
+                            .iter()
+                            .flat_map(|p| p.to_be_bytes())
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    guards.entry(mac).or_default().record_failure();
+                    (frame::TYPE_AUTH_NACK, Vec::new())
+                };
+                pending.reply.encrypted = pending.channel.seal(kind, pending.sid, &ports)?;
+                pending.reply.sid = pending.sid;
+                pending.reply.interface = pending.interface;
+                tx.send_on(
+                    pending.interface,
+                    &mac,
+                    cfg.ethertype,
+                    &pending.reply.encrypted,
+                )?;
+                peer.login_reply = Some(pending.reply);
+                if !ok {
+                    continue;
+                }
+                teardown_peer(peer, &mut pending_tx_bytes);
+                let mut stack = IpStack::new(SERVER_ADDR);
+                peer.listeners = (0..LISTENER_POOL_SIZE)
+                    .map(|_| stack.add_listener(INTERNAL_PORT))
+                    .collect();
+                peer.stack = Some(stack);
+                peer.poll_at = Some(tokio::time::Instant::now());
+                peer.sid = Some(pending.sid);
+                peer.crypto = Some(pending.channel);
+                peer.ifindex = pending.interface;
+                peer.last_seen = Instant::now();
+                println!(
+                    "client {} authenticated, session {}",
+                    fmt_mac(&mac),
+                    pending.sid
+                );
+            }
             r = tx.recv_with_meta(cfg.ethertype) => {
                 let (f, ifindex) = r?;
-                let l = match frame::decode(&f.payload) {
-                    Ok(l) => l,
-                    // A well-formed TERR frame in a version we do not speak
-                    // gets a plaintext reply so the peer can report the gap
-                    // instead of timing out into silence; anything else
-                    // stays dropped. Bounded by the global bucket so a
-                    // spoofed flood cannot amplify into replies.
-                    Err(frame::FrameError::BadVersion) => {
-                        if global_rate.allow() {
-                            let reply = frame::encode_version_mismatch();
-                            let _ = tx.send_on(ifindex, &f.src, cfg.ethertype, &reply);
-                            println!(
-                                "frame from {} with an unsupported protocol version, sent VERSION_MISMATCH (v{VERSION})",
-                                fmt_mac(&f.src)
-                            );
-                        }
-                        continue;
-                    }
-                    Err(_) => continue,
+                let Ok(l) = v6::decode(&f.payload) else {
+                    continue;
                 };
                 let mac = f.src;
                 match l.msg_type {
-                    TYPE_DISCOVER => {
-                        // Global bucket first: a per-MAC limiter is useless
-                        // against per-frame MAC spoofing.
-                        if !global_rate.allow() {
-                            println!("discover from {} dropped (global rate)", fmt_mac(&mac));
-                            continue;
-                        }
-                        if !rate_allow(&mut rate, &mac) {
-                            println!("discover from {} rate-limited", fmt_mac(&mac));
-                            continue;
-                        }
-                        // Sealed with the psk-derived pre-discovery key:
-                        // only a psk-holder is even heard, and the client
-                        // name/token stay hidden.
-                        let Some((discover_id, name, token)) =
-                            session::open_discover(&l, &master)
-                        else {
-                            println!("discover from {} ignored (cannot open)", fmt_mac(&mac));
-                            continue;
-                        };
-                        if !cfg.discover_token.is_empty()
-                            && token.as_deref() != Some(cfg.discover_token)
+                    TYPE_DISCOVER | v6::HELLO => {
+                        if !global_rate.allow()
+                            || (rate.len() >= MAX_PEERS && !rate.contains_key(&mac))
+                            || !rate_allow(&mut rate, &mac)
                         {
+                            continue;
+                        }
+                        let Some(body) = gate.open(&l) else { continue };
+                        if l.msg_type == TYPE_DISCOVER {
+                            if body.len() < 8 || body[8..] != *cfg.discover_token.as_bytes() {
+                                continue;
+                            }
                             println!(
-                                "discover from {} ignored (token mismatch)",
-                                fmt_mac(&mac)
+                                "discover {} via interface {}",
+                                u64::from_be_bytes(body[..8].try_into().expect("8 bytes")),
+                                ifindex
                             );
-                            continue;
+                            let mut answer = body[..8].to_vec();
+                            answer.extend_from_slice(&public);
+                            answer.extend_from_slice(cfg.device_name.as_bytes());
+                            tx.send_on(
+                                ifindex,
+                                &mac,
+                                cfg.ethertype,
+                                &gate.encode(frame::TYPE_RESP, 0, &answer)?,
+                            )?;
+                        } else {
+                            if l.session_id == 0
+                                || body.get(..32) != Some(public.as_slice())
+                                || (peers.len() >= MAX_PEERS && !peers.contains_key(&mac))
+                            {
+                                continue;
+                            }
+                            let peer = peers
+                                .entry(mac)
+                                .or_insert_with(|| new_peer(to_tx.clone(), allowed.clone()));
+                            if peer.login_sid != Some(l.session_id) {
+                                let Some(p) = Pending::new(l.session_id, ifindex, &body[32..], &private)
+                                else {
+                                    continue;
+                                };
+                                generation += 1;
+                                peer.login_generation = generation;
+                                peer.login_sid = Some(l.session_id);
+                                peer.pending = Some(p);
+                                peer.login_reply = None;
+                                if peer.sid.is_none() {
+                                    peer.last_seen = Instant::now();
+                                }
+                            }
+                            if let Some(p) = &peer.pending {
+                                tx.send_on(p.interface, &mac, cfg.ethertype, &p.welcome)?;
+                            }
                         }
-                        if !peers.contains_key(&mac) && peers.len() >= MAX_PEERS {
-                            println!("discover from {} dropped (peer table full)", fmt_mac(&mac));
-                            continue;
-                        }
-                        let peer = peers.entry(mac).or_insert_with(|| new_peer(to_tx.clone(), allowed.clone()));
-                        // A bridge and its slave capture the same DISCOVER.
-                        // Keep one reply interface for the whole attempt: a
-                        // duplicate reuses the ifindex that answered first, so
-                        // RESP and AUTH_ACK carry the same source MAC.
-                        if starts_new_attempt(peer.sess.pending_discover_id(), discover_id) {
-                            peer.handshake_ifindex = ifindex;
-                        }
-                        // Never disturb an active session: only a completed
-                        // AUTH_REQ replaces it, so a forged DISCOVER cannot
-                        // kick a live client.
-                        let resp = peer.sess.begin_discover(
-                            discover_id,
-                            cfg.device_name,
-                            cfg.forward_ports,
-                            &master,
-                        );
-                        tx.send_on(peer.handshake_ifindex, &mac, cfg.ethertype, &resp)?;
-                        println!("discover from {} '{}'", fmt_mac(&mac), name);
                     }
                     TYPE_AUTH_REQ => {
-                        if !global_rate.allow() {
-                            println!("auth attempt dropped (global rate)");
-                            continue;
-                        }
                         let Some(peer) = peers.get_mut(&mac) else {
-                            println!("auth attempt from unknown peer {}, ignored", fmt_mac(&mac));
                             continue;
                         };
-                        if !rate_allow(&mut rate, &mac) {
-                            println!("auth attempt from {} rate-limited", fmt_mac(&mac));
+                        if let Some(reply) = peer.login_reply.as_ref().filter(|r| r.matches(&l)) {
+                            if global_rate.allow() && rate_allow(&mut rate, &mac) {
+                                tx.send_on(reply.interface, &mac, cfg.ethertype, &reply.encrypted)?;
+                            }
                             continue;
                         }
-                        let reply_ifindex = if peer.handshake_ifindex != 0 {
-                            peer.handshake_ifindex
-                        } else {
-                            peer.ifindex
+                        let Some(p) = peer.pending.as_mut().filter(|p| p.sid == l.session_id) else {
+                            continue;
                         };
-                        let guard = guards.entry(mac).or_default();
-                        // MACs with an active session are never locked out:
-                        // an unauthenticated attacker could otherwise spoof
-                        // the victim's MAC to freeze their re-authentication.
-                        if guard.blocked() && peer.sess.session_id().is_none() {
-                            if let Some(rem) = guard.remaining() {
-                                // Tell the user why: retried too often. Sealed
-                                // with the handshake keys when the handshake
-                                // is still pending, so spoofed lockout NACKs
-                                // are rejected; plaintext only when there is
-                                // no pending nonce to seal with.
-                                let reason = format!(
-                                    "too many auth failures, locked out for {}s",
-                                    rem.as_secs()
-                                );
-                                let nack = match peer.sess.take_server_nonce() {
-                                    Some(s_nonce) => {
-                                        let hkey = HandshakeKeys::derive(&master, s_nonce);
-                                        hkey.seal_frame(
-                                            Dir::S2C,
-                                            frame::TYPE_AUTH_NACK,
-                                            0,
-                                            HS_AUTH_NACK,
-                                            &frame::encode_auth_nack_payload(&reason),
-                                        )
-                                    }
-                                    None => frame::encode_auth_nack(&reason),
-                                };
-                                let _ = tx.send_on(reply_ifindex, &mac, cfg.ethertype, &nack);
-                            }
-                            println!("auth attempt from {} ignored (lockout)", fmt_mac(&mac));
+                        let Some(credentials) = p.credentials(&l) else {
+                            continue;
+                        };
+                        let mut pending = peer.pending.take().expect("just checked");
+                        if checks.len() >= 4
+                            || !login_rate.allow()
+                            || guards.entry(mac).or_default().blocked()
+                        {
+                            let reply = pending
+                                .channel
+                                .seal(frame::TYPE_AUTH_NACK, pending.sid, &[])?;
+                            tx.send_on(pending.interface, &mac, cfg.ethertype, &reply)?;
                             continue;
                         }
-                        let mut drop_peer = false;
-                        match peer.sess.verify_auth(&l, &master) {
-                            VerifyResult::Accepted {
-                                sid,
-                                keys,
-                                server_proof,
-                                hkey,
-                                user,
-                            } => {
-                                guards.entry(mac).or_default().record_success();
-                                teardown_peer(peer, &mut pending_tx_bytes);
-                                let mut stack = IpStack::new(SERVER_ADDR);
-                                let listeners = (0..LISTENER_POOL_SIZE)
-                                    .map(|_| stack.add_listener(INTERNAL_PORT))
-                                    .collect();
-                                peer.stack = Some(stack);
-                                peer.poll_at = Some(tokio::time::Instant::now());
-                                peer.listeners = listeners;
-                                peer.crypto = Some(SessionCrypto::new(keys, Dir::S2C));
-                                // Continue the session on the interface that
-                                // carried the handshake, not on whichever
-                                // duplicate capture happened to arrive last.
-                                peer.ifindex = reply_ifindex;
-                                peer.last_seen = Instant::now();
-                                // The AUTH_ACK is sealed with the handshake
-                                // keys, so only a psk-holder can open it.
-                                let ack = hkey.seal_frame(
-                                    Dir::S2C,
-                                    frame::TYPE_AUTH_ACK,
-                                    sid,
-                                    HS_AUTH_ACK,
-                                    &frame::encode_auth_ack_payload(&server_proof),
-                                );
-                                tx.send_on(reply_ifindex, &mac, cfg.ethertype, &ack)?;
-                                println!(
-                                    "client {} '{}' authenticated, session {sid}",
-                                    fmt_mac(&mac),
-                                    user
-                                );
-                            }
-                            VerifyResult::Rejected { reason, hkey } => {
-                                // The client necessarily holds the handshake
-                                // keys (its AUTH_REQ opened), so the NACK is
-                                // sealed: a spoofed plaintext NACK cannot end
-                                // the handshake.
-                                let nack = hkey.seal_frame(
-                                    Dir::S2C,
-                                    frame::TYPE_AUTH_NACK,
-                                    0,
-                                    HS_AUTH_NACK,
-                                    &frame::encode_auth_nack_payload(&reason),
-                                );
-                                tx.send_on(reply_ifindex, &mac, cfg.ethertype, &nack)?;
-                                let active = peer.sess.session_id().is_some();
-                                if !active {
-                                    // Failures only count against MACs without
-                                    // an active session (a spoofing attacker
-                                    // must not be able to lock out a live
-                                    // client), and the server-wide budget
-                                    // bounds how many victims a flood can
-                                    // lock out.
-                                    let now = Instant::now();
-                                    while auth_fail_ts
-                                        .front()
-                                        .is_some_and(|t| now.duration_since(*t) > AUTH_WINDOW)
-                                    {
-                                        auth_fail_ts.pop_front();
-                                    }
-                                    if (auth_fail_ts.len() as u32) < AUTH_BUDGET {
-                                        guards.entry(mac).or_default().record_failure();
-                                        auth_fail_ts.push_back(now);
-                                    }
-                                }
-                                drop_peer = !active;
-                                println!("auth rejected for {}: {reason}", fmt_mac(&mac));
-                            }
-                            VerifyResult::Unauthentic(reason) => {
-                                // Not an auth attempt at all (could not even
-                                // be opened): no lockout accounting, no peer
-                                // teardown, and the pending nonce survives —
-                                // a MAC-spoofed garbage frame can neither
-                                // lock out nor interrupt a connecting client.
-                                println!("unauthentic auth frame from {} ({reason})", fmt_mac(&mac));
-                            }
-                        }
-                        if drop_peer
-                            && let Some(mut peer) = peers.remove(&mac) {
-                                teardown_peer(&mut peer, &mut pending_tx_bytes);
-                            }
+                        let attempt = peer.login_generation;
+                        checks.spawn_blocking(move || {
+                            (mac, attempt, pending, super::auth::verify(credentials))
+                        });
                     }
                     TYPE_KEEPALIVE => {
                         let Some(peer) = peers.get_mut(&mac) else {
                             continue;
                         };
-                        if peer.sess.session_id() != Some(l.session_id) {
+                        if peer.sid != Some(l.session_id) {
                             continue;
                         }
                         let Some(crypto) = peer.crypto.as_mut() else {
                             continue;
                         };
-                        if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_none() {
-                            if !fail_allow(&mut fail_rate, &mac) {
-                                continue;
-                            }
+                        if open_session(crypto, &l, &mut fail_rate, mac).is_none() {
                             continue;
                         }
                         peer.last_seen = Instant::now();
-                        let echo = crypto.seal(TYPE_KEEPALIVE, l.session_id, &[]);
+                        let echo = crypto.seal(TYPE_KEEPALIVE, l.session_id, &[])?;
                         tx.send_on(peer.ifindex, &mac, cfg.ethertype, &echo)?;
                     }
                     TYPE_DATA => {
                         let Some(peer) = peers.get_mut(&mac) else {
                             continue;
                         };
-                        if peer.sess.session_id() != Some(l.session_id) {
+                        if peer.sid != Some(l.session_id) {
                             continue;
                         }
                         let Some(crypto) = peer.crypto.as_mut() else {
                             continue;
                         };
-                        let Some(plain) = crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload) else {
-                            if !fail_allow(&mut fail_rate, &mac) {
-                                continue;
-                            }
+                        let Some(plain) = open_session(crypto, &l, &mut fail_rate, mac) else {
                             continue;
                         };
                         peer.last_seen = Instant::now();
@@ -567,14 +466,11 @@ pub async fn run(
                     TYPE_TEARDOWN => {
                         let mut drop_peer = false;
                         if let Some(peer) = peers.get_mut(&mac)
-                            && peer.sess.session_id() == Some(l.session_id)
-                                && let Some(crypto) = peer.crypto.as_mut() {
-                                    if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
-                                        drop_peer = true;
-                                    } else if !fail_allow(&mut fail_rate, &mac) {
-                                        continue;
-                                    }
-                                }
+                            && peer.sid == Some(l.session_id)
+                            && let Some(crypto) = peer.crypto.as_mut()
+                        {
+                            drop_peer = open_session(crypto, &l, &mut fail_rate, mac).is_some();
+                        }
                         if drop_peer {
                             println!("client {} sent teardown, dropping session", fmt_mac(&mac));
                             if let Some(mut peer) = peers.remove(&mac) {
@@ -610,7 +506,7 @@ pub async fn run(
                                 }
                             }
                         }
-                        if let Some(sid) = peer.sess.session_id() {
+                        if let Some(sid) = peer.sid {
                             pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes, &relay_wake)?;
                         }
                     }
@@ -619,7 +515,7 @@ pub async fn run(
                 let ready = ready_peers(&peers, keys);
                 for mac in ready {
                     if let Some(peer) = peers.get_mut(&mac)
-                        && let Some(sid) = peer.sess.session_id() {
+                        && let Some(sid) = peer.sid {
                         pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes, &relay_wake)?;
                     }
                 }
@@ -629,7 +525,7 @@ pub async fn run(
                 let due = due_peers(&peers, now);
                 for mac in due {
                     if let Some(peer) = peers.get_mut(&mac)
-                        && let Some(sid) = peer.sess.session_id() {
+                        && let Some(sid) = peer.sid {
                         pump_peer(peer, &mac, &mut tx, cfg.ethertype, sid, &mut pending_tx_bytes, &relay_wake)?;
                     }
                 }
@@ -638,16 +534,16 @@ pub async fn run(
                 let now = Instant::now();
                 rate.retain(|_, b| now.duration_since(b.last_seen) <= STALE_AFTER);
                 fail_rate.retain(|_, b| now.duration_since(b.last_seen) <= STALE_AFTER);
-                guards.retain(|_, g| now.duration_since(g.last_seen) <= STALE_AFTER);
+                guards.retain(|_, g| now.duration_since(g.last_seen) <= AUTH_WINDOW.max(AUTH_LOCKOUT));
                 let stale: Vec<[u8; 6]> = peers
                     .iter()
-                    .filter(|(_, p)| now.duration_since(p.last_seen) > STALE_AFTER)
+                    .filter(|(_, p)| now.duration_since(p.last_seen) > if p.pending.is_some() && p.sid.is_none() { Duration::from_secs(300) } else { STALE_AFTER })
                     .map(|(m, _)| *m)
                     .collect();
                 for mac in stale {
                     if let Some(peer) = peers.get_mut(&mac)
-                        && let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
-                            let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
+                        && let (Some(sid), Some(crypto)) = (peer.sid, peer.crypto.as_mut()) {
+                            let raw = crypto.seal(TYPE_TEARDOWN, sid, &[])?;
                             let _ = tx.send_on(peer.ifindex, &mac, cfg.ethertype, &raw);
                         }
                     if let Some(mut peer) = peers.remove(&mac) {
@@ -668,8 +564,10 @@ pub async fn run(
     let notified = tokio::time::timeout(Duration::from_secs(2), async {
         let mut n = 0;
         for (mac, peer) in peers.iter_mut() {
-            if let (Some(sid), Some(crypto)) = (peer.sess.session_id(), peer.crypto.as_mut()) {
-                let raw = crypto.seal(TYPE_TEARDOWN, sid, &[]);
+            if let (Some(sid), Some(crypto)) = (peer.sid, peer.crypto.as_mut()) {
+                let Ok(raw) = crypto.seal(TYPE_TEARDOWN, sid, &[]) else {
+                    continue;
+                };
                 if tx.send_on(peer.ifindex, mac, cfg.ethertype, &raw).is_ok() {
                     n += 1;
                 }
@@ -716,31 +614,39 @@ fn due_peers(peers: &HashMap<[u8; 6], Peer>, now: tokio::time::Instant) -> Vec<[
         .collect()
 }
 
-/// A DISCOVER starts a new handshake attempt when there is no pending
-/// handshake or it carries a different discover_id. Duplicate captures of one
-/// attempt must keep the interface that answered first.
-fn starts_new_attempt(pending_discover_id: Option<u64>, discover_id: u64) -> bool {
-    pending_discover_id != Some(discover_id)
-}
-
 fn rate_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
     map.entry(*mac).or_default().allow()
 }
 
-/// Spend one failed-open token for a MAC. Once the per-MAC budget is
-/// drained, session frames from that MAC are dropped before the decrypt
-/// attempt, so a spoofed flood stops costing work on the event loop.
-fn fail_allow(map: &mut HashMap<[u8; 6], RateBucket>, mac: &[u8; 6]) -> bool {
-    map.entry(*mac)
-        .or_insert_with(|| RateBucket::new(SESSION_FAIL_PER_SEC))
-        .allow()
+/// Charge only failed decryptions. Authenticated data is limited by the relay, not this bucket.
+fn open_session(
+    crypto: &mut v6::Transport,
+    frame: &frame::Frame<'_>,
+    failures: &mut HashMap<[u8; 6], RateBucket>,
+    mac: [u8; 6],
+) -> Option<Vec<u8>> {
+    let budget = failures
+        .entry(mac)
+        .or_insert_with(|| RateBucket::new(SESSION_FAIL_PER_SEC));
+    if !budget.has_token() {
+        return None;
+    }
+    let plaintext = crypto.open(frame);
+    if plaintext.is_none() {
+        budget.tokens -= 1.0;
+    }
+    plaintext
 }
 
 fn new_peer(to_tx: mpsc::Sender<ServerStackMsg>, allowed: Arc<[u16]>) -> Peer {
     Peer {
-        sess: ServerSession::new(),
+        sid: None,
+        pending: None,
+        login_generation: 0,
+        login_sid: None,
+        login_reply: None,
         ifindex: 0,
-        handshake_ifindex: 0,
+
         stack: None,
         poll_at: None,
         listeners: Vec::new(),
@@ -764,6 +670,7 @@ fn teardown_peer(peer: &mut Peer, pending_tx_bytes: &mut usize) {
         .map(Vec::len)
         .sum::<usize>();
     *pending_tx_bytes = pending_tx_bytes.saturating_sub(dropped);
+    peer.sid = None;
     peer.stack = None;
     peer.poll_at = None;
     peer.listeners.clear();
@@ -793,7 +700,7 @@ fn pump_peer(
 
     // Process ingress before accepting sockets or draining their buffers.
     for pkt in stack.poll() {
-        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt)?;
         tx.send_on(peer.ifindex, peer_mac, ethertype, &raw)?;
     }
 
@@ -886,7 +793,7 @@ fn pump_peer(
     // Flush writes, FINs and receive-window updates in this turn, rather
     // than relying on a later periodic tick to advance the stack.
     for pkt in stack.poll() {
-        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt)?;
         tx.send_on(peer.ifindex, peer_mac, ethertype, &raw)?;
     }
     peer.poll_at = stack
@@ -1176,15 +1083,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_discover_keeps_the_same_reply_interface() {
-        // First capture or a different attempt: pick the current interface.
-        assert!(starts_new_attempt(None, 7));
-        assert!(starts_new_attempt(Some(6), 7));
-        // The bridge/slave re-capture of the same attempt must not move it.
-        assert!(!starts_new_attempt(Some(7), 7));
-    }
-
-    #[test]
     fn rate_bucket_allows_burst_then_limits() {
         let mut b = RateBucket::new(RATE_PER_SEC);
         for _ in 0..10 {
@@ -1202,11 +1100,11 @@ mod tests {
             g.record_failure();
         }
         assert!(g.blocked());
-        assert!(g.remaining().is_some());
+        assert!(g.locked_until.is_some());
         // Once unlocked, everything is clean again.
         g.record_success();
         assert!(!g.blocked());
-        assert!(g.remaining().is_none());
+        assert!(g.locked_until.is_none());
     }
 
     #[test]

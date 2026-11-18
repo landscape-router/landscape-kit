@@ -51,6 +51,10 @@ pub struct Frame<'a> {
 }
 
 pub fn decode(data: &[u8]) -> Result<Frame<'_>, FrameError> {
+    decode_version(data, VERSION)
+}
+
+pub fn decode_version(data: &[u8], expected: u8) -> Result<Frame<'_>, FrameError> {
     if data.len() < HEADER_LEN {
         return Err(FrameError::TooShort);
     }
@@ -62,7 +66,7 @@ pub fn decode(data: &[u8]) -> Result<Frame<'_>, FrameError> {
     // VERSION_MISMATCH is the one frame type accepted across versions: a
     // peer speaking another version must be able to read the reply that
     // tells it which version the sender speaks.
-    if version != VERSION && msg_type != TYPE_VERSION_MISMATCH {
+    if version != expected && msg_type != TYPE_VERSION_MISMATCH {
         return Err(FrameError::BadVersion);
     }
     let len = u16::from_be_bytes([data[10], data[11]]) as usize;
@@ -114,6 +118,8 @@ pub fn encode(msg_type: u8, session_id: u32, seq: u32, payload: &[u8]) -> Vec<u8
 
 pub fn type_name(t: u8) -> &'static str {
     match t {
+        super::v6::HELLO => "NOISE_HELLO",
+        super::v6::WELCOME => "NOISE_WELCOME",
         TYPE_DISCOVER => "DISCOVER",
         TYPE_RESP => "RESP",
         TYPE_AUTH_REQ => "AUTH_REQ",

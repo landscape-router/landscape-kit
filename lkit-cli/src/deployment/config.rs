@@ -104,9 +104,11 @@ pub(crate) fn default_flare_section() -> FlareSection {
 }
 
 /// `[flare]` 配置段:daemon 托管的 Landscape Terrain 服务端(L2 防失联通道)。
-/// 宽容读取:段缺失或损坏时由 daemon 生成随机 psk 并写回,不影响其它功能。
+/// A missing policy on an existing PSK-only configuration selects private discovery.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FlareSection {
+    #[serde(default)]
+    pub public_discovery: Option<bool>,
     #[serde(default)]
     pub psk: Option<String>,
     #[serde(default = "default_device_name")]
@@ -337,25 +339,27 @@ pub(crate) fn load_language() -> Option<Language> {
 /// 读取 `[flare]` 配置段。宽容读取:文件缺失、TOML 损坏或段缺失时一律返回
 /// `None`,由 daemon 决定不启动 flare 服务,绝不阻断 daemon 主循环。
 pub(crate) fn load_flare() -> Option<FlareSection> {
+    read_flare().ok().flatten()
+}
+
+pub(crate) fn read_flare() -> Result<Option<FlareSection>, InstallError> {
     #[derive(Deserialize)]
     struct FlareConfig {
-        #[serde(default)]
         flare: Option<FlareSection>,
     }
-    let text = std::fs::read_to_string(layout::territory_config_file()).ok()?;
-    let config: FlareConfig = toml::from_str(&text).ok()?;
-    config.flare
+    let text = match std::fs::read_to_string(layout::territory_config_file()) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(InstallError::Io(error)),
+    };
+    toml::from_str::<FlareConfig>(&text)
+        .map(|c| c.flare)
+        .map_err(|_| InstallError::CorruptedState("invalid flare configuration".into()))
 }
 
 /// flare psk 的最小长度。服务端对短于 12 字符的 psk 只告警,供给路径(安装、
 /// `lkit flare setup`)直接拒绝,保证恢复通道有足够的离线猜测成本。
 pub(crate) const FLARE_PSK_MIN_LENGTH: usize = 12;
-
-/// 生成一个强随机 flare psk:32 字节随机数,hex 编码为 64 字符。
-pub(crate) fn generate_psk() -> String {
-    let bytes: [u8; 32] = rand::random();
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 /// 把 `[flare]` 段写回 `config.toml`。与 `write_language` 相同的定点写语义:
 /// 用 `toml_edit` 保留注释、未知 section/字段与原有顺序;`None` 字段从段中
@@ -375,7 +379,7 @@ pub(crate) fn update_flare(
     update: impl FnOnce(&mut FlareSection),
 ) -> Result<FlareSection, InstallError> {
     let _lock = config_lock()?;
-    let mut section = load_flare().unwrap_or_else(default_flare_section);
+    let mut section = read_flare()?.unwrap_or_else(default_flare_section);
     update(&mut section);
     save_flare_locked(&section)?;
     Ok(section)
@@ -419,6 +423,11 @@ fn save_flare_locked(section: &FlareSection) -> Result<(), InstallError> {
     let flare = document["flare"]
         .as_table_mut()
         .expect("flare is a table after normalization");
+    if let Some(public) = section.public_discovery {
+        flare["public_discovery"] = toml_edit::value(public);
+    } else {
+        flare.remove("public_discovery");
+    }
     set_optional_string(&mut *flare, "psk", section.psk.as_deref());
     // 缺省字段不写入:缺失时由 serde 默认值补齐,与"段内未配置"语义一致。
     if section.device_name != default_device_name() {
@@ -1521,16 +1530,6 @@ ui = 42
     }
 
     #[test]
-    fn generate_psk_is_long_unique_and_hex() {
-        let first = generate_psk();
-        let second = generate_psk();
-        assert_eq!(first.len(), 64, "32 random bytes hex-encoded");
-        assert!(first.len() >= FLARE_PSK_MIN_LENGTH);
-        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_ne!(first, second, "two generations must differ");
-    }
-
-    #[test]
     fn save_flare_creates_a_minimal_config_on_missing_file() {
         use std::os::unix::fs::MetadataExt;
 
@@ -1585,6 +1584,7 @@ devices = "eth0"
         )
         .unwrap();
         let section = FlareSection {
+            public_discovery: None,
             psk: Some("new-psk-value".into()),
             device_name: "landscape-router".into(),
             mac: None,

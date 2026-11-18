@@ -84,6 +84,7 @@ fn dash_fixture() -> DashFixture {
         forward_edit: false,
         forward_error: None,
         exit_confirming: false,
+        modern: false,
         resume_form: None,
         session_ready: false,
         connection: ConnectionState::Searching,

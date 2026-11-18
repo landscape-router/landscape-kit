@@ -60,3 +60,39 @@
 - 说明：本地服务保持连接且不主动关闭时，channel 消失、会话销毁和服务端退出均使
   转发任务退出。显式 `PeerEof` 只关闭写方向，仍能转发本地服务的响应；之后销毁会话
   也能取消已经半关闭的任务，避免 Flare 重载后遗留 socket。
+
+## FLR-37
+
+**同一网段的两台同名设备可以分别选中**
+
+- 测试层：containerlab e2e（CI）
+- 状态：`已覆盖`
+- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[拓扑](../../../../scripts/flare/containerlab/rescue.clab.yml)
+- 说明：延迟一侧响应，按两个指纹分别建立映射，HTTP 响应标记 A/B。扫描不建立会话。
+
+## FLR-38
+
+**本地密码认证与端口服务认证独立**
+
+- 测试层：containerlab e2e（CI）
+- 状态：`已覆盖`
+- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[拓扑](../../../../scripts/flare/containerlab/rescue.clab.yml)
+- 说明：Debian 与 Alpine 的 root 密码可用，锁定后拒绝。无 sshd 时 HTTP 可用。SSH 映射内验证无密钥拒绝、持正确密钥成功。
+
+## FLR-39
+
+**Landscape 晚安装及改密**
+
+- 测试层：containerlab e2e（CI）
+- 状态：`已覆盖`
+- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[拓扑](../../../../scripts/flare/containerlab/rescue.clab.yml)
+- 说明：daemon 启动后挂入安装记录和配置，Web 服务离线时登录。更新密码后旧密码失败，新密码成功。
+
+## FLR-40
+
+**私有发现与旧版互通**
+
+- 测试层：containerlab e2e（CI）
+- 状态：`已覆盖`
+- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[拓扑](../../../../scripts/flare/containerlab/rescue.clab.yml)
+- 说明：未持正确 PSK 的客户端发现不了私有设备。目标离线时连接失败。新客户端使用旧恢复码与固定版本的真实 v5 daemon 完成 HTTP 转发并提示升级。

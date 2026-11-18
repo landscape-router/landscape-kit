@@ -43,14 +43,7 @@ pub(super) struct ConsoleApp {
     pub(super) takeover_choice: usize,
     /// Overview「部署 daemon」动作的确认层与后台执行状态。
     pub(super) deploy_daemon_confirming: bool,
-    /// 部署确认弹窗中输入的急救恢复码(flare psk,编辑中为明文,渲染时掩码)。
-    /// 留空则由 daemon 首启自动生成。
-    pub(super) deploy_psk: String,
-    /// 急救恢复码的二次确认输入:两次不一致时拒绝部署。
-    pub(super) deploy_psk_confirmation: String,
-    /// 部署确认弹窗当前选中的单元(psk、确认或开始部署动作行)。
-    pub(super) deploy_psk_field: PskDialogField,
-    pub(super) deploy_psk_editing: bool,
+    pub(super) deploy_cancel_selected: bool,
     /// Overview「查看/修改急救恢复码」弹窗:展示当前 `[flare]` 段 psk 明文,
     /// 内嵌 psk 与二次确认两个输入框,保存时校验一致后写回。
     pub(super) show_psk: bool,
@@ -88,10 +81,7 @@ impl ConsoleApp {
             flare: FlareDialog::default(),
             takeover_choice: 0,
             deploy_daemon_confirming: false,
-            deploy_psk: String::new(),
-            deploy_psk_confirmation: String::new(),
-            deploy_psk_field: PskDialogField::Psk,
-            deploy_psk_editing: false,
+            deploy_cancel_selected: false,
             show_psk: false,
             show_psk_value: String::new(),
             show_psk_confirmation: String::new(),
@@ -242,18 +232,7 @@ impl ConsoleApp {
         if self.exit_state == ExitState::Confirming {
             return;
         }
-        // 部署弹窗:粘贴直接追加到当前聚焦的急救恢复码字段(自动进入编辑态)。
         if self.deploy_daemon_confirming {
-            self.deploy_psk_editing = true;
-            if let Some(target) = self.deploy_psk_value_mut() {
-                let remaining = 1024_usize.saturating_sub(target.chars().count());
-                target.extend(
-                    value
-                        .chars()
-                        .filter(|character| !character.is_control())
-                        .take(remaining),
-                );
-            }
             return;
         }
         // 查看/修改弹窗:粘贴直接追加到当前聚焦的字段(自动进入编辑态)。
@@ -457,7 +436,6 @@ impl ConsoleApp {
             || self.backup.editing
             || self.update.editing
             || self.reinit.editing
-            || self.deploy_psk_editing
             || self.show_psk_editing
             || self.flare.editing
             || self

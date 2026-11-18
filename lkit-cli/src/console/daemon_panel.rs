@@ -118,12 +118,7 @@ impl ConsoleApp {
     /// 打开「部署 daemon」确认弹窗:预填既有急救恢复码(通常为空,留空自动
     /// 生成),复位二次确认与导航。Overview 动作行与安装阻断弹框共用。
     pub(super) fn open_deploy_dialog(&mut self) {
-        self.deploy_psk = crate::deployment::config::load_flare()
-            .and_then(|section| section.psk)
-            .unwrap_or_default();
-        self.deploy_psk_confirmation.clear();
-        self.deploy_psk_field = PskDialogField::Psk;
-        self.deploy_psk_editing = false;
+        self.deploy_cancel_selected = false;
         self.deploy_daemon_confirming = true;
     }
 
@@ -140,16 +135,6 @@ impl ConsoleApp {
         self.show_psk = true;
     }
 
-    /// 部署确认弹窗当前字段的值(编辑、粘贴与删除的目标;动作行无值)。
-    pub(super) fn deploy_psk_value_mut(&mut self) -> Option<&mut String> {
-        match self.deploy_psk_field {
-            PskDialogField::Psk => Some(&mut self.deploy_psk),
-            PskDialogField::Confirmation => Some(&mut self.deploy_psk_confirmation),
-            PskDialogField::Action | PskDialogField::Cancel => None,
-        }
-    }
-
-    /// 查看/修改弹窗当前字段的值(编辑、粘贴与删除的目标;动作行无值)。
     pub(super) fn show_psk_value_mut(&mut self) -> Option<&mut String> {
         match self.show_psk_field {
             PskDialogField::Psk => Some(&mut self.show_psk_value),
@@ -174,7 +159,10 @@ impl ConsoleApp {
             self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH));
             return;
         }
-        match crate::deployment::config::update_flare(|section| section.psk = Some(psk)) {
+        match crate::deployment::config::update_flare(|section| {
+            section.public_discovery = Some(false);
+            section.psk = Some(psk)
+        }) {
             Ok(_) => {
                 self.show_psk = false;
                 self.show_psk_editing = false;
@@ -197,9 +185,7 @@ impl ConsoleApp {
         if self.deploy_daemon.is_some() {
             return Ok(());
         }
-        let psk = self.deploy_psk.trim().to_string();
-        let psk = (!psk.is_empty()).then_some(psk);
-        self.deploy_daemon = Some(self.deploy_ops.deploy(psk));
+        self.deploy_daemon = Some(self.deploy_ops.deploy(None));
         Ok(())
     }
 
@@ -249,14 +235,12 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
         height,
     );
     super::render::begin_dialog(frame, area);
-    let psk_row = psk_edit_row(app, PskDialogField::Psk, true);
-    let confirmation_row = psk_edit_row(app, PskDialogField::Confirmation, true);
     let start_row = dialog_action_row(
-        app.deploy_psk_field == PskDialogField::Action,
+        !app.deploy_cancel_selected,
         crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_START),
     );
     let cancel_row = dialog_action_row(
-        app.deploy_psk_field == PskDialogField::Cancel,
+        app.deploy_cancel_selected,
         crate::tr!(crate::keys::CONSOLE_DIALOG_CANCEL),
     );
     frame.render_widget(
@@ -266,13 +250,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
                 crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_PURPOSE),
                 Style::default().fg(Color::DarkGray),
             ),
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_INPUT_NOTE),
-                Style::default().fg(Color::DarkGray),
-            ),
             Line::raw(""),
-            psk_row,
-            confirmation_row,
             start_row,
             cancel_row,
             Line::raw(""),
@@ -284,54 +262,6 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     );
 }
 
-/// psk 输入字段行:聚焦字段高亮并显示光标。`masked` 为 true 时未编辑显示掩码
-/// (部署确认弹窗),false 时恒为明文(查看/修改弹窗);留空显示占位文本。
-fn psk_edit_row(app: &ConsoleApp, field: PskDialogField, masked: bool) -> Line<'static> {
-    let active = app.deploy_psk_field == field;
-    let (label, value) = match field {
-        PskDialogField::Psk => (
-            crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL),
-            &app.deploy_psk,
-        ),
-        PskDialogField::Confirmation => (
-            crate::tr!(crate::keys::CONSOLE_CONFIRM_PSK_LABEL),
-            &app.deploy_psk_confirmation,
-        ),
-        PskDialogField::Action | PskDialogField::Cancel => unreachable!(),
-    };
-    let editing = active && app.deploy_psk_editing;
-    let value_display = if editing || !masked {
-        value.clone()
-    } else if value.is_empty() {
-        crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_EMPTY)
-    } else {
-        super::render::mask(value)
-    };
-    let cursor = if editing { "_" } else { "" };
-    let selected_style = if active {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-    Line::from(vec![
-        Span::styled(if active { "> " } else { "  " }, selected_style),
-        Span::styled(
-            super::render::display_pad(&label, 19),
-            if active {
-                selected_style
-            } else {
-                Style::default().fg(Color::DarkGray)
-            },
-        ),
-        Span::styled(value_display, selected_style),
-        Span::styled(cursor, selected_style),
-    ])
-}
-
-/// psk 弹窗的动作行(部署/保存):聚焦时反色,未聚焦时绿字加粗。
 fn dialog_action_row(active: bool, label: String) -> Line<'static> {
     let selected_style = if active {
         Style::default()

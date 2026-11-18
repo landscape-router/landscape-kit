@@ -82,16 +82,24 @@ pub fn parse_and_print(f: &Frame, dev: Option<&str>) {
         fmt_mac(&f.dst),
         f.vlan_id.map_or("none".to_string(), |v| v.to_string()),
     );
-    match protocol::frame::decode(&f.payload) {
+    match protocol::frame::decode(&f.payload).or_else(|_| protocol::v6::decode(&f.payload)) {
         Ok(l) => println!(
             "{prefix}    Terrain v{} type={}(0x{:02x}) session=0x{:08x} seq={} payload={}B{}",
-            protocol::VERSION,
+            l.version,
             protocol::frame::type_name(l.msg_type),
             l.msg_type,
             l.session_id,
             l.seq,
             l.payload.len(),
-            if matches!(
+            if l.version == protocol::v6::VERSION
+                && matches!(l.msg_type, protocol::TYPE_DISCOVER | protocol::TYPE_RESP)
+            {
+                if l.payload.first() == Some(&1) {
+                    " (private discovery)"
+                } else {
+                    " (public discovery)"
+                }
+            } else if matches!(
                 l.msg_type,
                 protocol::TYPE_DISCOVER
                     | protocol::TYPE_RESP

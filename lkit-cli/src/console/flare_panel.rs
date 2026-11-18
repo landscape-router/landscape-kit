@@ -15,6 +15,8 @@ use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
 #[derive(Default)]
 pub(super) struct FlareDialog {
     pub(super) open: bool,
+    pub(super) public: bool,
+    pub(super) fingerprint: Option<String>,
     /// 当前 `[flare]` 段的 psk(编辑中为明文,渲染时掩码)。
     pub(super) psk: String,
     pub(super) editing: bool,
@@ -26,6 +28,13 @@ impl ConsoleApp {
     /// 打开 flare 弹窗:载入当前 `[flare]` 段的 psk。
     pub(super) fn open_flare_dialog(&mut self) {
         let section = crate::deployment::config::load_flare();
+        self.flare.public = section
+            .as_ref()
+            .is_none_or(|s| s.public_discovery.unwrap_or(s.psk.is_none()));
+        #[cfg(target_os = "linux")]
+        {
+            self.flare.fingerprint = crate::flare::auth::fingerprint().ok();
+        }
         self.flare.psk = section.and_then(|section| section.psk).unwrap_or_default();
         self.flare.editing = false;
         self.flare.notice.clear();
@@ -36,15 +45,18 @@ impl ConsoleApp {
     /// 保留其它字段(设备、token 等);daemon 在下一周期拾取新配置。
     pub(super) fn save_flare_dialog(&mut self) {
         let psk = self.flare.psk.trim().to_string();
-        if psk.is_empty() {
+        if !self.flare.public && psk.is_empty() {
             self.flare.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_REQUIRED);
             return;
         }
-        if psk.len() < FLARE_PSK_MIN_LENGTH {
+        if !self.flare.public && psk.len() < FLARE_PSK_MIN_LENGTH {
             self.flare.notice = crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT);
             return;
         }
-        match crate::deployment::config::update_flare(|section| section.psk = Some(psk)) {
+        match crate::deployment::config::update_flare(|section| {
+            section.public_discovery = Some(self.flare.public);
+            section.psk = (!self.flare.public).then_some(psk);
+        }) {
             Ok(_) => {
                 self.flare.open = false;
                 self.notice = Notice::Success(crate::tr!(crate::keys::CONSOLE_FLARE_SAVED));
@@ -63,7 +75,7 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
     }
     let screen = frame.area();
     let width = 64.min(screen.width.saturating_sub(2));
-    let height = 13.min(screen.height.saturating_sub(2));
+    let height = 17.min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -98,6 +110,12 @@ pub(crate) fn render_flare_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp) {
             crate::tr!(crate::keys::CONSOLE_FLARE_DIALOG_PURPOSE),
             Style::default().fg(Color::DarkGray),
         ),
+        Line::raw(format!(
+            "[{}] {}",
+            if app.flare.public { "x" } else { " " },
+            crate::tr!(crate::keys::CONSOLE_FLARE_PUBLIC)
+        )),
+        Line::raw(app.flare.fingerprint.as_deref().unwrap_or("").to_owned()),
         Line::raw(""),
         Line::from(vec![
             super::render::display_pad(&crate::tr!(crate::keys::CONSOLE_FLARE_DEVICES_LABEL), 19)

@@ -156,8 +156,7 @@ sudo lkit --non-interactive self install
 sudo lkit --non-interactive install --password-file /root/lkit-password
 ```
 
-密码文件必须归 root 所有，权限为 `0400` 或 `0600`。daemon 未配置急救恢复码时自动
-生成并保存，可用 `lkit flare setup` 查看。安装脚本不带参数时只安装 CLI，不部署 daemon。
+密码文件必须归 root 所有，权限为 `0400` 或 `0600`。daemon 首次部署默认允许公开发现。使用 `lkit flare setup` 查看设备指纹与发现模式。安装脚本不带参数时只安装 CLI，不部署 daemon。
 
 显式使用 Landscape 镜像仓库安装：
 

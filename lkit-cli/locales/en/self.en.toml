@@ -6,5 +6,3 @@ self.no_newer_release = "No newer release in the selected channel (current %{cur
 self.prerelease_upgrade_hint = "Use --include-prerelease to check RC and other prerelease versions"
 self.staged_execution_failed = "Cannot execute downloaded binary %{path}: %{error}; check its architecture and required interpreter/loader. The installed binary was not replaced"
 self.daemon_not_installed_hint = "the lkit daemon is not installed; run `lkit self install` to deploy it"
-
-self.enter_flare_psk = "Enter the flare recovery psk (L2 recovery channel of the daemon-hosted flare server, used when Landscape network configuration breaks; at least 12 characters)"

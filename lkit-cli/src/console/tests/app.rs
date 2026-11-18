@@ -13,6 +13,7 @@ fn renders_panel_focus_marker_on_overview() {
     let backend = TestBackend::new(100, 28);
     let mut terminal = Terminal::new(backend).unwrap();
     let mut app = ConsoleApp::new();
+    app.snapshot = Snapshot::NotInstalled;
     app.focus = Focus::Panel;
 
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
@@ -329,29 +330,6 @@ fn language_key_stays_disabled_while_exit_confirmation_is_open() {
 
     assert_eq!(crate::i18n::current(), Language::En);
     assert_eq!(app.exit_state, ExitState::Confirming);
-}
-
-#[test]
-fn recovery_code_typing_reaches_the_field_instead_of_switching_language() {
-    let _language = LanguageGuard::set(Language::En);
-    let mut app = ConsoleApp::new();
-    app.deploy_daemon_confirming = true;
-    assert!(
-        !app.language_switch_available(),
-        "the deploy dialog promises direct typing, so L must be paused while it is open"
-    );
-
-    for character in "lk9-dead-beef".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
-
-    assert_eq!(
-        crate::i18n::current(),
-        Language::En,
-        "typing a recovery code containing l must not switch the language"
-    );
-    assert_eq!(app.deploy_psk, "lk9-dead-beef");
-    assert!(app.deploy_daemon_confirming, "the dialog must stay open");
 }
 
 #[test]

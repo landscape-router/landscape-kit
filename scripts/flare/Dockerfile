@@ -32,3 +32,6 @@ COPY scripts/flare/replay_inject.py /opt/replay_inject.py
 COPY scripts/flare/rate_flood.py /opt/rate_flood.py
 COPY scripts/flare/auth_req_flood.py /opt/auth_req_flood.py
 COPY scripts/flare/connection_probe.py /opt/connection_probe.py
+
+# Disposable client-side credential used by the CI topology only.
+RUN umask 077 && printf '%s\n' 'fixture-root-password' > /opt/fixture-password

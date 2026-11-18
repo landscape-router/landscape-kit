@@ -61,12 +61,13 @@ Use the command-specific documentation for all options, confirmation rules, and 
 
 ## Terrain Recovery Channel
 
-Terrain is an encrypted Layer 2 recovery path between a host and a Landscape router. The `lkit` daemon can host the server side; configure or inspect its recovery secret with `lkit flare setup`.
+Terrain is an encrypted Layer 2 recovery path between a host and a Landscape router. The `lkit` daemon hosts the router endpoint. Use `lkit flare setup` on the router to inspect its device fingerprint and discovery settings.
 
-`lflare` opens an interactive client by default. Scripts can use its `cli` subcommand:
+`lflare` lists devices on the selected interface. Select a router, confirm its fingerprint and sign in with its Landscape administrator or local Linux root password. Scripts supply the fingerprint for each connection.
 
 ```sh
-lflare cli --psk '<recovery-secret>' --dev eth0 --forward 2222:22
+lflare discover --dev eth0 --json
+lflare cli --target "$FINGERPRINT" --auth root --dev eth0 --forward 2222:22
 ```
 
 Linux clients use fully static musl builds on the four supported architectures. Windows clients require Npcap. Read the [Terrain documentation](docs/flare/README.md) for protocol details, configuration, and end-to-end scenarios.

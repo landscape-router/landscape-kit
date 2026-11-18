@@ -36,6 +36,7 @@
 # Usage: test/e2e-double-capture.sh
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/flare/fixture-login.sh
 
 NET=lndp-dbl
 IMAGE=lndp-test:latest
@@ -75,11 +76,12 @@ docker run -d --name "$SRV" --network "$NET" \
     exec /opt/bin/lkit flare serve --psk '"$PSK"' --dev any --token '"$TOKEN"
 
 echo "== start client =="
+fingerprint=$(fixture_login "$SRV")
 docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
+  "$IMAGE" /opt/bin/lflare cli --target "$fingerprint" --auth root --password-file /opt/fixture-password --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
 
 wait_session() {
   local tries=45
@@ -105,7 +107,8 @@ echo "session established under double capture"
 echo "== confirm the double capture actually happened =="
 # The accepted-discover line carries the quoted client name; the dropped or
 # rate-limited variants do not, so this counts only real handshakes.
-DISCOVER_LINES=$(docker logs "$SRV" 2>&1 | grep -c "discover from .* '" || true)
+# Count distinct capture interfaces for the same discovery request.
+DISCOVER_LINES=$(docker logs "$SRV" 2>&1 | awk '/^discover [0-9]+ via interface [0-9]+$/ { if (!seen[$2,$5]++) counts[$2]++ } END { for (id in counts) if (counts[id]>n) n=counts[id]; print n+0 }')
 AUTH_LINES=$(docker logs "$SRV" 2>&1 | grep -c "authenticated, session" || true)
 if [ "$DISCOVER_LINES" -lt 2 ]; then
   echo "FAIL: only $DISCOVER_LINES discover line(s) — the environment did not reproduce the double capture, this run proves nothing"

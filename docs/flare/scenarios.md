@@ -1,5 +1,7 @@
 # Landscape Terrain（flare）协议场景
 
+`e2e-docker.sh`、`e2e-ratelimit.sh` 和旧协议帧测试验证 v5 兼容路径。连接生命周期、双重捕获及多客户端测试使用 v6。v6 发现与认证验收见 [FLR-37 至 FLR-40](../testing/scenarios/functional/flare.md#flr-37)。
+
 ## FLR-01
 
 **握手与加密数据传输完整性**
@@ -166,13 +168,13 @@
   先配置不存在的网卡，观察任务启动失败，再通过 `flare setup --dev eth0` 修正；
   daemon PID 保持不变，后续周期启动恢复通道并接受客户端。
   容器将只读 tmpfs 挂在 `/sys/fs/bpf`，断言 daemon 报告 bpffs 准备失败后仍托管 flare；
-  `lflare` 客户端完成 DISCOVER→RESP→AUTH_REQ→AUTH_ACK 并建立会话、保持 keepalive 即通过。本场景只验证"daemon 托管方式下能连上"，
+  `lflare` 客户端完成 发现、选定目标、Noise 握手及 root 密码认证 并建立会话、保持 keepalive 即通过。本场景只验证"daemon 托管方式下能连上"，
    不做端口转发与隧道数据传输。日志检查完整消费 `docker logs` 输出，在 `pipefail`
    模式下不因匹配后提前关闭管道而把成功会话误判为失败。
 
 ## FLR-20
 
-**daemon 部署（`lkit self install`）供给急救恢复码并写入 `[flare]` 配置段**
+**daemon 部署（`lkit self install`）设置私有发现密钥并写入 `[flare]` 配置段**
 
 - 测试层：fixture e2e（`install_fixture_e2e`，CI）
 - 状态：`已覆盖`
@@ -180,7 +182,7 @@
    [self.md](../commands/self.md)、[协议规范](protocol.md)
 - 说明：`lkit self install --flare-psk-file`（root-only 私密文件）在 daemon 启动前把
    psk 写入地盘 config.toml 的 `[flare]` 段（0600），daemon 首启即用该 psk 托管 flare；
-   未提供时保留既有 `[flare]`，交互终端提示输入，无终端回落 daemon 自动生成。
+   未提供时保留既有 `[flare]`，新装默认允许公开发现。
    重复 `self install` 不改动已配置的 psk。
 
 ## FLR-21

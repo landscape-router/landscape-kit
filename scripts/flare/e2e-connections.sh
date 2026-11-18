@@ -10,6 +10,7 @@
 #   6. keep one established TCP connection alive across 50 seconds of idle
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/flare/fixture-login.sh
 
 NET=flare-connections
 IMAGE=lndp-test:latest
@@ -38,11 +39,12 @@ docker run -d --name "$SRV" --network "$NET" \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
   "$IMAGE" bash -c 'python3 /opt/fake_service.py & exec /opt/bin/lkit flare serve --psk '"$PSK"' --dev any --token '"$TOKEN"' --forward-ports 6443,8080'
+fingerprint=$(fixture_login "$SRV")
 docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" \
+  "$IMAGE" /opt/bin/lflare cli --target "$fingerprint" --auth root --password-file /opt/fixture-password --psk "$PSK" --dev eth0 --token "$TOKEN" \
     --forward 2222:6443 --forward 2280:8080
 
 for i in $(seq 1 30); do

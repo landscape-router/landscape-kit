@@ -1,92 +1,32 @@
 # Landscape Terrain 协议（L2 防失联通道）
 
-Terrain 是 Landscape 路由器的 L2 旁路通信协议：当常规网络路径不可用时，主机通过
-以太网帧与路由器建立加密的 TCP-over-IP 隧道（`lflare` 客户端 ↔ `lkit flare` 服务端），
-用于应急管理连接。
+Terrain v6 使用 EtherType `0x88b6`（可配置）。Linux 上的 `lkit daemon` 或 `lkit flare serve` 在以太网上响应 `lflare`，无需路由器具备可达的 IP 地址。
 
-协议名 Terrain，魔数 `TERR`；客户端可执行文件 `lflare`（服务端并入 `lkit flare`）。
-共享密钥 **psk**（中文界面与文档称为**急救恢复码**）通过 `LANDSCAPE_FLARE_PSK`
-环境变量或 `--psk` 提供。
+## 发现与选机
 
-## 帧格式
+1. 客户端在选定网卡广播 `DISCOVER`，携带随机 64 位查询 ID 和可选的发现令牌。公开模式下，令牌在本网段可见。请求中没有用户名和密码。
+2. 每台设备单播 `RESP`，携带原查询 ID、32 字节设备公钥与 UTF-8 显示名。客户端按公钥的 SHA-256 指纹去重。同名设备分别列出，重复捕获的同一设备只显示一次。公开发现的名称和公钥在握手前均未经验证。
+3. 默认公开发现。配置私有发现后，双方用 scrypt 从 PSK 派生发现密钥（N=32768、r=8、p=1），以 ChaCha20-Poly1305 封装发现请求、响应与首个单播 HELLO。错误或缺失的发现密钥得不到设备响应。私有发现仍需设备确认和密码登录。
 
-16 字节明文头 + 载荷：
+## 握手、设备确认与登录
 
-| 字段 | 长度 | 说明 |
-| --- | --- | --- |
-| magic | 4 | `"TERR"`（`0x54455252`），未知帧在解析时丢弃 |
-| version | 1 | `0x05`（v5：scrypt 主密钥 + 全阶段密钥派生）；唯一例外是 `VERSION_MISMATCH` 帧，其 version 字段携带发送方自身的协议版本，且允许跨版本解码 |
-| type | 1 | 见下表 |
-| session | 4 | 会话 ID（握手帧为 0 或协商值） |
-| len | 2 | 精确载荷长度；以太网最小帧填充不算载荷 |
-| seq | 4 | 会话内序号，用于 AEAD nonce 与重放防护；握手帧恒为 0 |
+每个帧的 16 字节头包括魔数 `TERR`、版本、类型、32 位会话 ID、16 位载荷长度和 32 位序号。版本 6 的 `HELLO`、`WELCOME` 类型分别为 10、11。
 
-帧类型：`DISCOVER 0x01`、`RESP 0x02`、`AUTH_REQ 0x03`、`AUTH_ACK 0x04`、
-`AUTH_NACK 0x05`、`KEEPALIVE 0x06`、`DATA 0x07`、`TEARDOWN 0x08`、
-`VERSION_MISMATCH 0x09`。
+1. 用户选择目标后，客户端向目标 MAC 发送含目标公钥的 HELLO，启动一次新的 `Noise_NX_25519_ChaChaPoly_SHA256` 握手。双方为每次握手生成临时密钥。服务端的静态私钥保存在 `<territory>/flare-identity.key`，权限为 0600。
+2. 客户端从 WELCOME 验证对方持有选中公钥对应的私钥。TUI 要求用户逐次核对完整指纹，设备本机可运行 `lkit flare setup` 查看可信指纹。CLI 通过本次命令的 `--target` 指定完整指纹。客户端不写入信任记录。
+3. 用户名、认证方式和密码在 Noise 通道内发送。Landscape 方式在**每次认证**读取 lkit 安装记录指向的 `data/landscape.toml`，验证显式配置的 `[auth].admin_user` 和 `admin_pass`。安装、改密后下一次登录即可生效，Web 服务离线时仍可验证。未配置这一对凭据时，此方式不可用。仅通过 Web 进程参数或环境设置的密码不属于这个文件。
+4. Linux 方式仅接受本机 `root`，检查本地 shadow 中的 yescrypt、SHA-512-crypt 或 SHA-256-crypt 密码。锁定、空密码、过期及不支持的记录拒绝登录。只有 SSH 私钥且没有可用 root 密码时，可使用已配置的 Landscape 管理员密码。
+5. 服务端通过加密 ACK 返回允许映射的端口。客户端随后才开放本地监听。服务端限制待认证状态、密码校验并发和失败尝试，认证失败返回统一结果。每个方向独立使用 Noise 传输密钥。接收端在验证帧类型、会话与密文后更新序号窗口，允许有限乱序并拒绝重复帧。
 
-## 密钥计划
+## 旧 daemon
 
-psk 从不直接使用：双方启动时用 scrypt 拉伸为 32 字节主密钥，离线攻击者每次 psk
-猜测需付出约 32 MiB / ~100 ms（`N=2^15, r=8, p=1`；`LANDSCAPE_TERRAIN_SCRYPT_LOG_N`
-可覆盖指数，夹取 10..=20，双方必须一致——覆盖值由 `lflare` 与 `lkit flare` 在进程
-入口读取后显式传入派生，激活时两端都会打印提示；指数不一致的表现与 psk 错误相同，
-即服务端静默）。
-
-所有派生以 `h(label, key, server_nonce, client_nonce) = sha256(label ‖ key ‖ s ‖ c)`
-为基础：
-
-| 密钥 | label | 输入 | 用途 |
-| --- | --- | --- | --- |
-| 主密钥 `master` | — | scrypt(psk) | 一切派生的根 |
-| 发现前密钥 | `terrain-hkey0` | master, 0, 0 | 密封 DISCOVER；每帧自带随机 12 字节 nonce，固定密钥碰撞界 2^48 |
-| 握手密钥 | `terrain-hsalt` / `terrain-hkey-c2s` / `terrain-hkey-s2c` | master, s_nonce, 0 | 密封 RESP/AUTH_REQ/AUTH_ACK/AUTH_NACK，每方向一钥 |
-| 会话密钥 | `terrain-salt` / `terrain-key-c2s` / `terrain-key-s2c` | master, s_nonce, c_nonce | 密封 DATA/KEEPALIVE/TEARDOWN，每方向一钥 |
-| 认证证明 | `terrain-auth-c2s` / `terrain-auth-s2c` | master, s_nonce, c_nonce | 握手挑战-响应 |
-
-无前向保密：主密钥持有者可重派生任意会话密钥，对共享密钥的 LAN 协议可接受。
-
-## 握手流程
-
-1. **DISCOVER**（发现前密钥密封）：客户端广播设备名与可选发现令牌；只有 psk 持有者
-   能被听到，名字与令牌永不明文上线。服务端对错误 psk 保持静默。每个尝试携带随机
-   `discover_id`，服务端按它幂等处理同一尝试：绑定多个接口（默认 `any`）时同一广播
-   会被桥与物理口各捕获一次、或链路层重传，重复帧只重发以**同一**服务端 nonce 密封
-   的 RESP（确定性 AEAD 下字节相同，无 nonce 重用风险），不重新生成——客户端已采纳
-   先前 RESP 的 AUTH_REQ 仍可完成握手。回复接口也在尝试开始时固定：重复捕获复用首次
-   捕获的接口，后续 AUTH_ACK/AUTH_NACK 同样从该接口发出，因此一次握手的 RESP 与 ACK
-   源 MAC 始终一致。不同 `discover_id` 视为新尝试、换新 nonce。
-2. **RESP**：明文前缀携带服务端 nonce（用于派生握手密钥），其余密封，附设备名与
-   允许转发的端口清单。
-3. **AUTH_REQ**（握手密钥密封）：用户名 + 客户端证明。
-4. **AUTH_ACK / AUTH_NACK**（握手密钥密封，含服务端证明）：认证失败原因只在密封
-   帧中告知，防伪造 NACK 打断握手；已锁定源还会收到带剩余时长的锁定 NACK。密封的
-   AUTH 帧由握手密钥认证，客户端接受任意来源 MAC（中间路径改变源 MAC 也不影响）；
-   仅无证明的明文锁定 NACK 仍要求来自 RESP 的源 MAC（否则可被伪造 NACK 打断握手）。
-5. **会话**（会话密钥，ChaCha20-Poly1305）：AEAD nonce = 会话 salt(8) ‖ 帧序号(4)；
-   16 字节明文头作为附加认证数据，篡改头部同样解密失败。`KEEPALIVE` 维持对端存活
-   （45 秒 stale 清扫窗口内回显，认证成功的 `DATA` 同样视为链路活跃），`TEARDOWN`
-   优雅断开。客户端的会话收发错误也统一清理本地 listener 和连接，再重新握手。
-
-## 版本不匹配
-
-协议没有版本协商：`lkit` 与 `lflare` 从同一 workspace 一起发布，正常升级天然同步；
-唯一的风险场景是救援主机上残留旧版 `lflare` 对上新版服务端。为此服务端在解码到
-magic 正确但版本不认识的帧时，回复一个**明文**的 `VERSION_MISMATCH` 空载荷帧
-（header 的 version 字段携带服务端自身版本），受全局速率桶约束以防止伪造帧放大。
-新版客户端收到后立即报错退出并指明两端版本，而不是静默超时重试；早于该类型引入的
-旧客户端仍按未知版本丢弃、表现与之前相同。
-
-该帧不加密也无法加密（跨版本不存在密钥兼容性），因此同网段任何注入者都可伪造它
-来打断一次握手——这与既有的在途干扰面（伪造 RESP 使握手永远失败、洪泛 DISCOVER
-耗尽服务端速率配额）同级，可用性本就不以在途 L2 攻击者为威胁模型；换取的是真实
-版本错配场景从"疑似 psk 错误的无限重试"变成一条可执行的报错。
+旧 v5 daemon 使用原恢复码。TUI 选择旧版入口，或运行 `lflare cli --legacy --psk …`。新客户端在旧版会话中提示升级 daemon。旧脚本的仅 PSK 入口保留。v6 连接失败时由用户决定是否进入旧版流程，v5 不接收新式登录密码。
 
 ## 隧道与端口转发
 
 - Linux 传输层使用 AF_PACKET 原始套接字（无 libpcap 运行时依赖）；Windows/macOS
   客户端使用 libpcap。服务端 Linux only。
-- 每客户端会话内有一个 smoltcp 用户态 IP/TCP 栈（`127.0.0.1` 内部地址）；`lflare
+- 每客户端会话内有一个 smoltcp 用户态 IP/TCP 栈（`127.0.0.1` 内部地址）；`lflare cli
   --forward 2222:6443` 在客户端监听 `127.0.0.1:2222`，隧道内连接到服务端
   `127.0.0.1:6443`。服务端仅允许转发白名单端口（默认 `22,6443`）。
 - 重传、拥塞与滑动窗口由 smoltcp 在隧道内完成，丢包链路上数据仍保持完整。
@@ -113,64 +53,8 @@ magic 正确但版本不认识的帧时，回复一个**明文**的 `VERSION_MIS
   通知按连接代号区分，服务端忽略已失效连接的通知。每次推进在处理入站数据后接受连接、
   搬运字节并回收 socket，再刷新出站数据、FIN 和窗口更新后计算下一截止时间。
 
-## 服务端防护
+映射到 SSH 时，SSH 服务仍独立要求自己的用户名和凭据。映射到 HTTP 等服务及 Flare 登录本身均无需安装 sshd。
 
-- 每源 MAC 限速桶：DISCOVER/AUTH_REQ 默认 10/s，防扫描、爆破与踢会话。
-- 全局限速桶（默认 200/s）：每帧伪造 MAC 可绕过单 MAC 限速，全局桶约束伪造洪泛的
-  CPU 与 peer 表增长。
-- 认证锁死：无活动会话的 MAC 60 秒窗口内 5 次失败即冻结 60 秒；会话失败解密另有
-  每 MAC 预算，防止伪造帧洪泛消耗事件循环的解密算力。
-- peer 表硬上限 4096，满后丢弃未知 MAC 的 DISCOVER。
-- 活动会话永不被锁死：伪造者不能借受害者的 MAC 冻结其重认证。
+## 配置入口
 
-## 客户端交互形态（lflare TUI）
-
-`lflare` 无子命令时默认进入全屏 TUI（Windows 双击 `.exe` 也走此路径，适合无参数
-的交互使用）；脚本与自动化用 `lflare cli` 子命令加参数直连，行为与原命令行一致。
-Windows Npcap 的设备名通常是用户不可读的 `\Device\NPF_{GUID}`。TUI 设备选择器只显示
-Npcap 提供的网卡描述；若多个接口描述相同，会在名称后加序号。实际打开设备时仍使用
-底层设备 ID，因此已有 `--dev` 参数和配置无需改变。
-
-TUI 分两个阶段：
-
-1. **连接表单**：输入 psk（`*` 掩码，F2 显示/隐藏）、用户名、客户端名称、设备
-   （聚焦后按 Enter 打开列表，`↑↓` 选择，Enter 确认；默认自动取默认路由网卡）、ethertype（默认
-   `0x88b6`）、token（可选）。`Tab/↑↓` 切换字段；只有最后的「连接」按钮获得焦点
-   后按 Enter 才开始握手，`Ctrl-Q/Esc` 退出。
-2. **会话仪表盘**：实时显示连接状态（搜索中/已连接/认证被拒/链路断开等）、每条
-   端口映射的监听状态（启动中/监听中/失败）和彩色日志面板。握手成功后，聚焦映射
-   列表可用 `a` 添加 `LOCAL:DST`、`d` 删除选中项；目标端口必须在服务端握手公布的
-   允许列表中。删除会立即关闭该映射已有的本地连接；映射只保存在当前进程，链路重连
-   后会自动恢复，退出进程后不写入配置。`q` 断开并退出。
-
-连接结束后若 stdin 是终端（双击场景），打印结果摘要并等待按任意键再关闭窗口，
-避免控制台一闪而过。
-
-TUI 支持英文和中文。启动语言按 `--lang`、`LKIT_LANG`、系统 locale、英文默认值的顺序
-选择，例如 `lflare --lang zh`。会话页和连接表单聚焦在非输入控件时按 `l` 可运行时切换语言；
-输入 PSK、用户名等文本时，`l` 仍作为普通字符输入。`lflare cli` 的命令行参数、日志和退出
-状态保持英文，现有 `lflare cli --forward LOCAL:DST` 脚本接口不变。
-
-客户端代码按职责拆分为连接生命周期、端口转发、TUI 表单、会话交互和渲染模块。TUI 从客户端
-接收结构化的会话与监听器事件，不解析日志文本来判断连接状态。
-
-## 部署形态
-
-| 端 | 形态 | 入口 |
-| --- | --- | --- |
-| 客户端 | `lflare`（linux/windows） | 默认进入交互 TUI（连接表单，握手后管理临时映射）；脚本用 `lflare cli --psk … --dev eth0 --forward 2222:6443` |
-| 服务端 | `lkit flare serve`（Linux） | `lkit flare serve --psk … --dev any [--token …]` |
-| 服务端（daemon 托管，恒常启动） | `lkit daemon` 在 Linux 上总是托管 flare 服务端 | 读取 config.toml `[flare]` 段；段缺失/无 psk 时自动生成随机 psk 并持久化（启动时打印一次分发提示），daemon 每周期对比配置指纹，`[flare]` 变更（psk 非空）时重启 flare 任务拾取新配置，psk 被清空则保持现役不切断恢复通道。启动托管 flare 之前先尽力拉起所有带 MAC 的物理以太网卡（网卡 DOWN 时 L2 通道无法收发帧；跳过无 MAC/无线/虚拟设备，`ip link set` 失败只记录日志，不阻断 daemon 启动） |
-| 配置供给 | `lkit flare setup`（Linux） | 带 `--psk/--token/--devices/--ethertype/--forward-ports/--mac/--device-name` 时在既有配置上覆盖并写回 `[flare]` 段；空参打印当前有效配置（含 psk，供分发给 `lflare` 恢复客户端）。daemon 下一周期自动拾取 |
-| 配置供给 | `lkit self install [--flare-psk-file PATH]` | daemon 部署时供给：给 `--flare-psk-file`（root-only 私密文件）则在 daemon 启动前写回 `[flare]` 段（保留既有字段），daemon 首启即用该 psk 托管 flare；未提供时保留既有 `[flare]`，交互终端会提示输入（带用途说明），无终端则回落 daemon 自动生成（恒常启动兜底）。控制台的「部署 daemon」按钮不提示（后台线程），由 daemon 自动生成，用户经 `f` 弹窗或 `lkit flare setup` 管理 |
-| 抓包诊断 | `lkit flare sniff` | 在线设备或 pcap 文件解码 Terrain 帧 |
-
-Flare 任务失败后的重试采用最新有效配置；修正错误网卡等设置无需重启 daemon。
-首次配置持久化失败时，后续周期重新尝试启动；已有通道遇到损坏或清空的配置时保留现役配置。
-
-`[flare]` 段字段：`psk`（急救恢复码，必填，≥12 字符）、`device_name`（默认 `landscape-router`）、
-`mac`、`devices`（默认 `any`）、`ethertype`（默认 `0x88B6`）、`forward_ports`（默认
-`22,6443`）、`token`（发现令牌，可选）。psK（急救恢复码）保存在 root-only 的
-`<territory>/config.toml`（0600）；`lkit install` 完成时会提示恢复通道就绪
-（`lkit flare setup` 查看 psk）；TUI Overview 面板按 `f` 可弹窗查看/修改 flare
-配置与 psk。
+`lkit flare setup` 显示本机设备指纹和发现设置。使用 `--psk` 切换到私有发现，使用 `--public-discovery` 开启公开发现。控制台 Overview 按 `f` 打开同一设置。配置字段、迁移规则与 daemon 重载见[部署配置](../deployment/config.md#flare-恢复通道)。

@@ -19,6 +19,7 @@
 # Usage: scripts/flare/e2e-daemon.sh
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/flare/fixture-login.sh
 
 NET=lndp-daemon-test
 IMAGE=lndp-test:latest
@@ -81,11 +82,12 @@ daemon_pid=$(docker exec "$SRV" cat /tmp/territory/run/lkit.pid)
 docker exec "$SRV" /opt/bin/lkit flare setup --dev eth0
 
 echo "== start client =="
+fingerprint=$(fixture_login "$SRV")
 docker run -d --name "$CLI" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
+  "$IMAGE" /opt/bin/lflare cli --target "$fingerprint" --auth root --password-file /opt/fixture-password --psk "$PSK" --dev eth0 --token "$TOKEN" --forward 2222:6443
 
 # Consume the complete log stream: grep -q can give docker logs a broken pipe
 # after a successful match, which pipefail would incorrectly treat as failure.

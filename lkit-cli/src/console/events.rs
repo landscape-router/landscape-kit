@@ -117,7 +117,7 @@ impl ConsoleApp {
         }
         // 部署确认弹窗可从 Overview 动作行或安装阻断弹框发起,消费全部按键。
         if self.deploy_daemon_confirming {
-            self.handle_deploy_psk_key(key);
+            self.handle_deploy_key(key);
             return None;
         }
         if self.preflight_dialog {
@@ -414,61 +414,24 @@ impl ConsoleApp {
     /// 部署确认弹窗键处理:方向键/Tab 在 psk、二次确认与「开始部署」动作行间
     /// 移动;Enter 在输入字段上进入编辑(编辑中 Enter/Esc 提交),在动作行上
     /// 校验并启动部署;直接输入即进入编辑;Esc 关闭弹窗。
-    fn handle_deploy_psk_key(&mut self, key: KeyEvent) {
-        if self.deploy_psk_editing {
-            match key.code {
-                KeyCode::Enter | KeyCode::Esc => self.deploy_psk_editing = false,
-                KeyCode::Backspace => {
-                    self.deploy_psk_value_mut().map(String::pop);
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && self
-                            .deploy_psk_value_mut()
-                            .is_some_and(|value| value.chars().count() < 1024) =>
-                {
-                    if let Some(value) = self.deploy_psk_value_mut() {
-                        value.push(character);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
+    fn handle_deploy_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Enter => match self.deploy_psk_field {
-                PskDialogField::Action => self.deploy_with_validated_psk(),
-                PskDialogField::Cancel => self.deploy_daemon_confirming = false,
-                PskDialogField::Psk | PskDialogField::Confirmation => {
-                    self.deploy_psk_editing = true;
-                }
-            },
-            KeyCode::Up | KeyCode::BackTab => {
-                self.deploy_psk_field = self.deploy_psk_field.previous();
+            KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::BackTab => {
+                self.deploy_cancel_selected = !self.deploy_cancel_selected
             }
-            KeyCode::Down | KeyCode::Tab => {
-                self.deploy_psk_field = self.deploy_psk_field.next();
-            }
-            // 直接输入即进入编辑并追加字符,无需先按编辑键。
-            KeyCode::Char(character)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self
-                        .deploy_psk_value_mut()
-                        .is_some_and(|value| value.chars().count() < 1024) =>
-            {
-                self.deploy_psk_editing = true;
-                if let Some(value) = self.deploy_psk_value_mut() {
-                    value.push(character);
+            KeyCode::Enter => {
+                if !self.deploy_cancel_selected
+                    && let Err(e) = self.start_daemon_deploy()
+                {
+                    self.notice = Notice::Error(e)
                 }
+                self.deploy_daemon_confirming = false;
             }
             KeyCode::Esc => self.deploy_daemon_confirming = false,
-            _ => {}
+            _ => (),
         }
     }
 
-    /// 查看/修改弹窗键处理:方向键/Tab 在 psk、二次确认与「保存」动作行间
-    /// 移动;Enter 在输入字段上进入编辑(编辑中 Enter/Esc 提交),在动作行上
-    /// 校验一致后写回配置;直接输入即进入编辑;Esc 关闭弹窗。
     fn handle_show_psk_key(&mut self, key: KeyEvent) {
         if self.show_psk_editing {
             match key.code {
@@ -521,27 +484,6 @@ impl ConsoleApp {
         }
     }
 
-    /// 校验并启动 daemon 部署:急救恢复码非空时要求长度至少 12 且与二次确认
-    /// 一致,否则提示并留在弹窗;通过后后台执行 `lkit self install`(留空由
-    /// daemon 自动生成)。
-    fn deploy_with_validated_psk(&mut self) {
-        let psk = self.deploy_psk.trim();
-        if !psk.is_empty() && psk.len() < crate::deployment::config::FLARE_PSK_MIN_LENGTH {
-            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT));
-            return;
-        }
-        if !psk.is_empty() && self.deploy_psk_confirmation.trim() != psk {
-            self.notice = Notice::Error(crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH));
-            return;
-        }
-        if let Err(error) = self.start_daemon_deploy() {
-            self.notice = Notice::Error(error);
-        }
-        self.deploy_daemon_confirming = false;
-        self.deploy_psk_editing = false;
-        self.deploy_psk_field = PskDialogField::Psk;
-    }
-
     /// flare 弹窗键处理:弹窗开启时消费全部按键。Enter 保存(校验失败留在
     /// 弹窗内提示),Esc 关闭;`e`/Enter 进入 psk 编辑,编辑中直接输入字符。
     pub(super) fn handle_flare_dialog_key(&mut self, key: KeyEvent) -> Option<ConsoleAction> {
@@ -566,8 +508,10 @@ impl ConsoleApp {
         match key.code {
             KeyCode::Enter | KeyCode::Char('e' | 'E') => {
                 self.flare.notice.clear();
+                self.flare.public = false;
                 self.flare.editing = true;
             }
+            KeyCode::Char(' ') => self.flare.public = !self.flare.public,
             KeyCode::Char('s' | 'S') => self.save_flare_dialog(),
             KeyCode::Esc => self.flare.open = false,
             _ => {}

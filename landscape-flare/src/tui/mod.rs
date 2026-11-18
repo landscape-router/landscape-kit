@@ -19,6 +19,7 @@ use crate::client::{
 
 mod form;
 mod render;
+mod rescue;
 mod session;
 
 #[cfg(test)]
@@ -66,6 +67,7 @@ struct DashState {
     exit_confirming: bool,
     /// 连接时的表单快照:客户端任务以硬错误结束(设备消失、链路打开失败
     /// 等)时回到表单并显示原因,字段值保留,修正后可以直接重连。
+    modern: bool,
     resume_form: Option<FormState>,
     session_ready: bool,
     connection: ConnectionState,
@@ -163,6 +165,7 @@ impl DashState {
 /// 仅在 TUI 主循环内移动,低频构造(每次连接/断开一次),保持平坦布局。
 #[allow(clippy::large_enum_variant)]
 enum Phase {
+    Picker(String),
     Form(FormState),
     Dash(DashState),
     Done(Outcome),
@@ -236,8 +239,21 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std::error::Error>> {
-    let mut phase = Phase::Form(FormState::new());
+    let mut phase = Phase::Picker(String::new());
     loop {
+        if let Phase::Picker(message) = phase {
+            phase = match rescue::choose(terminal, message).await {
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|e| e.kind() == std::io::ErrorKind::Interrupted) =>
+                {
+                    return Ok(Outcome::FormQuit);
+                }
+                result => result?,
+            };
+            continue;
+        }
         let ev = if event::poll(EVENT_POLL)? {
             Some(event::read()?)
         } else {
@@ -246,6 +262,7 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
         let mut connect: Option<Result<OwnedConfig, String>> = None;
         let mut quit = false;
         match &mut phase {
+            Phase::Picker(_) => unreachable!(),
             Phase::Form(form) => {
                 draw_form(terminal, form)?;
                 if let Some(Event::Key(k)) = ev {
@@ -284,7 +301,7 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
                     } else {
                         None
                     };
-                    let mut dash = spawn_client(cfg);
+                    let mut dash = spawn_client(cfg, None);
                     dash.resume_form = resume;
                     phase = Phase::Dash(dash);
                 }
@@ -316,6 +333,11 @@ async fn run_tui(terminal: &mut DefaultTerminal) -> Result<Outcome, Box<dyn std:
 /// 客户端任务结束后的去向:硬错误且留有表单快照时回到表单并显示原因,
 /// 其余结果(正常断开、用户退出)结束 TUI。
 fn client_outcome_phase(dash: &mut DashState, outcome: Outcome) -> Phase {
+    if dash.modern
+        && let Outcome::Failed(message) = outcome
+    {
+        return Phase::Picker(message);
+    }
     match outcome {
         Outcome::Failed(reason) => match dash.resume_form.take() {
             Some(mut form) => {
@@ -328,7 +350,8 @@ fn client_outcome_phase(dash: &mut DashState, outcome: Outcome) -> Phase {
     }
 }
 
-fn spawn_client(cfg: OwnedConfig) -> DashState {
+fn spawn_client(cfg: OwnedConfig, login: Option<rescue::Login>) -> DashState {
+    let modern = login.is_some();
     let (log_tx, log_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (forward_tx, forward_rx) = mpsc::unbounded_channel();
@@ -351,9 +374,16 @@ fn spawn_client(cfg: OwnedConfig) -> DashState {
                 forward_control: Some(forward_rx),
                 events: Some(event_tx),
             };
-            crate::client::run(client_cfg)
-                .await
-                .map_err(|e| e.to_string())
+            if let Some((connection, method, password)) = login {
+                connection
+                    .run(client_cfg, method, password)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                crate::client::run(client_cfg)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
         });
     DashState {
         log_rx,
@@ -367,6 +397,7 @@ fn spawn_client(cfg: OwnedConfig) -> DashState {
         forward_edit: false,
         forward_error: None,
         exit_confirming: false,
+        modern,
         resume_form: None,
         session_ready: false,
         connection: ConnectionState::default(),
@@ -557,6 +588,7 @@ mod tests {
             forward_edit: false,
             forward_error: None,
             exit_confirming: false,
+            modern: false,
             resume_form: None,
             session_ready: true,
             connection: ConnectionState::Ready {
@@ -753,6 +785,15 @@ mod tests {
         assert_eq!(selection_offset(8, 6, 6), 1);
         assert_eq!(selection_offset(8, 6, 7), 2);
         assert_eq!(selection_offset(8, 6, 99), 2);
+    }
+
+    #[test]
+    fn modern_disconnect_returns_to_device_selection_for_new_confirmation() {
+        let mut dash = test_dash();
+        dash.modern = true;
+        assert!(
+            matches!(client_outcome_phase(&mut dash, Outcome::Failed("offline".into())), Phase::Picker(message) if message == "offline")
+        );
     }
 
     #[test]

@@ -4,9 +4,8 @@ use landscape_terrain_proto::ipstack::{
     CLIENT_ADDR, CONNECTION_CHANNEL_CAPACITY, INTERNAL_PORT, IpStack, MAX_PENDING_TO_STACK_BYTES,
     SERVER_ADDR, SocketHandle, StackMsg,
 };
-use landscape_terrain_proto::protocol::crypto::{Dir, SessionCrypto, SessionKeys};
-use landscape_terrain_proto::protocol::frame;
 use landscape_terrain_proto::protocol::session::KEEPALIVE_INTERVAL;
+use landscape_terrain_proto::protocol::v6::Channel;
 use landscape_terrain_proto::protocol::{TYPE_DATA, TYPE_KEEPALIVE, TYPE_TEARDOWN};
 use landscape_terrain_proto::relay::{RelayWake, wait_for_poll};
 use landscape_terrain_proto::transport::Link;
@@ -58,7 +57,7 @@ pub(super) async fn session_loop(
     tx: &mut Link,
     server_mac: &[u8; 6],
     sid: u32,
-    keys: SessionKeys,
+    mut crypto: Channel,
     cfg: &ClientConfig<'_>,
     notify: std::sync::Arc<tokio::sync::Notify>,
     forward_control: &mut Option<tokio::sync::mpsc::UnboundedReceiver<ForwardCommand>>,
@@ -66,7 +65,6 @@ pub(super) async fn session_loop(
     advertised_ports: &[u16],
 ) -> Result<SessionEnd, Box<dyn std::error::Error>> {
     let mut stack = IpStack::new(CLIENT_ADDR);
-    let mut crypto = SessionCrypto::new(keys, Dir::C2S);
     let (to_tx, mut to_rx) = mpsc::channel::<(ConnKey, StackMsg)>(512);
     let (accept_tx, mut accept_rx) = mpsc::channel::<(TcpStream, Forward)>(16);
     let mut conns: HashMap<SocketHandle, Conn> = HashMap::new();
@@ -103,13 +101,13 @@ pub(super) async fn session_loop(
                     Ok(frame) => frame,
                     Err(error) => break 'session Err(error),
                 };
-                if let Ok(l) = frame::decode(&f.payload) {
+                if let Ok(l) = crypto.decode(&f.payload) {
                     if l.session_id != sid {
                         continue;
                     }
                     match l.msg_type {
                         TYPE_TEARDOWN => {
-                            if crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload).is_some() {
+                            if crypto.open(&l).is_some() {
                                 cfg.log.emit(LogLevel::Info, "  teardown from server, closing session".into());
                                 break 'session Ok(SessionEnd::PeerClosed);
                             } else if !fail_budget.allow() {
@@ -117,7 +115,7 @@ pub(super) async fn session_loop(
                             }
                         }
                         TYPE_KEEPALIVE | TYPE_DATA => {
-                            let Some(plain) = crypto.open(l.msg_type, l.session_id, l.seq, l.len, l.payload) else {
+                            let Some(plain) = crypto.open(&l) else {
                                 if !fail_budget.allow() {
                                     continue;
                                 }
@@ -251,7 +249,7 @@ pub(super) async fn session_loop(
             _ = relay_wake.recv() => {}
             _ = wait_for_poll(deadline) => {}
             _ = tokio::time::sleep_until(last_keepalive + KEEPALIVE_INTERVAL) => {
-                let raw = crypto.seal(TYPE_KEEPALIVE, sid, &[]);
+                let raw = match crypto.seal(TYPE_KEEPALIVE, sid, &[]) { Ok(raw)=>raw, Err(e)=>break 'session Err(e.into()) };
                 if let Err(error) = tx.send(server_mac, cfg.ethertype, &raw) {
                     break 'session Err(error);
                 }
@@ -287,11 +285,9 @@ pub(super) async fn session_loop(
 
     // Best-effort teardown so the server drops us immediately instead of
     // waiting for the stale timeout.
-    let _ = tx.send(
-        server_mac,
-        cfg.ethertype,
-        &crypto.seal(TYPE_TEARDOWN, sid, &[]),
-    );
+    if let Ok(raw) = crypto.seal(TYPE_TEARDOWN, sid, &[]) {
+        let _ = tx.send(server_mac, cfg.ethertype, &raw);
+    }
     for task in listeners.into_values() {
         task.abort();
     }

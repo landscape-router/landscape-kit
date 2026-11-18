@@ -138,7 +138,7 @@
   不存在 `config.toml`；预置有效配置（HTTP 来源）后不带 `--repository` 执行首次安装，
   安装使用该来源且配置字节保持不变；网络接管 confirm 前后均不创建配置文件。
   `config.toml` 只由显式的偏好/通道配置动作写回（`[ui] language` 切换、`lkit self
-  install --flare-psk-file`/daemon 自动生成的 `[flare]`、`lkit flare setup`）。
+  install --flare-psk-file`/daemon 管理的 `[flare]`、`lkit flare setup`）。
 - 缺口：缺省官方 GitHub 的首次安装只在配置缺失路径被隐含覆盖，未单独断言请求打到官方
   仓库（E2E 避免真实网络）。
 
@@ -161,11 +161,8 @@
 
 - 测试层：CLI fixture E2E、单元测试
 - 状态：`已覆盖`
-- 证据：[flare 部署形态](../../../flare/protocol.md#部署形态)、[SS-10](self.md#ss-10)
-- 说明：急救恢复码属于 daemon 配置，由 `lkit self install`（`--flare-psk-file` / 交互
-  提示 / daemon 自动生成）与 `lkit flare setup` 管理，`lkit install` 不要求、不写入
-  psk。首次安装成功时输出恢复通道就绪提示，引导用 `lkit flare setup` 查看/设置 psk；
-  daemon 先于 install 部署（委托模型），网络接管发生前 L2 恢复通道已在线。完整故障
+- 证据：[flare 部署形态](../../../flare/protocol.md#配置入口)、[SS-10](self.md#ss-10)
+- 说明：daemon 管理发现模式。首次安装成功时提示恢复通道可用，引导用 `lkit flare setup` 查看设备指纹与发现设置。daemon 先于 install 部署（委托模型），网络接管发生前 L2 恢复通道已在线。完整故障
   场景（接管失败→经 lflare 恢复）见 [FLR-21](../../../flare/scenarios.md)。
 
 ## INS-19

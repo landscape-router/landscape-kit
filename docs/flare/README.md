@@ -1,30 +1,18 @@
-# Landscape Terrain（flare）文档
+# Landscape Terrain（Flare）救援通道
 
-flare 是 Landscape 路由器的 L2 防失联通道：主机通过以太网帧与路由器建立加密
-TCP-over-IP 隧道（`lflare` 客户端 ↔ `lkit flare` 服务端），用于常规网络路径
-不可用时的应急管理连接。
+在管理 IP 不可达时，将救援电脑直接接到路由器所在的二层网络，运行 `lflare`。选择网卡并发现设备，再从列表选择目标。设备可以同名。每次登录前核对完整指纹，使用 Landscape 管理员密码或本机 Linux root 密码登录，随后在会话页添加端口映射。
 
-- [协议规范](protocol.md)：帧格式、密钥计划、握手流程、隧道与端口转发、服务端防护
-- [测试体系](testing.md)：Docker L2 bridge 双容器 e2e 的入口、拓扑与日志契约
-- [测试场景](scenarios.md)：`FLR-01` 至 `FLR-29` 场景目录
+脚本可先列出设备，再用本次确认的完整指纹建立映射。省略 `--password-file` 时在终端隐藏输入密码。
 
-## 客户端用法
+```sh
+lflare discover --dev eth0 --json
+lflare cli --dev eth0 --target "$FINGERPRINT" --auth landscape --user admin --forward 8443:6443
+lflare cli --dev eth0 --target "$FINGERPRINT" --auth root --forward 2222:22
+```
 
-`lflare`（Windows 双击或终端直接运行）默认进入交互 TUI：表单输入 psk、设备、
-token 等，最后聚焦「连接」按钮并按 Enter 握手；连接成功后在会话页临时添加或删除
-端口映射。脚本环境继续使用 `lflare cli --psk … --dev eth0 --forward 2222:6443`。
+通过第三条命令访问 SSH 时，另开终端运行 `ssh -p 2222 root@127.0.0.1` 并完成 SSH 自己的认证。Flare 客户端不保存设备身份或登录密码。设备本机可运行 `lkit flare setup` 核对指纹。私有发现需要在扫描和连接时提供同一个发现 PSK。连接旧版 daemon 可在 TUI 按 F5，或使用 `lflare cli --legacy --psk "$OLD_CODE" --dev eth0 --forward 8443:6443`。
 
-退出交互与 console 的约定一致：会话页按 `q`/`Esc` 先弹出「断开连接」确认层
-（Enter 确认、Esc 取消），`Ctrl-C` 任何时候立即退出（含映射编辑器与确认层）；
-表单页退出用 `Ctrl-Q`/`Ctrl-C`，`Esc` 只用于收起设备选择器（取消时回滚到
-打开前的选择）。编辑字段会自动清除上一轮的校验错误。连接失败（如设备消失、
-链路打开失败）时回到表单并显示原因，已填字段保留，修正后可直接重连。认证被
-服务端明确拒绝时同样回到表单（cli 模式以错误退出），不用相同凭据自动重试——
-错误 psk 的 DISCOVER 本就被服务端静默丢弃，能收到明确拒绝说明凭据本身被拒，
-重试只会累计服务端的锁定计数；服务端静默（psk/token 不匹配、未启动、锁定
-冻结）仍按固定间隔持续重试。语言切换用 `F3`，表单任意字段（含文本输入中）、
-会话页与映射编辑器中一致生效，与文本输入不冲突。
-
-TUI 需要至少 60x24 的终端：小于该尺寸时表单与会话页都渲染整屏的
-「终端过小」提示（放大窗口即恢复），而不是挤压字段；表单中展开的设备列表会
-按剩余高度收缩可见行数，溢出提示行始终保留。
+- [协议规范](protocol.md)
+- [CI 测试与拓扑](testing.md)
+- [链路测试目录](scenarios.md)
+- [设备选择与认证验收场景](../testing/scenarios/functional/flare.md#flr-37)

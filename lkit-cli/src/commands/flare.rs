@@ -44,7 +44,7 @@ enum FlareCmd {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Args)]
 pub(crate) struct ServeArgs {
-    /// Shared secret used for challenge-response authentication; when
+    /// Optional private discovery key; when
     /// omitted, the LANDSCAPE_FLARE_PSK environment variable is used
     #[arg(long, value_name = "SECRET")]
     pub(crate) psk: Option<String>,
@@ -112,7 +112,10 @@ struct SniffArgs {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Args)]
 pub(crate) struct SetupArgs {
-    /// Recovery psk; when omitted the current value is kept
+    /// Allow discovery without a PSK.
+    #[arg(long, conflicts_with = "psk")]
+    pub(crate) public_discovery: bool,
+    /// Set a private discovery PSK
     #[arg(long, value_name = "SECRET")]
     pub(crate) psk: Option<String>,
 
@@ -175,22 +178,29 @@ pub(crate) async fn run_serve(
     args: &ServeArgs,
     shutdown: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let psk = match &args.psk {
-        Some(p) => p.clone(),
-        None => std::env::var("LANDSCAPE_FLARE_PSK").map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "--psk or the LANDSCAPE_FLARE_PSK environment variable is required",
-            )
-        })?,
+    let psk = if shutdown.is_some() {
+        args.psk.clone()
+    } else {
+        args.psk
+            .clone()
+            .or_else(|| std::env::var("LANDSCAPE_FLARE_PSK").ok())
     };
+    if psk.as_deref() == Some("") {
+        return Err("private discovery requires a nonempty PSK".into());
+    }
+    if args.device_name.len() > 200 || args.device_name.chars().any(char::is_control) {
+        return Err("invalid device name".into());
+    }
     let devs = parse_devs(&args.dev)?;
     let forward_ports = parse_port_list(&args.forward_ports)?;
+    if forward_ports.len() > 650 {
+        return Err("at most 650 allowed ports fit in one authentication reply".into());
+    }
     let cfg = ServerConfig {
         devs: &devs,
         ethertype: args.ethertype,
         mac: args.mac,
-        psk: &psk,
+        psk: psk.as_deref(),
         device_name: &args.device_name,
         forward_ports: &forward_ports,
         discover_token: args.token.as_deref().unwrap_or(""),
@@ -239,6 +249,7 @@ mod tests {
         })
         .unwrap();
         let args = SetupArgs {
+            public_discovery: false,
             psk: None,
             device_name: None,
             mac: None,
@@ -269,6 +280,7 @@ mod tests {
         })
         .unwrap();
         let args = SetupArgs {
+            public_discovery: false,
             psk: Some("a-rotated-recovery-secret".into()),
             device_name: None,
             mac: None,
@@ -299,6 +311,7 @@ mod tests {
         })
         .unwrap();
         let args = SetupArgs {
+            public_discovery: false,
             psk: Some("short".into()),
             device_name: None,
             mac: None,
@@ -321,6 +334,7 @@ mod tests {
     fn setup_creates_a_minimal_section_when_missing() {
         let (guard, temp) = territory("create");
         let args = SetupArgs {
+            public_discovery: false,
             psk: Some("a-brand-new-recovery-secret".into()),
             device_name: None,
             mac: None,
@@ -341,6 +355,7 @@ mod tests {
     fn setup_validates_devices_and_forward_ports() {
         let (guard, temp) = territory("validate");
         let invalid_dev = SetupArgs {
+            public_discovery: false,
             psk: Some("a-recovery-secret".into()),
             device_name: None,
             mac: None,
@@ -351,6 +366,7 @@ mod tests {
         };
         assert!(run_setup(&invalid_dev).is_err());
         let invalid_ports = SetupArgs {
+            public_discovery: false,
             psk: Some("a-recovery-secret".into()),
             device_name: None,
             mac: None,
@@ -371,11 +387,12 @@ mod tests {
 #[cfg(target_os = "linux")]
 fn run_setup(args: &SetupArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::deployment::config::{
-        FLARE_PSK_MIN_LENGTH, default_flare_section, load_flare, update_flare,
+        FLARE_PSK_MIN_LENGTH, default_flare_section, read_flare, update_flare,
     };
 
-    let section = load_flare().unwrap_or_else(default_flare_section);
-    let modifying = args.psk.is_some()
+    let section = read_flare()?.unwrap_or_else(default_flare_section);
+    let modifying = args.public_discovery
+        || args.psk.is_some()
         || args.device_name.is_some()
         || args.mac.is_some()
         || args.dev.is_some()
@@ -383,6 +400,13 @@ fn run_setup(args: &SetupArgs) -> Result<(), Box<dyn std::error::Error>> {
         || args.forward_ports.is_some()
         || args.token.is_some();
     if !modifying {
+        println!(
+            "flare: public discovery: {}",
+            section.public_discovery.unwrap_or(section.psk.is_none())
+        );
+        if let Ok(fingerprint) = crate::flare::auth::fingerprint() {
+            println!("flare: device fingerprint: {fingerprint}");
+        }
         let psk = section.psk.as_deref().unwrap_or("<not configured>");
         println!(
             "flare: device {} (ethertype 0x{:04x}), forward ports: {}",
@@ -415,7 +439,12 @@ fn run_setup(args: &SetupArgs) -> Result<(), Box<dyn std::error::Error>> {
         let _ = parse_port_list(ports)?;
     }
     update_flare(|section| {
+        if args.public_discovery {
+            section.public_discovery = Some(true);
+            section.psk = None;
+        }
         if let Some(psk) = &args.psk {
+            section.public_discovery = Some(false);
             section.psk = Some(psk.clone());
         }
         if let Some(name) = &args.device_name {

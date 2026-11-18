@@ -6,12 +6,11 @@
 `state/install-state.json`。它保存安装机器的持续分发通道偏好，不属于安装记录：
 `state/install-state.json` 不包含任何仓库信息。
 
-`lkit` 不会凭空创建 `config.toml`；只有显式的偏好/通道配置动作才会写回该文件：
+以下操作会写入 `config.toml`。
 
 - 交互控制台按 `L` 切换语言会写回 `[ui] language`（见[语言预设](#语言预设)）；
-- `lkit self install --flare-psk-file` 供给急救恢复码时写回 `[flare]` 段
-  （见[flare 恢复通道](#flare-恢复通道)），daemon 首启无 `[flare]` 时也会生成
-  随机 psk 并写回（恒常托管）；
+- `lkit self install --flare-psk-file` 配置私有发现。Linux daemon 首次启动时会记录发现模式。
+
 - `lkit flare setup` 显式写回 `[flare]` 段。
 
 仓库来源选择不会被任何命令持久化，成功、失败、回滚或中断恢复都不会改变该文件；
@@ -155,38 +154,20 @@ tmp + rename 完成，保留注释、未知 section/字段与原有顺序，并�
 
 ## flare 恢复通道
 
-`[flare]` 段配置 daemon 托管的 Landscape Terrain（L2 防失联通道）服务端。daemon 在
-Linux 上**恒常托管** flare：段缺失或无 `psk` 时自动生成随机 psk 并写回本文件
-（启动时打印一次分发提示），随后每个周期对比配置指纹，`[flare]` 变更（psk 非空）时
-重启 flare 任务拾取新配置；psk 被清空则保持现役运行，不切断恢复通道。
-任务启动失败或退出后重试时先读取最新有效配置；修正网卡等参数后无需重启 daemon。
-首次配置读取或持久化失败时，daemon 保持运行，并在后续周期重新尝试启动恢复通道。
+`[flare]` 控制 Linux daemon 托管的 L2 恢复通道。新装默认允许公开发现。已有配置含 PSK 且没有 `public_discovery` 字段时使用私有发现，保留原密钥。私有模式缺少密钥或配置损坏时，运行中的服务保留上一份有效设置。
 
 ```toml
 [flare]
-psk = "一个 ≥12 字符的共享密钥"
-device_name = "landscape-router"   # 可选,默认 landscape-router
-mac = "aa:bb:cc:dd:ee:ff"          # 可选,缺省自动探测
-devices = "any"                    # 可选,默认 any
-ethertype = 0x88b6                 # 可选,默认 0x88b6
-forward_ports = "22,6443"          # 可选,默认 22,6443
-token = "发现令牌"                  # 可选
+public_discovery = true
+device_name = "landscape-router"
+devices = "any"
+ethertype = 0x88b6
+forward_ports = "22,6443"
 ```
 
-写入路径：
+`mac` 和 `token` 可选。公开模式中的发现令牌对同网段可见。运行 `lkit flare setup --psk "$KEY"`，或设置 `public_discovery = false` 并提供 `psk`，即可启用私有发现。切回公开模式使用 `lkit flare setup --public-discovery`。daemon 在下个检查周期应用新的有效设置。
 
-- **`lkit self install --flare-psk-file`**：daemon 部署时在启动前写回 `[flare]` 段
-  （保留既有字段）；未提供时保留既有 `[flare]`，交互终端提示输入，无终端回落
-  daemon 自动生成，见 [`lkit self`](../commands/self.md)；
-- **`lkit flare setup`**：带 `--psk/--token/--devices/--ethertype/--forward-ports/
-  --mac/--device-name` 时在既有配置上覆盖并写回；空参打印当前有效配置（含 psk，
-  供分发给 `lflare` 恢复客户端）；
-- **daemon 首启**：无 `[flare]`/psk 时生成随机 psk 并写回。
-
-`lkit install` 不写回本文件；首次安装完成时会提示 flare 恢复通道就绪
-（`lkit flare setup` 查看 psk）。psK 随本文件以 `0600` 权限保存（`lkit` 写入时强制）；
-文件缺失时上述动作会创建带默认 `[repository]` 的最小配置，与"文件缺失"的缺省
-回退语义一致。
+部署时可通过 `lkit self install --flare-psk-file PATH` 从 root 私密文件设置发现 PSK。省略此选项会保留已有设置。设备身份保存在独立的 `flare-identity.key` 文件，本机运行 `lkit flare setup` 可查看指纹。Landscape 和 Linux root 的登录密码均在认证时读取。[发现和认证协议](../flare/protocol.md)
 
 ## 来源变化与资产身份
 `lkit reconcile --repository` 与同版本 `install`/`switch` 的显式来源诊断：

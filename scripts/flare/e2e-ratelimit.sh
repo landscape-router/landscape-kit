@@ -45,7 +45,7 @@ docker run -d --name "$SRV" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" bash -c 'python3 /opt/fake_service.py & exec /opt/bin/lkit flare serve --psk '"$PSK"' --dev any'
+  "$IMAGE" bash -c 'python3 /opt/fake_service.py & exec /opt/bin/lkit-v5 flare serve --psk '"$PSK"' --dev any'
 sleep 1
 
 echo "== flood DISCOVER from a fake MAC =="

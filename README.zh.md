@@ -62,12 +62,13 @@ sudo lkit install --repository https://l1s3.whileaway.dev/landscape/
 
 ## Terrain 防失联通道
 
-Terrain 是主机与 Landscape 路由器之间的加密二层应急通道。`lkit` daemon 可以托管服务端，使用 `lkit flare setup` 配置或查看恢复密钥。
+Terrain 是主机与 Landscape 路由器之间的加密二层应急通道。`lkit` daemon 可以托管服务端，使用 `lkit flare setup` 查看设备指纹与发现设置。
 
-`lflare` 默认进入交互式客户端。脚本可以使用 `cli` 子命令：
+`lflare` 会列出当前网卡发现的设备。选择目标，核对本次连接的指纹，再用 Landscape 管理员密码或本机 Linux root 密码登录。脚本可逐次指定已确认的指纹。
 
 ```sh
-lflare cli --psk '<恢复密钥>' --dev eth0 --forward 2222:22
+lflare discover --dev eth0 --json
+lflare cli --target "$FINGERPRINT" --auth root --dev eth0 --forward 2222:22
 ```
 
 Linux 客户端使用上述四种架构的 musl 全静态产物；Windows 客户端需要安装 Npcap。协议细节、配置方式和端到端场景见 [Terrain 文档](docs/flare/README.md)。

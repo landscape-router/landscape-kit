@@ -18,6 +18,7 @@
 # Usage: test/e2e-same-segment.sh
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/flare/fixture-login.sh
 
 NET=lndp-seg
 IMAGE=lndp-test:latest
@@ -48,13 +49,14 @@ docker run -d --name "$SRV" --network "$NET" \
   -v "$PWD/target/debug:/opt/bin:ro" \
   "$IMAGE" bash -c 'python3 /opt/fake_service.py & exec /opt/bin/lkit flare serve --psk '"$PSK"' --dev any --token '"$TOKEN"
 
+fingerprint=$(fixture_login "$SRV")
 start_client() {
   local name=$1 port=$2
   docker run -d --name "$name" --network "$NET" \
     --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
     --cap-add NET_RAW \
     -v "$PWD/target/debug:/opt/bin:ro" \
-    "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --token "$TOKEN" --forward "$port":6443
+    "$IMAGE" /opt/bin/lflare cli --target "$fingerprint" --auth root --password-file /opt/fixture-password --psk "$PSK" --dev eth0 --token "$TOKEN" --forward "$port":6443
 }
 
 # Wait until the client has logged at least `want` session-establishments.

@@ -7,7 +7,7 @@
 //!    事务由 daemon 自动接管并执行与 CLI 相同的恢复语义
 //!    ([`crate::deployment::transaction::recover_interrupted`]);
 //! 3. **恒常托管 flare 服务端**:Linux 上 daemon 启动即托管 Landscape Terrain
-//!    (L2 防失联通道)服务端,`[flare]` 段缺失或无 psk 时生成随机 psk 并持久化;
+//!    (L2 防失联通道)服务端,新装默认公开发现;
 //!    每周期对比配置指纹,变更时重启 flare 任务拾取新配置。网络接管失败等
 //!    IP 路径不可用时,操作员仍可经 L2 通道连接(见 [`reload_flare`])。
 //!    网卡 DOWN 时 L2 通道无法收发帧,故 daemon 启动、托管 flare 之前会尽力
@@ -204,8 +204,7 @@ struct FlareTask {
     section: crate::deployment::config::FlareSection,
 }
 
-/// 恒常启动 flare 服务端:Linux 上 daemon 启动即托管,`[flare]` 段缺失或无 psk
-/// 时生成随机 psk 并持久化,启动时打印一次分发提示(后续安装会覆盖它)。
+/// Linux daemon owns the Flare task and its discovery policy.
 #[cfg(target_os = "linux")]
 fn initial_flare() -> Option<FlareTask> {
     match effective_flare_config() {
@@ -261,7 +260,9 @@ fn reload_flare_with(
     };
     // Read corrections before retrying a failed task. Invalid/cleared configuration
     // retains the last usable section, including while that task is being retried.
-    let current = crate::deployment::config::load_flare().filter(|section| section.psk.is_some());
+    let current = crate::deployment::config::load_flare().filter(|s| {
+        s.public_discovery == Some(true) || s.psk.as_deref().is_some_and(|p| !p.is_empty())
+    });
     if !running.handle.is_finished()
         && !current
             .as_ref()
@@ -291,32 +292,23 @@ fn flare_needs_restart(
     running: &crate::deployment::config::FlareSection,
     current: &crate::deployment::config::FlareSection,
 ) -> bool {
-    current.psk.is_some() && current != running
+    (current.public_discovery == Some(true) || current.psk.is_some()) && current != running
 }
 
-/// 计算当前生效的 flare 配置:有 psk 直接使用,段缺失或无 psk 时生成随机 psk
-/// 并持久化到 `config.toml` 的 `[flare]` 段(缺省字段由 serde 默认值补齐)。
-/// 生成时打印一次 psk,提示记下保存。
+/// Initialize public discovery on fresh installs and preserve privacy on v5 upgrades.
 #[cfg(target_os = "linux")]
 fn effective_flare_config() -> Result<crate::deployment::config::FlareSection, InstallError> {
-    use crate::deployment::config::{generate_psk, load_flare, update_flare};
-
-    if let Some(section) = load_flare().filter(|section| section.psk.is_some()) {
-        return Ok(section);
-    }
-    let mut generated = false;
-    let section = update_flare(|section| {
-        if section.psk.is_none() {
-            section.psk = Some(generate_psk());
-            generated = true;
-        }
-    })?;
-    if generated {
-        let psk = section.psk.as_deref().expect("generated recovery psk");
-        println!(
-            "lkit daemon: generated flare recovery psk (written to {}); a later `lkit install` or `lkit flare setup` replaces it: {psk}",
-            layout::territory_config_file().display()
-        );
+    use crate::deployment::config::{read_flare, update_flare};
+    let section = match read_flare()? {
+        Some(s) if s.public_discovery.is_some() => s,
+        _ => update_flare(|s| {
+            s.public_discovery.get_or_insert(s.psk.is_none());
+        })?,
+    };
+    if section.public_discovery == Some(false) && section.psk.as_deref().is_none_or(str::is_empty) {
+        return Err(InstallError::CorruptedState(
+            "private discovery needs a discovery PSK".into(),
+        ));
     }
     Ok(section)
 }
@@ -330,10 +322,14 @@ fn spawn_flare_from(
     tokio::sync::oneshot::Sender<()>,
     tokio::task::JoinHandle<()>,
 )> {
-    let psk = section.psk.as_deref()?;
+    let psk = if section.public_discovery == Some(true) {
+        None
+    } else {
+        Some(section.psk.clone()?)
+    };
     let (tx, rx) = tokio::sync::oneshot::channel();
     let mut args = crate::commands::flare::ServeArgs {
-        psk: Some(psk.to_string()),
+        psk,
         device_name: section.device_name.clone(),
         mac: None,
         dev: section.devices.clone().unwrap_or_else(|| "any".to_string()),
@@ -657,30 +653,13 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn generates_and_persists_a_psk_when_the_flare_section_is_missing() {
-        use crate::deployment::config::FLARE_PSK_MIN_LENGTH;
-        use std::os::unix::fs::MetadataExt;
-
-        let (guard, temp) = territory("flare-generate");
+    fn new_configuration_is_public_and_has_no_generated_secret() {
+        let (_guard, temp) = territory("flare-public");
         let section = effective_flare_config().unwrap();
-        assert!(section.psk.is_some());
-        let psk = section.psk.as_deref().unwrap();
-        assert!(psk.len() >= FLARE_PSK_MIN_LENGTH);
-        let reloaded = crate::deployment::config::load_flare().unwrap();
-        assert_eq!(
-            reloaded.psk.as_deref(),
-            Some(psk),
-            "the psk must be persisted"
-        );
-        let config = layout::territory_config_file();
-        let metadata = std::fs::metadata(&config).unwrap();
-        assert_eq!(
-            metadata.mode() & 0o077,
-            0,
-            "config with a psk must be root-only"
-        );
-        drop(guard);
-        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(section.public_discovery, Some(true));
+        assert!(section.psk.is_none());
+        assert_eq!(crate::deployment::config::load_flare(), Some(section));
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -790,33 +769,11 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn regenerates_a_psk_when_the_configured_one_was_removed() {
-        use crate::deployment::config::{FlareSection, default_flare_section, save_flare};
-
-        let (guard, temp) = territory("flare-regenerate");
-        save_flare(&FlareSection {
-            psk: Some("the-first-secret".into()),
-            ..default_flare_section()
-        })
-        .unwrap();
-        save_flare(&FlareSection {
-            psk: None,
-            ..default_flare_section()
-        })
-        .unwrap();
-        let section = effective_flare_config().unwrap();
-        let psk = section.psk.as_deref().unwrap();
-        assert_ne!(psk, "the-first-secret");
-        assert_eq!(
-            crate::deployment::config::load_flare()
-                .unwrap()
-                .psk
-                .as_deref(),
-            Some(psk),
-            "the regenerated psk must be persisted"
-        );
-        drop(guard);
-        let _ = std::fs::remove_dir_all(&temp);
+    fn missing_private_discovery_secret_fails_closed() {
+        let (_guard, temp) = territory("flare-missing-key");
+        crate::deployment::config::update_flare(|s| s.public_discovery = Some(false)).unwrap();
+        assert!(effective_flare_config().is_err());
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[cfg(target_os = "linux")]

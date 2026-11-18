@@ -16,6 +16,7 @@ use landscape_terrain_proto::transport::{Frame, Link, fmt_mac};
 use tokio::sync::mpsc;
 
 mod forward;
+pub mod rescue;
 mod session;
 
 use forward::{BridgeMsg, Conn};
@@ -258,11 +259,19 @@ pub async fn run(mut cfg: ClientConfig<'_>) -> Result<(), Box<dyn std::error::Er
             },
         );
 
+        cfg.log.emit(
+            LogLevel::Warn,
+            "Terrain v5: upgrade lkit daemon on the selected device to use password authentication"
+                .into(),
+        );
         let end = session_loop(
             &mut tx,
             &server_mac,
             sid,
-            keys,
+            landscape_terrain_proto::protocol::v6::Channel::Legacy(SessionCrypto::new(
+                keys,
+                landscape_terrain_proto::protocol::crypto::Dir::C2S,
+            )),
             &cfg,
             notify.clone(),
             &mut forward_control,
@@ -534,14 +543,14 @@ fn pump(
     tx: &mut Link,
     server_mac: &[u8; 6],
     sid: u32,
-    crypto: &mut SessionCrypto,
+    crypto: &mut landscape_terrain_proto::protocol::v6::Channel,
     ethertype: u16,
     conns: &mut HashMap<SocketHandle, Conn>,
     pending_tx: &mut HashMap<SocketHandle, VecDeque<Vec<u8>>>,
     pending_tx_bytes: &mut usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for pkt in stack.poll() {
-        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt)?;
         tx.send(server_mac, ethertype, &raw)?;
     }
 
@@ -604,7 +613,7 @@ fn pump(
     // Socket writes, FINs and receive-window updates must be flushed before
     // sleeping; there is no periodic tick to finish this work for us.
     for pkt in stack.poll() {
-        let raw = crypto.seal(TYPE_DATA, sid, &pkt);
+        let raw = crypto.seal(TYPE_DATA, sid, &pkt)?;
         tx.send(server_mac, ethertype, &raw)?;
     }
     Ok(())

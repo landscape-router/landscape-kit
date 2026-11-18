@@ -16,6 +16,7 @@
 # Usage: test/e2e-multiclient.sh
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/flare/fixture-login.sh
 
 NET_A=lndp-mc-a
 NET_B=lndp-mc-b
@@ -49,13 +50,14 @@ docker run -d --name "$SRV" --network "$NET_A" \
 docker network connect "$NET_B" "$SRV"
 sleep 1
 
+fingerprint=$(fixture_login "$SRV")
 start_client() {
   local name=$1 net=$2 port=$3
   docker run -d --name "$name" --network "$net" \
     --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
     --cap-add NET_RAW \
     -v "$PWD/target/debug:/opt/bin:ro" \
-    "$IMAGE" /opt/bin/lflare cli --psk "$PSK" --dev eth0 --forward "$port":6443
+    "$IMAGE" /opt/bin/lflare cli --target "$fingerprint" --auth root --password-file /opt/fixture-password --psk "$PSK" --dev eth0 --forward "$port":6443
 }
 
 wait_session() {

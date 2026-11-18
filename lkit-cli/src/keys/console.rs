@@ -144,8 +144,6 @@ pub(crate) const CONSOLE_OVERVIEW_LKIT_PSK_HELP: &str = "console.overview_lkit_p
 pub(crate) const CONSOLE_OVERVIEW_HINT_DEPLOY: &str = "console.overview_hint_deploy";
 pub(crate) const CONSOLE_DEPLOY_DAEMON_TITLE: &str = "console.deploy_daemon_title";
 pub(crate) const CONSOLE_DEPLOY_FLARE_PURPOSE: &str = "console.deploy_flare_purpose";
-pub(crate) const CONSOLE_DEPLOY_FLARE_INPUT_NOTE: &str = "console.deploy_flare_input_note";
-pub(crate) const CONSOLE_DEPLOY_FLARE_EMPTY: &str = "console.deploy_flare_empty";
 pub(crate) const CONSOLE_DEPLOY_PSK_MISMATCH: &str = "console.deploy_psk_mismatch";
 pub(crate) const CONSOLE_DEPLOY_DAEMON_START: &str = "console.deploy_daemon_start";
 pub(crate) const CONSOLE_DIALOG_CANCEL: &str = "console.dialog_cancel";
@@ -359,3 +357,5 @@ pub(crate) const CONSOLE_TAKEOVER_PENDING_CONFIRM: &str = "console.takeover_pend
 pub(crate) const CONSOLE_TAKEOVER_PENDING_ROLLING_BACK: &str =
     "console.takeover_pending_rolling_back";
 pub(crate) const CONSOLE_TAKEOVER_PENDING_KEY_HINT: &str = "console.takeover_pending_key_hint";
+
+pub(crate) const CONSOLE_FLARE_PUBLIC: &str = "console.flare_public";

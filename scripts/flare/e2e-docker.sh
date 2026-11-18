@@ -54,7 +54,7 @@ docker run -d --name "$SRV" --network "$NET" \
   --env LANDSCAPE_TERRAIN_SCRYPT_LOG_N=10 \
   --cap-add NET_RAW --cap-add NET_ADMIN \
   -v "$PWD/target/debug:/opt/bin:ro" \
-  "$IMAGE" bash -c 'python3 /opt/fake_service.py & exec /opt/bin/lkit flare serve --psk '"$PSK"' --dev any --token '"$TOKEN"
+  "$IMAGE" bash -c 'python3 /opt/fake_service.py & exec /opt/bin/lkit-v5 flare serve --psk '"$PSK"' --dev any --token '"$TOKEN"
 
 echo "== start client =="
 docker run -d --name "$CLI" --network "$NET" \

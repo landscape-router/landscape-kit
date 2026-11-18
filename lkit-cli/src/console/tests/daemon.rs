@@ -1,4 +1,3 @@
-use super::super::daemon_panel::PskDialogField;
 use super::super::*;
 use super::support::*;
 use crate::check::model::{CheckGroup, CheckReport, CheckResult, Status, StatusCounts};
@@ -248,28 +247,9 @@ fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() 
         app.deploy_daemon_confirming,
         "D must open the deploy confirm dialog"
     );
-    // 输入恢复码与二次确认后部署。
-    for character in "an-operator-chosen-code".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    for character in "an-operator-chosen-code".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(
-        app.deploy_daemon.is_some(),
-        "confirming must start the daemon deploy in the background"
-    );
-    assert_eq!(
-        app.deploy_psk, "an-operator-chosen-code",
-        "the psk entered in the dialog must be passed to the deploy"
-    );
-
-    assert_eq!(deploy.requests(), [Some("an-operator-chosen-code".into())]);
+    assert!(app.deploy_daemon.is_some());
+    assert_eq!(deploy.requests(), [None]);
     app.update();
     assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
     assert!(
@@ -297,7 +277,7 @@ fn deploy_confirm_dialog_renders_on_the_install_menu_from_the_preflight_path() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(content.contains("Deploy the lkit daemon"));
-    assert!(content.contains("Confirm psk"));
+    assert!(!content.contains("Confirm psk"));
     assert!(content.contains("[ Start deployment ]"));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -331,7 +311,7 @@ fn flare_dialog_renders_the_current_configuration() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(content.contains("Flare recovery channel"));
-    assert!(content.contains("Flare recovery psk"));
+    assert!(content.contains("Discovery PSK"));
     assert!(content.contains("<not configured>"));
     drop(_guard);
     let _ = std::fs::remove_dir_all(&territory);
@@ -386,186 +366,16 @@ fn flare_dialog_rejects_a_short_psk_and_stays_open() {
 }
 
 #[test]
-fn deploy_confirm_shows_the_recovery_code_field_and_explains_its_purpose() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("deploy-flare-render", "99999999\n");
-    let mut app = overview_app();
-    app.focus = Focus::Panel;
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(app.deploy_daemon_confirming);
-    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
-    let content = terminal_content(&terminal);
-    assert!(content.contains("Flare recovery psk"));
-    assert!(content.contains("Confirm psk"));
-    assert!(content.contains("rescue channel"));
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn deploy_confirm_accepts_an_edited_recovery_code_and_starts_the_deploy() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("deploy-flare-edit", "99999999\n");
-    let (mut app, deploy) = overview_app_with_deploy(Ok("fixture daemon deployed".into()));
-    app.focus = Focus::Panel;
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    // psk 字段:直接输入进入编辑,Enter 提交编辑。
-    for character in "an-operator-chosen-code".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    // Down 到二次确认字段:输入后提交。
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    for character in "an-operator-chosen-code".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    // Down 到「开始部署」动作行,Enter 启动部署。
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(
-        app.deploy_daemon.is_some(),
-        "confirming with a matching recovery code must start the deploy"
-    );
-    assert_eq!(app.deploy_psk, "an-operator-chosen-code");
-    assert_eq!(app.deploy_psk_confirmation, "an-operator-chosen-code");
-    assert_eq!(deploy.requests(), [Some("an-operator-chosen-code".into())]);
-    app.update();
-    assert!(app.deploy_daemon.is_none(), "the deploy worker must finish");
-    assert!(
-        matches!(&app.notice, Notice::Success(message) if message == "fixture daemon deployed")
-    );
-    assert!(matches!(app.preflight.state, PreflightState::Running(_)));
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn deploy_confirm_enter_edits_instead_of_deploying_and_arrows_navigate() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("deploy-flare-arrows", "99999999\n");
-    let mut app = overview_app();
-    app.focus = Focus::Panel;
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    // 弹窗打开即聚焦 psk 字段:Enter 进入编辑而不是直接部署。
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(
-        app.deploy_daemon.is_none(),
-        "Enter on a field must not deploy directly"
-    );
-    assert!(
-        app.deploy_psk_editing,
-        "Enter must start editing the psk field"
-    );
-    // 提交编辑后 Down 到二次确认字段,直接输入落到确认字段。
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.deploy_psk_field, PskDialogField::Confirmation);
-    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    assert_eq!(app.deploy_psk, "", "typing must not touch the psk field");
-    assert_eq!(app.deploy_psk_confirmation, "xy");
-    // 提交后 Up 回到 psk 字段,BackTab 再从 Action 回到 Confirmation。
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.deploy_psk_field, PskDialogField::Psk);
+fn deployment_requires_only_confirmation_and_preserves_the_discovery_settings() {
+    let (_guard, _territory) = territory_with_pidfile("deploy-public", "99999999\n");
+    let (mut app, deploy) = overview_app_with_deploy(Ok("deployed".into()));
+    app.open_deploy_dialog();
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.deploy_psk_field, PskDialogField::Action);
-    app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
-    assert_eq!(app.deploy_psk_field, PskDialogField::Confirmation);
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn deploy_confirm_rejects_a_mismatched_confirmation_without_starting() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("deploy-flare-mismatch", "99999999\n");
-    let mut app = overview_app();
-    app.focus = Focus::Panel;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    for character in "an-operator-chosen-code".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
+    assert!(deploy.requests().is_empty());
+    app.open_deploy_dialog();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    for character in "a-different-code".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(
-        app.deploy_daemon.is_none(),
-        "a mismatched confirmation must not start the deploy"
-    );
-    assert!(
-        app.deploy_daemon_confirming,
-        "the dialog must stay open on a mismatch"
-    );
-    assert!(
-        app.notice.contains("do not match"),
-        "unexpected notice: {}",
-        app.notice.text()
-    );
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn deploy_confirm_rejects_a_short_recovery_code_without_starting() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("deploy-flare-short", "99999999\n");
-    let mut app = overview_app();
-    app.focus = Focus::Panel;
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    for character in "eshort".chars() {
-        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    }
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(
-        app.deploy_daemon.is_none(),
-        "a short recovery code must not start the deploy"
-    );
-    assert!(app.deploy_daemon_confirming, "the dialog must stay open");
-    assert!(
-        app.notice.contains("at least 12 characters"),
-        "unexpected notice: {}",
-        app.notice.text()
-    );
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
-}
-
-#[test]
-fn deploy_confirm_prefills_an_existing_recovery_code() {
-    let _language = LanguageGuard::set(Language::En);
-    let (_guard, territory) = territory_with_pidfile("deploy-flare-prefill", "99999999\n");
-    crate::deployment::config::save_flare(&crate::deployment::config::FlareSection {
-        psk: Some("an-existing-recovery-code".into()),
-        ..crate::deployment::config::default_flare_section()
-    })
-    .unwrap();
-    let mut app = overview_app();
-    app.focus = Focus::Panel;
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_eq!(
-        app.deploy_psk, "an-existing-recovery-code",
-        "an existing recovery code must be pre-filled"
-    );
-    assert_eq!(
-        app.deploy_psk_confirmation, "",
-        "the confirmation field must start empty"
-    );
-    drop(_guard);
-    let _ = std::fs::remove_dir_all(&territory);
+    assert_eq!(deploy.requests(), [None]);
 }
 
 #[test]
@@ -579,7 +389,7 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
     app.focus = Focus::Panel;
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
-    assert!(content.contains("[ Show recovery psk ]"));
+    assert!(content.contains("[ Show discovery key ]"));
     assert!(!content.contains("[ Deploy the lkit daemon ]"));
     assert!(
         content.contains("A systemd service that executes"),
@@ -587,11 +397,11 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
     );
     let psk_row = content
         .lines()
-        .position(|line| line.contains("[ Show recovery psk ]"))
+        .position(|line| line.contains("[ Show discovery key ]"))
         .expect("the show psk row must render");
     let help_row = content
         .lines()
-        .position(|line| line.contains("rescue"))
+        .position(|line| line.contains("private discovery"))
         .expect("the recovery-code description must render");
     assert!(
         help_row < psk_row,
@@ -611,7 +421,7 @@ fn overview_does_not_show_show_psk_row_when_daemon_is_down() {
     terminal.draw(|frame| render(frame, &mut app)).unwrap();
     let content = terminal_content(&terminal);
     assert!(
-        !content.contains("[ Show recovery psk ]"),
+        !content.contains("[ Show discovery key ]"),
         "the show psk row must not render while the daemon is down"
     );
     drop(_guard);

@@ -1,0 +1,23 @@
+name: flare-rescue
+topology:
+  kinds:
+    linux:
+      image: lkit-flare-lab:ci
+      cmd: sleep infinity
+      binds:
+        - ${FLARE_LAB_BIN}:/opt/bin:ro
+  nodes:
+    a:
+      kind: linux
+    b:
+      kind: linux
+      image: alpine:3.22
+      cmd: sleep 86400
+    client:
+      kind: linux
+    lan:
+      kind: bridge
+  links:
+    - endpoints: ["a:eth1", "lan:fr-a"]
+    - endpoints: ["b:eth1", "lan:fr-b"]
+    - endpoints: ["client:eth1", "lan:fr-client"]

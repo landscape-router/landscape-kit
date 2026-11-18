@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod frame;
 pub mod session;
+pub mod v6;
 
 /// Magic value "TERR" = Landscape Terrain Protocol.
 /// First 4 bytes of every frame payload; unknown frames are dropped at parse time.

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "layout_version": 2,
+  "install_root": "/srv/landscape",
+  "canonical_install_root": "/srv/landscape",
+  "active_version": "0.28.3",
+  "assets": {
+    "webserver": {"architecture": "x86_64", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1},
+    "static_archive": {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 1}
+  },
+  "initialization": {"status": "complete", "lock_present": true, "initialized_at": "2026-01-01T00:00:00Z"},
+  "service": {"manager": "systemd", "registered": true, "enabled": true, "verified": true, "definition_path": "service/landscape-router.service", "definition_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+}

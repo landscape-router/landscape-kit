@@ -19,33 +19,22 @@ of the wire share one implementation:
 | Module | Contents |
 | --- | --- |
 | `protocol::frame` | 16-byte header wire format (`TERR` magic, version, type, session, len, seq), typed payload codecs |
-| `protocol::crypto` | scrypt master-key stretch, per-phase/per-direction key schedule, ChaCha20-Poly1305 sealing, replay window |
-| `protocol::session` | Client/server handshake as pure state machines (frames in, frames out; no I/O) |
+| `protocol::v6` | Discovery, Noise NX device handshake and authenticated datagram transport |
+| `protocol::crypto` | Legacy v5 scrypt master-key stretch, per-phase/per-direction key schedule, ChaCha20-Poly1305 sealing, replay window |
+| `protocol::session` | Legacy v5 client/server handshake as pure state machines (frames in, frames out; no I/O) |
 | `ipstack` | Userspace TCP/IP stack (smoltcp) bridged over Terrain DATA frames, with monotonic TCP deadlines |
 | `transport` | Platform `Link` (AF_PACKET on Linux, libpcap elsewhere), ethernet/VLAN parsing |
 | `cli` | Shared argument parsers used by both binaries |
 | `concurrency` | Named Tokio tasks, OS threads and runtime workers shared by both binaries |
 | `relay` | Deadline-driven waits and coalesced relay-channel capacity/closure notifications |
 
-## Security model in one paragraph
+## Authentication and transport
 
-The psk is stretched with scrypt into a master key; every key and auth proof
-is domain-separated from it. DISCOVER is sealed with a pre-discovery key, so
-the server stays silent for anyone without the psk (an optional discovery
-token adds anti-scanning). Each direction of the handshake and the session
-uses its own key; the cleartext header is AEAD-associated data; sequence
-numbers feed both the nonce and a strict replay window. There is no forward
-secrecy — acceptable for a shared-secret LAN protocol. The server bounds
-brute-force with per-MAC lockout plus global rate budgets.
+Terrain v6 discovers routers on the local Ethernet segment. Private discovery wraps requests and responses with a PSK. After selection, a fresh Noise NX handshake proves possession of the chosen device key and establishes the session keys. Clients verify the fingerprint on each connection and submit login credentials over the encrypted channel. A successful login authorizes the configured loopback port mappings. Each mapped application handles its own authentication.
 
-The full specification (frame tables, key schedule, handshake flow,
-version-mismatch behavior, server defenses) lives in
-[`docs/flare/protocol.md`](../docs/flare/protocol.md); the Docker L2
-end-to-end test topology is described in
-[`docs/flare/testing.md`](../docs/flare/testing.md).
+The v5 codec and session state machines support clients connecting to older daemons with the original recovery code. The library has its own crate version. The current wire format is identified by `protocol::v6::VERSION`.
 
-This crate carries its own version line, independent of the workspace
-version, because the protocol version (`VERSION` const) evolves with it.
+See the [protocol specification](../docs/flare/protocol.md) and [Docker and containerlab tests](../docs/flare/testing.md).
 
 ## License
 

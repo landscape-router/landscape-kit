@@ -35,12 +35,8 @@ daemon 进程写 pidfile 到
    受管定义校验。把对应服务定义渲染到全局目录
    `/usr/local/lib/lkit/lkit.service`。systemd unit 为 `0600`；init 脚本为可执行的 `0755`，
    各后端均运行 `/usr/local/bin/lkit daemon --supervise`，不绑定 Landscape 安装根；
-4. （可选）供给 急救恢复码:提供 `--flare-psk-file`(root 所有、`0400`/`0600`
-   私密文件)时,在启动 daemon 前把 psk 写入 lkit 地盘 `config.toml` 的 `[flare]` 段
-   (保留既有字段,文件缺失时创建带默认仓库来源的最小配置),daemon 首启即用该 psk
-   托管 flare 服务;未提供时保留既有 `[flare]` 配置,交互终端会提示输入 psk(带用途
-   说明,至少 12 字符),无终端环境(脚本/控制台后台部署)回落 daemon 自动生成,
-   不阻断部署。psK 用途与查看方式见 [flare 协议](../flare/protocol.md);
+4. 可用 `--flare-psk-file` 从 root 所有的 0400 或 0600 文件设置私有发现密钥。省略时保留既有设置，新装默认公开发现。设备指纹和登录方式见 [Flare 协议](../flare/protocol.md)。
+
 5. 注册、启用并启动服务：systemd 注册链接为 `/etc/systemd/system/lkit.service`，
    OpenRC/SysVinit 为 `/etc/init.d/lkit.service`，均指向全局原件；检查监管进程存在，且实际 daemon 的新 PID 与恢复能力标识匹配。
    后台 init 脚本返回后最多等待 3 秒确认进程出现，不等待 bpffs 准备成功。
@@ -145,7 +141,7 @@ daemon 重启而被主动启动。需要新建接管、reinit 或委托修改时
   完成等,详见[事务与中断恢复](../deployment/transactions-and-recovery.md));
   恢复目标从 lkit 地盘的状态与事务发现 landscape 根;
 - **恒常托管 flare 服务端**:Linux 上 daemon 启动即托管 Landscape Terrain
-  (L2 防失联通道)服务端,`[flare]` 段缺失或无 psk 时生成随机 psk 并持久化;
+  (L2 防失联通道)服务端,新装默认公开发现，已有 PSK 的配置保留私有发现;
   每周期对比配置指纹,变更时重启 flare 任务拾取新配置,见[flare 协议](../flare/protocol.md);
 - 网络接管由 daemon 监测期限与主机重启并自动回滚；用户确认仍通过 `lkit network confirm`；
   见[恢复契约](../network/daemon-recovery.md)；

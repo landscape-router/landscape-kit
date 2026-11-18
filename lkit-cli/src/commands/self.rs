@@ -102,10 +102,7 @@ pub struct SelfArgs {
 
 #[derive(Debug, Args)]
 pub struct InstallSelfArgs {
-    /// Flare recovery psk read from a restricted file (root-only): the L2
-    /// recovery channel secret of the daemon-hosted flare server, used when
-    /// Landscape network configuration breaks. Omitted: keep the configured
-    /// psk, prompt in an interactive terminal, or let the daemon generate one
+    /// Set a private Flare discovery key from a root-only file. Omit to keep existing settings.
     #[arg(long, value_name = "PATH")]
     pub flare_psk_file: Option<PathBuf>,
     #[cfg(feature = "test-support")]
@@ -176,39 +173,17 @@ async fn run_inner(args: &SelfCommand) -> Result<Option<String>, InstallError> {
     }
 }
 
-/// 解析 flare 恢复 psk:`--flare-psk-file` 优先;既有 `[flare]` 已配置 psk 时
-/// 不覆盖;否则在交互终端提示输入(带用途说明),非交互环境回落 daemon 自动
-/// 生成(恒常启动兜底),不阻断部署。
+/// Read an explicitly supplied discovery key before starting the daemon.
 fn resolve_flare_psk(
     args: &InstallSelfArgs,
     runtime: &InstallRuntime,
 ) -> Result<Option<String>, InstallError> {
-    use crate::deployment::config::load_flare;
-
     if let Some(path) = args.flare_psk_file.as_deref() {
         let psk = crate::interaction::credentials::read_password_file(path, runtime.managed_uid)?;
         validate_flare_psk(&psk)?;
         return Ok(Some(psk));
     }
-    if load_flare().is_some_and(|section| section.psk.is_some()) {
-        return Ok(None);
-    }
-    match crate::interaction::interactive::read_password(&crate::tr!(
-        crate::keys::SELF_ENTER_FLARE_PSK
-    )) {
-        Ok(psk) => {
-            validate_flare_psk(&psk)?;
-            Ok(Some(psk))
-        }
-        // 无终端(脚本/后台):daemon 首启自动生成并持久化。
-        Err(InstallError::NonInteractive(_)) => {
-            println!(
-                "self: no flare psk configured; the daemon generates one on first start, view or set it with `lkit flare setup`"
-            );
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
+    Ok(None)
 }
 
 fn validate_flare_psk(psk: &str) -> Result<(), InstallError> {
@@ -226,6 +201,7 @@ fn validate_flare_psk(psk: &str) -> Result<(), InstallError> {
 /// 启动前完成,保证 daemon 首启即用该 psk 托管 flare 服务。
 fn write_flare_psk(psk: &str) -> Result<(), InstallError> {
     crate::deployment::config::update_flare(|section| {
+        section.public_discovery = Some(false);
         section.psk = Some(psk.to_string());
     })
     .map(|_| ())
@@ -233,8 +209,7 @@ fn write_flare_psk(psk: &str) -> Result<(), InstallError> {
 
 /// 交互控制台在 TUI 内执行 `lkit self install`:与 CLI 相同的 root 检查、安装锁
 /// 与服务管理器语义,返回结果消息由控制台展示而不直接打印(控制台不另起 lkit
-/// 进程、不解析 CLI 文本输出)。`psk` 为 TUI 部署弹窗收集的急救恢复码:提供时
-/// 在 daemon 启动前写回 `[flare]` 段,`None` 时由 daemon 首启自动生成。
+/// 进程、不解析 CLI 文本输出)。
 pub(crate) fn install_daemon(psk: Option<String>) -> Result<String, InstallError> {
     if unsafe { libc::geteuid() } != 0 {
         return Err(InstallError::UnsupportedPlatform(
@@ -1689,7 +1664,7 @@ mod tests {
     }
 
     #[test]
-    fn non_interactive_without_a_psk_falls_back_to_daemon_generation() {
+    fn non_interactive_without_a_psk_keeps_the_discovery_default() {
         let _interactive_guard = crate::interaction::interactive::test_guard();
         crate::interaction::interactive::configure(true);
         let territory =
