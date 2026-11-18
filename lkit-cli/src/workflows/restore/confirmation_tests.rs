@@ -203,27 +203,47 @@ fn restored_data_startup_requires_a_permit_for_the_current_boot() {
 }
 
 #[test]
-fn original_data_identity_survives_rename_and_rejects_target_data_or_symlinks() {
-    let fixture = Fixture::new();
+fn data_recovery_steps_preserve_original_data_when_rollback_is_interrupted() {
+    let mut fixture = Fixture::new();
+    std::fs::create_dir(fixture.root.canonical.join("releases")).unwrap();
+    transaction::workspace::select(&mut fixture.tx);
     fixture.persist();
     let data = fixture.root.canonical.join("data");
-    let previous = fixture.root.canonical.join("previous-data");
-    std::fs::create_dir_all(&data).unwrap();
-    std::fs::create_dir_all(identity_path(&fixture.tx).parent().unwrap()).unwrap();
-    capture_previous_data(&fixture.root, &fixture.tx).unwrap();
-    assert!(is_previous_data(&data, &fixture.tx).unwrap());
+    std::fs::create_dir(&data).unwrap();
+    std::fs::write(data.join("old-marker"), b"original data").unwrap();
+    std::fs::create_dir_all(layout::territory_transactions_dir().join(&fixture.tx.transaction_id))
+        .unwrap();
+    prepare_data_recovery(&fixture.root, &fixture.tx).unwrap();
+    assert!(data_was_original(&fixture.root, &fixture.tx).unwrap());
+    // Recovery before staging keeps the original data without requiring a workspace.
+    sync_data_directories(&fixture.root, &fixture.tx).unwrap();
+
+    // The normal restore stages the original directory before populating its target.
+    let workspace = transaction::workspace::prepare(&fixture.root, &fixture.tx).unwrap();
+    let previous = workspace.join("previous-data");
     std::fs::rename(&data, &previous).unwrap();
     std::fs::create_dir(&data).unwrap();
-    assert!(is_previous_data(&previous, &fixture.tx).unwrap());
-    assert!(!is_previous_data(&data, &fixture.tx).unwrap());
+    record_data_saved(&fixture.root, &fixture.tx).unwrap();
+    std::fs::write(data.join("target-config"), b"restored backup").unwrap();
+    assert!(directory_exists(&previous).unwrap());
+    assert!(!data_was_original(&fixture.root, &fixture.tx).unwrap());
 
-    // A crash after the original directory was moved back needs no guessed identity.
-    std::fs::remove_dir(&data).unwrap();
+    // Persist rollback progress before consuming previous-data. An interruption
+    // before this rename still leaves the staged original available for retry.
+    begin_data_restore(&fixture.tx).unwrap();
+    assert!(directory_exists(&previous).unwrap());
+    std::fs::remove_dir_all(&data).unwrap();
     std::fs::rename(&previous, &data).unwrap();
-    assert!(is_previous_data(&data, &fixture.tx).unwrap());
-    assert!(!is_previous_data(&previous, &fixture.tx).unwrap());
-    std::os::unix::fs::symlink(&data, &previous).unwrap();
-    assert!(is_previous_data(&previous, &fixture.tx).is_err());
-    std::fs::write(identity_path(&fixture.tx), b"corrupt identity").unwrap();
-    assert!(is_previous_data(&data, &fixture.tx).is_err());
+    sync_data_directories(&fixture.root, &fixture.tx).unwrap();
+
+    // A retry after rename, before state/permit completion, keeps the restored data.
+    for _ in 0..2 {
+        assert!(data_was_original(&fixture.root, &fixture.tx).unwrap());
+        assert!(!directory_exists(&previous).unwrap());
+        assert_eq!(
+            std::fs::read(data.join("old-marker")).unwrap(),
+            b"original data"
+        );
+        assert!(!data.join("target-config").exists());
+    }
 }

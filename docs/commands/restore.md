@@ -70,8 +70,8 @@ restore 不下载仓库资产，进度条表示阶段进度而非字节进度。
 
 restore 使用全局安装事务锁，由 daemon 执行。systemd、OpenRC 和 SysVinit 均由安装记录对应的服务后端管理：
 
-1. 记录恢复前的 `current`、state、unit、enabled/active 和 resolv.conf；
-2. 将当前 `data/` 原子移动到事务目录，作为中断恢复现场；
+1. 记录恢复前的 `current`、state、unit、enabled/active、resolv.conf 和原 data 是否存在；
+2. 将当前 `data/` 原子移动到安装文件系统上的事务工作目录，记录移动进度，作为中断恢复现场；
 3. 从 `.lkb` 重建目标版本 release、空 `data/`、`landscape_init.toml` 和 `geo_tmp`；
 4. 原子切换 `current`，注册并启动目标 unit；
 5. 完成初始化和完整健康检查后保存待提交 state，开始网络确认窗口；确认后提交目标 state。
@@ -82,6 +82,9 @@ restore 使用全局安装事务锁，由 daemon 执行。systemd、OpenRC 和 S
 主机中断也继续完成提交；未确认时恢复原 data、release、服务状态及 DNS 文件。
 该能力需要支持 `restore-v2` 的 daemon，旧 daemon 在提交前被拒绝并提示升级。
 
+恢复期间，`data/`、事务工作目录和恢复进度记录由 lkit 管理。手工搬移、替换或清理
+这些内容不属于自动恢复保证范围。恢复判断依据受控路径、真实目录和流程进度，不以
+设备号、inode、文件系统 UUID 或目录身份标记绑定原 data。
 
 恢复成功后，事务目录中的旧 data 现场保留用于诊断和中断恢复。`.lkb` 不包含 SQLite
 数据文件，但包含 `landscape_init.toml`：恢复后首次启动时 Landscape 会清空并重建
@@ -102,6 +105,11 @@ API token、日志和指标不包含，备份之后新增的数据会丢失。
 （同版本 restore 时把被替换的原 release 从事务目录移回）→ 恢复 `current` 与 `data/` →
 仅在恢复前服务活跃时启动并做完整健康检查 → 重新提交恢复前 state。同版本 restore 回滚
 后，release 内容与回滚前完全一致（不是备份内二进制/静态资源的重建版本）。
+
+回滚优先移回事务工作目录中的 `previous-data`。该目录已被正常恢复流程移回时，
+持久化进度允许重试继续使用原 `data/`，避免再次删除；目标 `data/` 的存在本身不能
+证明原数据已经恢复。正向和逆向目录移动后均同步两个父目录，具体进度和兼容恢复
+规则见[restore 事务](../deployment/transactions-and-recovery.md#原生-restore-事务schema-v14)。
 
 恢复不得伪造成功，也不得在没有必要事实时猜测 service manager 或 `current`。
 恢复提交的 state 中：`active_version` 取备份 metadata；`webserver` 身份从解包二进制

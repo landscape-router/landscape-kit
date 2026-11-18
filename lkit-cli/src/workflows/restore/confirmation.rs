@@ -175,64 +175,146 @@ pub(crate) async fn rollback(
     .await
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq)]
-struct DataIdentity {
-    device: u64,
-    inode: u64,
+/// Progress describes lkit's directory moves, never filesystem object identity.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DataRecovery {
+    OriginalPresent,
+    OriginalAbsent,
+    Saved,
+    Restoring,
 }
 
-fn data_identity(path: &std::path::Path) -> Result<Option<DataIdentity>, InstallError> {
-    use std::os::unix::fs::MetadataExt;
+pub(super) fn directory_exists(path: &std::path::Path) -> Result<bool, InstallError> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            Ok(Some(DataIdentity {
-                device: metadata.dev(),
-                inode: metadata.ino(),
-            }))
-        }
-        Ok(_) => Err(InstallError::Preflight(
-            "restore data must be a real directory".into(),
-        )),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(InstallError::Io(e)),
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(true),
+        Ok(_) => Err(InstallError::Preflight(format!(
+            "restore path {} must be a real directory",
+            path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(InstallError::Io(error)),
     }
 }
 
-fn identity_path(tx: &TransactionFile) -> std::path::PathBuf {
+fn data_recovery_path(tx: &TransactionFile) -> std::path::PathBuf {
     layout::territory_transactions_dir()
         .join(&tx.transaction_id)
-        .join("previous-data-identity.json")
+        .join("data-recovery.json")
 }
 
-pub(super) fn capture_previous_data(
+fn read_data_recovery(tx: &TransactionFile) -> Result<Option<DataRecovery>, InstallError> {
+    let path = data_recovery_path(tx);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => {
+            return Err(InstallError::CorruptedTransaction(
+                "restore data progress must be a regular file".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(InstallError::Io(error)),
+    }
+    serde_json::from_slice(&std::fs::read(path).map_err(InstallError::Io)?)
+        .map(Some)
+        .map_err(|error| {
+            InstallError::CorruptedTransaction(format!("invalid restore data progress: {error}"))
+        })
+}
+
+fn write_data_recovery(tx: &TransactionFile, progress: DataRecovery) -> Result<(), InstallError> {
+    let path = data_recovery_path(tx);
+    super::rollback_util::write_file_atomic(
+        &path,
+        &serde_json::to_vec(&progress).map_err(InstallError::StateWrite)?,
+        0o600,
+    )?;
+    std::fs::File::open(path.parent().unwrap())
+        .and_then(|directory| directory.sync_all())
+        .map_err(InstallError::Io)
+}
+
+pub(super) fn prepare_data_recovery(
     root: &InstallRoot,
     tx: &TransactionFile,
 ) -> Result<(), InstallError> {
     if tx.restore_confirmation.is_some() {
-        let identity = data_identity(&root.canonical.join("data"))?;
-        super::rollback_util::write_file_atomic(
-            &identity_path(tx),
-            &serde_json::to_vec(&identity).map_err(InstallError::StateWrite)?,
-            0o600,
-        )?;
+        let progress = if directory_exists(&root.canonical.join("data"))? {
+            DataRecovery::OriginalPresent
+        } else {
+            DataRecovery::OriginalAbsent
+        };
+        write_data_recovery(tx, progress)?;
     }
     Ok(())
 }
 
-/// Rename preserves directory identity even if recovery dies before writing its permit.
-pub(super) fn is_previous_data(
-    path: &std::path::Path,
+/// Preserve the pre-activation fact before changing an older journal to RollingBack.
+pub(super) fn prepare_legacy_data_recovery(
+    root: &InstallRoot,
+    tx: &TransactionFile,
+) -> Result<(), InstallError> {
+    if tx.restore_confirmation.is_some()
+        && matches!(tx.phase, Phase::Prepared | Phase::Stopping)
+        && read_data_recovery(tx)?.is_none()
+    {
+        prepare_data_recovery(root, tx)?;
+    }
+    Ok(())
+}
+
+pub(super) fn sync_data_directories(
+    root: &InstallRoot,
+    tx: &TransactionFile,
+) -> Result<(), InstallError> {
+    let workspace = transaction::workspace::directory(root, tx)?;
+    for path in [&root.canonical, &workspace] {
+        // Before staging begins, a transaction can still lack its workspace.
+        if path == &workspace && !directory_exists(path)? {
+            continue;
+        }
+        std::fs::File::open(path)
+            .and_then(|directory| directory.sync_all())
+            .map_err(InstallError::Io)?;
+    }
+    Ok(())
+}
+
+/// The original move must be durable before recording that target data can be written.
+pub(super) fn record_data_saved(
+    root: &InstallRoot,
+    tx: &TransactionFile,
+) -> Result<(), InstallError> {
+    if tx.restore_confirmation.is_some() {
+        sync_data_directories(root, tx)?;
+        write_data_recovery(tx, DataRecovery::Saved)?;
+    }
+    Ok(())
+}
+
+/// Persist intent before consuming previous-data, so retry can recognize the moved-back data.
+pub(super) fn begin_data_restore(tx: &TransactionFile) -> Result<(), InstallError> {
+    if tx.restore_confirmation.is_some() {
+        read_data_recovery(tx)?;
+        write_data_recovery(tx, DataRecovery::Restoring)?;
+    }
+    Ok(())
+}
+
+pub(super) fn data_was_original(
+    root: &InstallRoot,
     tx: &TransactionFile,
 ) -> Result<bool, InstallError> {
-    if tx.restore_confirmation.is_none() {
-        return Ok(path.exists());
+    if !directory_exists(&root.canonical.join("data"))? {
+        return Ok(false);
     }
-    let identity: Option<DataIdentity> =
-        serde_json::from_slice(&std::fs::read(identity_path(tx)).map_err(InstallError::Io)?)
-            .map_err(|e| {
-                InstallError::CorruptedTransaction(format!("invalid previous data identity: {e}"))
-            })?;
-    Ok(identity.is_some() && data_identity(path)? == identity)
+    if tx.restore_confirmation.is_none() {
+        return Ok(true);
+    }
+    Ok(matches!(
+        read_data_recovery(tx)?,
+        Some(DataRecovery::OriginalPresent | DataRecovery::Restoring)
+    ))
 }
 
 /// Only call after the original release and data have been restored.

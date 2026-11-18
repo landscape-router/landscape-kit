@@ -211,7 +211,7 @@ async fn restore_prepared<P: DocsProbe>(
         None
     };
     rollback_util::write_state_snapshot(root, &transaction.transaction_id, state)?;
-    confirmation::capture_previous_data(root, &transaction)?;
+    confirmation::prepare_data_recovery(root, &transaction)?;
 
     // 停止服务前完成安全解包与完整内容校验(必需条目、权限 0700/0600):
     // 解包失败时服务与现场均未改变,事务直接标记 failed。
@@ -260,6 +260,7 @@ async fn restore_prepared<P: DocsProbe>(
             &root.canonical.join("data"),
             &workspace.join("previous-data"),
         )?;
+        confirmation::record_data_saved(root, &transaction)?;
         rollback_util::rebuild_release_from_backup(
             root,
             &workspace,

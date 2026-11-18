@@ -266,7 +266,7 @@
 - 状态：`部分覆盖`
 - 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[请求校验](../../../../lkit-cli/src/daemon_operations/tests.rs)
 - 说明：备份被替换时不创建事务、不修改 state；请求校验拒绝缺失摘要和相对路径，排队取消不读取备份。
-- 缺口：TUI 确认期间目标替换与安装根替换的端到端场景。
+- 缺口：TUI 确认期间输入备份被替换的端到端场景。
 
 ## RST-17
 
@@ -275,7 +275,7 @@
 - 测试层：CI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[restore fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)
-- 说明：激活后重启恢复原 data；等待确认的结果落盘前中断，重启后保留原确认截止时间并补写等待状态；确认已进入 finalizing 或已写 state 后中断，重启继续提交，即使截止时间已经过去也不回滚。保持同一操作和事务 ID，不重复创建保护备份，领取后的取消被拒绝。
+- 说明：激活后重启恢复原 data，检查仅原数据具有的内容重新出现，不能把目标 data 当作回滚完成；等待确认的结果落盘前中断，重启后保留原确认截止时间并补写等待状态；确认已进入 finalizing 或已写 state 后中断，重启继续提交，即使截止时间已经过去也不回滚。保持同一操作和事务 ID，不重复创建保护备份，领取后的取消被拒绝。
 - 缺口：恢复失败后重试与所有持久化边界的故障注入矩阵。
 
 ## RST-18
@@ -288,6 +288,9 @@
 - 说明：fixture 在等待确认时推进截止时间，断言原 data 恢复、事务 rolled_back、原操作返回 5，之后可正常备份。单元验证 schema14 的事务 ID、boot ID 和 pending state 路径绑定；同启动未超时等待、到期或换启动回滚、finalizing 优先完成；回滚期间没有当前启动的 restored-boot-id 不允许 Landscape 启动。
 - 说明：真实业务回退由 [JNY-04](real-install-recovery.md#jny-04) 验证，包含实际确认超时、
   主动回滚、未确认重启及突然终止 QEMU 后的原配置与外部 LAN 检查。
+- 说明：数据恢复依据事务工作目录及 `data-recovery.json` 的流程进度，不绑定设备号、
+  inode 或其他目录身份。场景验证 lkit 正常移动、回滚和中断恢复；事务期间手工搬移、
+  替换或清理受管 data、工作目录和进度记录不属于自动恢复保证范围。
 - 缺口：全部恢复写入边界、真实存储错误及 OpenRC／SysVinit 的同等业务回退。
 
 ## BKP-13

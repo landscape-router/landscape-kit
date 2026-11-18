@@ -30,6 +30,7 @@ pub(crate) async fn rollback_restore<P: DocsProbe>(
     manager: &dyn ServiceManager,
     health: &HealthOptions<P>,
 ) -> Result<(), InstallError> {
+    super::confirmation::prepare_legacy_data_recovery(root, transaction)?;
     mark_phase(root, transaction, Phase::RollingBack)?;
     super::confirmation::revoke_restored_start(transaction)?;
     let result = rollback_restore_inner(root, transaction, manager, health).await;
@@ -77,27 +78,23 @@ async fn rollback_restore_inner<P: DocsProbe>(
     let data = root.canonical.join("data");
     let previous_data = tx_dir.join("previous-data");
     restore_replaced_release_if_same_version(root, transaction)?;
-    if transaction.restore_confirmation.is_some()
-        && previous_data.exists()
-        && !super::confirmation::is_previous_data(&previous_data, transaction)?
-    {
-        return Err(InstallError::CorruptedTransaction(
-            "previous data directory identity changed".into(),
-        ));
-    }
-    if super::confirmation::is_previous_data(&previous_data, transaction)?
-        || super::confirmation::is_previous_data(&data, transaction)?
-    {
-        // 原现场存在(previous-data 未消费),或上次回滚已经恢复 data
-        // (previous-data 已消费、data 在):两种情况下都只做幂等恢复。
+    let has_previous = super::confirmation::directory_exists(&previous_data)?;
+    super::confirmation::directory_exists(&data)?;
+    if has_previous || super::confirmation::data_was_original(root, transaction)? {
+        // The transaction layout and recorded move progress distinguish original
+        // data from the provisional target; no device or inode identity is required.
         let previous_current = transaction.previous_current.as_deref().ok_or_else(|| {
             InstallError::CorruptedTransaction(
                 "restore transaction is missing previous_current".into(),
             )
         })?;
         rollback_util::restore_current(root, previous_current)?;
-        if previous_data.exists() {
+        if has_previous {
+            super::confirmation::begin_data_restore(transaction)?;
             restore_previous_data(&data, &previous_data)?;
+        }
+        if transaction.restore_confirmation.is_some() {
+            super::confirmation::sync_data_directories(root, transaction)?;
         }
         super::confirmation::permit_restored_start(transaction)?;
         let was_active = transaction
@@ -135,7 +132,7 @@ async fn rollback_restore_inner<P: DocsProbe>(
         mark_phase(root, transaction, Phase::RolledBack)?;
         Ok(())
     } else {
-        // 事务现场损坏(previous-data 与 data 均不存在):只能使用保护快照或报损坏。
+        // 原数据缺失或进度不足以确认已恢复:只能使用保护快照或报告缺少恢复依据。
         if transaction.backup.is_some() {
             rollback_util::rollback_switch(root, transaction, &snapshot, manager, health).await
         } else if transaction.restore_confirmation.is_some() {

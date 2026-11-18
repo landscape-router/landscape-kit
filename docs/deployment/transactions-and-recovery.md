@@ -276,15 +276,17 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
     不启动；同版本恢复先移回 `replaced-release`，再恢复 `current` 和原 data，最后仅在
     原服务活跃时启动并健康检查，写回原 state 后标记 `rolled_back`。systemd、OpenRC、
     SysVinit 使用同一顺序。必要时使用保护 `.lkb`；恢复失败保留未完成阶段与恢复依据；
-  - schema v14 的原 data 由停止前保存的设备号和 inode 识别。`previous-data` 和活动
-    `data/` 中只有匹配的真实目录才能视为原数据，不能以目录存在性认定回滚完成。
-    原数据丢失时只能使用保护 `.lkb` 重建；无保护备份时阻断恢复，不能放行目标数据；
+  - schema v14 使用 `data-recovery.json` 记录原 data 存在事实及移动进度，校验受控
+    路径和真实目录。回滚优先恢复 `previous-data`；它缺失时，只有 `original_present`
+    或 `restoring` 进度且 `data/` 为真实目录，才能继续使用该原数据。`saved` 阶段
+    不能把仍存在的目标 data 认作恢复结果；必要时使用保护 `.lkb` 重建，无可用恢复
+    依据时保持阻断；
   - `awaiting_network_confirmation`：同次主机启动且期限未到时等待用户确认，daemon
     重启不延长期限；超时或主机启动标识变化进入回滚；
   - `finalizing`：确认决定已经持久化，校验 pending state 后续做提交，即使期限已到
     或主机已重启也不撤销确认。state 已写但事务未提交时同样续做；
   - 旧 schema v9 不含确认窗口，沿用其停止／激活恢复规则；原 data 已移回后按旧格式
-    识别幂等恢复，不补写或猜测 schema v14 的身份依据。
+    识别幂等恢复，不推断确认窗口。
 - `rolling_back`：继续事务已经选择的回滚路径，不重新尝试目标版本；
 - `awaiting_network_confirmation` 或 `finalizing`：普通命令不执行恢复；用户通过网络
   子命令确认或回滚，daemon 监测待确认期限和主机重启，对 finalizing 继续提交；
@@ -446,19 +448,36 @@ systemd、OpenRC、SysVinit 依安装 state 的后端执行，恢复时必须与
 `preparing` 中断时清理临时内容并标记 `failed`；`prepared`、`stopping`、`activating`、
 `verifying` 中断都进入完整回滚路径，成功标记 `rolled_back` 并保留恢复依据。
 
-停止服务前，在 lkit 地盘的 `transactions/<id>/previous-data-identity.json` 保存原
-`data/` 的设备号和 inode。需要原子移动的 `previous-data`、`failed-data` 和同版本
-`replaced-release` 使用事务选定的安装文件系统工作目录。回滚先还原原 release 和
-current，再核实并还原原 data；数据已经移回但 daemon 尚未写入下一步时，以目录身份
-识别该结果。软链接、身份变化或缺少身份文件不能当作原数据。原 data 丢失时可用
-保护 `.lkb` 做配置级重建，无可用依据时保留 `rolling_back` 并阻断启动。
+停止服务前，在 lkit 地盘的 `transactions/<id>/data-recovery.json` 记录数据恢复进度：
+
+- `original_present`：原 `data/` 是真实目录，尚未移出；
+- `original_absent`：准备时没有原 `data/`，不能把随后创建的目标 data 认作原数据；
+- `saved`：原 data 已移入 `previous-data`；
+- `restoring`：已开始将 `previous-data` 移回活动 `data/`，用于继续中断的回滚。
+
+需要原子移动的 `previous-data`、`failed-data` 和同版本 `replaced-release` 使用事务
+选定的安装文件系统工作目录。正向和逆向数据目录移动后均同步两个父目录。回滚先
+还原原 release 和 current，再还原 data，始终优先使用真实的 `previous-data`。
+该目录缺失时，只有 `original_present` 或 `restoring` 进度且活动 `data/` 为真实目录，
+才能继续使用正常流程中的原数据。`saved` 阶段的目标 data 不能以目录存在为由被
+视为回滚完成。原数据不可用时可使用保护 `.lkb` 做配置级重建，无可用恢复依据时
+保留 `rolling_back` 并阻断启动。
+
+事务期间，data、工作目录和进度记录由 lkit 管理；外部手工搬移、替换或清理这些内容
+不属于自动恢复保证范围。恢复校验受控路径、真实目录及流程位置，不保存或读取设备号
+和 inode，也不采用文件系统 UUID 或目录身份标记绑定原 data。
+
+没有进度记录的 v14 事务在 `prepared` 或 `stopping` 阶段先记录原 data 是否存在，
+然后回滚；其他阶段有 `previous-data` 时将其恢复，缺失时只能使用保护备份或报告
+缺少恢复依据。该兼容路径不读取设备号和 inode 记录，也不凭活动 data 的存在猜测
+已经完成的数据移动。
 
 每次回滚重试在修改服务或数据前撤销旧启动放行凭据并同步目录；原 release 与数据
 恢复后、启动原服务前写入 `transactions/<id>/restored-boot-id`。启动屏障只在该凭据
 等于当前主机启动标识时允许 `rolling_back` 中的原配置启动；它不能放行仍处于待确认阶段的目标配置。原本停止的
 服务保持停止。恢复失败保留未完成阶段，daemon 重试并阻止后续修改。
 
-读取旧 v9 restore 时保留其原有恢复语义，不创建或推断确认窗口及数据身份；它不能
+读取旧 v9 restore 时保留其原有恢复语义，不创建或推断确认窗口；它不能
 使用 v14 的待确认和确认提交阶段。`committed` 只补写操作结果，不重复创建备份或导入
 目标。观察者断开不改变任何版本的事务。
 

@@ -26,7 +26,8 @@ lkit 自身(CLI 二进制 `/usr/local/bin/lkit` 与常驻 daemon)不属于任何
 ├── transactions/
 │   ├── <transaction-id>.json
 │   └── <restore-transaction-id>/
-│       ├── previous-data/
+│       ├── data-recovery.json
+│       ├── pending-restore-state.json
 │       └── target-backup.lkb
 ├── backups/
 │   ├── .tmp/
@@ -47,8 +48,9 @@ lkit 自身(CLI 二进制 `/usr/local/bin/lkit` 与常驻 daemon)不属于任何
   daemon 首次供给恢复码也可创建文件，见[配置文件](config.md)；安装及版本切换不修改仓库来源；
 - `state/install-state.json` 只记录最近一次成功提交的安装状态,并记录 landscape
   安装根目录;
-- `transactions` 记录进行中和历史事务阶段;restore 事务还可保留旧 `data/` 和已验证
-  的目标备份现场用于中断恢复和人工诊断;
+- `transactions` 记录进行中和历史事务阶段；restore 事务还保存数据移动进度、待提交
+  state 和已验证的目标备份现场。旧 `data/` 保留在事务选定的安装文件系统工作目录，
+  用于中断恢复和人工诊断；
 - `backups` 保存 `.lkb` 配置级备份;
 - `logs` 保存 lkit 安装事务日志,与 `data/logs` 中的 Landscape 日志分离;
 - `run/install.lock` 是安装锁;`run/lkit.pid` 是常驻 daemon 的 pidfile。
