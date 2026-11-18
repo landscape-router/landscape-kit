@@ -50,10 +50,23 @@ assert_landscape_starts() {
     rm -f /run/landscape-order-ok
 }
 
+read_router_fingerprint() {
+    /usr/local/bin/lkit flare setup | sed -n 's/^flare: device fingerprint: //p' | grep -Ex '[0-9a-f]{64}'
+}
+
+discover_router() {
+    ip netns exec ci-flare /usr/local/bin/lflare discover --dev ci-client --psk alpine-qemu-recovery-secret |
+        grep -F "$1 " >/dev/null
+}
+
 assert_flare() {
     scenario=$1
+    fingerprint=$(cat /root/ci-flare-fingerprint)
+    test "$(read_router_fingerprint)" = "$fingerprint"
+    wait_for discover_router "$fingerprint"
     timeout 40 ip netns exec ci-flare \
         /usr/local/bin/lflare cli --dev ci-client --psk alpine-qemu-recovery-secret \
+        --target "$fingerprint" --auth root --password-file /root/ci-flare-password \
         >"/var/log/client-$scenario.log" 2>&1 &
     client_pid=$!
     attempts=0
@@ -107,6 +120,9 @@ case "${1:-}" in
         test "$(stat -c %a /var/log/lkit.log)" = 600
         /usr/local/bin/lkit --lang en check > /var/log/check-ready.log 2>&1 || true
         grep -F 'bpffs is mounted read-write at /sys/fs/bpf' /var/log/check-ready.log
+        (umask 077; head -c 32 /dev/urandom | sha256sum | cut -d ' ' -f1 > /root/ci-flare-password)
+        printf 'root:%s\n' "$(cat /root/ci-flare-password)" | chpasswd -c sha512
+        wait_for read_router_fingerprint > /root/ci-flare-fingerprint
         assert_flare mounted
 
         echo '== daemon crash must restart under the same supervisor =='
