@@ -56,17 +56,25 @@ fn read_identity(path: &Path) -> io::Result<Zeroizing<[u8; 32]>> {
 }
 
 pub(crate) fn fingerprint() -> io::Result<String> {
-    let private = read_identity(&layout::lkit_territory().join("flare-identity.key"))?;
+    let private = read_identity(&layout::lkit_territory().join(layout::FLARE_IDENTITY_FILE))?;
     Ok(v6::fingerprint(&v6::public_key(&private)))
 }
 
 pub(super) fn identity() -> io::Result<Zeroizing<[u8; 32]>> {
     let dir = layout::lkit_territory();
     fs::create_dir_all(dir)?;
-    let path = dir.join("flare-identity.key");
+    let path = dir.join(layout::FLARE_IDENTITY_FILE);
     match read_identity(&path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            let tmp = dir.join(format!(".flare-{}.tmp", uuid::Uuid::now_v7()));
+            let staging = layout::territory_run_dir();
+            fs::create_dir_all(&staging)?;
+            let meta = fs::symlink_metadata(&staging)?;
+            if !meta.is_dir() || meta.uid() != 0 || meta.mode() & 0o022 != 0 {
+                return Err(io::Error::other(
+                    "untrusted Flare identity staging directory",
+                ));
+            }
+            let tmp = staging.join(format!(".flare-{}.tmp", uuid::Uuid::now_v7()));
             let mut out = OpenOptions::new()
                 .write(true)
                 .create_new(true)

@@ -6,8 +6,9 @@ use super::layout;
 use super::plan::InstallError;
 
 /// lkit 地盘顶层的已知条目:lkit 元数据目录/文件与缺省 landscape 根。
-const KNOWN_TOP_LEVEL: [&str; 7] = [
+const KNOWN_TOP_LEVEL: [&str; 8] = [
     "config.toml",
+    layout::FLARE_IDENTITY_FILE,
     "state",
     "transactions",
     "backups",
@@ -133,6 +134,8 @@ mod tests {
         std::fs::create_dir_all(territory.join("state")).unwrap();
         assert!(acquire_install_lock().is_ok());
         std::fs::write(territory.join("config.toml"), b"schema_version = 1\n").unwrap();
+        assert!(acquire_install_lock().is_ok());
+        std::fs::write(territory.join(layout::FLARE_IDENTITY_FILE), [0; 32]).unwrap();
         assert!(acquire_install_lock().is_ok());
         std::fs::create_dir_all(territory.join("landscape")).unwrap();
         assert!(acquire_install_lock().is_ok());

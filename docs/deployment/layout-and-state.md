@@ -21,6 +21,7 @@ lkit 自身(CLI 二进制 `/usr/local/bin/lkit` 与常驻 daemon)不属于任何
 ```text
 /root/.lkit/
 ├── config.toml               （可选，用户维护）
+├── flare-identity.key        （Flare 设备身份，root 专用，权限 0600）
 ├── state/
 │   └── install-state.json
 ├── transactions/

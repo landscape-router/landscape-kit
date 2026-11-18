@@ -4,6 +4,7 @@ use std::sync::RwLock;
 /// lkit 地盘固定位置。测试用 `test_territory()`(进程内静态覆盖)或环境变量
 /// `LKIT_TERRITORY`(子进程,如 e2e fixture)覆盖。
 pub(crate) const LKIT_TERRITORY: &str = "/root/.lkit";
+pub(crate) const FLARE_IDENTITY_FILE: &str = "flare-identity.key";
 /// landscape 安装根目录的缺省位置(仅 install/migrate 选择安装根时使用)。
 pub(crate) const DEFAULT_LANDSCAPE_ROOT: &str = "/root/.lkit/landscape";
 
