@@ -112,7 +112,7 @@
 
 - 测试层：Windows、已安装的 Npcap、隔离以太网
 - 状态：`待实机验证`
-- 证据：[PowerShell 7 验收脚本](../../../../scripts/flare/windows-npcap-smoke.ps1)
+- 证据：[PowerShell 7 验收脚本](../../../../scripts/flare/windows-npcap-smoke.ps1)、[Windows QEMU 场景](../../../../scripts/flare/windows-qemu.sh)、[CI 镜像约定](../../../flare/windows-ci.md)
 - 说明：两台测试路由器启用公开发现和 root 密码认证，各自的本地 HTTP 服务在允许映射的端口上返回单独一行 A 或 B（默认端口 6443）。从路由器控制台取各自完整指纹。Windows 测试机上按以下方式运行，脚本在每次读取 HTTP 标记后关闭对应客户端。
 
 ```powershell

@@ -34,6 +34,7 @@ on:
           - all
           - connections
           - containerlab
+          - windows-npcap
           - docker
           - double-capture
           - same-segment
@@ -80,10 +81,12 @@ jobs:
       - name: Check PowerShell syntax and report installed capture driver
         shell: pwsh
         run: |
-          $errors = $null
-          $null = [Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path scripts/flare/windows-npcap-smoke.ps1), [ref]$null, [ref]$errors)
-          if ($errors.Count) { throw ($errors -join [Environment]::NewLine) }
+          foreach ($script in Get-ChildItem scripts/flare/windows-*.ps1) {
+            $errors = $null
+            $null = [Management.Automation.Language.Parser]::ParseFile(
+              $script.FullName, [ref]$null, [ref]$errors)
+            if ($errors.Count) { throw ($errors -join [Environment]::NewLine) }
+          }
           $driver = Get-Service npcap -ErrorAction SilentlyContinue
           if ($driver) { "Npcap service: $($driver.Status)" } else { "Npcap service absent" }
       - uses: actions/upload-artifact@v7
@@ -93,6 +96,7 @@ jobs:
           retention-days: 2
 
   e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.scenario != 'windows-npcap'
     name: Flare e2e (${{ matrix.scenario }})
     needs: prepare
     runs-on: ubuntu-24.04
@@ -133,21 +137,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/v5-target"
       - name: Prepare containerlab and the static Linux binaries
         if: matrix.scenario == 'containerlab'
-        run: |
-          base=https://github.com/srl-labs/containerlab/releases/download/v0.69.3
-          package=containerlab_0.69.3_linux_amd64.deb
-          curl -fsSLO "$base/$package"
-          curl -fsSL "$base/checksums.txt" | grep -F "$package" | sha256sum -c -
-          sudo apt-get update
-          sudo apt-get install -y "./$package" musl-tools
-          rustup target add x86_64-unknown-linux-musl
-          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="--cfg tokio_unstable -C target-feature=+crt-static -C relocation-model=static"
-          cargo build --locked --target x86_64-unknown-linux-musl -p lkit-cli --bin lkit -p landscape-flare --bin lflare
-          for app in lkit lflare; do
-            file "target/x86_64-unknown-linux-musl/debug/$app"
-            if readelf -lW "target/x86_64-unknown-linux-musl/debug/$app" | grep -q INTERP; then exit 1; fi
-          done
+        run: bash scripts/flare/prepare-containerlab.sh
       - name: Run ${{ matrix.scenario }} e2e
         # The e2e image installs runtime dependencies via apt inside the
         # Dockerfile (no .deb files are present in CI); locally the scripts
@@ -155,3 +145,33 @@ jobs:
         env:
           FLARE_E2E_SKIP_BUILD: "1"
         run: scripts/flare/e2e-${{ matrix.scenario }}.sh
+
+  windows-npcap:
+    name: Windows/Npcap guest on the containerlab LAN
+    if: github.event_name == 'workflow_dispatch' && inputs.scenario == 'windows-npcap'
+    needs: [prepare, windows-client]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fetch the private Windows test image
+        env:
+          IMAGE_URL: ${{ secrets.FLARE_WINDOWS_IMAGE_URL }}
+          IMAGE_SHA256: ${{ vars.FLARE_WINDOWS_IMAGE_SHA256 }}
+        run: |
+          : "${IMAGE_URL:?Set FLARE_WINDOWS_IMAGE_URL to the prepared private qcow2}"
+          [[ $IMAGE_SHA256 =~ ^[a-fA-F0-9]{64}$ ]]
+          curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 "$IMAGE_URL" -o "$RUNNER_TEMP/windows.qcow2"
+          echo "$IMAGE_SHA256  $RUNNER_TEMP/windows.qcow2" | sha256sum -c -
+      - uses: actions/download-artifact@v8
+        with:
+          name: lflare-windows
+          path: windows-client
+      - name: Prepare the isolated LAN and QEMU
+        run: |
+          bash scripts/flare/prepare-containerlab.sh
+          sudo apt-get install -y acl qemu-system-x86 genisoimage
+      - name: Verify both router mappings from the Windows guest
+        env:
+          FLARE_WINDOWS_IMAGE: ${{ runner.temp }}/windows.qcow2
+        run: scripts/flare/e2e-containerlab.sh

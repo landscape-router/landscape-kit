@@ -98,6 +98,10 @@ reject() {
 a_id=$(fingerprint "$a")
 b_id=$(fingerprint "$b")
 test "$a_id" != "$b_id"
+if [[ -n ${FLARE_WINDOWS_IMAGE:-} ]]; then
+  bash scripts/flare/windows-qemu.sh "$a_id" "$b_id"
+  exit 0
+fi
 root=(--auth root --password-file /opt/fixture-password)
 # Both replies have the same display name. Reorder arrivals and verify the data.
 sudo tc qdisc add dev fr-b root netem delay 75ms
