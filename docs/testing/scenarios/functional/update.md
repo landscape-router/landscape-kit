@@ -106,13 +106,13 @@ update 独有的行为；事务、备份、回滚与退出码语义全部继承 
 
 ## UP-10
 
-**确认期间或排队期间安装现场改变时拒绝执行**
+**确认期间或排队期间安装根路径、版本或状态摘要改变时拒绝执行**
 
 - 测试层：隔离请求单元测试、CI fixture E2E
 - 状态：`部分覆盖`
 - 证据：[`lkit update`](../../../commands/update.md)、[SW-12](switch.md#sw-12)
-- 缺口：确认期间安装根替换的入口场景；同根同版本的 service 状态字段变化由 [update fixture](../../../../lkit-cli/tests/install_fixture_e2e/update.rs) 覆盖。
-- 说明：请求绑定展示时的安装根、活动版本和完整状态摘要。现场变化时拒绝，要求重新
+- 说明：同根同版本的 service 状态字段变化由 [update fixture](../../../../lkit-cli/tests/install_fixture_e2e/update.rs) 覆盖。检查不识别相同路径与状态内容下的目录替换。
+- 说明：请求绑定展示时的安装根、活动版本和完整状态摘要。这些值变化时拒绝，要求重新
   确认，不以新现场重建请求，不下载目标资产或创建切换事务。SW-12 提供 daemon 领取
   时校验现场的证据，update fixture 验证确认时状态摘要不会在提交时被替换。
 

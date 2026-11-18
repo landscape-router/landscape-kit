@@ -452,12 +452,13 @@ systemd、OpenRC、SysVinit 依安装 state 的后端执行，恢复时必须与
 
 - `original_present`：原 `data/` 是真实目录，尚未移出；
 - `original_absent`：准备时没有原 `data/`，不能把随后创建的目标 data 认作原数据；
-- `saved`：原 data 已移入 `previous-data`；
+- `saved`：原 data 保存步骤已完成；原目录存在时已移入 `previous-data`，此后进入目标 data 重建；
 - `restoring`：已开始将 `previous-data` 移回活动 `data/`，用于继续中断的回滚。
 
 需要原子移动的 `previous-data`、`failed-data` 和同版本 `replaced-release` 使用事务
-选定的安装文件系统工作目录。正向和逆向数据目录移动后均同步两个父目录。回滚先
-还原原 release 和 current，再还原 data，始终优先使用真实的 `previous-data`。
+选定的安装文件系统工作目录。原生 v14 restore 在 `data/` 与 `previous-data` 之间
+移动目录后同步源和目标父目录。回滚先还原原 release 和 current，再还原 data，
+始终优先使用真实的 `previous-data`。
 该目录缺失时，只有 `original_present` 或 `restoring` 进度且活动 `data/` 为真实目录，
 才能继续使用正常流程中的原数据。`saved` 阶段的目标 data 不能以目录存在为由被
 视为回滚完成。原数据不可用时可使用保护 `.lkb` 做配置级重建，无可用恢复依据时

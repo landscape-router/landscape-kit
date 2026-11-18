@@ -69,10 +69,10 @@
 
 **从 `.lkb` 恢复同版本现有 systemd 安装**
 
-- 测试层：Docker E2E
+- 测试层：CI fixture E2E、真实 Debian/systemd QEMU
 - 状态：`已覆盖`
-- 证据：[restore 命令](../../../commands/restore.md)、[手工 restore](../../../backup/lkb-and-rollback.md#手工-restore)、[S10 手工备份与恢复](../../../../scripts/docker/lifecycle/run-scenarios.sh)
-- 说明：恢复前自动创建保护备份；目标 release、空 data、初始化配置、服务身份和健康检查全部成功后提交；state 的 `static_archive` 身份与备份内压缩包一致，`config.toml` 中的来源记录不变。
+- 证据：[restore 命令](../../../commands/restore.md)、[原生恢复 fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[JNY-02](real-install-recovery.md#jny-02)
+- 说明：恢复前自动创建保护备份；目标 release、空 data、初始化配置、服务身份和健康检查全部成功后等待网络确认。等待期间安装 state 保持原字节，确认后提交并关联原 restore 事务。
 
 ## RST-02
 
@@ -99,16 +99,17 @@
 - 测试层：CLI fixture E2E、Rust workflow
 - 状态：`已覆盖`
 - 证据：[恢复前检查](../../../commands/restore.md#恢复前检查)、`restore_blocks_without_allow_no_backup_when_protection_fails`、`restore_continues_with_allow_no_backup_when_protection_fails`（lkit-cli/src/workflows/restore/mod.rs）
-- 说明：导出失败时默认阻断且现场不变；`--allow-no-backup` 继续时事务记录 `no_backup: true`、`backup: null`，restore 正常提交。
+- 说明：导出失败时默认阻断且现场不变；`--allow-no-backup` 继续时事务记录 `no_backup: true`、`backup: null`。该授权不跳过目标校验或恢复后的网络确认。
 
 ## RST-05
 
 **restore 中断后按 phase 恢复，回滚失败返回 `6` 并保留诊断现场**
 
-- 测试层：Rust 事务测试、Docker E2E
-- 状态：`已覆盖`
-- 证据：[事务中断恢复](../../../deployment/transactions-and-recovery.md#中断恢复)、[S12 restore 中断后 phase 恢复](../../../../scripts/docker/lifecycle/run-scenarios.sh)、`rollback_restores_previous_data_from_transaction_dir`、`rollback_treats_consumed_previous_data_as_already_restored`、`rollback_failure_marks_the_transaction_failed`（lkit-cli/src/workflows/restore/mod.rs）
-- 说明：Docker E2E 在目标激活 `verifying` 阶段 kill 掉 `lkit`，断言事务停在非终结阶段且 data 已移入 `previous-data`，下次命令经恢复入口完整回滚（`rolled_back`、data/current/state 恢复）；Rust 测试覆盖回滚失败标记 `failed`（对应退出码 `6`）与 previous-data 幂等恢复。
+- 测试层：Rust 事务测试、CI fixture E2E
+- 状态：`部分覆盖`
+- 证据：[事务中断恢复](../../../deployment/transactions-and-recovery.md#中断恢复)、[原生恢复 fixture](../../../../lkit-cli/tests/install_fixture_e2e/restore.rs)、[目录移动与重试单元测试](../../../../lkit-cli/src/workflows/restore/confirmation_tests.rs)
+- 说明：fixture 在目标激活后中断 daemon，重启后恢复原 data、current 和 state，事务标记 `rolled_back`；单元验证正常目录移动及移回 data 后中断的重试。原生回滚失败保留 `rolling_back` 和恢复依据，由 daemon 重试；结束 CLI 观察不会触发回滚。
+- 缺口：原生 restore 回滚失败后再次恢复的端到端场景。
 
 ## RST-06
 
@@ -157,12 +158,12 @@
 
 ## RST-11
 
-**非交互 `--yes` 完成恢复，不触发 TTY 确认**
+**非交互 `--yes` 确认开始恢复，不触发 TTY 确认**
 
 - 测试层：Rust 工作流
 - 状态：`已覆盖`
 - 证据：[`lkit restore`](../../../commands/restore.md)、`restore_proceeds_with_non_interactive_yes`（lkit-cli/src/workflows/restore/mod.rs）
-- 说明：`--non-interactive --yes` 时恢复确认以 `--yes` 代替，不再调用 `/dev/tty`。
+- 说明：`--non-interactive --yes` 时开始恢复的确认以 `--yes` 代替，不再调用 `/dev/tty`；应用备份后的网络确认仍需显式完成。
 
 ## RST-12
 
@@ -291,7 +292,8 @@
 - 说明：数据恢复依据事务工作目录及 `data-recovery.json` 的流程进度，不绑定设备号、
   inode 或其他目录身份。场景验证 lkit 正常移动、回滚和中断恢复；事务期间手工搬移、
   替换或清理受管 data、工作目录和进度记录不属于自动恢复保证范围。
-- 缺口：全部恢复写入边界、真实存储错误及 OpenRC／SysVinit 的同等业务回退。
+- 缺口：恢复写入边界与重试的故障注入，以及 OpenRC／SysVinit 的同等业务回退，
+  包括恢复前禁用服务的启用状态还原。当前场景不验证任意存储断电点的数据持久性。
 
 ## BKP-13
 

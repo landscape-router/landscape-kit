@@ -274,7 +274,8 @@ release 替换使用 `replaced-release`。静态修复先把已校验资产复�
 临时链接，原子替换后同步安装根目录；失败时仅清理本次创建的临时链接。
 
 restore 在地盘事务目录的 `data-recovery.json` 保存原 data 存在事实及移动进度；
-正向和逆向数据目录移动后均同步两个父目录。回滚优先恢复 `previous-data`，已移回的
+原生 v14 restore 在 `data/` 与 `previous-data` 之间移动目录后同步源和目标父目录。
+回滚优先恢复 `previous-data`，已移回的
 原 data 按流程进度继续使用，不能仅凭目标 data 存在认定恢复完成。data、工作目录及
 进度记录在事务期间由 lkit 管理，外部手工搬移、替换或清理不在自动恢复保证范围内。
 恢复不以设备号、inode、文件系统 UUID 或目录身份标记绑定原 data，具体进度和兼容

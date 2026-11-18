@@ -4,6 +4,8 @@
 systemd 管理服务。安装根位于第二块磁盘 `/srv/landscape`，lkit 地盘位于系统盘，
 文件系统设备 ID 必须不同。版本和二进制、静态资产摘要由
 [固定资产清单](../../../../scripts/qemu/network/landscape-release.json)确定。
+两个文件系统用于验证跨文件系统安装布局；设备 ID 检查只确认测试环境具备该条件，
+不要求恢复时设备 ID 保持不变。
 
 API 请求遵循该版本发布的 OpenAPI：使用管理员登录取得令牌，通过正式 DNS 重定向和
 DHCP API 修改数据库配置。断言比较配置实体语义和外部客户端观察结果，不比较 SQLite
@@ -66,11 +68,11 @@ CI 的只读 GitHub token 通过虚拟机内 `0600` 的临时环境文件供 lki
 
 ## JNY-04
 
-**待确认恢复经主动回滚、实际超时、重启或突然断电后保留原业务配置**
+**待确认恢复经主动回滚、实际超时、重启或强杀 QEMU 后恢复原业务配置**
 
 - 测试层：真实 Debian/systemd QEMU、正式 API、外部 LAN DNS/HTTPS
 - 状态：`部分覆盖`
-- 证据：[故障编排](../../../../scripts/qemu/network/restore-faults.sh)、[持久化证据与业务断言](../../../../scripts/qemu/network/journey.py)、[主机启动与断电入口](../../../../scripts/test-qemu-network-takeover.sh)
+- 证据：[故障编排](../../../../scripts/qemu/network/restore-faults.sh)、[持久化证据与业务断言](../../../../scripts/qemu/network/journey.py)、[虚拟机启动与强制终止入口](../../../../scripts/test-qemu-network-takeover.sh)
 - 说明：修改 DNS 与 DHCP 后保存语义快照，应用原备份并确认已进入待确认状态、旧安装 state 未被提交覆盖。
   分别执行 `network rollback`、等待生产 600 秒确认窗口真实到期、正常整机重启和强杀
   QEMU 后使用同一两块磁盘冷启动。冷启动前保持 WAN 断开，不更改事务截止时间或运行测试版 daemon。
