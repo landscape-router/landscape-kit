@@ -241,7 +241,8 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 
 ### 中断恢复
 
-下次执行发现未结束事务时，先结合 `operation` 和 `phase` 处理：
+daemon 在启动及后续恢复周期中发现未完成事务时，取得安装锁后，按 `operation`、
+事务版本和 `phase` 执行恢复。业务恢复不依赖用户再次运行 CLI：
 - `preparing`：尚未改变运行状态；普通事务清理临时文件并标记 `failed`，初始化观测 repair 保持旧状态并标记 `failed`；
 - `prepared` 或 `stopping`：`current` 和数据尚未激活，但服务可能已经停止；按
   `systemd_before` 幂等恢复注册链接、enabled/active 状态，清理目标临时资产并标记
@@ -294,7 +295,9 @@ v1 的 `prepared` 可能来自旧实现中“已经 stop 但尚未写 activating
 - `rolled_back`：不重复恢复；
 - `failed`：阻断新安装并要求人工诊断。
 
-普通事务恢复再次失败时标记 `failed`；网络回滚遵守保留 `rolling_back` 的规则。保留可用的 `.lkb`、静态备份、版本目录和失败现场，不无限循环重试。
+恢复失败后的阶段由对应事务版本和工作流决定。尚需恢复的原生事务保留可重试的
+非终态及恢复依据，由 daemon 后续周期继续恢复，不重放用户请求；只有对应恢复规则
+明确要求终结时才标记 `failed`。可用备份、版本目录和诊断现场予以保留。
 
 ### 未提交网络接管安装的回滚清理
 
@@ -342,12 +345,12 @@ CLI/TUI 观察同一记录；Ctrl+C、SIGHUP 或断线只停止观察，不发�
 ### daemon 自动恢复
 
 安装了 lkit 常驻服务（`lkit self install`）后，daemon 每 2 秒尝试以
-非阻塞方式获取安装锁；锁空闲且存在未完成事务时，执行与 CLI 完全相同的本节恢复
-语义（见[`lkit self`](../commands/self.md)）：
+非阻塞方式获取安装锁；锁空闲且存在未完成事务时，按本节规则恢复
+（见[`lkit self`](../commands/self.md)）：
 
-- CLI 进程因 SSH 断开、崩溃或 `SIGKILL` 消失后，遗留事务由 daemon 自动接管：
-  失败激活回滚（含 `.lkb` 配置级回滚）、中断恢复、卸载前向完成均按本节规则执行，
-  不再依赖下一次 lkit 调用或委托进程存活；
+- CLI/TUI 断开或退出只停止观察，已接受的操作继续由 daemon 执行；daemon 中断后，
+  新 daemon 根据持久化记录恢复失败激活（含 `.lkb` 配置级回滚）或继续卸载等事务，
+  不要求前端重新提交；
 - daemon 恢复目标固定为 lkit 地盘：从 `/root/.lkit/` 下的状态与事务发现 landscape
   根，不绑定任何具体安装根；
 - 网络接管待确认时监测期限与主机启动标识，提交中继续提交，回滚中继续回滚；
