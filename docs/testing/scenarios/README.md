@@ -45,7 +45,7 @@ fake systemctl 隔离外部 service manager，但资产发布与下载、文件�
 | Alpine / OpenRC 真实虚拟机 | `ALP-01` 至 `ALP-06` | [alpine.md](functional/alpine.md) |
 | Debian / SysVinit 真实虚拟机 | `SVI-01` 至 `SVI-06` | [sysvinit.md](functional/sysvinit.md) |
 | daemon 自动恢复 | `DAE-01` 至 `DAE-20` | [daemon.md](functional/daemon.md) |
-| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-40` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
+| Landscape Terrain 防失联通道 | `FLR-01` 至 `FLR-42` | [协议与 e2e](../../flare/scenarios.md)、[协议栈调度](functional/flare.md) |
 
 ## 第二部分：systemd 兼容性 Smoke
 

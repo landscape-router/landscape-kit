@@ -83,10 +83,10 @@
 
 **Landscape 晚安装及改密**
 
-- 测试层：containerlab e2e（CI）
-- 状态：`已覆盖`
-- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[拓扑](../../../../scripts/flare/containerlab/rescue.clab.yml)
-- 说明：daemon 启动后挂入安装记录和配置，Web 服务离线时登录。更新密码后旧密码失败，新密码成功。
+- 测试层：containerlab 配置夹具、官方 Landscape 0.28.3 的 Debian QEMU e2e
+- 状态：`CI 自动验证`
+- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[官方安装与改密](../../../../scripts/qemu/network/flare-rescue.sh)
+- 说明：daemon 先于安装启动。通过真实管理员 API 改密，验证新密码可登录 Web，停止 Web 后分别用旧、新密码连接 Flare。检查旧密码被明确拒绝、新密码能映射 SSH、systemd 的 daemon 启动实例保持一致。
 
 ## FLR-40
 
@@ -96,3 +96,28 @@
 - 状态：`已覆盖`
 - 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[拓扑](../../../../scripts/flare/containerlab/rescue.clab.yml)
 - 说明：未持正确 PSK 的客户端发现不了私有设备。目标离线时连接失败。新客户端使用旧恢复码与固定版本的真实 v5 daemon 完成 HTTP 转发并提示升级。
+
+## FLR-41
+
+**取消设备确认后返回选择列表，重新连接需再次确认**
+
+- 测试层：containerlab 内的真实 TUI、伪终端和隔离网卡，另有 Noise 内存单测
+- 状态：`CI 自动验证`
+- 证据：[TUI 验收](../../../../scripts/flare/containerlab/tui-confirmation.py)、[Noise 握手](../../../../landscape-terrain-proto/src/protocol/v6.rs)
+- 说明：连续两次取消完整指纹确认，验证界面返回设备列表且没有发出认证帧。第三次确认并提交密码，验证能够观察到认证帧并进入已连接界面。握手对端密钥与所选设备不匹配时，客户端无法取得传输通道。
+
+## FLR-42
+
+**Windows 上的 Npcap 客户端按指纹选择两台设备**
+
+- 测试层：Windows、已安装的 Npcap、隔离以太网
+- 状态：`待实机验证`
+- 证据：[PowerShell 7 验收脚本](../../../../scripts/flare/windows-npcap-smoke.ps1)
+- 说明：两台测试路由器启用公开发现和 root 密码认证，各自的本地 HTTP 服务在允许映射的端口上返回单独一行 A 或 B（默认端口 6443）。从路由器控制台取各自完整指纹。Windows 测试机上按以下方式运行，脚本在每次读取 HTTP 标记后关闭对应客户端。
+
+```powershell
+./scripts/flare/windows-npcap-smoke.ps1 -Executable .\lflare.exe `
+  -Interface '\Device\NPF_{测试网卡GUID}' `
+  -FingerprintA $routerA -PasswordFileA .\a-password.txt `
+  -FingerprintB $routerB -PasswordFileB .\b-password.txt
+```

@@ -1,0 +1,50 @@
+name: Flare rescue on real Landscape
+
+on:
+  push:
+    paths: &paths
+      - Cargo.lock
+      - Cargo.toml
+      - landscape-flare/**
+      - landscape-terrain-proto/**
+      - lkit-cli/**
+      - crates/**
+      - scripts/test-qemu-network-takeover.sh
+      - scripts/qemu/network/**
+      - .github/workflows/test-flare-rescue-vm.yml
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rescue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: Install QEMU dependencies
+        run: |
+          sudo test -w /dev/kvm
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs jq mmdebstrap openssh-client qemu-system-x86 qemu-utils
+      - name: Build router and rescue client
+        run: cargo build --locked --release -p lkit-cli --bin lkit -p landscape-flare --bin lflare
+      - name: Recover the management IP and rotate the real administrator password
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LKIT_QEMU_PREBUILT: ${{ github.workspace }}/target/release/lkit
+          LKIT_QEMU_LFLARE: ${{ github.workspace }}/target/release/lflare
+          LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/flare-qemu
+        run: |
+          sudo --preserve-env=GITHUB_TOKEN,LKIT_QEMU_PREBUILT,LKIT_QEMU_LFLARE,LKIT_QEMU_ARTIFACT_DIR \
+            scripts/test-qemu-network-takeover.sh --flare-rescue
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: flare-qemu-diagnostics
+          path: ${{ runner.temp }}/flare-qemu
+          retention-days: 7

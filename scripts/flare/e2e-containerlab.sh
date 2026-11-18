@@ -115,6 +115,8 @@ docker exec "$a" tc qdisc add dev eth1 root netem loss 2%
 for _ in $(seq 1 10); do test "$(request)" = A; done
 docker exec "$a" tc qdisc del dev eth1 root
 stop_client
+docker exec "$client" sh -ec 'apt-get update -qq; apt-get install -y -qq python3-pexpect python3-pyte'
+docker exec -i "$client" /usr/bin/python3 - "$a_id" "$b_id" <scripts/flare/containerlab/tui-confirmation.py
 docker exec "$client" sh -ec 'umask 077; echo wrong-password > /tmp/wrong'
 reject --target "$a_id" --auth root --password-file /tmp/wrong
 # Lock root on the Alpine server. Existing Landscape credentials are independent.

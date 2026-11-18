@@ -109,16 +109,14 @@ pub async fn connect(
                 continue;
             }
             v6::read_handshake(&mut noise, f.payload)?;
-            if noise.get_remote_static() != Some(device.public.as_slice()) {
-                return Err("device fingerprint changed".into());
-            }
+            let channel = v6::Transport::for_device(noise, &device.public)?;
             device.mac = reply.src;
             return Ok(Connection {
                 link,
                 eth,
                 device,
                 sid,
-                channel: v6::Transport::new(noise)?,
+                channel,
             });
         }
     }

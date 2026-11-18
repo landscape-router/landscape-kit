@@ -189,14 +189,10 @@
 
 **网络接管失败后经 flare 通道恢复（完整故障场景）**
 
-- 测试层：未覆盖（缺口）
-- 状态：`缺口`
-- 说明：完整场景需要真实 L2 桥 + 容器内 systemd/网络服务破坏：网络接管失败使 IP
-   路径不可用后，操作员经 `lflare` 隧道进入路由器执行 `lkit network rollback`。
-   目前由 FLR-19（daemon 托管可连接）、FLR-20（daemon 部署供给 psk，早于接管）与
-   接管 fixture e2e（[network.rs](../../lkit-cli/tests/install_fixture_e2e/network.rs)）
-   分层覆盖，端到端联动留待后续专用容器脚本。
-- 缺口：完整"接管失败 → lflare 连接 → rollback"的集成验证。
+- 测试层：Debian/systemd QEMU、独立 TAP 上的真实 lflare、OpenSSH
+- 状态：`CI 自动验证`
+- 证据：[救援流程](../../scripts/qemu/network/flare-rescue.sh)、[QEMU 作业](../../.github/workflows/test-flare-rescue-vm.yml)
+- 说明：先通过原 LAN 管理地址登录，再由官方 Landscape 安装接管网络。确认原地址失联后，用控制台指纹选定设备，通过 Flare 的 root 密码和 SSH 密钥建立映射内的 SSH 会话，执行 `lkit network rollback`。验收检查同一事务在截止前显式回滚成功，并通过原地址重新登录。
 
 ## FLR-22
 

@@ -70,6 +70,28 @@ jobs:
       - name: Build workspace once
         run: cargo build --locked --workspace
 
+  windows-client:
+    name: Build Windows client and validate the Npcap smoke script
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p landscape-flare --bin lflare
+      - name: Check PowerShell syntax and report installed capture driver
+        shell: pwsh
+        run: |
+          $errors = $null
+          $null = [Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/flare/windows-npcap-smoke.ps1), [ref]$null, [ref]$errors)
+          if ($errors.Count) { throw ($errors -join [Environment]::NewLine) }
+          $driver = Get-Service npcap -ErrorAction SilentlyContinue
+          if ($driver) { "Npcap service: $($driver.Status)" } else { "Npcap service absent" }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lflare-windows
+          path: target/debug/lflare.exe
+          retention-days: 2
+
   e2e:
     name: Flare e2e (${{ matrix.scenario }})
     needs: prepare

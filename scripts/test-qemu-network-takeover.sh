@@ -58,6 +58,7 @@ cleanup_vm() {
 
 cleanup() {
   local result=$?
+  if declare -F close_flare_ssh >/dev/null; then close_flare_ssh; fi
   if [[ $result -ne 0 && -n $active_qemu_pid ]] && declare -F collect_guest_diagnostics >/dev/null; then
     collect_guest_diagnostics failure || true
   fi
@@ -661,6 +662,14 @@ run_real_backup_journey() {
   printf '%s\n' 'PASS: committed Landscape boots from its separate filesystem without the lkit daemon and retains real LAN service' \
     | tee -a "$artifact_dir/journey-assertions.log"
 }
+
+if [[ ${1:-} == --flare-rescue ]]; then
+  lflare_binary=${LKIT_QEMU_LFLARE:?provide the lflare binary built from this checkout}
+  # shellcheck source=scripts/qemu/network/flare-rescue.sh
+  source "$repo_root/scripts/qemu/network/flare-rescue.sh"
+  run_flare_rescue
+  exit 0
+fi
 
 boot_vm reboot-rollback
 start_takeover reboot-rollback

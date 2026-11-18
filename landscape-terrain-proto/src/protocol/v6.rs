@@ -164,6 +164,17 @@ pub struct Transport {
 }
 
 impl Transport {
+    /// Complete the client handshake only for the identity selected during discovery.
+    pub fn for_device(handshake: HandshakeState, selected: &[u8; 32]) -> io::Result<Self> {
+        if handshake.get_remote_static() != Some(selected.as_slice()) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "device fingerprint changed",
+            ));
+        }
+        Self::new(handshake).map_err(io::Error::other)
+    }
+
     pub fn new(handshake: HandshakeState) -> Result<Self, snow::Error> {
         Ok(Self {
             state: handshake.into_stateless_transport_mode()?,
@@ -241,13 +252,30 @@ mod tests {
     use super::super::{TYPE_AUTH_REQ, TYPE_DATA};
     use super::*;
 
-    fn pair(private: &[u8; 32]) -> (Transport, Transport) {
+    fn exchange(private: &[u8; 32]) -> (HandshakeState, HandshakeState) {
         let mut a = handshake(17, None).unwrap();
         let mut b = handshake(17, Some(private)).unwrap();
         read_handshake(&mut b, &write_handshake(&mut a).unwrap()).unwrap();
         read_handshake(&mut a, &write_handshake(&mut b).unwrap()).unwrap();
-        assert_eq!(a.get_remote_static(), Some(public_key(private).as_slice()));
-        (Transport::new(a).unwrap(), Transport::new(b).unwrap())
+        (a, b)
+    }
+
+    fn pair(private: &[u8; 32]) -> (Transport, Transport) {
+        let (client, router) = exchange(private);
+        (
+            Transport::for_device(client, &public_key(private)).unwrap(),
+            Transport::new(router).unwrap(),
+        )
+    }
+
+    #[test]
+    fn another_routers_handshake_cannot_open_the_selected_channel() {
+        let (client, _) = exchange(&[7; 32]);
+        let error = Transport::for_device(client, &public_key(&[8; 32]))
+            .err()
+            .expect("identity mismatch");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "device fingerprint changed");
     }
 
     #[test]
