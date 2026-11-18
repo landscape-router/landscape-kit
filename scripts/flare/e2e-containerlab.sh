@@ -31,8 +31,21 @@ docker exec -i "$a" chpasswd <<< 'root:fixture-root-password'
 docker exec -i "$b" chpasswd -c sha512 <<< 'root:fixture-root-password'
 docker exec "$a" sh -c 'echo A > /tmp/www/index.html'
 docker exec "$b" sh -c 'echo B > /tmp/www/index.html'
+docker exec "$b" apk add --no-cache busybox-extras
 docker exec -d "$a" python3 -m http.server 6443 --directory /tmp/www --bind 127.0.0.1
-docker exec -d "$b" busybox httpd -f -p 127.0.0.1:6443 -h /tmp/www
+docker exec "$b" /bin/busybox-extras httpd -p 127.0.0.1:6443 -h /tmp/www
+
+check_backend() {
+  local pid marker
+  pid=$(docker inspect --format '{{.State.Pid}}' "$1")
+  marker=$(sudo nsenter -t "$pid" -n curl --noproxy '*' -fsS --retry 5 --retry-connrefused http://127.0.0.1:6443/)
+  if [[ $marker != "$2" ]]; then
+    echo "Expected HTTP marker $2 on $1, got $marker" >&2
+    return 1
+  fi
+}
+check_backend "$a" A
+check_backend "$b" B
 
 fingerprint() {
   local text
@@ -63,7 +76,10 @@ expect_target() {
   local want=$1; shift
   start_client "$@"
   for _ in $(seq 1 45); do
-    if [[ $(request 2>/dev/null) == "$want" ]]; then return; fi
+    if [[ $(request 2>/dev/null) == "$want" ]]; then
+      echo "Flare mapping returned marker $want"
+      return
+    fi
     sleep 1
   done
   docker exec "$client" cat /tmp/client.log >&2
@@ -73,7 +89,10 @@ reject() {
   if docker exec "$client" timeout 20 /opt/bin/lflare cli --dev eth1 --forward 26443:6443 "$@" >/tmp/flare-lab-reject.log 2>&1; then
     echo 'unexpected login success' >&2; return 1
   fi
-  grep -Eq 'authentication failed|selected fingerprint not found' /tmp/flare-lab-reject.log
+  if ! grep -Eq 'authentication failed|selected fingerprint not found' /tmp/flare-lab-reject.log; then
+    cat /tmp/flare-lab-reject.log >&2
+    return 1
+  fi
   if request >/dev/null 2>&1; then echo 'unexpected HTTP mapping after rejection' >&2; return 1; fi
 }
 a_id=$(fingerprint "$a")
