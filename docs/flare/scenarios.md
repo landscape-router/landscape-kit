@@ -190,9 +190,10 @@
 **网络接管失败后经 flare 通道恢复（完整故障场景）**
 
 - 测试层：Debian/systemd QEMU、独立 TAP 上的真实 lflare、OpenSSH
-- 状态：`CI 自动验证`
+- 状态：`CI 已复现失败`
 - 证据：[救援流程](../../scripts/qemu/network/flare-rescue.sh)、[QEMU 作业](../../.github/workflows/test-flare-rescue-vm.yml)
 - 说明：先通过原 LAN 管理地址登录，再由官方 Landscape 安装接管网络。确认原地址失联后，用控制台指纹选定设备，通过 Flare 的 root 密码和 SSH 密钥建立映射内的 SSH 会话，执行 `lkit network rollback`。验收检查同一事务在截止前显式回滚成功，并通过原地址重新登录。
+- 缺口：原管理地址和接管后的 LAN 同属 `192.168.10.0/24` 时，映射内可以发起回滚，事务进入 `rolled_back`，原网卡重新取得 `192.168.10.99`。来宾路由表仍有一条指向无载波 `br_lan` 的同网段路由，从客户端重新登录原地址失败。失败时 CI 保留 SSH、路由表和事务诊断。[首次复现与诊断附件](https://github.com/landscape-router/landscape-kit/actions/runs/44375392597)
 
 ## FLR-22
 

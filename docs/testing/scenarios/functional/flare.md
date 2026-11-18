@@ -84,8 +84,8 @@
 **Landscape 晚安装及改密**
 
 - 测试层：containerlab 配置夹具、官方 Landscape 0.28.3 的 Debian QEMU e2e
-- 状态：`CI 自动验证`
-- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[官方安装与改密](../../../../scripts/qemu/network/flare-rescue.sh)
+- 状态：`已覆盖`
+- 证据：[三节点场景](../../../../scripts/flare/e2e-containerlab.sh)、[官方安装与改密](../../../../scripts/qemu/network/flare-rescue.sh)、[QEMU 实测结果](https://github.com/landscape-router/landscape-kit/actions/runs/44377715440/job/135061210605)
 - 说明：daemon 先于安装启动。通过真实管理员 API 改密，验证新密码可登录 Web，停止 Web 后分别用旧、新密码连接 Flare。检查旧密码被明确拒绝、新密码能映射 SSH、systemd 的 daemon 启动实例保持一致。
 
 ## FLR-40
@@ -102,7 +102,7 @@
 **取消设备确认后返回选择列表，重新连接需再次确认**
 
 - 测试层：containerlab 内的真实 TUI、伪终端和隔离网卡，另有 Noise 内存单测
-- 状态：`CI 自动验证`
+- 状态：`已覆盖`
 - 证据：[TUI 验收](../../../../scripts/flare/containerlab/tui-confirmation.py)、[Noise 握手](../../../../landscape-terrain-proto/src/protocol/v6.rs)
 - 说明：连续两次取消完整指纹确认，验证界面返回设备列表且没有发出认证帧。第三次确认并提交密码，验证能够观察到认证帧并进入已连接界面。握手对端密钥与所选设备不匹配时，客户端无法取得传输通道。
 
