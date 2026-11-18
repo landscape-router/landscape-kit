@@ -21,6 +21,11 @@ permissions:
 
 jobs:
   rescue:
+    name: Flare ${{ matrix.scenario }} in QEMU
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [rollback, password]
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
@@ -33,7 +38,7 @@ jobs:
           sudo apt-get install -y e2fsprogs jq mmdebstrap openssh-client qemu-system-x86 qemu-utils
       - name: Build router and rescue client
         run: cargo build --locked --release -p lkit-cli --bin lkit -p landscape-flare --bin lflare
-      - name: Recover the management IP and rotate the real administrator password
+      - name: Run ${{ matrix.scenario }} acceptance
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LKIT_QEMU_PREBUILT: ${{ github.workspace }}/target/release/lkit
@@ -41,10 +46,10 @@ jobs:
           LKIT_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/flare-qemu
         run: |
           sudo --preserve-env=GITHUB_TOKEN,LKIT_QEMU_PREBUILT,LKIT_QEMU_LFLARE,LKIT_QEMU_ARTIFACT_DIR \
-            scripts/test-qemu-network-takeover.sh --flare-rescue
+            scripts/test-qemu-network-takeover.sh --flare-${{ matrix.scenario }}
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: flare-qemu-diagnostics
+          name: flare-qemu-${{ matrix.scenario }}-diagnostics
           path: ${{ runner.temp }}/flare-qemu
           retention-days: 7

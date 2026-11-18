@@ -39,8 +39,8 @@ close_flare_ssh() {
   fi
 }
 
-run_flare_rescue() {
-  local original=192.168.10.99 transaction deadline rotated="$test_root/rotated-password"
+run_flare_rollback() {
+  local original=192.168.10.99 transaction deadline
   local daemon_instance router_id mapped_port
   boot_vm flare-rollback
   wan_ssh 'nmcli con mod lkit-lan-unconfigured ipv4.method manual ipv4.addresses 192.168.10.99/24 connection.autoconnect yes && nmcli con up lkit-lan-unconfigured'
@@ -60,12 +60,16 @@ run_flare_rescue() {
   deadline=$("${tunnel[@]}" "jq -er '.network_takeover.confirmation_deadline' /root/.lkit/transactions/*.json")
   # Rollback can tear down a link while the CLI is waiting for its operation.
   "${tunnel[@]}" 'nohup lkit network rollback </dev/null >/var/lib/lkit-qemu/flare-rollback.log 2>&1 &'
-  local restored=false
-  for _ in $(seq 1 60); do
-    if ssh "${ssh_common[@]}" "root@$original" 'test -f /etc/lkit-qemu-network' >/dev/null 2>&1; then restored=true; break; fi
+  local restored=false wait_until=$((SECONDS + 90))
+  while ((SECONDS < wait_until)); do
+    if ssh -o ConnectTimeout=2 "${ssh_common[@]}" "root@$original" 'test -f /etc/lkit-qemu-network' >/dev/null 2>&1; then restored=true; break; fi
     sleep 1
   done
-  [[ $restored == true ]]
+  if [[ $restored != true ]]; then
+    echo 'Original LAN SSH still unreachable after explicit rollback' >&2
+    wan_ssh 'ip -4 route get 192.168.10.2 from 192.168.10.99; ip -4 route; cat /var/lib/lkit-qemu/flare-rollback.log' >&2 || true
+    return 1
+  fi
   ssh "${ssh_common[@]}" "root@$original" bash -s -- "$transaction" "$deadline" <<'GUEST'
 set -euo pipefail
 tx=/root/.lkit/transactions/$1.json
@@ -79,8 +83,10 @@ exit 1
 GUEST
   close_flare_ssh
   echo 'PASS: lost management IP restored by explicit rollback over Flare before the deadline'
-  cleanup_vm
+}
 
+run_flare_password() {
+  local daemon_instance router_id mapped_port rotated="$test_root/rotated-password"
   boot_vm flare-password
   prepare_flare_router
   start_takeover flare-password

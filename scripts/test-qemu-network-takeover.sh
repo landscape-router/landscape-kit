@@ -663,11 +663,14 @@ run_real_backup_journey() {
     | tee -a "$artifact_dir/journey-assertions.log"
 }
 
-if [[ ${1:-} == --flare-rescue ]]; then
+if [[ ${1:-} == --flare-rollback || ${1:-} == --flare-password ]]; then
   lflare_binary=${LKIT_QEMU_LFLARE:?provide the lflare binary built from this checkout}
   # shellcheck source=scripts/qemu/network/flare-rescue.sh
   source "$repo_root/scripts/qemu/network/flare-rescue.sh"
-  run_flare_rescue
+  case $1 in
+    --flare-rollback) run_flare_rollback ;;
+    --flare-password) run_flare_password ;;
+  esac
   exit 0
 fi
 
