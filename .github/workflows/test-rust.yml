@@ -50,7 +50,8 @@ jobs:
       - name: Run unit tests
         run: cargo test --locked --workspace --features test-support --lib
       - name: Check the systemctl fixture link model
-        run: cargo test --locked -p lkit-test-fixture --bin lkit-test-systemctl tests::
+        run: |
+          cargo test --locked -p lkit-test-fixture --bin lkit-test-systemctl tests::
       - name: Check test selection runner
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
       - name: Run reviewed CLI unit tests
