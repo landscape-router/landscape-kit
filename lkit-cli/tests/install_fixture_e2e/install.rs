@@ -145,8 +145,6 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
 
     std::fs::write(&config_path, b"not valid toml [[[").unwrap();
     let original_bytes = std::fs::read(&config_path).unwrap();
-    let daemon_runtime = harness.daemon_runtime();
-    let _daemon = harness.spawn_daemon(&daemon_runtime);
 
     // 普通 reconcile 不读取配置,损坏配置不影响它。
     let reconcile = harness
@@ -163,19 +161,12 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
     );
 
     // 需要解析来源的 switch/repair/update 在无显式来源时被损坏配置阻断。
-    for args in [
-        vec!["switch", "--version", VERSION],
-        vec!["repair", "static"],
-    ] {
+    let assert_source_blocked = |args: &[&str], runtime: &Path| {
         let blocked = harness
             .command()
-            .args(&args)
+            .args(args)
             .arg("--test-runtime")
-            .arg(if args[0] == "repair" {
-                &daemon_runtime
-            } else {
-                &harness.runtime_config
-            })
+            .arg(runtime)
             .output()
             .unwrap();
         assert_eq!(
@@ -189,7 +180,8 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
             "{args:?} stderr must identify the config file:\n{}",
             String::from_utf8_lossy(&blocked.stderr)
         );
-    }
+    };
+    assert_source_blocked(&["switch", "--version", VERSION], &harness.runtime_config);
 
     let mut update_tty = Pty::open();
     update_tty.master.write_all(b"\n").unwrap();
@@ -234,6 +226,11 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
         "explicit bypass must not modify the config file"
     );
 
+    // Only the repair commands use the daemon. Inline reconcile takes the same
+    // install lock that the daemon periodically acquires to check for recovery.
+    let daemon_runtime = harness.daemon_runtime();
+    let daemon = harness.spawn_daemon(&daemon_runtime);
+    assert_source_blocked(&["repair", "static"], &daemon_runtime);
     let bypass_repair = harness
         .command()
         .arg("repair")
@@ -255,6 +252,7 @@ fn corrupted_config_blocks_repository_commands_but_not_plain_reconcile() {
         "explicit repair must not modify the config file"
     );
 
+    drop(daemon);
     std::fs::remove_file(&config_path).unwrap();
     let fixed = harness
         .command()
