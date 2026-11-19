@@ -61,10 +61,8 @@ jobs:
       - name: Build workspace
         run: cargo build --locked
 
-      - name: Run Rust tests
-        env:
-          LKIT_E2E: "1"
-        run: cargo test --features test-support
+      - name: Run Rust tests (fixture E2E runs in parallel shards)
+        run: cargo test --locked --features test-support
 
       - name: Check installer scripts
         run: |
@@ -72,14 +70,17 @@ jobs:
           scripts/test-install-lkit.sh
           bash scripts/test-build-musl-static.sh
 
+  fixture-e2e:
+    uses: ./.github/workflows/test-fixture-e2e.yml
+
   test-musl:
     name: Test musl architectures
-    needs: verify
+    needs: [verify, fixture-e2e]
     uses: ./.github/workflows/test-musl.yml
 
   build:
     name: Build static Linux (${{ matrix.arch }})
-    needs: verify
+    needs: [verify, fixture-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -132,7 +133,7 @@ jobs:
 
   build-flare-windows:
     name: Build lflare (windows-x86_64)
-    needs: verify
+    needs: [verify, fixture-e2e]
     runs-on: windows-latest
     env:
       LIBPCAP_LIBDIR: ${{ github.workspace }}\landscape-flare\vendor\npcap-sdk\Lib\x64

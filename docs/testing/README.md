@@ -63,8 +63,8 @@ workflow 使用原生 Node.js 24 的 Actions：`actions/checkout@v7`、
 
 fixture E2E 套件（`tests/install_fixture_e2e`）会在宿主机上部署真实服务并生成真实进程，
 只有显式设置 `LKIT_E2E=1` 时才执行；本地误跑（如被 `daemon::` 这类子串过滤器匹配）
-会在宿主机挂起并泄漏进程，CI 的两个入口（`test-fixture-e2e.yml`、`release-lkit.yml`）都已设置
-该变量。
+会在宿主机挂起并泄漏进程。`test-fixture-e2e.yml` 按功能分组设置该变量，并校验所有编译出的 fixture 测试均已分配。
+发布预演和打 tag 时，`release-lkit.yml` 调用同一组 fixture 作业，与 Rust 单测并行运行，全部通过后开始打包。
 
 ## CI 构建缓存
 

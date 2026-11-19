@@ -20,12 +20,13 @@ on:
       - .github/workflows/test-fixture-e2e.yml
       - .github/workflows/test-rust.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: fixture-e2e-${{ github.ref }}
+  group: fixture-e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,6 +34,8 @@ jobs:
     name: Build fixture e2e binaries
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      shards: ${{ steps.inventory.outputs.shards }}
     steps:
       - uses: actions/checkout@v7
       - name: Cache Rust build
@@ -55,6 +58,25 @@ jobs:
           test_binary_rel="deps/$(basename "$test_binary")"
           test -f "target/debug/$test_binary_rel"
           printf '%s\n' "$test_binary_rel" > ci-artifacts/test-binary-path
+      - name: Check that the shards cover every compiled fixture test
+        id: inventory
+        env:
+          # The console shard covers both console:: and console_screen::.
+          SHARDS: >-
+            {"console":"console", "daemon":"daemon::", "fault-matrix":"fault_matrix::",
+             "frontend":"frontend::", "install":"install::", "manager-backends":"manager_backends::",
+             "migrate":"migrate::", "network":"network::", "reinit":"reinit::", "repair":"repair::",
+             "repair-service":"repair_service::", "restore":"restore::", "self":"self_cmd::",
+             "switch":"switch::", "uninstall":"uninstall::", "update":"update::"}
+        run: |
+          jq -r '.[]' <<<"$SHARDS" > ci-artifacts/fixture-filters
+          python3 scripts/ci/run-test-selection.py --list-only \
+            --manifest ci-artifacts/fixture-filters --report ci-artifacts/fixture-inventory.json -- \
+            "target/debug/$(cat ci-artifacts/test-binary-path)"
+          jq -e 'if .unselected == [] then true else error("unassigned tests: " + (.unselected | join(", "))) end' \
+            ci-artifacts/fixture-inventory.json
+          matrix=$(jq -c 'to_entries | map({domain: .key, filter: .value})' <<<"$SHARDS")
+          echo "shards=$matrix" >> "$GITHUB_OUTPUT"
       - name: Package compiled fixture e2e binaries
         run: |
           set -eu
@@ -79,40 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - domain: console
-            # 匹配 console::(libc PTY)与 console_screen::(termlens)两个模块。
-            filter: "console"
-          - domain: daemon
-            filter: "daemon::"
-          - domain: fault-matrix
-            filter: "fault_matrix::"
-          - domain: frontend
-            filter: "frontend::"
-          - domain: install
-            filter: "install::"
-          - domain: manager-backends
-            filter: "manager_backends::"
-          - domain: migrate
-            filter: "migrate::"
-          - domain: network
-            filter: "network::"
-          - domain: reinit
-            filter: "reinit::"
-          - domain: repair
-            filter: "repair::"
-          - domain: repair-service
-            filter: "repair_service::"
-          - domain: restore
-            filter: "restore::"
-          - domain: self
-            filter: "self_cmd::"
-          - domain: switch
-            filter: "switch::"
-          - domain: uninstall
-            filter: "uninstall::"
-          - domain: update
-            filter: "update::"
+        include: ${{ fromJSON(needs.build.outputs.shards) }}
     steps:
       - uses: actions/checkout@v7
       - name: Download compiled fixture e2e binaries
