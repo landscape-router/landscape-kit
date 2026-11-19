@@ -448,7 +448,6 @@ pub(crate) fn confirm_plan(
 #[allow(clippy::await_holding_lock)]
 mod tests {
     // 交互模式测试通过 std::sync::Mutex 串行化,锁故意跨 await 持有。
-    use std::os::unix::fs::PermissionsExt;
 
     use super::super::health::HealthOptions;
     use super::super::repository::test_server::{TestResponse, TestServer};
@@ -630,50 +629,21 @@ mod tests {
         std::fs::write(root.canonical.join("data/landscape.toml"), b"").unwrap();
     }
 
-    /// 受管服务 unit 源文件(restore 的 systemd 路径会读取并记录其 sha256)。
-    pub(super) fn write_unit_origin(root: &InstallRoot) {
-        std::fs::create_dir_all(root.canonical.join("service")).unwrap();
+    pub(super) fn installed_systemd(root: &InstallRoot) -> Systemd {
+        let manager =
+            crate::service::systemd::workflow_fixture::new(&root.canonical.join("fake-systemd"));
+        let service = ManagedService::LandscapeRouter;
+        let origin = root.canonical.join("service/landscape-router.service");
+        std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
         std::fs::write(
-            root.canonical.join("service/landscape-router.service"),
-            b"[Unit]\nDescription=Landscape Router\n",
+            &origin,
+            manager.render_definition(service, &root.canonical).unwrap(),
         )
         .unwrap();
-    }
-
-    /// 有状态假 systemctl:stop/start 维护 state 文件,stop 后 ActiveState 为 inactive。
-    pub(super) fn fake_systemd_stateful(dir: &std::path::Path) -> Systemd {
-        std::fs::create_dir_all(dir.join("units")).unwrap();
-        std::fs::create_dir_all(dir.join("run")).unwrap();
-        std::fs::write(dir.join("state"), b"active").unwrap();
-        let script = dir.join("systemctl");
-        std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-STATE_FILE="{}"
-case "$*" in
-  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
-  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
-  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
-  "show --property=MainPID --value landscape-router.service") echo {};;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") cat "$STATE_FILE";;
-  *) exit 0;;
-esac
-"#,
-                dir.join("state").display(),
-                std::process::id()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Systemd {
-            systemctl: script,
-            system_unit_dir: dir.join("units"),
-            run_systemd_dir: dir.join("run"),
-            pid1_is_systemd: true,
-            resolv_conf: dir.join("resolv.conf"),
-        }
+        manager.register(service, &origin).unwrap();
+        manager.enable(service).unwrap();
+        manager.start(service).unwrap();
+        manager
     }
 
     /// 初始化 watcher:landscape_init.toml 出现后写入 lock 与 landscape.toml
@@ -707,8 +677,7 @@ esac
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
-        write_unit_origin(&install_root);
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
@@ -878,8 +847,7 @@ esac
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
-        write_unit_origin(&install_root);
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
@@ -931,8 +899,7 @@ esac
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
-        write_unit_origin(&install_root);
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);

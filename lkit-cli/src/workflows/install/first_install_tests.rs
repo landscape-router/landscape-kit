@@ -213,35 +213,6 @@ pub(crate) fn version() -> semver::Version {
     semver::Version::new(1, 2, 3)
 }
 
-pub(crate) fn fake_systemd(dir: &std::path::Path, main_pid: u32) -> Systemd {
-    let script = dir.join("systemctl");
-    std::fs::write(
-        &script,
-        format!(
-            r#"#!/bin/sh
-case "$*" in
-  "show --property=MainPID --value landscape-router.service") echo {main_pid};;
-  "show --property=ActiveState --value landscape-router.service") echo active;;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") echo active;;
-  *) exit 0;;
-esac
-"#
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::create_dir_all(dir.join("run")).unwrap();
-    std::fs::create_dir_all(dir.join("units")).unwrap();
-    Systemd {
-        systemctl: script,
-        system_unit_dir: dir.join("units"),
-        run_systemd_dir: dir.join("run"),
-        pid1_is_systemd: true,
-        resolv_conf: dir.join("resolv.conf"),
-    }
-}
-
 #[tokio::test]
 async fn performs_first_install_from_http_repository() {
     use std::net::{TcpListener, UdpSocket};
@@ -278,7 +249,7 @@ async fn performs_first_install_from_http_repository() {
         },
     ];
 
-    let systemd = fake_systemd(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let data_dir = root.canonical.join("data");
     let watcher = std::thread::spawn(move || {
         loop {
@@ -449,7 +420,7 @@ pub(crate) async fn assert_systemd_first_install(case: &str) {
         },
     ];
 
-    let systemd = fake_systemd(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let data_dir = root.canonical.join("data");
     let watcher = std::thread::spawn(move || {
         loop {
@@ -589,7 +560,7 @@ async fn resolves_latest_stable_from_channel() {
         },
     ];
 
-    let systemd = fake_systemd(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let data_dir = root.canonical.join("data");
     let watcher = std::thread::spawn(move || {
         loop {

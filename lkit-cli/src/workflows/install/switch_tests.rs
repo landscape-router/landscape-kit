@@ -5,12 +5,11 @@ use super::super::health::PortCheck;
 use super::super::repository::provider_for;
 use super::super::repository::test_server::{TestResponse, TestServer};
 use crate::service::systemd::Systemd;
-use std::os::unix::fs::PermissionsExt;
 
 use super::first_install_tests::{
     CurrentSymlinkDocs, FailSecondDocs, FakeDocs, ToggleDocs, WEBSERVER_PAYLOAD, credentials,
-    export_body, fake_systemd, load_transaction_json, none_options, repository_files,
-    repository_files_for, sha256_bytes, start_repository, temp_root, test_options, version,
+    export_body, load_transaction_json, none_options, repository_files, repository_files_for,
+    sha256_bytes, start_repository, temp_root, test_options, version,
 };
 use super::*;
 
@@ -123,7 +122,7 @@ fn switch_world_repo(name: &str, from: &str, to: &str, payload_to: &[u8]) -> Swi
             port: udp.local_addr().unwrap().port(),
         },
     ];
-    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     init_watcher(root.canonical.join("data"), stop.clone());
     let options = HealthOptions {
@@ -491,41 +490,6 @@ async fn repository_override_does_not_require_a_second_confirmation() {
     let _ = std::fs::remove_dir_all(&_second_root.install_root);
 }
 
-/// 有状态假 systemctl:start/stop 维护 state 文件,stop 后 ActiveState 为 inactive。
-fn fake_systemd_stateful(dir: &std::path::Path, main_pid: u32) -> Systemd {
-    std::fs::create_dir_all(dir.join("units")).unwrap();
-    std::fs::create_dir_all(dir.join("run")).unwrap();
-    std::fs::write(dir.join("state"), b"active").unwrap();
-    let script = dir.join("systemctl");
-    std::fs::write(
-        &script,
-        format!(
-            r#"#!/bin/sh
-STATE_FILE="{}"
-case "$*" in
-  "start landscape-router.service") echo active > "$STATE_FILE"; exit 0;;
-  "stop landscape-router.service") echo inactive > "$STATE_FILE"; exit 0;;
-  "show --property=ActiveState --value landscape-router.service") cat "$STATE_FILE";;
-  "show --property=MainPID --value landscape-router.service") echo {main_pid};;
-  "is-enabled landscape-router.service") echo enabled;;
-  "is-active landscape-router.service") cat "$STATE_FILE";;
-  *) exit 0;;
-esac
-"#,
-            dir.join("state").display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    Systemd {
-        systemctl: script,
-        system_unit_dir: dir.join("units"),
-        run_systemd_dir: dir.join("run"),
-        pid1_is_systemd: true,
-        resolv_conf: dir.join("resolv.conf"),
-    }
-}
-
 fn init_watcher(data_dir: std::path::PathBuf, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) {
     std::thread::spawn(move || {
         while !stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -579,7 +543,7 @@ async fn switches_version_with_systemd() {
             port: udp.local_addr().unwrap().port(),
         },
     ];
-    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     init_watcher(root.canonical.join("data"), stop.clone());
 
@@ -704,7 +668,7 @@ fn stopped_service_world(name: &str) -> StoppedServiceWorld {
             port: udp.local_addr().unwrap().port(),
         },
     ];
-    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     init_watcher(root.canonical.join("data"), stop.clone());
     let docs = ToggleDocs {
@@ -982,7 +946,7 @@ async fn switches_and_rolls_back_via_lkb_on_health_failure() {
             port: udp.local_addr().unwrap().port(),
         },
     ];
-    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     init_watcher(root.canonical.join("data"), stop.clone());
 
@@ -1127,7 +1091,7 @@ async fn switch_rollback_failure_returns_rollback_failed_and_preserves_diagnosti
             port: udp.local_addr().unwrap().port(),
         },
     ];
-    let systemd = fake_systemd_stateful(&dir, std::process::id());
+    let systemd = crate::service::systemd::workflow_fixture::new(&dir);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     init_watcher(root.canonical.join("data"), stop.clone());
 

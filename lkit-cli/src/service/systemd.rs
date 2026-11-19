@@ -15,6 +15,10 @@ mod boot;
 #[path = "systemd_enablement.rs"]
 mod enablement;
 
+#[cfg(test)]
+#[path = "systemd_test_fixture.rs"]
+pub(crate) mod workflow_fixture;
+
 pub(crate) const UNIT_NAME: &str = "landscape-router.service";
 pub(crate) const LKIT_DAEMON_UNIT_NAME: &str = "lkit.service";
 pub(crate) const SYSTEM_UNIT_DIR: &str = "/etc/systemd/system";

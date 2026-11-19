@@ -72,6 +72,8 @@ run_flare_rollback() {
   fi
   ssh "${ssh_common[@]}" "root@$original" bash -s -- "$transaction" "$deadline" <<'GUEST'
 set -euo pipefail
+original_if=$(ip -j -4 address show to 192.168.10.99/32 | jq -er 'select(length == 1) | .[0].ifname')
+ip -j -4 route get 192.168.10.2 from 192.168.10.99 | jq -e --arg dev "$original_if" '.[0].dev == $dev' >/dev/null
 tx=/root/.lkit/transactions/$1.json
 jq -e '.phase == "rolled_back"' "$tx" >/dev/null
 (( $(date -d "$(jq -r .updated_at "$tx")" +%s) < $(date -d "$2" +%s) ))

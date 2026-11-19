@@ -77,6 +77,13 @@ pub(crate) fn prepare_transaction(
         boot_id: Some(current_boot_id()?),
         plan: plan.clone(),
         network_manager: Some(super::network_manager::capture(runtime, &host_services)?),
+        management_bridge_was_absent: matches!(plan.mode, NetworkMode::RoutedLan { .. })
+            && runtime.test_runtime_path.is_none()
+            && !runtime
+                .sys_class_net
+                .join(super::config::MANAGEMENT_BRIDGE)
+                .try_exists()
+                .map_err(InstallError::Io)?,
         preserve_startup_links: true,
         host_services,
         confirmation_deadline: Utc::now() + timeout,
@@ -182,13 +189,37 @@ pub(crate) fn cleanup_failed_takeover(
     network: &transaction::NetworkTakeoverTransaction,
     manager: &dyn ServiceManager,
 ) -> Result<(), InstallError> {
+    restore_host_network(network, manager)?;
+    cleanup_recovery(root, network, manager, false)
+}
+
+fn restore_host_network(
+    network: &transaction::NetworkTakeoverTransaction,
+    manager: &dyn ServiceManager,
+) -> Result<(), InstallError> {
+    // Restore the host profiles even when the bridge needs a cleanup retry.
+    let address_cleanup = remove_takeover_address(network);
     host_network::restore_all(
         manager,
         &network.host_services,
         network.preserve_startup_links,
     )?;
     super::network_manager::restore(network)?;
-    cleanup_recovery(root, network, manager, false)
+    address_cleanup
+}
+
+fn remove_takeover_address(
+    network: &transaction::NetworkTakeoverTransaction,
+) -> Result<(), InstallError> {
+    let NetworkMode::RoutedLan { management, .. } = network.plan.mode else {
+        return Ok(());
+    };
+    if !network.management_bridge_was_absent
+        || network.boot_id.as_deref() != Some(current_boot_id()?.as_str())
+    {
+        return Ok(());
+    }
+    super::discovery::remove_bridge_address(management)
 }
 
 pub(crate) fn write_pending_state(
@@ -524,12 +555,7 @@ pub(crate) async fn rollback(
                     &pending,
                     runtime.service_manager.as_ref(),
                 )?;
-                host_network::restore_all(
-                    runtime.service_manager.as_ref(),
-                    &network.host_services,
-                    network.preserve_startup_links,
-                )?;
-                super::network_manager::restore(&network)?;
+                restore_host_network(&network, runtime.service_manager.as_ref())?;
                 cleanup_recovery(root, &network, runtime.service_manager.as_ref(), automatic)?;
             }
             transaction::Operation::Reinit => {
@@ -878,6 +904,7 @@ mod eligibility_tests {
                 },
                 host_services: Vec::new(),
                 network_manager: Some(Vec::new()),
+                management_bridge_was_absent: false,
                 preserve_startup_links: true,
                 confirmation_deadline: Utc::now(),
                 rollback_service: "test-rollback.service".into(),

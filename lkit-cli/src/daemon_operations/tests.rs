@@ -763,6 +763,7 @@ fn network_tx(f: &Fixture) -> transaction::TransactionFile {
         },
         host_services: vec![],
         network_manager: None,
+        management_bridge_was_absent: false,
         preserve_startup_links: false,
         confirmation_deadline: chrono::Utc::now() + chrono::Duration::minutes(5),
         rollback_service: "lkit-network-test-rollback.service".into(),

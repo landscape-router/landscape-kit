@@ -16,7 +16,8 @@ lkit network rollback
   并提交状态。restore 的 `--yes` 和本机健康检查均不能代替这一步。
 - `rollback` 恢复未确认变更之前的配置与服务状态；首次安装清理未提交的安装数据，
   reinit 恢复原 Landscape 数据和状态，restore 恢复原 release、data、state、服务及
-  DNS 文件。失败保留 `rolling_back`，由 daemon 重试。
+  DNS 文件。首次安装接管新建的 `br_lan` 时，同次开机回滚会移除接管配置的管理 IPv4 地址，让内核撤销对应的直连路由。
+  失败保留 `rolling_back`，由 daemon 重试。
 - 手工确认与回滚由 daemon 直接执行；CLI 提交绑定安装根与事务 ID 的结构化操作，
   输出操作 ID 后观察结果。SSH 断开或 Ctrl+C 只退出观察，操作继续执行。
 - 请求仅排队时可取消。领取后与自动恢复共用安装锁；网络操作优先于等待中的普通修改

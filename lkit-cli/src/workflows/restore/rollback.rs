@@ -214,8 +214,8 @@ mod tests {
 
     use super::super::tests::{
         NonInteractiveGuard, PAYLOAD_1_2_3, PAYLOAD_1_3_0, TOKEN, YES, ZIP_1_2_3, ZIP_1_3_0,
-        activate_version, create_target_backup, export_server, fake_systemd_stateful,
-        install_state, interactive_guard, none_health, setup_current, temp_root,
+        activate_version, create_target_backup, export_server, install_state, installed_systemd,
+        interactive_guard, none_health, setup_current, temp_root,
     };
     use super::super::{RestoreArgs, RestoreOptions, restore_version};
     use crate::backup::rollback::write_state_snapshot;
@@ -265,7 +265,7 @@ mod tests {
         mark_phase(&install_root, &transaction, Phase::Activating).unwrap();
         std::fs::write(install_root.canonical.join("data/partial"), b"partial").unwrap();
 
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         rollback_restore(&install_root, &transaction, &systemd, &none_health())
             .await
             .unwrap();
@@ -334,7 +334,7 @@ mod tests {
         assert!(!tx_dir.join("previous-data").exists());
         mark_phase(&install_root, &transaction, Phase::Activating).unwrap();
 
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         rollback_restore(&install_root, &transaction, &systemd, &none_health())
             .await
             .unwrap();
@@ -410,7 +410,7 @@ mod tests {
         .unwrap();
         mark_phase(&install_root, &transaction, Phase::Activating).unwrap();
 
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         rollback_restore(&install_root, &transaction, &systemd, &none_health())
             .await
             .unwrap();
@@ -474,7 +474,7 @@ mod tests {
         std::fs::remove_file(&current).unwrap();
         std::fs::create_dir_all(current.join("occupied")).unwrap();
 
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         assert!(
             rollback_restore(&install_root, &transaction, &systemd, &none_health(),)
                 .await

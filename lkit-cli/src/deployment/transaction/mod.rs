@@ -148,6 +148,8 @@ pub(crate) struct NetworkTakeoverTransaction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_manager: Option<Vec<crate::network::network_manager::Connection>>,
     #[serde(default)]
+    pub management_bridge_was_absent: bool,
+    #[serde(default)]
     pub preserve_startup_links: bool,
     pub confirmation_deadline: DateTime<Utc>,
     pub rollback_service: String,

@@ -638,6 +638,7 @@ mod tests {
             },
             host_services: Vec::new(),
             network_manager: None,
+            management_bridge_was_absent: false,
             preserve_startup_links: false,
             confirmation_deadline: Utc::now(),
             rollback_service: "lkit-network-tx-rollback.service".into(),

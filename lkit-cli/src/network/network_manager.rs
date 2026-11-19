@@ -499,5 +499,6 @@ mod tests {
             serde_json::from_value(value).unwrap();
         assert!(decoded.network_manager.is_none());
         assert!(!decoded.preserve_startup_links);
+        assert!(!decoded.management_bridge_was_absent);
     }
 }

@@ -131,8 +131,8 @@ mod tests {
 
     use super::super::tests::{
         NonInteractiveGuard, PAYLOAD_1_3_0, TOKEN, YES, ZIP_1_3_0, activate_version,
-        create_target_backup, fake_systemd_stateful, init_watcher, install_state,
-        interactive_guard, none_health, setup_current, temp_root, write_unit_origin,
+        create_target_backup, init_watcher, install_state, installed_systemd, interactive_guard,
+        none_health, setup_current, temp_root,
     };
     use super::super::{RestoreArgs, RestoreOptions, RestoreOutcome, restore_version};
     use crate::deployment::state::load_state;
@@ -154,7 +154,7 @@ mod tests {
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         write_state(&install_root, &state).unwrap();
         let (backup_ref, _) = create_target_backup(&install_root);
@@ -205,8 +205,7 @@ mod tests {
         };
         activate_version(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);
         setup_current(&install_root);
-        write_unit_origin(&install_root);
-        let systemd = fake_systemd_stateful(&root.join("fake-systemd"));
+        let systemd = installed_systemd(&install_root);
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watcher = init_watcher(install_root.canonical.join("data"), stop.clone());
         let state = install_state(&install_root, "1.3.0", PAYLOAD_1_3_0, ZIP_1_3_0);

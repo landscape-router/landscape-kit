@@ -228,6 +228,58 @@ fn read_addresses(ip_command: &Path) -> Result<HashMap<String, Vec<Ipv4Cidr>>, I
     Ok(addresses)
 }
 
+/// Remove the planned IPv4 address and its kernel prefix route. A disappeared
+/// bridge or address is already clean when an interrupted rollback retries.
+pub(super) fn remove_bridge_address(management: Ipv4Cidr) -> Result<(), InstallError> {
+    let bridge = Path::new("/sys/class/net")
+        .join(MANAGEMENT_BRIDGE)
+        .join("bridge");
+    if !bridge.try_exists().map_err(InstallError::Io)? {
+        return Ok(());
+    }
+    let ip = Path::new(HOST_IP_COMMAND);
+    let addresses = read_addresses(ip)?;
+    let addresses = addresses
+        .get(MANAGEMENT_BRIDGE)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !should_remove_bridge_address(management, addresses)? {
+        return Ok(());
+    }
+    run_ip(
+        ip,
+        &[
+            "-4",
+            "address",
+            "del",
+            &management.to_string(),
+            "dev",
+            MANAGEMENT_BRIDGE,
+        ],
+    )?;
+    Ok(())
+}
+
+fn should_remove_bridge_address(
+    management: Ipv4Cidr,
+    addresses: &[Ipv4Cidr],
+) -> Result<bool, InstallError> {
+    if !addresses.contains(&management) {
+        return Ok(false);
+    }
+    // Linux can remove secondary addresses when their primary is deleted.
+    if addresses.iter().any(|other| {
+        *other != management
+            && other.prefix == management.prefix
+            && other.network() == management.network()
+    }) {
+        return Err(network_error(format!(
+            "cannot remove {management} from {MANAGEMENT_BRIDGE}: another address shares its prefix"
+        )));
+    }
+    Ok(true)
+}
+
 fn read_default_routes(ip_command: &Path) -> Result<Vec<DefaultRoute>, InstallError> {
     let output = run_ip(ip_command, &["-j", "-4", "route", "show", "default"])?;
     let records: Vec<IpRouteRecord> = serde_json::from_slice(&output).map_err(|error| {
@@ -382,6 +434,18 @@ fn network_error(reason: impl Into<String>) -> InstallError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rollback_removes_only_the_configured_address_without_shared_prefixes() {
+        let management = "192.168.10.1/24".parse().unwrap();
+        let other = "198.51.100.1/24".parse().unwrap();
+        let neighbor = "192.168.10.2/24".parse().unwrap();
+        let changed = "192.168.10.1/28".parse().unwrap();
+        assert!(!should_remove_bridge_address(management, &[]).unwrap());
+        assert!(!should_remove_bridge_address(management, &[changed, other]).unwrap());
+        assert!(should_remove_bridge_address(management, &[management, other]).unwrap());
+        assert!(should_remove_bridge_address(management, &[management, neighbor]).is_err());
+    }
 
     #[test]
     fn host_ip_uses_path_and_keeps_json_arguments_without_real_processes() {
