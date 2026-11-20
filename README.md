@@ -86,6 +86,10 @@ Linux clients use fully static musl builds on the four supported architectures. 
 
 ## Building and Testing
 
+With `just` installed, run `just build` to compile `lkit` and `lflare` for the host using Cargo’s release profile. The binaries are in `target/release/` by default. Run `just` to list all commands.
+
+Run `just push root@192.0.2.10` to install the existing release build at `/usr/local/bin/lkit` on a test host. The SSH user needs write access to that directory.
+
 Build the Linux distribution binaries (defaults to the host architecture, musl static linking):
 
 ```sh

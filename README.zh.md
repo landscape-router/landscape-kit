@@ -87,6 +87,10 @@ Linux 客户端使用上述四种架构的 musl 全静态产物；Windows 客户
 
 ## 构建与测试
 
+安装了 `just` 后，运行 `just build` 即可用 Cargo 的 release 配置编译宿主平台的 `lkit` 和 `lflare`，默认输出到 `target/release/`。运行 `just` 可查看全部命令。
+
+运行 `just push root@192.0.2.10` 可将已编译的 release 版 `lkit` 安装到测试机的 `/usr/local/bin/lkit`。SSH 用户需有该目录的写权限。
+
 构建 Linux 分发二进制（默认按宿主架构选择 musl 目标，全静态链接）：
 
 ```sh
