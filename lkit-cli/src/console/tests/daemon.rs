@@ -47,7 +47,7 @@ fn overview_shows_daemon_status_and_deploy_row_when_not_running() {
     assert!(content.contains("lkit daemon is not running"));
     assert!(content.contains("[ Deploy the lkit daemon ]"));
     assert!(
-        content.contains("A systemd service that executes"),
+        content.contains("Runs privileged tasks"),
         "the resident service section must carry a description"
     );
     assert!(
@@ -116,7 +116,6 @@ fn deploy_confirm_runs_in_background_and_writes_the_result_to_the_notice() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.deploy_daemon_confirming);
     // 空恢复码(留空自动生成):直接下移到「开始部署」动作行并确认。
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
@@ -211,7 +210,6 @@ fn preflight_dialog_enter_opens_the_deploy_confirm_and_confirms_starts_deploy() 
     );
     // 空恢复码(留空自动生成):下移到「开始部署」并确认。
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
         app.deploy_daemon.is_some(),
@@ -247,6 +245,7 @@ fn preflight_dialog_d_key_opens_the_deploy_confirm_and_confirms_starts_deploy() 
         app.deploy_daemon_confirming,
         "D must open the deploy confirm dialog"
     );
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.deploy_daemon.is_some());
     assert_eq!(deploy.requests(), [None]);
@@ -366,16 +365,48 @@ fn flare_dialog_rejects_a_short_psk_and_stays_open() {
 }
 
 #[test]
-fn deployment_requires_only_confirmation_and_preserves_the_discovery_settings() {
+fn clearing_the_optional_key_hides_confirmation_and_skips_it_in_both_directions() {
+    let (_guard, _territory) = territory_with_pidfile("deploy-clear-key", "99999999\n");
+    let (mut app, deploy) = overview_app_with_deploy(Ok("deployed".into()));
+    app.open_deploy_dialog();
+    assert!(!app.psk_confirmation_visible());
+    app.handle_paste("a");
+    assert!(app.psk_confirmation_visible());
+    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_paste("a");
+    app.handle_key(key(KeyCode::BackTab));
+    app.handle_key(key(KeyCode::Enter));
+    app.handle_key(key(KeyCode::Backspace));
+    assert!(!app.psk_confirmation_visible());
+    assert!(app.show_psk_confirmation.is_empty());
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_key(key(KeyCode::Up));
+    assert_eq!(
+        app.show_psk_field,
+        crate::console::daemon_panel::PskDialogField::Psk
+    );
+    app.handle_key(key(KeyCode::Down));
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(deploy.requests(), [None]);
+}
+
+#[test]
+fn deployment_accepts_a_private_key_in_the_dialog() {
     let (_guard, _territory) = territory_with_pidfile("deploy-public", "99999999\n");
     let (mut app, deploy) = overview_app_with_deploy(Ok("deployed".into()));
     app.open_deploy_dialog();
+    app.handle_paste("private-test-key");
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.deploy_daemon_confirming);
     assert!(deploy.requests().is_empty());
-    app.open_deploy_dialog();
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    app.handle_paste("private-test-key");
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_eq!(deploy.requests(), [None]);
+    assert_eq!(deploy.requests(), [Some("private-test-key".into())]);
 }
 
 #[test]
@@ -392,7 +423,7 @@ fn overview_shows_show_psk_row_when_daemon_is_alive() {
     assert!(content.contains("[ Show discovery key ]"));
     assert!(!content.contains("[ Deploy the lkit daemon ]"));
     assert!(
-        content.contains("A systemd service that executes"),
+        content.contains("Runs privileged tasks"),
         "the section description must also render while the daemon is running"
     );
     let psk_row = content

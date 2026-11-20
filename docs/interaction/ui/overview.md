@@ -29,8 +29,7 @@
 ## 右栏:lkit 常驻服务
 
 - 小节标题:`SECTION_TITLE`(灰 + 加粗);
-- 服务简介:标题下一行灰色简介(`overview_lkit_section_help`,说明常驻服务以
-  systemd 常驻并代控制台执行特权操作),按栏宽预折行(词级断行,超宽无空格段
+- 服务简介:标题下一行灰色简介(`overview_lkit_section_help`,说明常驻服务在后台执行控制台发起的特权操作),按栏宽预折行(词级断行,超宽无空格段
   按字符硬切,见 `widgets::wrap_to_width`),保证动作行命中区行号与渲染一致;
 - lkit 版本行:白字,值为当前二进制版本(`env!("CARGO_PKG_VERSION")`),
   daemon 未运行时也显示;

@@ -111,13 +111,8 @@ impl ConsoleApp {
         if self.flare.open {
             return self.handle_flare_dialog_key(key);
         }
-        if self.show_psk {
-            self.handle_show_psk_key(key);
-            return None;
-        }
-        // 部署确认弹窗可从 Overview 动作行或安装阻断弹框发起,消费全部按键。
-        if self.deploy_daemon_confirming {
-            self.handle_deploy_key(key);
+        if self.show_psk || self.deploy_daemon_confirming {
+            self.handle_psk_dialog_key(key);
             return None;
         }
         if self.preflight_dialog {
@@ -414,30 +409,24 @@ impl ConsoleApp {
     /// 部署确认弹窗键处理:方向键/Tab 在 psk、二次确认与「开始部署」动作行间
     /// 移动;Enter 在输入字段上进入编辑(编辑中 Enter/Esc 提交),在动作行上
     /// 校验并启动部署;直接输入即进入编辑;Esc 关闭弹窗。
-    fn handle_deploy_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::BackTab => {
-                self.deploy_cancel_selected = !self.deploy_cancel_selected
-            }
-            KeyCode::Enter => {
-                if !self.deploy_cancel_selected
-                    && let Err(e) = self.start_daemon_deploy()
-                {
-                    self.notice = Notice::Error(e)
-                }
-                self.deploy_daemon_confirming = false;
-            }
-            KeyCode::Esc => self.deploy_daemon_confirming = false,
-            _ => (),
-        }
-    }
-
-    fn handle_show_psk_key(&mut self, key: KeyEvent) {
+    fn handle_psk_dialog_key(&mut self, key: KeyEvent) {
         if self.show_psk_editing {
             match key.code {
                 KeyCode::Enter | KeyCode::Esc => self.show_psk_editing = false,
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.show_psk_editing = false;
+                    self.show_psk_field = if key.code == KeyCode::Tab {
+                        self.show_psk_field.next(self.psk_confirmation_visible())
+                    } else {
+                        self.show_psk_field
+                            .previous(self.psk_confirmation_visible())
+                    };
+                }
                 KeyCode::Backspace => {
                     self.show_psk_value_mut().map(String::pop);
+                    if !self.psk_confirmation_visible() {
+                        self.show_psk_confirmation.clear();
+                    }
                 }
                 KeyCode::Char(character)
                     if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -455,17 +444,25 @@ impl ConsoleApp {
         }
         match key.code {
             KeyCode::Enter => match self.show_psk_field {
+                PskDialogField::Action if self.deploy_daemon_confirming => {
+                    match self.start_daemon_deploy() {
+                        Ok(()) => self.deploy_daemon_confirming = false,
+                        Err(error) => self.notice = Notice::Error(error),
+                    }
+                }
                 PskDialogField::Action => self.save_show_psk_dialog(),
-                PskDialogField::Cancel => self.show_psk = false,
+                PskDialogField::Cancel => self.close_psk_dialog(),
                 PskDialogField::Psk | PskDialogField::Confirmation => {
                     self.show_psk_editing = true;
                 }
             },
             KeyCode::Up | KeyCode::BackTab => {
-                self.show_psk_field = self.show_psk_field.previous();
+                self.show_psk_field = self
+                    .show_psk_field
+                    .previous(self.psk_confirmation_visible());
             }
             KeyCode::Down | KeyCode::Tab => {
-                self.show_psk_field = self.show_psk_field.next();
+                self.show_psk_field = self.show_psk_field.next(self.psk_confirmation_visible());
             }
             // 直接输入即进入编辑并追加字符,无需先按编辑键。
             KeyCode::Char(character)
@@ -479,9 +476,17 @@ impl ConsoleApp {
                     value.push(character);
                 }
             }
-            KeyCode::Esc => self.show_psk = false,
+            KeyCode::Esc => self.close_psk_dialog(),
             _ => {}
         }
+    }
+
+    fn close_psk_dialog(&mut self) {
+        self.show_psk = false;
+        self.deploy_daemon_confirming = false;
+        self.show_psk_editing = false;
+        self.show_psk_value.clear();
+        self.show_psk_confirmation.clear();
     }
 
     /// flare 弹窗键处理:弹窗开启时消费全部按键。Enter 保存(校验失败留在

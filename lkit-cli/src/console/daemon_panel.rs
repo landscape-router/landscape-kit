@@ -89,17 +89,19 @@ pub(super) enum PskDialogField {
 }
 
 impl PskDialogField {
-    pub(super) fn previous(self) -> Self {
+    pub(super) fn previous(self, confirmation_visible: bool) -> Self {
         match self {
             Self::Psk => Self::Cancel,
             Self::Confirmation => Self::Psk,
+            Self::Action if !confirmation_visible => Self::Psk,
             Self::Action => Self::Confirmation,
             Self::Cancel => Self::Action,
         }
     }
 
-    pub(super) fn next(self) -> Self {
+    pub(super) fn next(self, confirmation_visible: bool) -> Self {
         match self {
+            Self::Psk if !confirmation_visible => Self::Action,
             Self::Psk => Self::Confirmation,
             Self::Confirmation => Self::Action,
             Self::Action => Self::Cancel,
@@ -115,10 +117,12 @@ impl ConsoleApp {
         !crate::daemon::is_running()
     }
 
-    /// 打开「部署 daemon」确认弹窗:预填既有急救恢复码(通常为空,留空自动
-    /// 生成),复位二次确认与导航。Overview 动作行与安装阻断弹框共用。
+    /// 打开「部署 daemon」确认弹窗:清空可选发现密钥和确认输入，复位导航。Overview 动作行与安装阻断弹框共用。
     pub(super) fn open_deploy_dialog(&mut self) {
-        self.deploy_cancel_selected = false;
+        self.show_psk_value.clear();
+        self.show_psk_confirmation.clear();
+        self.show_psk_field = PskDialogField::Psk;
+        self.show_psk_editing = false;
         self.deploy_daemon_confirming = true;
     }
 
@@ -133,6 +137,10 @@ impl ConsoleApp {
         self.show_psk_field = PskDialogField::Psk;
         self.show_psk_editing = false;
         self.show_psk = true;
+    }
+
+    pub(super) fn psk_confirmation_visible(&self) -> bool {
+        !self.deploy_daemon_confirming || !self.show_psk_value.trim().is_empty()
     }
 
     pub(super) fn show_psk_value_mut(&mut self) -> Option<&mut String> {
@@ -180,12 +188,24 @@ impl ConsoleApp {
     /// 在后台线程执行 `lkit self install`(与 CLI 相同的 root 检查、安装锁与
     /// systemd 语义),结果经 channel 回传,由 `poll_daemon_deploy` 展示。
     /// 控制台不另起 lkit 进程、不解析 CLI 文本输出。弹窗中填写的急救恢复码
-    /// 一并传入:提供时在 daemon 启动前写回 `[flare]` 段,留空自动生成。
+    /// 一并传入:提供时在 daemon 启动前写回 `[flare]` 段,留空保留当前配置。
     pub(super) fn start_daemon_deploy(&mut self) -> Result<(), String> {
         if self.deploy_daemon.is_some() {
             return Ok(());
         }
-        self.deploy_daemon = Some(self.deploy_ops.deploy(None));
+        let psk = self.show_psk_value.trim();
+        if psk != self.show_psk_confirmation.trim() {
+            return Err(crate::tr!(crate::keys::CONSOLE_DEPLOY_PSK_MISMATCH));
+        }
+        if !psk.is_empty() && psk.len() < crate::deployment::config::FLARE_PSK_MIN_LENGTH {
+            return Err(crate::tr!(crate::keys::CONSOLE_FLARE_PSK_TOO_SHORT));
+        }
+        self.deploy_daemon = Some(
+            self.deploy_ops
+                .deploy((!psk.is_empty()).then(|| psk.to_owned())),
+        );
+        self.show_psk_value.clear();
+        self.show_psk_confirmation.clear();
         Ok(())
     }
 
@@ -227,7 +247,42 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
     }
     let screen = frame.area();
     let width = 72.min(screen.width.saturating_sub(2));
-    let height = 11.min(screen.height.saturating_sub(2));
+    let start_row = dialog_action_row(
+        app.show_psk_field == PskDialogField::Action,
+        crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_START),
+    );
+    let cancel_row = dialog_action_row(
+        app.show_psk_field == PskDialogField::Cancel,
+        crate::tr!(crate::keys::CONSOLE_DIALOG_CANCEL),
+    );
+    let mut rows = vec![
+        Line::raw(crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_DISCOVERY)),
+        Line::raw(crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_PRIVATE)),
+        Line::raw(""),
+        show_psk_row(
+            app,
+            PskDialogField::Psk,
+            "*".repeat(app.show_psk_value.chars().count().min(32)),
+        ),
+    ];
+    if app.psk_confirmation_visible() {
+        rows.push(show_psk_row(
+            app,
+            PskDialogField::Confirmation,
+            "*".repeat(app.show_psk_confirmation.chars().count().min(32)),
+        ));
+    }
+    rows.extend([
+        start_row,
+        cancel_row,
+        Line::raw(""),
+        super::render::dialog_hint_line(app),
+    ]);
+    let dialog = Paragraph::new(rows)
+        .wrap(Wrap { trim: false })
+        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_TITLE)));
+    let height =
+        (dialog.line_count(width.saturating_sub(2)) as u16).min(screen.height.saturating_sub(2));
     let area = Rect::new(
         screen.x + screen.width.saturating_sub(width) / 2,
         screen.y + screen.height.saturating_sub(height) / 2,
@@ -235,31 +290,7 @@ pub(crate) fn render_daemon_deploy_confirmation(frame: &mut Frame<'_>, app: &mut
         height,
     );
     super::render::begin_dialog(frame, area);
-    let start_row = dialog_action_row(
-        !app.deploy_cancel_selected,
-        crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_START),
-    );
-    let cancel_row = dialog_action_row(
-        app.deploy_cancel_selected,
-        crate::tr!(crate::keys::CONSOLE_DIALOG_CANCEL),
-    );
-    frame.render_widget(
-        Paragraph::new(vec![
-            // 两行短说明各自不折行:第一行是什么,第二行怎么填。
-            Line::styled(
-                crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_PURPOSE),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Line::raw(""),
-            start_row,
-            cancel_row,
-            Line::raw(""),
-            super::render::dialog_hint_line(app),
-        ])
-        .wrap(Wrap { trim: false })
-        .block(Block::bordered().title(crate::tr!(crate::keys::CONSOLE_DEPLOY_DAEMON_TITLE))),
-        area,
-    );
+    frame.render_widget(dialog, area);
 }
 
 fn dialog_action_row(active: bool, label: String) -> Line<'static> {
@@ -338,12 +369,20 @@ pub(crate) fn render_show_psk_dialog(frame: &mut Frame<'_>, app: &mut ConsoleApp
 fn show_psk_row(app: &ConsoleApp, field: PskDialogField, value: String) -> Line<'static> {
     let active = app.show_psk_field == field;
     let editing = active && app.show_psk_editing;
-    let (label, value) = match field {
-        PskDialogField::Psk => (crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL), value),
-        PskDialogField::Confirmation => (crate::tr!(crate::keys::CONSOLE_CONFIRM_PSK_LABEL), value),
+    let label = match field {
+        PskDialogField::Psk if app.deploy_daemon_confirming => {
+            crate::tr!(crate::keys::CONSOLE_DEPLOY_FLARE_KEY_LABEL)
+        }
+        PskDialogField::Psk => crate::tr!(crate::keys::CONSOLE_FLARE_PSK_LABEL),
+        PskDialogField::Confirmation => crate::tr!(crate::keys::CONSOLE_CONFIRM_PSK_LABEL),
         PskDialogField::Action | PskDialogField::Cancel => unreachable!(),
     };
     let cursor = if editing { "_" } else { "" };
+    let display = if app.deploy_daemon_confirming {
+        format!(" [{:<24}]", format!("{value}{cursor}"))
+    } else {
+        format!("{value}{cursor}")
+    };
     let selected_style = if active {
         Style::default()
             .fg(Color::Black)
@@ -355,15 +394,14 @@ fn show_psk_row(app: &ConsoleApp, field: PskDialogField, value: String) -> Line<
     Line::from(vec![
         Span::styled(if active { "> " } else { "  " }, selected_style),
         Span::styled(
-            super::render::display_pad(&label, 19),
+            super::render::display_pad(&label, if app.deploy_daemon_confirming { 24 } else { 19 }),
             if active {
                 selected_style
             } else {
                 Style::default().fg(Color::DarkGray)
             },
         ),
-        Span::styled(value, selected_style),
-        Span::styled(cursor, selected_style),
+        Span::styled(display, selected_style),
     ])
 }
 

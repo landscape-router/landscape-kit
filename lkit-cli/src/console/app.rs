@@ -43,7 +43,6 @@ pub(super) struct ConsoleApp {
     pub(super) takeover_choice: usize,
     /// Overview「部署 daemon」动作的确认层与后台执行状态。
     pub(super) deploy_daemon_confirming: bool,
-    pub(super) deploy_cancel_selected: bool,
     /// Overview「查看/修改急救恢复码」弹窗:展示当前 `[flare]` 段 psk 明文,
     /// 内嵌 psk 与二次确认两个输入框,保存时校验一致后写回。
     pub(super) show_psk: bool,
@@ -81,7 +80,6 @@ impl ConsoleApp {
             flare: FlareDialog::default(),
             takeover_choice: 0,
             deploy_daemon_confirming: false,
-            deploy_cancel_selected: false,
             show_psk: false,
             show_psk_value: String::new(),
             show_psk_confirmation: String::new(),
@@ -232,12 +230,15 @@ impl ConsoleApp {
         if self.exit_state == ExitState::Confirming {
             return;
         }
-        if self.deploy_daemon_confirming {
+        if self.deploy_daemon.is_some() {
             return;
         }
         // 查看/修改弹窗:粘贴直接追加到当前聚焦的字段(自动进入编辑态)。
-        if self.show_psk {
-            self.show_psk_editing = true;
+        if self.show_psk || self.deploy_daemon_confirming {
+            self.show_psk_editing = matches!(
+                self.show_psk_field,
+                PskDialogField::Psk | PskDialogField::Confirmation
+            );
             if let Some(target) = self.show_psk_value_mut() {
                 let remaining = 1024_usize.saturating_sub(target.chars().count());
                 target.extend(
