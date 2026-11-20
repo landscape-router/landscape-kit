@@ -73,3 +73,4 @@ presentation.restore_awaiting_confirmation = "Restore awaiting network confirmat
 presentation.restore_confirm_network = "The restored configuration is running. Confirm network access to commit it."
 
 presentation.observe_operation_hint = "Ctrl+C: stop watching · Esc: request cancellation"
+presentation.log_scroll = "↑/↓ Scroll  PgUp/PgDn Page  Home First  End Follow"

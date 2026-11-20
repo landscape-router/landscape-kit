@@ -91,3 +91,4 @@ pub(crate) const PRESENTATION_TAKEOVER_CONFIRM_PRESS_ESC: &str =
     "presentation.takeover_confirm_press_esc";
 
 pub(crate) const PRESENTATION_OBSERVE_OPERATION_HINT: &str = "presentation.observe_operation_hint";
+pub(crate) const PRESENTATION_LOG_SCROLL: &str = "presentation.log_scroll";

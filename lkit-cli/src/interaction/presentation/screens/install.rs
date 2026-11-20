@@ -1,10 +1,9 @@
 use super::{DownloadState, OperationPhase, OperationResult, OperationScreen};
-use super::{is_confirmation_line, step_phase_text};
+use super::{render_log_panel, step_phase_text};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph};
 
 pub(crate) struct InstallScreen;
 
@@ -33,6 +32,7 @@ impl OperationScreen for InstallScreen {
         step_progress: Option<(u8, u8)>,
         current: Option<&DownloadState>,
         logs: &[String],
+        scroll: &mut super::LogScroll,
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
@@ -154,7 +154,7 @@ impl OperationScreen for InstallScreen {
                 progress,
             );
         }
-        render_log_panel(frame, log_area, logs);
+        render_log_panel(frame, log_area, logs, scroll);
         let hint = if result.is_some() {
             if takeover_pending {
                 crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_HINT)
@@ -171,33 +171,6 @@ impl OperationScreen for InstallScreen {
             render_stop_confirmation(frame);
         }
     }
-}
-
-/// 安装页日志面板：最近 8 行，网络接管确认与回滚提示行醒目标出。
-fn render_log_panel(frame: &mut Frame<'_>, area: Rect, logs: &[String]) {
-    let visible_logs = logs.iter().rev().take(8).rev().collect::<Vec<_>>();
-    let log_lines: Vec<Line<'_>> = visible_logs
-        .iter()
-        .map(|line| {
-            if is_confirmation_line(line) {
-                Line::styled(
-                    line.as_str(),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Line::raw(line.as_str())
-            }
-        })
-        .collect();
-    frame.render_widget(
-        Paragraph::new(log_lines)
-            .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_OUTPUT)))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, notice: &str, hint: &str) {
@@ -255,6 +228,7 @@ mod tests {
                     step_progress,
                     current,
                     logs,
+                    &mut Default::default(),
                     "",
                     false,
                     result,
@@ -286,6 +260,16 @@ mod tests {
         assert!(content.contains("Landscape webserver"));
         assert!(content.contains("stop watching"));
         assert!(!content.contains("Navigation"));
+    }
+
+    #[test]
+    fn output_uses_the_panel_height_and_keeps_the_latest_wrapped_row() {
+        let mut logs: Vec<_> = (0..10).map(|n| format!("entry #{n}")).collect();
+        let content = render(OperationPhase::Preparing, None, None, &logs, None);
+        assert!(content.contains("entry #0"));
+        logs.push(format!("{} final message", "wrapped ".repeat(250)));
+        let content = render(OperationPhase::Preparing, None, None, &logs, None);
+        assert!(content.contains("final message"));
     }
 
     #[test]
@@ -333,6 +317,7 @@ mod tests {
                     None,
                     None,
                     &[],
+                    &mut Default::default(),
                     "",
                     false,
                     Some(OperationResult::Success),

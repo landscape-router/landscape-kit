@@ -2,7 +2,7 @@
 
 运行 `just build` 可在 `target/release/` 下生成宿主平台的 release 二进制。准备好 Zig 和 cargo-zigbuild 后，运行 `just dist` 可调用 `scripts/build-musl-static.sh`，在 `dist/` 下生成 Linux 静态分发文件及校验和。
 
-测试机部署使用 `just push <host>` 或 `just push <user>@<host>`。命令读取本地 `${CARGO_TARGET_DIR:-target}/release/lkit`，通过 SSH 上传到远端 `/usr/local/bin` 内的临时文件，校验 SHA256 并运行 `--version` 后原子替换 `lkit`。本地产物须兼容目标主机，SSH 用户须能写入安装目录。已运行的进程继续使用原版本，新启动的命令使用新版本。
+测试机部署使用 `just push <host>` 或 `just push <user>@<host>`。命令读取本地 `${CARGO_TARGET_DIR:-target}/release/lkit`，通过 SSH 上传到远端 `/usr/local/bin` 内的临时文件，校验 SHA256 并运行 `--version` 后原子替换 `lkit`。本地产物须兼容目标主机，SSH 用户须能写入安装目录。已运行的进程继续使用原版本，新启动的命令使用新版本。在测试机上以 root 身份运行 `lkit self restart` 可让常驻 daemon 加载新版本。
 
 ## 版本来源与触发
 

@@ -73,3 +73,4 @@ presentation.restore_awaiting_confirmation = "恢复等待网络确认"
 presentation.restore_confirm_network = "恢复的配置正在运行；确认网络访问正常后才会提交。"
 
 presentation.observe_operation_hint = "Ctrl+C：退出观察 · Esc：请求取消"
+presentation.log_scroll = "↑/↓ 滚动  PgUp/PgDn 翻页  Home 最早  End 跟随最新"

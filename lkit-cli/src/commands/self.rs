@@ -86,6 +86,8 @@ pub struct SelfCommand {
 pub enum SelfAction {
     /// 注册全局常驻 daemon 并启动
     Install(InstallSelfArgs),
+    /// 通过当前系统的服务管理器重启已注册的 lkit daemon
+    Restart(SelfArgs),
     /// 升级 /usr/local/bin/lkit 与常驻 daemon
     #[command(visible_alias = "update")]
     Upgrade(UpgradeArgs),
@@ -168,6 +170,7 @@ async fn run_inner(args: &SelfCommand) -> Result<Option<String>, InstallError> {
             let flare_psk = resolve_flare_psk(args, &runtime)?;
             install(&runtime, flare_psk.as_deref()).map(Some)
         }
+        SelfAction::Restart(_) => restart(&runtime).map(Some),
         SelfAction::Upgrade(args) => upgrade(&runtime, args).await.map(|()| None),
         SelfAction::Remove(_) => remove(&runtime).map(Some),
     }
@@ -232,25 +235,63 @@ fn install(runtime: &InstallRuntime, flare_psk: Option<&str>) -> Result<String, 
     let origin = unit_origin_dir().join(manager.service_name(ManagedService::LkitDaemon));
     let previous_pid = std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
     install_with(manager, &binary, &origin, flare_psk, || {
-        // Backgrounding init scripts can return before exec is visible in /proc.
-        for _ in 0..30 {
-            let current_pid =
-                std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
-            if current_pid != previous_pid
-                && manager
-                    .main_pid(ManagedService::LkitDaemon)
-                    .is_ok_and(|pid| pid != 0)
-                && crate::daemon::require_capability("service-repair-v1.pid").is_ok()
-            {
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        Err(InstallError::Systemd(
-            "lkit daemon did not produce a main pid after start".into(),
-        ))
+        wait_for_new_daemon(manager, previous_pid)
     })?;
     Ok(crate::tr!(crate::keys::SELF_INSTALLED))
+}
+
+fn wait_for_new_daemon(
+    manager: &dyn ServiceManager,
+    previous_pid: Option<String>,
+) -> Result<(), InstallError> {
+    // Backgrounding init scripts can return before exec is visible in /proc.
+    for _ in 0..30 {
+        let current_pid =
+            std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
+        if current_pid != previous_pid
+            && manager
+                .main_pid(ManagedService::LkitDaemon)
+                .is_ok_and(|pid| pid != 0)
+            && crate::daemon::require_capability("service-repair-v1.pid").is_ok()
+        {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err(InstallError::Systemd(
+        "lkit daemon did not produce a main pid after start".into(),
+    ))
+}
+
+fn restart(runtime: &InstallRuntime) -> Result<String, InstallError> {
+    let manager = require_manager(runtime)?;
+    let origin = unit_origin_dir().join(manager.service_name(ManagedService::LkitDaemon));
+    let previous_pid = std::fs::read_to_string(crate::deployment::layout::territory_pidfile()).ok();
+    restart_registered(manager, &origin, &lkit_binary())?;
+    wait_for_new_daemon(manager, previous_pid)?;
+    Ok(crate::tr!(crate::keys::SELF_RESTARTED))
+}
+
+fn restart_registered(
+    manager: &dyn ServiceManager,
+    origin: &Path,
+    binary: &Path,
+) -> Result<(), InstallError> {
+    let service = ManagedService::LkitDaemon;
+    if !owned_registration(manager, origin)? {
+        return Err(InstallError::Preflight(crate::tr!(
+            crate::keys::SELF_DAEMON_NOT_INSTALLED_HINT
+        )));
+    }
+    let (definition, _) = existing_definition(origin)?.ok_or_else(|| {
+        InstallError::Preflight("lkit service definition is missing; run lkit self install".into())
+    })?;
+    manager.validate_definition(service, &definition, binary)?;
+    if manager.is_active(service)? {
+        manager.restart(service)
+    } else {
+        manager.start(service)
+    }
 }
 
 struct InstallBefore {
@@ -1031,7 +1072,7 @@ fn resolve_runtime(_args: &SelfCommand) -> Result<InstallRuntime, InstallError> 
 fn test_runtime(args: &SelfCommand) -> Option<&Path> {
     match &args.action {
         SelfAction::Install(args) => args.test_runtime.as_deref(),
-        SelfAction::Remove(args) => args.test_runtime.as_deref(),
+        SelfAction::Restart(args) | SelfAction::Remove(args) => args.test_runtime.as_deref(),
         SelfAction::Upgrade(args) => args.test_runtime.as_deref(),
     }
 }
@@ -1545,7 +1586,26 @@ mod tests {
     }
 
     #[test]
+    fn restart_uses_only_the_registered_daemon() {
+        for (registered, active, expected) in [
+            (true, true, vec!["restart"]),
+            (true, false, vec!["start"]),
+            (false, false, vec![]),
+        ] {
+            let (dir, binary, manager) = installation_fixture(registered, active, false);
+            let result = restart_registered(&manager, &manager.path, &binary);
+            assert_eq!(result.is_ok(), registered);
+            assert_eq!(manager.state.lock().unwrap().calls, expected);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
     fn parses_subcommands() {
+        assert!(matches!(
+            parse(&["self", "restart"]).unwrap().action,
+            SelfAction::Restart(_)
+        ));
         assert!(matches!(
             parse(&["self", "install"]).unwrap().action,
             SelfAction::Install(_)

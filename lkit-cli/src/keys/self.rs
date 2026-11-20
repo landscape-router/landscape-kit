@@ -1,3 +1,4 @@
+pub(crate) const SELF_RESTARTED: &str = "self.restarted";
 pub(crate) const SELF_INSTALLED: &str = "self.installed";
 pub(crate) const SELF_REMOVED: &str = "self.removed";
 pub(crate) const SELF_UPGRADED: &str = "self.upgraded";

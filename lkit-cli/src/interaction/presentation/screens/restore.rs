@@ -1,9 +1,8 @@
 use super::{DownloadState, OperationPhase, OperationResult, OperationScreen};
-use super::{is_confirmation_line, step_phase_text};
+use super::{render_log_panel, step_phase_text};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
 pub(crate) struct RestoreScreen;
@@ -33,6 +32,7 @@ impl OperationScreen for RestoreScreen {
         step_progress: Option<(u8, u8)>,
         current: Option<&DownloadState>,
         logs: &[String],
+        scroll: &mut super::LogScroll,
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
@@ -142,29 +142,7 @@ impl OperationScreen for RestoreScreen {
                 progress,
             );
         }
-        let visible_logs = logs.iter().rev().take(8).rev().collect::<Vec<_>>();
-        let log_lines: Vec<Line<'_>> = visible_logs
-            .iter()
-            .map(|line| {
-                if is_confirmation_line(line) {
-                    Line::styled(
-                        line.as_str(),
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Line::raw(line.as_str())
-                }
-            })
-            .collect();
-        frame.render_widget(
-            Paragraph::new(log_lines)
-                .block(Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_OUTPUT)))
-                .wrap(Wrap { trim: false }),
-            log_area,
-        );
+        render_log_panel(frame, log_area, logs, scroll);
         let hint = if result.is_some() {
             if takeover_pending {
                 crate::tr!(crate::keys::PRESENTATION_TAKEOVER_CONFIRM_HINT)
@@ -239,6 +217,7 @@ mod tests {
                     step_progress,
                     None,
                     &["restore: restored to version 0.22.2 from backup x".into()],
+                    &mut Default::default(),
                     "",
                     false,
                     result,

@@ -84,6 +84,9 @@ async fn fetch_frontend_static(
     target_dir: &Path,
 ) -> Result<(), InstallError> {
     let client = DownloadClient::new()?;
+    crate::workflows::operation_control::step(
+        crate::daemon_operations::timeline::Step::DownloadingStatic,
+    );
     let static_zip = target_dir.join("static.zip");
     client
         .download_asset(
@@ -93,6 +96,9 @@ async fn fetch_frontend_static(
             &static_zip,
         )
         .await?;
+    crate::workflows::operation_control::step(
+        crate::daemon_operations::timeline::Step::UnpackingStatic,
+    );
     extract_static_archive(
         version,
         &static_zip,

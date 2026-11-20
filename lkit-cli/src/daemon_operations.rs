@@ -1187,11 +1187,10 @@ async fn wait_for_result(
             match timeline::read_events(&record.id) {
                 Ok(entries) => {
                     for entry in entries.iter().filter(|e| e.sequence > event_sequence) {
-                        let line = entry.display();
                         if let Some(screen) = &mut presentation {
-                            screen.capture_log(&line);
+                            screen.capture_event(entry);
                         } else {
-                            eprintln!("[debug] {line}");
+                            eprintln!("[debug] {}", entry.display());
                         }
                     }
                     if let Some(entry) = entries.last() {

@@ -49,6 +49,7 @@ pub(crate) trait OperationScreen {
         step_progress: Option<(u8, u8)>,
         current: Option<&DownloadState>,
         logs: &[String],
+        scroll: &mut LogScroll,
         notice: &str,
         confirming_stop: bool,
         result: Option<OperationResult>,
@@ -84,9 +85,147 @@ pub(crate) fn step_phase_text(phase: OperationPhase) -> String {
     }
 }
 
+/// A missing top row follows live output. Offsets count wrapped terminal rows.
+#[derive(Default)]
+pub(crate) struct LogScroll {
+    top: Option<u16>,
+    bottom: u16,
+    height: u16,
+    width: u16,
+}
+
+impl LogScroll {
+    pub(super) fn handle_key(&mut self, key: crossterm::event::KeyCode) -> bool {
+        use crossterm::event::KeyCode;
+        let top = self.top.unwrap_or(self.bottom);
+        let page = self.height.max(1);
+        let next = match key {
+            KeyCode::Up => top.saturating_sub(1),
+            KeyCode::Down => top.saturating_add(1),
+            KeyCode::PageUp => top.saturating_sub(page),
+            KeyCode::PageDown => top.saturating_add(page),
+            KeyCode::Home => 0,
+            KeyCode::End => self.bottom,
+            _ => return false,
+        };
+        self.top = (next < self.bottom).then_some(next);
+        true
+    }
+
+    pub(super) fn discard(&mut self, lines: &[String]) {
+        if let Some(top) = &mut self.top {
+            use ratatui::widgets::{Paragraph, Wrap};
+            for line in lines {
+                let rows = Paragraph::new(line.as_str())
+                    .wrap(Wrap { trim: false })
+                    .line_count(self.width);
+                *top = top.saturating_sub(u16::try_from(rows).unwrap_or(u16::MAX));
+            }
+        }
+    }
+}
+
+fn render_log_panel(
+    frame: &mut Frame<'_>,
+    area: ratatui::layout::Rect,
+    logs: &[String],
+    scroll: &mut LogScroll,
+) {
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::Line;
+    use ratatui::widgets::{Block, Paragraph, Wrap};
+
+    let block = Block::bordered().title(crate::tr!(crate::keys::PRESENTATION_OUTPUT));
+    let inner = block.inner(area);
+    let height = usize::from(inner.height);
+    let lines = logs
+        .iter()
+        .map(|line| {
+            if is_confirmation_line(line) {
+                Line::styled(
+                    line.as_str(),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Line::raw(line.as_str())
+            }
+        })
+        .collect::<Vec<_>>();
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    scroll.height = inner.height;
+    scroll.width = inner.width;
+    scroll.bottom =
+        u16::try_from(paragraph.line_count(inner.width).saturating_sub(height)).unwrap_or(u16::MAX);
+    scroll.top = scroll.top.filter(|top| *top < scroll.bottom);
+    let block = if scroll.bottom > 0 {
+        block.title_bottom(crate::tr!(crate::keys::PRESENTATION_LOG_SCROLL))
+    } else {
+        block
+    };
+    frame.render_widget(block, area);
+    frame.render_widget(
+        paragraph.scroll((scroll.top.unwrap_or(scroll.bottom), 0)),
+        inner,
+    );
+}
+
 /// 全屏结果页里把网络接管的确认与回滚后果提示行用醒目背景标出。
 /// 中英文输出都包含 `lkit network confirm` 命令；等待确认、重新连接和
 /// 未确认回滚的提示行分别包含 `confirm`/`确认`。
 pub(crate) fn is_confirmation_line(line: &str) -> bool {
     line.contains("confirm") || line.contains("确认")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn page_through_wrapped_logs_and_resume_following() {
+        let mut terminal = Terminal::new(TestBackend::new(12, 5)).unwrap();
+        let mut scroll = LogScroll::default();
+        let mut logs: Vec<_> = ["first", "aaaaaaaaa bbbbbbbbb", "three", "four", "five"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut draw = |logs: &[String], scroll: &mut LogScroll| {
+            terminal
+                .draw(|frame| render_log_panel(frame, frame.area(), logs, scroll))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (1..4)
+                .map(|y| {
+                    (1..11)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(draw(&logs, &mut scroll), ["three", "four", "five"]);
+        scroll.handle_key(KeyCode::PageUp);
+        assert_eq!(
+            draw(&logs, &mut scroll),
+            ["first", "aaaaaaaaa", "bbbbbbbbb"]
+        );
+        logs.push("six".into());
+        scroll.handle_key(KeyCode::Down);
+        assert_eq!(
+            draw(&logs, &mut scroll),
+            ["aaaaaaaaa", "bbbbbbbbb", "three"]
+        );
+        scroll.handle_key(KeyCode::Home);
+        assert_eq!(draw(&logs, &mut scroll)[0], "first");
+        scroll.handle_key(KeyCode::PageDown);
+        assert_eq!(draw(&logs, &mut scroll), ["three", "four", "five"]);
+        scroll.handle_key(KeyCode::End);
+        logs.push("seven".into());
+        assert_eq!(draw(&logs, &mut scroll), ["five", "six", "seven"]);
+    }
 }

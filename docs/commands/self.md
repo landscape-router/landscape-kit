@@ -9,6 +9,7 @@ lkit 地盘(`/root/.lkit/`),见[安装布局与状态](../deployment/layout-and-
 
 ```text
 lkit self install [--flare-psk-file <PATH>]
+lkit self restart
 lkit self upgrade [--include-prerelease] [--version <TAG>]
 lkit self remove
 ```
@@ -50,6 +51,11 @@ daemon 进程写 pidfile 到
 停止、注销或刷新失败时保留原件并报告清理错误，供排除故障后重试。
 显式供给的 Flare 恢复码保留在配置中，不因服务安装失败而改回旧值。
 `install` 不复制二进制，daemon 使用 `/usr/local/bin/lkit`，升级由 `self upgrade` 负责。
+
+## restart
+
+以 root 身份运行 `lkit self restart` 可让 daemon 加载当前安装的二进制，例如在 `just push` 之后。
+命令通过主机的 systemd、OpenRC 或 SysVinit 校验已有服务的注册归属和定义，重启运行中的服务或启动已停止的服务，并等待新的 daemon PID 和恢复能力标识就绪。开机启动设置保持原值。首次部署请使用 `lkit self install`。
 
 ## upgrade
 

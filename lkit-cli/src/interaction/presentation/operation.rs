@@ -23,12 +23,14 @@ use super::screens::{InstallScreen, OperationResult, OperationScreen};
 
 pub(crate) struct OperationPresentation {
     current: Option<DownloadState>,
+    download_asset: Option<&'static str>,
     screen: Option<FullScreenOperation>,
     operation: Box<dyn OperationScreen>,
     phase: OperationPhase,
     durable_cancellable: Option<bool>,
     progress: Option<(u8, u8)>,
     logs: Vec<String>,
+    log_scroll: super::screens::LogScroll,
     notice: String,
     confirming_stop: bool,
     /// 结果页时是否存在待确认的网络接管（install/reinit 成功后进入该状态）。
@@ -51,6 +53,7 @@ impl OperationPresentation {
     pub(crate) fn new(full_screen: bool, operation: Box<dyn OperationScreen>) -> Self {
         Self {
             current: None,
+            download_asset: None,
             screen: full_screen
                 .then(FullScreenOperation::start)
                 .and_then(Result::ok),
@@ -59,6 +62,7 @@ impl OperationPresentation {
             durable_cancellable: None,
             progress: None,
             logs: Vec::new(),
+            log_scroll: Default::default(),
             notice: String::new(),
             confirming_stop: false,
             takeover_pending: false,
@@ -97,7 +101,7 @@ impl OperationPresentation {
         self.progress = Some((step.min(total), total));
         self.current = (record.stage == Stage::Downloading).then(|| DownloadState {
             id: 0,
-            label: record.id.clone(),
+            label: self.download_label(),
             total: record.total_bytes.unwrap_or(0),
             position: record.downloaded_bytes,
             elapsed_millis: 0,
@@ -123,6 +127,31 @@ impl OperationPresentation {
         self.render_screen();
     }
 
+    fn download_label(&self) -> String {
+        self.download_asset
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::tr!(crate::keys::PRESENTATION_DOWNLOAD))
+    }
+
+    pub(crate) fn capture_event(&mut self, entry: &crate::daemon_operations::timeline::Entry) {
+        use crate::daemon_operations::timeline::{Event, Step};
+        self.download_asset = match entry.event {
+            Event::Step(Step::DownloadingBinary) => Some("Landscape webserver"),
+            Event::Step(Step::DownloadingStatic) => Some("Landscape static assets"),
+            _ => None,
+        };
+        let label = self.download_label();
+        if let Some(current) = &mut self.current {
+            current.label = label;
+        }
+        let line = entry.display();
+        if matches!(entry.event, Event::Stage(_)) {
+            self.capture_log(&format!("── {line} ──"));
+        } else {
+            self.capture_log(&line);
+        }
+    }
+
     pub(crate) fn capture_log(&mut self, content: &str) -> bool {
         if self.screen.is_none() {
             return false;
@@ -134,7 +163,9 @@ impl OperationPresentation {
                 .map(str::to_string),
         );
         if self.logs.len() > 200 {
-            self.logs.drain(..self.logs.len() - 200);
+            let discard = self.logs.len() - 200;
+            self.log_scroll.discard(&self.logs[..discard]);
+            self.logs.drain(..discard);
         }
         self.render_screen();
         true
@@ -196,6 +227,12 @@ impl OperationPresentation {
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
         {
             self.toggle_language();
+            return None;
+        }
+        if !self.confirming_stop
+            && !self.confirming_takeover
+            && self.log_scroll.handle_key(key.code)
+        {
             return None;
         }
         if self.result.is_some() {
@@ -286,8 +323,8 @@ impl OperationPresentation {
         };
         let operation = self.operation.as_ref();
         let phase = self.phase;
-        let progress = self.progress;
-        let current = self.current.as_ref();
+        let progress = self.progress.filter(|_| self.result.is_none());
+        let current = self.current.as_ref().filter(|_| self.result.is_none());
         let logs = &self.logs;
         let notice = &self.notice;
         let confirming_stop = self.confirming_stop;
@@ -301,6 +338,7 @@ impl OperationPresentation {
                 progress,
                 current,
                 logs,
+                &mut self.log_scroll,
                 notice,
                 confirming_stop,
                 result,
@@ -446,6 +484,34 @@ mod tests {
             screen.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(PresentationAction::Close)
         );
+    }
+
+    #[test]
+    fn download_gauge_follows_timeline_assets_on_attach_and_live_updates() {
+        use crate::daemon_operations::{
+            Record,
+            timeline::{Entry, Event, Step},
+        };
+        let record: Record = serde_json::from_value(serde_json::json!({
+            "schema_version":8, "id":"fixture-operation-id", "kind":"install", "install_root":"/fixture",
+            "status":"running", "stage":"downloading", "transaction_id":null, "message":null
+        })).unwrap();
+        let mut screen = OperationPresentation::new(false, Box::new(InstallScreen));
+        screen.observe_operation(&record);
+        assert_ne!(screen.current.as_ref().unwrap().label, record.id);
+        for (step, label) in [
+            (Step::DownloadingBinary, "Landscape webserver"),
+            (Step::DownloadingStatic, "Landscape static assets"),
+        ] {
+            screen.capture_event(&Entry {
+                sequence: 1,
+                at: chrono::Utc::now(),
+                event: Event::Step(step),
+            });
+            assert_eq!(screen.current.as_ref().unwrap().label, label);
+            screen.observe_operation(&record);
+            assert_eq!(screen.current.as_ref().unwrap().label, label);
+        }
     }
 
     #[test]

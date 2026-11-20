@@ -1,3 +1,4 @@
+self.restarted = "lkit daemon restarted and ready"
 self.installed = "lkit daemon is registered, enabled, and running"
 self.removed = "lkit daemon service was stopped and removed"
 self.upgraded = "lkit upgraded to %{version}"
