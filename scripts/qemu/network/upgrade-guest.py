@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Real old-release installation migration, only in the disposable QEMU guest.
 
-Host stages legacy-lkit-rc3, candidate-lkit and candidate-lkit.sha256 in BASE.
+Host stages legacy-lkit, candidate-lkit and candidate-lkit.sha256 in BASE.
 Run prepare before the host drives the old CLI's install and network confirm.
 Then run move-to-disk and upgrade; after the host reboots, assert-rebooted.
 Long actions may run under nohup; upgrade/<action>.exit records their outcome.
-Published rc3 -> rc4 uses the unmodified old CLI's real self upgrade. The
+The upgrade between pinned releases uses the unmodified old CLI's real self upgrade. The
 unpublished candidate is a separate, explicitly labelled atomic deployment.
 """
 import hashlib
@@ -194,14 +194,14 @@ def prepare():
           '/srv must be empty before the old installation')
     check(run('findmnt', '-n', '-o', 'SOURCE', '--mountpoint', '/srv') == '/dev/vdb',
           '/srv is not the disposable second disk')
-    verify_release(BASE / 'legacy-lkit-rc3', PIN['source'])
+    verify_release(BASE / 'legacy-lkit', PIN['source'])
     candidate_digest()
     command('umount', '/srv')
     check(Path('/srv').stat().st_dev == Path('/root').stat().st_dev,
           'old release must install on one filesystem because of its EXDEV limitation')
-    deploy(BASE / 'legacy-lkit-rc3')
+    deploy(BASE / 'legacy-lkit')
     verify_release(CLI, PIN['source'])
-    print('PASS: authentic published rc3 staged; old install starts with /srv on the system disk', flush=True)
+    print(f"PASS: {PIN['source']['tag']} staged; old install starts with /srv on the system disk", flush=True)
 
 
 def move_to_disk():
@@ -262,7 +262,7 @@ def upgrade():
     verify_release(CLI, PIN['released_target'])
     assert_service(before)
     check(digest(ORIGIN) == saved('old-definition-sha256.json'), 'self upgrade rewrote Landscape definition')
-    print('PASS: unmodified rc3 self upgrade downloaded and installed the real published rc4', flush=True)
+    print(f"PASS: {PIN['source']['tag']} self upgrade installed {PIN['released_target']['tag']}", flush=True)
 
     expected = candidate_digest()
     deploy(BASE / 'candidate-lkit')

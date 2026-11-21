@@ -17,7 +17,7 @@
 //! [`layout::territory_pidfile`](crate::deployment::layout::territory_pidfile),
 //! 恢复目标从地盘的状态与事务发现 landscape 根,不再绑定任何安装根。
 //! 并发安全依赖安装锁:CLI 命令在整个操作期间持有
-//! `<territory>/run/install.lock`,daemon 每个周期以非阻塞方式尝试获取,
+//! `<territory>/run/install.lock`,daemon 发现待处理工作时以非阻塞方式尝试获取,
 //! 获取失败说明有活动命令,跳过本周期。网络接管由 daemon 监测期限与主机重启,
 //! 自动回滚未确认事务并继续已接受的提交;用户仍需显式确认。
 
@@ -367,20 +367,17 @@ fn spawn_flare_from(
 /// 单个恢复周期:以非阻塞方式获取安装锁,存在未完成事务时执行
 /// `recover_interrupted`(与 CLI 相同的恢复语义)。
 async fn recovery_cycle(runtime: &InstallRuntime) {
+    if pending_recovery().is_none() {
+        return;
+    }
     let lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(_) => return,
     };
-    // 恢复目标从 lkit 地盘的状态与事务发现 landscape 根:状态记录已提交安装,
-    // 中断的首次安装还没有状态,从未完成事务记录的根发现。
-    let Some(install_root) = discover_recovery_root() else {
+    // The CLI may have committed or replaced the transaction since the poll.
+    let Some((install_root, unfinished)) = pending_recovery() else {
         return;
     };
-    let unfinished = match transaction::find_unfinished(&install_root) {
-        Ok(unfinished) => unfinished,
-        Err(_) => return,
-    };
-    let Some(unfinished) = unfinished else { return };
     if (unfinished.operation == transaction::Operation::Reinit
         || matches!(
             unfinished.phase,
@@ -421,6 +418,15 @@ async fn recovery_cycle(runtime: &InstallRuntime) {
         ),
     }
     drop(lock);
+}
+
+fn pending_recovery() -> Option<(
+    crate::deployment::root::InstallRoot,
+    transaction::TransactionFile,
+)> {
+    let root = discover_recovery_root()?;
+    let transaction = transaction::find_unfinished(&root).ok()??;
+    Some((root, transaction))
 }
 
 /// 从 lkit 地盘的状态与事务发现 landscape 恢复目标。状态文件缺失时
@@ -615,6 +621,46 @@ mod tests {
         );
         drop(guard);
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn idle_polls_leave_the_install_lock_free_and_still_clean_orphan_inputs() {
+        let (_guard, temp) = territory("idle-poll");
+        let run_dir = layout::territory_run_dir();
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let config = run_dir.join("test-runtime.json");
+        let runtime = serde_json::json!({
+            "schema_version": 1, "allow_non_root": true, "managed_uid": 0,
+            "os_release_path": temp.join("os-release"),
+            "systemd": {
+                "systemctl": temp.join("systemctl"), "system_unit_dir": temp.join("units"),
+                "run_systemd_dir": run_dir, "pid1_is_systemd": false,
+                "resolv_conf": temp.join("resolv.conf")
+            },
+            "health": {
+                "base_url": "https://127.0.0.1:1", "dns_tcp_port": 53, "dns_udp_port": 53,
+                "http_port": 80, "https_port": 443, "startup_timeout_ms": 1000, "stable_duration_ms": 1000
+            },
+            "export_base_url": "https://127.0.0.1:1"
+        });
+        std::fs::write(&config, runtime.to_string()).unwrap();
+        let runtime = InstallRuntime::from_test_file(&config).unwrap();
+        recovery_cycle(&runtime).await;
+        assert!(!crate::daemon_operations::process_one(&runtime).unwrap());
+        assert!(!layout::territory_install_lock().exists());
+
+        let operations = run_dir.join("operations");
+        std::fs::create_dir_all(&operations).unwrap();
+        let orphan = operations.join(format!("{}.password", uuid::Uuid::now_v7()));
+        std::fs::write(&orphan, b"fixture").unwrap();
+        let lock = lock::acquire_install_lock().unwrap();
+        assert!(!crate::daemon_operations::process_one(&runtime).unwrap());
+        assert!(orphan.exists());
+        drop(lock);
+        assert!(!crate::daemon_operations::process_one(&runtime).unwrap());
+        assert!(!orphan.exists());
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]

@@ -117,18 +117,21 @@ printf '%s\n' '/dev/vda / ext4 defaults 0 1' '/dev/vdb /srv ext4 defaults 0 2' >
 mkdir -p "$rootfs/srv"
 printf '%s\n' 'Disposable QEMU network acceptance guest' >"$rootfs/etc/lkit-qemu-network"
 install -d -m 0700 "$rootfs/var/lib/lkit-qemu"
-install -m 0755 "$lkit_binary" "$rootfs/var/lib/lkit-qemu/candidate-lkit"
-sha256sum "$lkit_binary" | cut -d ' ' -f 1 >"$rootfs/var/lib/lkit-qemu/candidate-lkit.sha256"
-upgrade_pin=$repo_root/scripts/qemu/network/lkit-upgrade-releases.json
-legacy_tag=$(jq -r '.source.tag' "$upgrade_pin")
-legacy_asset=$(jq -r '.asset' "$upgrade_pin")
-legacy_sha256=$(jq -r '.source.sha256' "$upgrade_pin")
-curl --fail --location --silent --show-error --retry 3 \
-  "https://github.com/landscape-router/landscape-kit/releases/download/$legacy_tag/$legacy_asset" \
-  --output "$rootfs/var/lib/lkit-qemu/legacy-lkit-rc3"
-printf '%s  %s\n' "$legacy_sha256" "$rootfs/var/lib/lkit-qemu/legacy-lkit-rc3" | sha256sum --check --status
-chmod 0755 "$rootfs/var/lib/lkit-qemu/legacy-lkit-rc3"
-cp "$upgrade_pin" "$artifact_dir/lkit-upgrade-releases.json"
+if [[ ${1:-} != --flare-rollback && ${1:-} != --flare-password ]]; then
+  install -m 0755 "$lkit_binary" "$rootfs/var/lib/lkit-qemu/candidate-lkit"
+  sha256sum "$lkit_binary" | cut -d ' ' -f 1 >"$rootfs/var/lib/lkit-qemu/candidate-lkit.sha256"
+  upgrade_pin=$repo_root/scripts/qemu/network/lkit-upgrade-releases.json
+  legacy_repo=$(jq -er .repository "$upgrade_pin")
+  legacy_tag=$(jq -r '.source.tag' "$upgrade_pin")
+  legacy_asset=$(jq -r '.asset' "$upgrade_pin")
+  legacy_sha256=$(jq -r '.source.sha256' "$upgrade_pin")
+  curl --fail --location --silent --show-error --retry 3 \
+    "https://github.com/$legacy_repo/releases/download/$legacy_tag/$legacy_asset" \
+    --output "$rootfs/var/lib/lkit-qemu/legacy-lkit"
+  printf '%s  %s\n' "$legacy_sha256" "$rootfs/var/lib/lkit-qemu/legacy-lkit" | sha256sum --check --status
+  chmod 0755 "$rootfs/var/lib/lkit-qemu/legacy-lkit"
+  cp "$upgrade_pin" "$artifact_dir/lkit-upgrade-releases.json"
+fi
 printf '%s\n' 'Secret123' >"$rootfs/var/lib/lkit-qemu/password"
 chmod 0600 "$rootfs/var/lib/lkit-qemu/password"
 printf '%s\n' 'Secret123' >"$test_root/journey-password"

@@ -362,14 +362,20 @@ fn validate_request(kind: Kind, assets: Option<&AssetRequest>) -> Result<(), Ins
     }
 }
 pub(crate) fn list() -> Result<Vec<Record>, InstallError> {
+    scan_queue().map(|(records, _)| records)
+}
+
+fn scan_queue() -> Result<(Vec<Record>, bool), InstallError> {
     let entries = match std::fs::read_dir(directory()) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((vec![], false)),
         Err(e) => return Err(InstallError::Io(e)),
     };
     let mut records = vec![];
+    let mut has_private_inputs = false;
     for entry in entries {
         let path = entry.map_err(InstallError::Io)?.path();
+        has_private_inputs |= path.extension().is_some_and(|ext| ext == "password");
         if path.extension().is_some_and(|ext| ext == "json") {
             records.push(read(
                 path.file_stem()
@@ -380,7 +386,7 @@ pub(crate) fn list() -> Result<Vec<Record>, InstallError> {
         }
     }
     records.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(records)
+    Ok((records, has_private_inputs))
 }
 #[cfg(test)]
 fn submit(root: String) -> Result<Record, InstallError> {
@@ -795,6 +801,13 @@ fn reconcile(record: &mut Record, result: Option<Result<(), String>>) -> Result<
 
 /// Returns whether an operation was executed or remains blocked on recovery.
 pub(crate) fn process_one(runtime: &InstallRuntime) -> Result<bool, InstallError> {
+    // A new submission after this read will be picked up on the next poll.
+    // Private inputs without a record still require orphan cleanup under lock.
+    if let Ok((records, false)) = scan_queue()
+        && records.iter().all(|record| record.status.terminal())
+    {
+        return Ok(false);
+    }
     let _install_lock = match lock::acquire_install_lock() {
         Ok(lock) => lock,
         Err(InstallError::LockBusy) => return Ok(false),

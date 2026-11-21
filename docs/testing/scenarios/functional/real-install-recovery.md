@@ -92,9 +92,9 @@ CI 的只读 GitHub token 通过虚拟机内 `0600` 的临时环境文件供 lki
 - 测试层：真实 Debian/systemd QEMU、公开 lkit 发布资产、正式 Landscape
 - 状态：`部分覆盖`
 - 证据：[发布资产固定清单](../../../../scripts/qemu/network/lkit-upgrade-releases.json)、[升级与迁移检查](../../../../scripts/qemu/network/upgrade-guest.py)、[QEMU 编排](../../../../scripts/test-qemu-network-takeover.sh)
-- 说明：用固定摘要的公开 rc3 二进制完成安装与接管确认。为符合该版本的同文件系统
+- 说明：用固定摘要的公开的 `v0.7.1-rc2` 二进制完成安装与接管确认。为符合该版本的同文件系统
   要求，首次安装在系统盘 `/srv`；停服后按原路径、内容、权限和所有权迁至第二块磁盘，
-  再启动旧服务。旧 CLI 通过真实 GitHub 元数据和校验清单执行 `self upgrade` 到公开 rc4。
+  再启动旧服务。旧 CLI 通过真实 GitHub 元数据和校验清单执行 `self upgrade` 到公开的 `v0.7.1-rc4`。
 - 说明：迁移前确认两个服务均已停止，仅清理无内核持有者的已知运行时
   `data/unix_link/register.sock`；持久文件逐项校验。未知 socket、重定向路径或同名普通
   文件均阻止迁移，不作为临时文件删除。
